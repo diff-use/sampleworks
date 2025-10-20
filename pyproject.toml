@@ -1,32 +1,54 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[dependency-groups]
+boltz = ["boltz"]
+dev = ["pytest", "pytest-cov", "mypy", "pre-commit"]
+
 [project]
-authors = [{name = "Karson Chrispens", email = "karson.chrispens@ucsf.edu"}]
-dependencies = ["atomworks[ml]"]
+authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
+dependencies = ["atomworks[ml]", "dotenv", "jaxtyping"]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
 
-[build-system]
-build-backend = "hatchling.build"
-requires = ["hatchling"]
+[tool.pixi.dependencies]
+numpy = "<2.0"
+pyarrow = "==17.0.0"
+
+[tool.pixi.environments]
+boltz = {features = ["boltz"]}
+boltz-dev = {features = ["boltz", "dev"]}
+
+[tool.pixi.pypi-dependencies]
+sampleworks = {editable = true, path = "."}
+
+[tool.pixi.system-requirements]
+cuda = "12"
+
+[tool.pixi.tasks]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
-[tool.pixi.dependencies]
-pyarrow = "==17.0.0"
-numpy = "<2.0"
+[tool.ruff]
+extend-include = ["*.ipynb"]
+src = []
 
-[tool.pixi.pypi-dependencies]
-sampleworks = { path = ".", editable = true }
+[tool.ruff.lint]
+fixable = ["I001", "F401", "UP"]
+ignore = ["E402", "E721", "E731", "E741", "F722"]
+select = ["E", "F", "I001", "UP"]
 
-[tool.pixi.system-requirements]
-cuda = "12"
+[tool.ruff.lint.flake8-import-conventions.extend-aliases]
+"collections" = "co"
+"functools" = "ft"
+"itertools" = "it"
 
-[tool.pixi.environments]
-boltz = { features = ["boltz"]}
-
-[tool.pixi.tasks]
-
-[dependency-groups]
-boltz = ["boltz"]
+[tool.ruff.lint.isort]
+combine-as-imports = true
+extra-standard-library = ["typing_extensions"]
+lines-after-imports = 2
+order-by-type = false
