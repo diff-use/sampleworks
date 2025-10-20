@@ -7,10 +7,12 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-added-large-files
+        exclude: \.(cif|pdb|ccp4|mtz)$
       - id: check-merge-conflict
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+        exclude: \.(cif|pdb|ccp4|mtz)$
 
   - repo: local
     hooks:
