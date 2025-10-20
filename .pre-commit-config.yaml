@@ -40,4 +40,5 @@ repos:
       - id: pyright
         additional_dependencies:
           - boltz
+          - jax
           - jaxtyping
