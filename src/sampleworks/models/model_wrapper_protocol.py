@@ -83,7 +83,11 @@ class DiffusionModelWrapper(ModelWrapper):
         ...
 
     def denoise_step(
-        self, features: dict[str, Any], timestep: float, **kwargs
+        self,
+        features: dict[str, Any],
+        timestep: float,
+        grad_needed: bool = False,
+        **kwargs,
     ) -> dict[str, Any]:
         """
         Perform one denoising step at given timestep/noise level.
@@ -96,6 +100,8 @@ class DiffusionModelWrapper(ModelWrapper):
             Model features as returned by `featurize`.
         timestep : float
             Current timestep/noise level.
+        grad_needed : bool, optional
+            Whether gradients are needed for this pass, by default False.
         **kwargs : dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
