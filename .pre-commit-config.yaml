@@ -42,3 +42,4 @@ repos:
           - boltz
           - jax
           - jaxtyping
+          - atomworks

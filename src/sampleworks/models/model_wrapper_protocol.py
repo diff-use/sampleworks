@@ -1,3 +1,9 @@
+"""
+Dependency injection protocols for generative model wrappers.
+
+Allows different model wrappers to be used interchangeably in sampling pipelines.
+"""
+
 from typing import Any, Protocol
 
 from jaxtyping import Array, Float

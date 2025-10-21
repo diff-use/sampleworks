@@ -1,0 +1,611 @@
+"""
+Wrapper classes for Boltz models.
+Follows the protocol in model_wrapper_protocol.py
+to allow dependency injection/interchangeable use in sampling pipelines.
+"""
+
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+import torch
+from atomworks.enums import ChainType
+from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
+from boltz.data.types import Manifest
+from boltz.main import (
+    Boltz2DiffusionParams,
+    BoltzDiffusionParams,
+    BoltzProcessedInput,
+    BoltzSteeringParams,
+    check_inputs,
+    MSAModuleArgs,
+    PairformerArgsV2,
+    process_inputs,
+)
+from boltz.model.models.boltz2 import Boltz2
+from jaxtyping import Array, Float
+
+
+@dataclass
+class PredictArgs:
+    """Arguments for model prediction."""
+
+    recycling_steps: int = 3  # default in Boltz1
+    sampling_steps: int = 200
+    diffusion_samples: int = (
+        1  # number of samples you want to generate, will be used as multiplicity
+    )
+    write_confidence_summary: bool = True
+    write_full_pae: bool = False
+    write_full_pde: bool = False
+
+
+class Boltz2Wrapper:
+    """Wrapper for Boltz2 model.
+
+    Parameters
+    ----------
+    checkpoint_path : str
+        Filesystem path to the Boltz2 checkpoint containing trained weights.
+    use_msa_server : bool, optional
+        Whether to fetch multiple sequence alignment features from the ColabFold
+        MSA server instead of relying solely on local inputs.
+    predict_args : PredictArgs, optional
+        Runtime prediction configuration such as recycling depth and number of
+        diffusion samples to generate.
+    diffusion_args : Boltz2DiffusionParams, optional
+        Diffusion process parameters passed down to the Boltz2 model.
+    steering_args : BoltzSteeringParams, optional
+        Steering configuration controlling external potentials applied during
+        sampling.
+    method : str, optional
+        Inference method identifier understood by Boltz2 (e.g. ``"MD"``).
+    """
+
+    def __init__(
+        self,
+        checkpoint_path: str | Path,
+        use_msa_server: bool = True,
+        predict_args: PredictArgs = PredictArgs(),
+        diffusion_args: Boltz2DiffusionParams = Boltz2DiffusionParams(),
+        steering_args: BoltzSteeringParams = BoltzSteeringParams(),
+        method: str = "MD",
+        device: torch.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        ),
+    ):
+        self.checkpoint_path = checkpoint_path
+        self.use_msa_server = use_msa_server
+        self.predict_args = predict_args
+        self.diffusion_args = diffusion_args
+        self.steering_args = steering_args
+        self.method = method
+        self.device = torch.device(device)
+        # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
+        self.cache_path = (
+            Path(checkpoint_path)
+            if isinstance(checkpoint_path, str)
+            else checkpoint_path
+        ).parent
+        self.cache_path.mkdir(parents=True, exist_ok=True)
+
+        pairformer_args = PairformerArgsV2()
+
+        msa_args = MSAModuleArgs(
+            subsample_msa=True,  # Default from boltz repo
+            num_subsampled_msa=1024,  # Default from boltz repo
+            use_paired_feature=True,  # Required for Boltz2
+        )
+
+        self.model = (
+            Boltz2.load_from_checkpoint(
+                checkpoint_path,
+                strict=True,
+                predict_args=asdict(predict_args),
+                map_location="cpu",
+                diffusion_process_args=asdict(diffusion_args),
+                ema=False,
+                pairformer_args=asdict(pairformer_args),
+                msa_args=asdict(msa_args),
+                steering_args=asdict(steering_args),
+            )
+            .to(self.device)
+            .eval()
+        )
+
+        self.data_module: Boltz2InferenceDataModule
+
+    def _create_boltz_input_from_structure(
+        self, structure: dict, out_dir: str | Path
+    ) -> Path:
+        out_dir = Path(out_dir) if isinstance(out_dir, str) else out_dir
+        out_dir = out_dir.expanduser().resolve()
+
+        polymer_info = {}
+        ligand_info = {}
+
+        chain_info = structure.get("chain_info", {})
+
+        # Process atomworks chain_info into boltz YAML info
+        # TODO: Handle non-canonical AAs in a polymer
+        # TODO: Handle templates
+        # TODO: Handle constraints
+        for chain in chain_info:
+            # Process protein, DNA, RNA chains
+            entity_type: ChainType = chain_info[chain]["chain_type"]
+            if entity_type.is_polymer():
+                polymer_info[chain]["entity_type"] = (
+                    "protein"
+                    if entity_type.is_protein()
+                    else "DNA"
+                    if entity_type.is_nucleic_acid()
+                    and "DEOXY" in entity_type.to_string()
+                    else "RNA"
+                )
+                polymer_info[chain]["sequence"] = chain_info[chain][
+                    "processed_entity_canonical_sequence"
+                ]  # Get canonical sequence
+                if "CYCLIC" in entity_type.to_string():
+                    polymer_info[chain]["cyclic"] = True
+            else:  # Ligand
+                ligand_info[chain]["entity_type"] = "ligand"
+                ligand_info[chain]["ccd"] = chain_info[chain]["resname"][0]
+
+        boltz_input_path = out_dir / "boltz_input.yaml"
+        with open(boltz_input_path, "w") as f:
+            f.write("sequences:\n")
+            for chain_id, info in polymer_info.items():
+                f.write(f"    - {info['entity_type']}:\n")
+                f.write(f"        id: {chain_id}:\n")
+                f.write(f"        sequence: {info['sequence']}\n")
+                if info.get("cyclic", True):
+                    f.write("        cyclic: true\n")
+            if ligand_info:
+                for chain_id, info in ligand_info.items():
+                    f.write(f"    - {info['entity_type']}:\n")
+                    f.write(f"        id: {chain_id}:\n")
+                    f.write(f"        ccd: {info['ccd']}\n")
+
+        return boltz_input_path
+
+    def _setup_data_module(
+        self,
+        input_path: str | Path,
+        out_dir: str | Path,
+        num_workers: int = 8,
+    ):
+        input_path = Path(input_path) if isinstance(input_path, str) else input_path
+        out_dir = Path(out_dir) if isinstance(out_dir, str) else out_dir
+        input_path = input_path.expanduser().resolve()
+        ccd_path = self.cache_path / "ccd.pkl"
+        mol_dir = self.cache_path / "mols"
+
+        data = check_inputs(input_path)
+
+        process_inputs(
+            data=data,
+            out_dir=out_dir,
+            ccd_path=ccd_path,
+            mol_dir=mol_dir,
+            use_msa_server=self.use_msa_server,
+            msa_server_url="https://api.colabfold.com",
+            msa_pairing_strategy="greedy",
+            boltz2=True,
+            preprocessing_threads=1,
+        )
+
+        processed_dir = out_dir / "processed"
+        processed = BoltzProcessedInput(
+            manifest=Manifest.load(processed_dir / "manifest.json"),  # type: ignore (Boltz repo doesn't have the right type hints?)
+            targets_dir=processed_dir / "structures",
+            msa_dir=processed_dir / "msa",
+            constraints_dir=(processed_dir / "constraints")
+            if (processed_dir / "constraints").exists()
+            else None,
+            template_dir=processed_dir / "templates"
+            if (processed_dir / "templates").exists()
+            else None,
+            extra_mols_dir=processed_dir / "mols"
+            if (processed_dir / "mols").exists()
+            else None,
+        )
+
+        self.data_module = Boltz2InferenceDataModule(
+            manifest=processed.manifest,
+            target_dir=processed.targets_dir,
+            msa_dir=processed.msa_dir,
+            mol_dir=mol_dir,
+            num_workers=num_workers if num_workers is not None else 8,
+            constraints_dir=processed.constraints_dir,
+            template_dir=processed_dir / "templates"
+            if (processed_dir / "templates").exists()
+            else None,
+            extra_mols_dir=processed_dir / "mols"
+            if (processed_dir / "mols").exists()
+            else None,
+            override_method=self.method,
+        )
+
+    def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
+        """From an Atomworks structure, calculate model features.
+
+        Parameters
+        ----------
+        structure : dict
+            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
+        **kwargs : dict, optional
+            keys:
+            - out_dir: str | Path
+                Output directory for processed Boltz intermediate files. Defaults first
+                to the structure ID from metadata, then to "boltz2_output" in the
+                current working directory.
+            - num_workers: int
+                Number of parallel workers for input data processing. Defaults to 8.
+
+        Returns
+        -------
+        dict[str, Any]
+            Model features.
+        """
+        input_path = self._create_boltz_input_from_structure(
+            structure,
+            kwargs.get(
+                "out_dir", structure.get("metadata", {}).get("id", "boltz2_output")
+            ),
+        )
+
+        self._setup_data_module(
+            input_path,
+            kwargs.get("out_dir", "boltz2_output"),
+            num_workers=kwargs.get("num_workers", 8),
+        )
+
+        batch = self.data_module.transfer_batch_to_device(
+            next(iter(self.data_module.predict_dataloader())), self.device, 0
+        )
+
+        recycling_steps = kwargs.get(
+            "recycling_steps", self.predict_args.recycling_steps
+        )
+
+        with torch.no_grad():
+            mask = batch["token_pad_mask"]
+            pair_mask = batch["token_pair_pad_mask"]
+            s_inputs = self.model.input_embedder(batch)
+
+            s_init = self.model.s_init(s_inputs)
+            z_init = (
+                self.model.z_init_1(s_inputs)[:, :, None]
+                + self.model.z_init_2(s_inputs)[:, None, :]
+            )
+
+            relative_position_encoding = self.model.rel_pos(batch)
+
+            s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
+
+            for _ in range(recycling_steps + 1):
+                s = s_init + self.model.s_recycle(self.model.s_norm(s))
+                z = z_init + self.model.z_recycle(self.model.z_norm(z))
+
+                if self.model.use_templates:
+                    if self.model.is_template_compiled:
+                        template_module = (
+                            self.model.template_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                        )
+                    else:
+                        template_module = self.model.template_module
+
+                    z = z + template_module(
+                        z, batch, pair_mask, use_kernels=self.model.use_kernels
+                    )  # type: ignore (Object will be callable here)
+
+                if self.model.is_msa_compiled:
+                    msa_module = self.model.msa_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                else:
+                    msa_module = self.model.msa_module
+
+                z = z + msa_module(
+                    z, s_inputs, batch, use_kernels=self.model.use_kernels
+                )  # type: ignore (Object will be callable here)
+
+                if self.model.is_pairformer_compiled:
+                    pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                else:
+                    pairformer_module = self.model.pairformer_module
+
+                s, z = pairformer_module(s, z, mask=mask, pair_mask=pair_mask)  # type: ignore (Object will be callable here)
+
+            q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+                self.model.diffusion_conditioning(
+                    s_trunk=s,
+                    z_trunk=z,
+                    relative_position_encoding=relative_position_encoding,
+                    feats=batch,
+                )
+            )
+
+            diffusion_conditioning = {
+                "q": q,
+                "c": c,
+                "to_keys": to_keys,
+                "atom_enc_bias": atom_enc_bias,
+                "atom_dec_bias": atom_dec_bias,
+                "token_trans_bias": token_trans_bias,
+            }
+
+        return {
+            "s": s,
+            "z": z,
+            "s_inputs": s_inputs,
+            "relative_position_encoding": relative_position_encoding,
+            "batch_feats": batch,
+            "diffusion_conditioning": diffusion_conditioning,
+        }
+
+    def step(
+        self, features: dict[str, Any], grad_needed: bool = False, **kwargs
+    ) -> dict[str, Any]:
+        """
+        Perform a single pass through the model to obtain output, which can then be
+        passed into a scaler for optimizing fit with observables.
+
+        Parameters
+        ----------
+        features : dict[str, Any]
+            Model features as returned by `featurize`.
+        grad_needed : bool, optional
+            Whether gradients are needed for this pass, by default False.
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Model outputs.
+        """
+        raise NotImplementedError()
+
+    def get_noise_schedule(self) -> dict[str, Float[Array, "..."]]:
+        """
+        Return the full noise schedule with semantic keys.
+
+        Examples:
+        - {"sigma": [...], "timesteps": [...]}
+        - {"alpha": [...], "sigma": [...], "betas": [...]}
+        - Model-specific keys depending on parameterization.
+
+        Returns
+        -------
+        dict[str, Float[Array, "..."]]
+            Noise schedule arrays.
+        """
+        raise NotImplementedError()
+
+    def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
+        """
+        Return scaling constants.
+
+        For v-parameterization: returns {c_skip, c_out, c_in, c_noise}
+        For epsilon-parameterization: returns {alpha, sigma}
+        For other parameterizations: return model-specific scalings.
+
+        Parameters
+        ----------
+        timestep : float
+            Current timestep/noise level.
+
+        Returns
+        -------
+        dict[str, float]
+            Scaling constants.
+        """
+        raise NotImplementedError()
+
+    def denoise_step(
+        self,
+        features: dict[str, Any],
+        timestep: float,
+        grad_needed: bool = False,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Perform one denoising step at given timestep/noise level.
+        Returns predicted clean sample or predicted noise depending on
+        model parameterization.
+
+        Parameters
+        ----------
+        features : dict[str, Any]
+            Model features as returned by `featurize`.
+        timestep : float
+            Current timestep/noise level.
+        grad_needed : bool, optional
+            Whether gradients are needed for this pass, by default False.
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Predicted clean sample or predicted noise.
+        """
+        raise NotImplementedError()
+
+    def initialize_from_noise(
+        self, structure: dict, noise_level: float, **kwargs
+    ) -> dict[str, Any]:
+        """Create a noisy version of structure at given noise level.
+
+        Parameters
+        ----------
+        structure : dict
+            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
+        noise_level : float
+            Desired noise level/timestep to initialize at.
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Noisy structure.
+        """
+        raise NotImplementedError()
+
+
+class Boltz1Wrapper:
+    """Wrapper for Boltz1 model.
+
+    Parameters
+    ----------
+    checkpoint_path : str
+        Filesystem path to the Boltz1 checkpoint containing trained weights.
+    use_msa_server : bool, optional
+        Whether to fetch multiple sequence alignment features from the ColabFold
+        MSA server instead of relying solely on local inputs.
+    predict_args : PredictArgs, optional
+        Runtime prediction configuration such as recycling depth and number of
+        diffusion samples to generate.
+    diffusion_args : BoltzDiffusionParams, optional
+        Diffusion process parameters passed down to the Boltz model.
+    steering_args : BoltzSteeringParams, optional
+        Steering configuration controlling external potentials applied during
+        sampling.
+    """
+
+    def __init__(
+        self,
+        checkpoint_path: str,
+        use_msa_server: bool = True,
+        predict_args: PredictArgs = PredictArgs(),
+        diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
+        steering_args: BoltzSteeringParams = BoltzSteeringParams(),
+    ):
+        raise NotImplementedError("Boltz2Wrapper is not yet implemented.")
+
+    def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
+        """From an Atomworks structure, calculate model features.
+
+        Parameters
+        ----------
+        structure : dict
+            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Model features.
+        """
+        raise NotImplementedError()
+
+    def step(
+        self, features: dict[str, Any], grad_needed: bool = False, **kwargs
+    ) -> dict[str, Any]:
+        """
+        Perform a single pass through the model to obtain output, which can then be
+        passed into a scaler for optimizing fit with observables.
+
+        Parameters
+        ----------
+        features : dict[str, Any]
+            Model features as returned by `featurize`.
+        grad_needed : bool, optional
+            Whether gradients are needed for this pass, by default False.
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Model outputs.
+        """
+        raise NotImplementedError()
+
+    def get_noise_schedule(self) -> dict[str, Float[Array, "..."]]:
+        """
+        Return the full noise schedule with semantic keys.
+
+        Examples:
+        - {"sigma": [...], "timesteps": [...]}
+        - {"alpha": [...], "sigma": [...], "betas": [...]}
+        - Model-specific keys depending on parameterization.
+
+        Returns
+        -------
+        dict[str, Float[Array, "..."]]
+            Noise schedule arrays.
+        """
+        raise NotImplementedError()
+
+    def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
+        """
+        Return scaling constants.
+
+        For v-parameterization: returns {c_skip, c_out, c_in, c_noise}
+        For epsilon-parameterization: returns {alpha, sigma}
+        For other parameterizations: return model-specific scalings.
+
+        Parameters
+        ----------
+        timestep : float
+            Current timestep/noise level.
+
+        Returns
+        -------
+        dict[str, float]
+            Scaling constants.
+        """
+        raise NotImplementedError()
+
+    def denoise_step(
+        self,
+        features: dict[str, Any],
+        timestep: float,
+        grad_needed: bool = False,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Perform one denoising step at given timestep/noise level.
+        Returns predicted clean sample or predicted noise depending on
+        model parameterization.
+
+        Parameters
+        ----------
+        features : dict[str, Any]
+            Model features as returned by `featurize`.
+        timestep : float
+            Current timestep/noise level.
+        grad_needed : bool, optional
+            Whether gradients are needed for this pass, by default False.
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Predicted clean sample or predicted noise.
+        """
+        raise NotImplementedError()
+
+    def initialize_from_noise(
+        self, structure: dict, noise_level: float, **kwargs
+    ) -> dict[str, Any]:
+        """Create a noisy version of structure at given noise level.
+
+        Parameters
+        ----------
+        structure : dict
+            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
+        noise_level : float
+            Desired noise level/timestep to initialize at.
+        **kwargs : dict, optional
+            Additional keyword arguments needed for classes that implement this Protocol
+
+        Returns
+        -------
+        dict[str, Any]
+            Noisy structure.
+        """
+        raise NotImplementedError()
