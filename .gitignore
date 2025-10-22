@@ -211,4 +211,5 @@ __marimo__/
 !.pixi/config.toml
 
 # Claude Code
+.claude/
 CLAUDE.local.md

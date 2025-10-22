@@ -4,9 +4,11 @@ Dependency injection protocols for generative model wrappers.
 Allows different model wrappers to be used interchangeably in sampling pipelines.
 """
 
+from collections.abc import Mapping
 from typing import Any, Protocol
 
-from jaxtyping import Array, Float
+from jaxtyping import ArrayLike, Float
+from torch import Tensor
 
 
 class ModelWrapper(Protocol):
@@ -34,6 +36,10 @@ class ModelWrapper(Protocol):
         Perform a single pass through the model to obtain output, which can then be
         passed into a scaler for optimizing fit with observables.
 
+        NOTE: For a diffusion model, this will be done in denoising step, and this
+        function should be used for any conditioning or embedding (e.g. Pairformer for
+        AF3 and its clones).
+
         Parameters
         ----------
         features : dict[str, Any]
@@ -52,7 +58,7 @@ class ModelWrapper(Protocol):
 
 
 class DiffusionModelWrapper(ModelWrapper):
-    def get_noise_schedule(self) -> dict[str, Float[Array, "..."]]:
+    def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
         """
         Return the full noise schedule with semantic keys.
 
@@ -63,7 +69,7 @@ class DiffusionModelWrapper(ModelWrapper):
 
         Returns
         -------
-        dict[str, Float[Array, "..."]]
+        Mapping[str, Float[ArrayLike | Tensor, "..."]]
             Noise schedule arrays.
         """
         ...
@@ -91,6 +97,7 @@ class DiffusionModelWrapper(ModelWrapper):
     def denoise_step(
         self,
         features: dict[str, Any],
+        noisy_coords: Float[ArrayLike | Tensor, "..."],
         timestep: float,
         grad_needed: bool = False,
         **kwargs,
@@ -104,6 +111,8 @@ class DiffusionModelWrapper(ModelWrapper):
         ----------
         features : dict[str, Any]
             Model features as returned by `featurize`.
+        noisy_coords : Float[ArrayLike | Tensor, "..."]
+            Noisy atom coordinates at current timestep.
         timestep : float
             Current timestep/noise level.
         grad_needed : bool, optional
@@ -120,8 +129,8 @@ class DiffusionModelWrapper(ModelWrapper):
 
     def initialize_from_noise(
         self, structure: dict, noise_level: float, **kwargs
-    ) -> dict[str, Any]:
-        """Create a noisy version of structure at given noise level.
+    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
+        """Create a noisy version of structure's coordinates at given noise level.
 
         Parameters
         ----------
@@ -134,7 +143,7 @@ class DiffusionModelWrapper(ModelWrapper):
 
         Returns
         -------
-        dict[str, Any]
-            Noisy structure.
+        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
+            Noisy structure coordinates.
         """
         ...
