@@ -7,11 +7,12 @@ to allow dependency injection/interchangeable use in sampling pipelines.
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from atomworks.enums import ChainType
 from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
+from boltz.data.pad import pad_dim
 from boltz.data.types import Manifest
 from boltz.main import (
     Boltz2DiffusionParams,
@@ -23,7 +24,9 @@ from boltz.main import (
     PairformerArgsV2,
     process_inputs,
 )
+from boltz.model.loss.diffusion import weighted_rigid_align
 from boltz.model.models.boltz2 import Boltz2
+from boltz.model.modules.utils import center_random_augmentation
 from jaxtyping import ArrayLike, Float
 from torch import Tensor
 
@@ -309,7 +312,9 @@ class Boltz2Wrapper:
     ) -> dict[str, Any]:
         """
         Perform a pass through the Pairformer module to obtain output, which can then be
-        passed into the diffusion module.
+        passed into the diffusion module. Pretty much only here to match the protocol
+        and be used in featurize, but could be useful for doing exploration in
+        the Boltz embedding space.
 
         Parameters
         ----------
@@ -404,13 +409,13 @@ class Boltz2Wrapper:
     def denoise_step(
         self,
         features: dict[str, Any],
-        noisy_coords: Float[ArrayLike | Tensor, "..."],
+        noisy_coords: Float[Tensor, "..."],
         timestep: float,
         grad_needed: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
         """
-        Perform one denoising step at given timestep/noise level.
+        Perform denoising at given timestep/noise level.
         Returns predicted clean sample or predicted noise depending on
         model parameterization.
 
@@ -425,15 +430,104 @@ class Boltz2Wrapper:
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs : dict, optional
-            Additional keyword arguments needed for classes that implement this Protocol
+            Additional keyword arguments for Boltz-2 denoising.
+
+            augmentation (bool, optional)
+                Apply `center_random_augmentation` when True (default True).
+
+            align_to_input (bool, optional)
+                Align denoised coordinates to `input_coords` when True (default True).
+
+            input_coords (Tensor, optional)
+                Reference coordinates required if `align_to_input` is True.
+
+            alignment_weights (Tensor, optional)
+                Atom weights for alignment; defaults to `atom_mask`.
+
+            multiplicity (int, optional)
+                Overrides the multiplicity passed to the diffusion network, which is the
+                replicating the model does internally along axis=0; defaults to the
+                batch size of `noisy_coords`.
 
 
-        Returns
+        Returns # TODO: Fix these type hints, these should
+        probably ArrayLike-ish or provide meaningful dict keys
         -------
         dict[str, Any]
             Predicted clean sample or predicted noise.
         """
-        raise NotImplementedError()
+        s = features.get("s", None)
+        z = features.get("z", None)
+        s_inputs = features.get("s_inputs", None)
+        relative_position_encoding = features.get("relative_position_encoding", None)
+        feats = features.get("feats", None)
+
+        if any(x is None for x in [s, z, s_inputs, relative_position_encoding, feats]):
+            raise ValueError("Missing required features for denoise_step")
+
+        # shape [1, N_padded]
+        feats = cast(dict[str, Any], feats)
+        atom_mask = feats.get("atom_pad_mask")
+        atom_mask = cast(Tensor, atom_mask)
+        # shape [batch_size, N_padded]
+        atom_mask = atom_mask.repeat_interleave(noisy_coords.shape[0], dim=0)
+
+        pad_len = noisy_coords.shape[1] - atom_mask.shape[1]
+        if pad_len >= 0:
+            padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
+        else:
+            raise ValueError("pad_len is negative, cannot pad noisy_coords")
+
+        timestep_scaling = self.get_timestep_scaling(timestep)
+        eps = timestep_scaling["eps_scale"] * torch.randn(
+            padded_noisy_coords.shape, device=self.device
+        )
+
+        if kwargs.get("augmentation", True):
+            padded_noisy_coords = center_random_augmentation(
+                padded_noisy_coords,
+                atom_mask=atom_mask,
+                augmentation=True,
+            )
+
+        padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+
+        with torch.set_grad_enabled(grad_needed):
+            padded_atom_coords_denoised = (
+                self.model.structure_module.preconditioned_network_forward(
+                    padded_noisy_coords_eps,
+                    timestep_scaling.get("t_hat"),
+                    network_condition_kwargs=dict(
+                        multiplicity=kwargs.get(
+                            "multiplicity", padded_noisy_coords_eps.shape[0]
+                        ),
+                        s_inputs=s_inputs,
+                        s_trunk=s,
+                        feats=feats,
+                        diffusion_conditioning=features["diffusion_conditioning"],
+                    ),
+                )
+            )
+
+            if kwargs.get("align_to_input", True):
+                input_coords = kwargs.get("input_coords")
+                if input_coords is not None:
+                    alignment_weights = kwargs.get("alignment_weights", atom_mask)
+                    padded_atom_coords_denoised = weighted_rigid_align(
+                        padded_atom_coords_denoised.float(),
+                        cast(Tensor, input_coords).float(),
+                        weights=alignment_weights,
+                        mask=atom_mask,
+                    )
+                else:
+                    raise ValueError(
+                        "Input coordinates must be provided when align_to_input "
+                        "is True."
+                    )
+
+            atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :]
+
+        return {"atom_coords_denoised": atom_coords_denoised}
 
     def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
         """

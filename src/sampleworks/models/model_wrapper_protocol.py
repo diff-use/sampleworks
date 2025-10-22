@@ -103,7 +103,7 @@ class DiffusionModelWrapper(ModelWrapper):
         **kwargs,
     ) -> dict[str, Any]:
         """
-        Perform one denoising step at given timestep/noise level.
+        Perform denoising at given timestep/noise level.
         Returns predicted clean sample or predicted noise depending on
         model parameterization.
 
