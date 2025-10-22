@@ -43,3 +43,4 @@ repos:
           - jax
           - jaxtyping
           - atomworks
+        exclude: real_space_density
