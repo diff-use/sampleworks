@@ -125,7 +125,6 @@ class Boltz2Wrapper:
         predict_args: PredictArgs = PredictArgs(),
         diffusion_args: Boltz2DiffusionParams = Boltz2DiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
-        sampling_steps: int = 200,
         method: str = "MD",
         device: torch.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
@@ -134,22 +133,19 @@ class Boltz2Wrapper:
         """
         Parameters
         ----------
-        checkpoint_path : str
+        checkpoint_path : str | Path
             Filesystem path to the Boltz2 checkpoint containing trained weights.
         use_msa_server : bool, optional
-            Whether to fetch multiple sequence alignment features from the ColabFold
-            MSA server instead of relying solely on local inputs.
+            If ``True``, fetch MSA features from the ColabFold server; otherwise rely
+            on precomputed MSAs.
         predict_args : PredictArgs, optional
-            Runtime prediction configuration such as recycling depth and number of
-            diffusion samples to generate.
+            Runtime prediction configuration such as recycling depth and sampling
+            steps.
         diffusion_args : Boltz2DiffusionParams, optional
             Diffusion process parameters passed down to the Boltz2 model.
         steering_args : BoltzSteeringParams, optional
             Steering configuration controlling external potentials applied during
             sampling.
-        sampling_steps : int, optional
-            Number of diffusion sampling steps to perform. NOTE: This should be for the
-            entire sampling process, not the amount of partial diffusion steps.
         method : str, optional
             Inference method identifier understood by Boltz2 (e.g. ``"MD"``).
         device : torch.device, optional
@@ -160,7 +156,6 @@ class Boltz2Wrapper:
         self.predict_args = predict_args
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
-        self.sampling_steps = sampling_steps
         self.method = method
         self.device = torch.device(device)
         # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
@@ -197,7 +192,9 @@ class Boltz2Wrapper:
 
         self.data_module: Boltz2InferenceDataModule
 
-        sigmas = self.model.structure_module.sample_schedule(self.sampling_steps)
+        sigmas = self.model.structure_module.sample_schedule(
+            self.predict_args.sampling_steps
+        )
         gammas = torch.where(
             sigmas > self.model.structure_module.gamma_min,
             self.model.structure_module.gamma_0,
@@ -431,7 +428,7 @@ class Boltz2Wrapper:
         timestep: float,
         grad_needed: bool = False,
         **kwargs,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Tensor]:
         """
         Perform denoising at given timestep/noise level.
         Returns predicted clean sample or predicted noise depending on
@@ -440,9 +437,9 @@ class Boltz2Wrapper:
         Parameters
         ----------
         features : dict[str, Any]
-            Model features as returned by `featurize`.
-        noisy_coords : Float[Array, "..."]
-            Noisy atom coordinates at current timestep.
+            Model features produced by :meth:`featurize` or :meth:`step`.
+        noisy_coords : Float[Tensor, "..."]
+            Noisy atom coordinates at the current timestep.
         timestep : float
             Current timestep/noise level.
         grad_needed : bool, optional
@@ -471,8 +468,9 @@ class Boltz2Wrapper:
         Returns # TODO: Fix these type hints, these should
         probably ArrayLike-ish or provide meaningful dict keys
         -------
-        dict[str, Any]
-            Predicted clean sample or predicted noise.
+        dict[str, Tensor]
+            Dictionary containing ``"atom_coords_denoised"`` with the cleaned
+            coordinate tensor.
         """
         s = features.get("s", None)
         z = features.get("z", None)
@@ -641,7 +639,6 @@ class Boltz1Wrapper:
         predict_args: PredictArgs = PredictArgs(),
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
-        sampling_steps: int = 200,
         device: torch.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         ),
@@ -649,22 +646,19 @@ class Boltz1Wrapper:
         """
         Parameters
         ----------
-        checkpoint_path : str
+        checkpoint_path : str | Path
             Filesystem path to the Boltz1 checkpoint containing trained weights.
         use_msa_server : bool, optional
-            Whether to fetch multiple sequence alignment features from the ColabFold
-            MSA server instead of relying solely on local inputs.
+            If ``True``, fetch MSA features from the ColabFold server; otherwise rely
+            on precomputed MSAs.
         predict_args : PredictArgs, optional
-            Runtime prediction configuration such as recycling depth and number of
-            diffusion samples to generate.
+            Runtime prediction configuration such as recycling depth and sampling
+            steps.
         diffusion_args : BoltzDiffusionParams, optional
             Diffusion process parameters passed down to the Boltz1 model.
         steering_args : BoltzSteeringParams, optional
             Steering configuration controlling external potentials applied during
             sampling.
-        sampling_steps : int, optional
-            Number of diffusion sampling steps to perform. NOTE: This should be for the
-            entire sampling process, not the amount of partial diffusion steps.
         device : torch.device, optional
             Device to run the model on, by default CUDA if available.
         """
@@ -673,7 +667,6 @@ class Boltz1Wrapper:
         self.predict_args = predict_args
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
-        self.sampling_steps = sampling_steps
         self.device = torch.device(device)
 
         self.cache_path = (
@@ -710,7 +703,9 @@ class Boltz1Wrapper:
 
         self.data_module: BoltzInferenceDataModule
 
-        sigmas = self.model.structure_module.sample_schedule(self.sampling_steps)
+        sigmas = self.model.structure_module.sample_schedule(
+            self.predict_args.sampling_steps
+        )
         gammas = torch.where(
             sigmas > self.model.structure_module.gamma_min,
             self.model.structure_module.gamma_0,
@@ -794,10 +789,10 @@ class Boltz1Wrapper:
             keys:
             - out_dir: str | Path
                 Output directory for processed Boltz intermediate files. Defaults first
-                to the structure ID from metadata, then to "boltz2_output" in the
+                to the structure ID from metadata, then to "boltz1_output" in the
                 current working directory.
             - num_workers: int
-                Number of parallel workers for input data processing. Defaults to 8.
+                Number of parallel workers for input data processing. Defaults to 2.
 
         Returns
         -------
@@ -829,25 +824,19 @@ class Boltz1Wrapper:
         """
         Return the full noise schedule with semantic keys.
 
-        Examples:
-        - {"sigma": [...], "timesteps": [...]}
-        - {"alpha": [...], "sigma": [...], "betas": [...]}
-        - Model-specific keys depending on parameterization.
-
         Returns
         -------
         Mapping[str, Float[ArrayLike | Tensor, "..."]]
             Noise schedule arrays.
+            Sigma at time t-1: "sigma_tm"
+            Sigma at time t: "sigmas_t"
+            Gamma at time t: "gamma"
         """
         return self.noise_schedule
 
     def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
         """
-        Return scaling constants.
-
-        For v-parameterization: returns {c_skip, c_out, c_in, c_noise}
-        For epsilon-parameterization: returns {alpha, sigma}
-        For other parameterizations: return model-specific scalings.
+        Return scaling constants for Boltz1.
 
         Parameters
         ----------
@@ -858,6 +847,7 @@ class Boltz1Wrapper:
         -------
         dict[str, float]
             Scaling constants.
+            "t_hat", "sigma_t", "eps_scale"
         """
         sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
         sigma_t = self.noise_schedule["sigmas_t"][int(timestep)]
