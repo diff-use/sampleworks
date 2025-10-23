@@ -57,7 +57,7 @@ class ModelWrapper(Protocol):
         ...
 
 
-class DiffusionModelWrapper(ModelWrapper):
+class DiffusionModelWrapper(ModelWrapper, Protocol):
     def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
         """
         Return the full noise schedule with semantic keys.

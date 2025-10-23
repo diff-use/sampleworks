@@ -583,7 +583,8 @@ class Boltz2Wrapper:
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
         noise_level : float
-            Desired noise level/timestep to initialize at.
+            Desired noise level/timestep to initialize at. For Boltz, this should be
+            the timestep.
         **kwargs : dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
@@ -592,7 +593,24 @@ class Boltz2Wrapper:
         Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
             Noisy structure coordinates.
         """
-        raise NotImplementedError()
+        if "asym_unit" not in structure:
+            raise ValueError(
+                "structure must contain 'asym_unit' key to access"
+                "the coordinates in the asymmetric unit."
+            )
+
+        coords = structure["coordinates"]
+        if isinstance(coords, ArrayLike):
+            coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
+
+        noisy_coords = (
+            coords
+            + self.model.structure_module.noise_scale
+            * self.noise_schedule["sigma_t"][int(noise_level)]
+            * torch.randn(coords.shape, device=self.device)
+        )
+
+        return noisy_coords
 
 
 class Boltz1Wrapper:
@@ -623,7 +641,7 @@ class Boltz1Wrapper:
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
     ):
-        raise NotImplementedError("Boltz2Wrapper is not yet implemented.")
+        raise NotImplementedError("Boltz1Wrapper is not yet implemented.")
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
         """From an Atomworks structure, calculate model features.
