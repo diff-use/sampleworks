@@ -79,6 +79,7 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
         # Process protein, DNA, RNA chains
         entity_type: ChainType = chain_info[chain]["chain_type"]
         if entity_type.is_polymer():
+            polymer_info[chain] = {}
             polymer_info[chain]["entity_type"] = (
                 "protein"
                 if entity_type.is_protein()
@@ -92,22 +93,23 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
             if "CYCLIC" in entity_type.to_string():
                 polymer_info[chain]["cyclic"] = True
         else:  # Ligand
+            ligand_info[chain] = {}
             ligand_info[chain]["entity_type"] = "ligand"
-            ligand_info[chain]["ccd"] = chain_info[chain]["resname"][0]
+            ligand_info[chain]["ccd"] = chain_info[chain]["res_name"][0]
 
     boltz_input_path = out_dir / "boltz_input.yaml"
     with open(boltz_input_path, "w") as f:
         f.write("sequences:\n")
         for chain_id, info in polymer_info.items():
             f.write(f"    - {info['entity_type']}:\n")
-            f.write(f"        id: {chain_id}:\n")
+            f.write(f"        id: {chain_id}\n")
             f.write(f"        sequence: {info['sequence']}\n")
-            if info.get("cyclic", True):
+            if info.get("cyclic", False):
                 f.write("        cyclic: true\n")
         if ligand_info:
             for chain_id, info in ligand_info.items():
                 f.write(f"    - {info['entity_type']}:\n")
-                f.write(f"        id: {chain_id}:\n")
+                f.write(f"        id: {chain_id}\n")
                 f.write(f"        ccd: {info['ccd']}\n")
 
     return boltz_input_path
@@ -615,7 +617,7 @@ class Boltz2Wrapper:
                 "the coordinates in the asymmetric unit."
             )
 
-        coords = structure["coordinates"]
+        coords = structure["asym_unit"].coord
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
@@ -1093,7 +1095,7 @@ class Boltz1Wrapper:
                 "the coordinates in the asymmetric unit."
             )
 
-        coords = structure["coordinates"]
+        coords = structure["asym_unit"].coord
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
