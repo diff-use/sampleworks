@@ -111,6 +111,10 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c0/10/d20b513afe03acc89ec33948320a5544d31f21b05368436d580dec4e234d/charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/97/57/6813202cfe8afe187ac01c3e96396fca5727309de016309b3d1fda351b84/chembl_structure_pipeline-1.2.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/00/2e/d53fa4befbf2cfa713304affc7ca780ce4fc1fd8710527771b58311a3229/click-8.1.7-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/81/63/447db5f84bc9399681ba984821e5406cde0bcc580622d9bdd01057940ea2/cuequivariance-0.7.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/0a/96/82786c5036402c16ed7255199a1c7ed963b0d95aa4a69513edd9d2e0bc56/cuequivariance_ops_cu12-0.7.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/b0/47/413af27491e4be8e8c0d0de690c76e007ce125bc8872520b82c1bb6a6447/cuequivariance_ops_torch_cu12-0.7.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/98/88/fd38997baf849608281eafdfa21b616db20789d407889427da90cddb0e50/cuequivariance_torch-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/34/f8/0b98537f0b4e8c01f76d2a6cf75389987538e4d4ac9faf25836fd18c9689/cython-3.1.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/23/d9/2f7a4db7f92eab4b567e56cc2fc147fed1ef35f7968e44cefcbbfb366980/cytoolz-0.12.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c9/d4/8cbb857612ca69763ee4f4f97c7b91659df1d373d62237cb9c772e55ae97/dm_tree-0.1.8-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -156,10 +160,12 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f0/6e/c2cf12c9ff8b872e92b4a5740701e51ff17689c4d726fca91875b07f655d/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/1e/b8b7c2f4099a37b96af5c9bb158632ea9e5d9d27d7391d7eb8fc45236674/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/3b/9a/72ef35b399b0e183bc2e8f6f558036922d453c4d8237dab26c666a04244b/nvidia_cusparselt_cu12-0.6.3-py3-none-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/7f/96/d6d25a4c307d6645f4a9b91d620c0151c544ad38b5e371313a87d2761004/nvidia_ml_py-13.580.82-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/67/ca/f42388aed0fddd64ade7493dbba36e1f534d4e6fdbdd355c6a90030ae028/nvidia_nccl_cu12-2.26.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9d/d7/c5383e47c7e9bf1c99d5bd2a8c935af2b6d705ad831a7ec5c97db4d82f4f/nvidia_nvjitlink_cu12-12.6.85-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/56/9a/fff8376f8e3d084cd1530e1ef7b879bb7d6d265620c95c1b322725c694f4/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/e3/94/1843518e420fa3ed6919835845df698c7e27e183cb997394e4a670973a65/omegaconf-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e5/63/cd7d615331b328e287d8233ba9fdf191a9c2d11b6af0c7a59cfcec23de68/pandas-2.3.3-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/4f/87/424511bdcd02c8d7acf9f65caa09f291a519b16bd83c3fb3374b3d4ae951/pillow-12.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -315,6 +321,10 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/97/57/6813202cfe8afe187ac01c3e96396fca5727309de016309b3d1fda351b84/chembl_structure_pipeline-1.2.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/00/2e/d53fa4befbf2cfa713304affc7ca780ce4fc1fd8710527771b58311a3229/click-8.1.7-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/0b/d3bcbbc259fcced5fb67c5d78f6e7ee965f49760c14afd931e9e663a83b2/coverage-7.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/81/63/447db5f84bc9399681ba984821e5406cde0bcc580622d9bdd01057940ea2/cuequivariance-0.7.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/0a/96/82786c5036402c16ed7255199a1c7ed963b0d95aa4a69513edd9d2e0bc56/cuequivariance_ops_cu12-0.7.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/b0/47/413af27491e4be8e8c0d0de690c76e007ce125bc8872520b82c1bb6a6447/cuequivariance_ops_torch_cu12-0.7.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/98/88/fd38997baf849608281eafdfa21b616db20789d407889427da90cddb0e50/cuequivariance_torch-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d2/d2/52bf6d5b18d6faa9c3655c2c2854dd4cc3630e0af7ff89e415fbba713c37/cython-3.1.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/23/d9/2f7a4db7f92eab4b567e56cc2fc147fed1ef35f7968e44cefcbbfb366980/cytoolz-0.12.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
@@ -366,10 +376,12 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f0/6e/c2cf12c9ff8b872e92b4a5740701e51ff17689c4d726fca91875b07f655d/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/1e/b8b7c2f4099a37b96af5c9bb158632ea9e5d9d27d7391d7eb8fc45236674/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/3b/9a/72ef35b399b0e183bc2e8f6f558036922d453c4d8237dab26c666a04244b/nvidia_cusparselt_cu12-0.6.3-py3-none-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/7f/96/d6d25a4c307d6645f4a9b91d620c0151c544ad38b5e371313a87d2761004/nvidia_ml_py-13.580.82-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/67/ca/f42388aed0fddd64ade7493dbba36e1f534d4e6fdbdd355c6a90030ae028/nvidia_nccl_cu12-2.26.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9d/d7/c5383e47c7e9bf1c99d5bd2a8c935af2b6d705ad831a7ec5c97db4d82f4f/nvidia_nvjitlink_cu12-12.6.85-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/56/9a/fff8376f8e3d084cd1530e1ef7b879bb7d6d265620c95c1b322725c694f4/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/e3/94/1843518e420fa3ed6919835845df698c7e27e183cb997394e4a670973a65/omegaconf-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e5/63/cd7d615331b328e287d8233ba9fdf191a9c2d11b6af0c7a59cfcec23de68/pandas-2.3.3-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/cc/20/ff623b09d963f88bfde16306a54e12ee5ea43e9b597108672ff3a408aad6/pathspec-0.12.1-py3-none-any.whl
@@ -1101,6 +1113,54 @@ packages:
   sha256: 16ce17ceb5d211f320b62df002fa7016b7442ea0fd260c11cec8ce7730954893
   requires_dist:
   - tomli ; python_full_version <= '3.11' and extra == 'toml'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/81/63/447db5f84bc9399681ba984821e5406cde0bcc580622d9bdd01057940ea2/cuequivariance-0.7.0-py3-none-any.whl
+  name: cuequivariance
+  version: 0.7.0
+  sha256: 8e0aae751c87120c4338e9d1085f89633891e2e3264e4ee53db814b161f30f99
+  requires_dist:
+  - networkx
+  - numpy
+  - opt-einsum
+  - scipy
+  - sympy
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/0a/96/82786c5036402c16ed7255199a1c7ed963b0d95aa4a69513edd9d2e0bc56/cuequivariance_ops_cu12-0.7.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
+  name: cuequivariance-ops-cu12
+  version: 0.7.0
+  sha256: 343dba087fb86fe38b25e6e0c90490ef397b415d248ede40d4d3cc899bb30bde
+  requires_dist:
+  - nvidia-cublas-cu12>=12.5.0
+  - tqdm
+  - nvidia-ml-py
+  - platformdirs
+  - numpy ; extra == 'test'
+  - pytest ; extra == 'test'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/b0/47/413af27491e4be8e8c0d0de690c76e007ce125bc8872520b82c1bb6a6447/cuequivariance_ops_torch_cu12-0.7.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+  name: cuequivariance-ops-torch-cu12
+  version: 0.7.0
+  sha256: 28d68a555b26fb4b2cfc13a93b20c12daad4adf1aa5f8a3ac9b824b1a7f1770c
+  requires_dist:
+  - cuequivariance-ops-cu12==0.7.0
+  - scipy
+  - torch>=2.4 ; extra == 'test'
+  - numpy>=1.23,<2.0a0 ; extra == 'test'
+  - pytest ; extra == 'test'
+  - onnx ; extra == 'plugins'
+  - onnxscript ; extra == 'plugins'
+  - onnxruntime ; extra == 'plugins'
+  - onnxruntime-extensions ; extra == 'plugins'
+  - tensorrt-cu12 ; extra == 'plugins'
+  - cupy-cuda12x ; extra == 'plugins'
+  - polygraphy ; extra == 'plugins'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/98/88/fd38997baf849608281eafdfa21b616db20789d407889427da90cddb0e50/cuequivariance_torch-0.7.0-py3-none-any.whl
+  name: cuequivariance-torch
+  version: 0.7.0
+  sha256: 37b6b997f794fc5f6a49e700e6353908d8df3fb028b9fccc38c0497a56e7de50
+  requires_dist:
+  - cuequivariance
   requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/34/f8/0b98537f0b4e8c01f76d2a6cf75389987538e4d4ac9faf25836fd18c9689/cython-3.1.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
   name: cython
@@ -2426,6 +2486,10 @@ packages:
   name: nvidia-cusparselt-cu12
   version: 0.6.3
   sha256: e5c8a26c36445dd2e6812f1177978a24e2d37cacce7e090f297a688d1ec44f46
+- pypi: https://files.pythonhosted.org/packages/7f/96/d6d25a4c307d6645f4a9b91d620c0151c544ad38b5e371313a87d2761004/nvidia_ml_py-13.580.82-py3-none-any.whl
+  name: nvidia-ml-py
+  version: 13.580.82
+  sha256: 4361db337b0c551e2d101936dae2e9a60f957af26818e8c0c3a1f32b8db8d0a7
 - pypi: https://files.pythonhosted.org/packages/67/ca/f42388aed0fddd64ade7493dbba36e1f534d4e6fdbdd355c6a90030ae028/nvidia_nccl_cu12-2.26.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
   name: nvidia-nccl-cu12
   version: 2.26.2
@@ -2462,6 +2526,11 @@ packages:
   purls: []
   size: 3119624
   timestamp: 1759324353651
+- pypi: https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl
+  name: opt-einsum
+  version: 3.4.0
+  sha256: 69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd
+  requires_python: '>=3.8'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/orc-2.1.3-h61e0c1e_0.conda
   sha256: 76b5d0efa288bc491a9d1c59bf9c3cf81aca420035de5c7166eed28029ccddfb
   md5: 451e93e0c51efff54f9e91d61187a572
@@ -3060,7 +3129,7 @@ packages:
 - pypi: ./
   name: sampleworks
   version: 0.1.0
-  sha256: 7216a15714fc1ef9b7496ac21290a303912a44f4f4cb6f9eec0286bc1ced6c9c
+  sha256: d7647e71a915caf8054a75db562c83d528e22075c52461307492429737b329bc
   requires_dist:
   - atomworks[ml]
   - dotenv

@@ -193,6 +193,7 @@ class Boltz2Wrapper:
         )
 
         self.data_module: Boltz2InferenceDataModule
+        self.cached_representations: dict[str, Any] = {}
 
         sigmas = self.model.structure_module.sample_schedule(
             self.predict_args.sampling_steps
@@ -204,7 +205,7 @@ class Boltz2Wrapper:
         )
         self.noise_schedule: dict[str, Float[Tensor, ...]] = {
             "sigma_tm": sigmas[:-1],
-            "sigmas_t": sigmas[1:],
+            "sigma_t": sigmas[1:],
             "gamma": gammas[1:],
         }
 
@@ -278,7 +279,7 @@ class Boltz2Wrapper:
         )
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
-        """From an Atomworks structure, calculate Boltz-2 diffusion module features.
+        """From an Atomworks structure, calculate Boltz-2 input features.
 
         Parameters
         ----------
@@ -296,8 +297,7 @@ class Boltz2Wrapper:
         Returns
         -------
         dict[str, Any]
-            Boltz-2 diffusion module input features. (Pairformer input features are
-            in "feats" key)
+            Boltz-2 input features (from dataloader).
         """
         # Side effect: creates Boltz input YAML file in out_dir
         input_path = create_boltz_input_from_structure(
@@ -318,7 +318,7 @@ class Boltz2Wrapper:
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
 
-        return self.step(batch, grad_needed=False, **kwargs)
+        return batch
 
     def step(
         self, features: dict[str, Any], grad_needed: bool = False, **kwargs
@@ -348,8 +348,8 @@ class Boltz2Wrapper:
             Boltz-2 Pairformer outputs.
         """
         with torch.set_grad_enabled(grad_needed):
-            mask = features["token_pad_mask"]
-            pair_mask = features["token_pair_pad_mask"]
+            mask: Tensor = features["token_pad_mask"]
+            pair_mask = mask[:, :, None] * mask[:, None, :]
             s_inputs = self.model.input_embedder(features)
 
             s_init = self.model.s_init(s_inputs)
@@ -466,21 +466,48 @@ class Boltz2Wrapper:
                 replicating the model does internally along axis=0; defaults to the
                 batch size of `noisy_coords`.
 
+            overwrite_representations (bool, optional)
+                Whether to overwrite cached representations (default False).
+                Do this if you are running a new input sample through the model.
 
-        Returns # TODO: Fix these type hints, these should
-        probably ArrayLike-ish or provide meaningful dict keys
+            recycling_steps (int, optional)
+                Number of recycling steps to perform (default 3 from PredictArgs).
+                This will only be applied if overwrite_representations is True, as
+                it is passed to the pairformer module computation that is ideally
+                cached for efficiency.
+
+
+        Returns
         -------
         dict[str, Tensor]
             Dictionary containing ``"atom_coords_denoised"`` with the cleaned
             coordinate tensor.
         """
+
+        if not self.cached_representations or kwargs.get(
+            "overwrite_representations", False
+        ):
+            # Side effect: overwrites class attribute
+            self.cached_representations = self.step(
+                features,
+                grad_needed=grad_needed,
+                recycling_steps=kwargs.get(
+                    "recycling_steps", self.predict_args.recycling_steps
+                ),
+            )
+
+        features = self.cached_representations
+
         s = features.get("s", None)
         z = features.get("z", None)
         s_inputs = features.get("s_inputs", None)
         relative_position_encoding = features.get("relative_position_encoding", None)
+        # These are the input features to the conditioning networks
         feats = features.get("feats", None)
 
-        if any(x is None for x in [s, z, s_inputs, relative_position_encoding, feats]):
+        if any(
+            x is None for x in [s, z, s_inputs, relative_position_encoding, features]
+        ):
             raise ValueError("Missing required features for denoise_step")
 
         # shape [1, N_padded]
@@ -490,27 +517,27 @@ class Boltz2Wrapper:
         # shape [batch_size, N_padded]
         atom_mask = atom_mask.repeat_interleave(noisy_coords.shape[0], dim=0)
 
-        pad_len = noisy_coords.shape[1] - atom_mask.shape[1]
-        if pad_len >= 0:
-            padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
-        else:
-            raise ValueError("pad_len is negative, cannot pad noisy_coords")
+        with torch.set_grad_enabled(grad_needed):
+            pad_len = atom_mask.shape[1] - noisy_coords.shape[1]
+            if pad_len >= 0:
+                padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
+            else:
+                raise ValueError("pad_len is negative, cannot pad noisy_coords")
 
-        timestep_scaling = self.get_timestep_scaling(timestep)
-        eps = timestep_scaling["eps_scale"] * torch.randn(
-            padded_noisy_coords.shape, device=self.device
-        )
-
-        if kwargs.get("augmentation", True):
-            padded_noisy_coords = center_random_augmentation(
-                padded_noisy_coords,
-                atom_mask=atom_mask,
-                augmentation=True,
+            timestep_scaling = self.get_timestep_scaling(timestep)
+            eps = timestep_scaling["eps_scale"] * torch.randn(
+                padded_noisy_coords.shape, device=self.device
             )
 
-        padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+            if kwargs.get("augmentation", True):
+                padded_noisy_coords = center_random_augmentation(
+                    padded_noisy_coords,
+                    atom_mask=atom_mask,
+                    augmentation=True,
+                )
 
-        with torch.set_grad_enabled(grad_needed):
+            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+
             padded_atom_coords_denoised = (
                 self.model.structure_module.preconditioned_network_forward(
                     padded_noisy_coords_eps,
@@ -556,7 +583,7 @@ class Boltz2Wrapper:
         Mapping[str, Float[ArrayLike | Tensor, "..."]]
             Noise schedule arrays.
             Sigma at time t-1: "sigma_tm"
-            Sigma at time t: "sigmas_t"
+            Sigma at time t: "sigma_t"
             Gamma at time t: "gamma"
         """
         return self.noise_schedule
@@ -577,7 +604,7 @@ class Boltz2Wrapper:
             "t_hat", "sigma_t", "eps_scale"
         """
         sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
-        sigma_t = self.noise_schedule["sigmas_t"][int(timestep)]
+        sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
         gamma = self.noise_schedule["gamma"][int(timestep)]
 
         t_hat = sigma_tm * (1 + gamma)
@@ -593,7 +620,7 @@ class Boltz2Wrapper:
 
     def initialize_from_noise(
         self, structure: dict, noise_level: float, **kwargs
-    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
+    ) -> Float[Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
         Parameters
@@ -608,8 +635,8 @@ class Boltz2Wrapper:
 
         Returns
         -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates.
+        Float[Tensor, "*batch _num_atoms 3"]
+            Noisy structure coordinates for atoms that have nonzero occupancy.
         """
         if "asym_unit" not in structure:
             raise ValueError(
@@ -617,7 +644,10 @@ class Boltz2Wrapper:
                 "the coordinates in the asymmetric unit."
             )
 
-        coords = structure["asym_unit"].coord
+        # We need to make sure the missing atoms are handled correctly
+        residues_with_occupancy = structure["asym_unit"].occupancy > 0
+        coords = structure["asym_unit"].coord[:, residues_with_occupancy]
+
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
@@ -704,6 +734,7 @@ class Boltz1Wrapper:
         )
 
         self.data_module: BoltzInferenceDataModule
+        self.cached_representations: dict[str, Any] = {}
 
         sigmas = self.model.structure_module.sample_schedule(
             self.predict_args.sampling_steps
@@ -715,7 +746,7 @@ class Boltz1Wrapper:
         )
         self.noise_schedule: dict[str, Float[Tensor, ...]] = {
             "sigma_tm": sigmas[:-1],
-            "sigmas_t": sigmas[1:],
+            "sigma_t": sigmas[1:],
             "gamma": gammas[1:],
         }
 
@@ -799,7 +830,7 @@ class Boltz1Wrapper:
         Returns
         -------
         dict[str, Any]
-            Model features.
+            Boltz-1 input features (raw batch from dataloader).
         """
         # Side effect: creates Boltz input YAML file in out_dir
         input_path = create_boltz_input_from_structure(
@@ -820,7 +851,7 @@ class Boltz1Wrapper:
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
 
-        return self.step(batch, grad_needed=False, **kwargs)
+        return batch
 
     def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
         """
@@ -831,7 +862,7 @@ class Boltz1Wrapper:
         Mapping[str, Float[ArrayLike | Tensor, "..."]]
             Noise schedule arrays.
             Sigma at time t-1: "sigma_tm"
-            Sigma at time t: "sigmas_t"
+            Sigma at time t: "sigma_t"
             Gamma at time t: "gamma"
         """
         return self.noise_schedule
@@ -852,7 +883,7 @@ class Boltz1Wrapper:
             "t_hat", "sigma_t", "eps_scale"
         """
         sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
-        sigma_t = self.noise_schedule["sigmas_t"][int(timestep)]
+        sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
         gamma = self.noise_schedule["gamma"][int(timestep)]
 
         t_hat = sigma_tm * (1 + gamma)
@@ -895,8 +926,8 @@ class Boltz1Wrapper:
             Boltz-1 Pairformer outputs.
         """
         with torch.set_grad_enabled(grad_needed):
-            mask = features["token_pad_mask"]
-            pair_mask = features["token_pair_pad_mask"]
+            mask: Tensor = features["token_pad_mask"]
+            pair_mask = mask[:, :, None] * mask[:, None, :]
             s_inputs = self.model.input_embedder(features)
 
             s_init = self.model.s_init(s_inputs)
@@ -915,31 +946,13 @@ class Boltz1Wrapper:
                 s = s_init + self.model.s_recycle(self.model.s_norm(s))
                 z = z_init + self.model.z_recycle(self.model.z_norm(z))
 
-                if self.model.use_templates:
-                    if self.model.is_template_compiled:
-                        template_module = self.model.template_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                    else:
-                        template_module = self.model.template_module
-
-                    z = z + template_module(
-                        z, features, pair_mask, use_kernels=self.model.use_kernels
-                    )  # type: ignore (Object will be callable here)
-
-                if self.model.is_msa_compiled:
-                    msa_module = self.model.msa_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                else:
-                    msa_module = self.model.msa_module
-
-                z = z + msa_module(
+                z = z + self.model.msa_module(
                     z, s_inputs, features, use_kernels=self.model.use_kernels
                 )  # type: ignore (Object will be callable here)
 
-                if self.model.is_pairformer_compiled:
-                    pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                else:
-                    pairformer_module = self.model.pairformer_module
-
-                s, z = pairformer_module(s, z, mask=mask, pair_mask=pair_mask)  # type: ignore (Object will be callable here)
+                s, z = self.model.pairformer_module(
+                    s, z, mask=mask, pair_mask=pair_mask
+                )  # type: ignore (Object will be callable here)
 
         return {
             "s": s,
@@ -965,7 +978,7 @@ class Boltz1Wrapper:
         Parameters
         ----------
         features : dict[str, Any]
-            Model features as returned by `featurize`.
+            Model features produced by :meth:`featurize`.
         noisy_coords : Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
         timestep : float
@@ -992,15 +1005,40 @@ class Boltz1Wrapper:
                 replicating the model does internally along axis=0; defaults to the
                 batch size of `noisy_coords`.
 
+            overwrite_representations (bool, optional)
+                Whether to overwrite cached representations (default False).
+                Do this if you are running a new input sample through the model.
+
+            recycling_steps (int, optional)
+                Number of recycling steps to perform (default 3 from PredictArgs).
+                This will only be applied if overwrite_representations is True, as
+                it is passed to the pairformer module computation that is ideally
+                cached for efficiency.
+
         Returns
         -------
         dict[str, Any]
             Predicted clean sample or predicted noise.
         """
+        if not self.cached_representations or kwargs.get(
+            "overwrite_representations", False
+        ):
+            # Side effect: overwrites class attribute
+            self.cached_representations = self.step(
+                features,
+                grad_needed=grad_needed,
+                recycling_steps=kwargs.get(
+                    "recycling_steps", self.predict_args.recycling_steps
+                ),
+            )
+
+        features = self.cached_representations
+
         s = features.get("s", None)
         z = features.get("z", None)
         s_inputs = features.get("s_inputs", None)
         relative_position_encoding = features.get("relative_position_encoding", None)
+        # These are the input features to the conditioning networks
         feats = features.get("feats", None)
 
         if any(x is None for x in [s, z, s_inputs, relative_position_encoding, feats]):
@@ -1011,27 +1049,27 @@ class Boltz1Wrapper:
         atom_mask = cast(Tensor, atom_mask)
         atom_mask = atom_mask.repeat_interleave(noisy_coords.shape[0], dim=0)
 
-        pad_len = noisy_coords.shape[1] - atom_mask.shape[1]
-        if pad_len >= 0:
-            padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
-        else:
-            raise ValueError("pad_len is negative, cannot pad noisy_coords")
+        with torch.set_grad_enabled(grad_needed):
+            pad_len = atom_mask.shape[1] - noisy_coords.shape[1]
+            if pad_len >= 0:
+                padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
+            else:
+                raise ValueError("pad_len is negative, cannot pad noisy_coords")
 
-        timestep_scaling = self.get_timestep_scaling(timestep)
-        eps = timestep_scaling["eps_scale"] * torch.randn(
-            padded_noisy_coords.shape, device=self.device
-        )
-
-        if kwargs.get("augmentation", True):
-            padded_noisy_coords = center_random_augmentation(
-                padded_noisy_coords,
-                atom_mask=atom_mask,
-                augmentation=True,
+            timestep_scaling = self.get_timestep_scaling(timestep)
+            eps = timestep_scaling["eps_scale"] * torch.randn(
+                padded_noisy_coords.shape, device=self.device
             )
 
-        padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+            if kwargs.get("augmentation", True):
+                padded_noisy_coords = center_random_augmentation(
+                    padded_noisy_coords,
+                    atom_mask=atom_mask,
+                    augmentation=True,
+                )
 
-        with torch.set_grad_enabled(grad_needed):
+            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+
             padded_atom_coords_denoised, _ = (
                 self.model.structure_module.preconditioned_network_forward(
                     padded_noisy_coords_eps,
@@ -1072,7 +1110,7 @@ class Boltz1Wrapper:
 
     def initialize_from_noise(
         self, structure: dict, noise_level: float, **kwargs
-    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
+    ) -> Float[Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
         Parameters
@@ -1086,8 +1124,8 @@ class Boltz1Wrapper:
 
         Returns
         -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates.
+        Float[Tensor, "*batch _num_atoms 3"]
+            Noisy structure coordinates for atoms that have nonzero occupancy.
         """
         if "asym_unit" not in structure:
             raise ValueError(
@@ -1095,7 +1133,10 @@ class Boltz1Wrapper:
                 "the coordinates in the asymmetric unit."
             )
 
-        coords = structure["asym_unit"].coord
+        # We need to make sure the missing atoms are handled correctly
+        residues_with_occupancy = structure["asym_unit"].occupancy > 0
+        coords = structure["asym_unit"].coord[:, residues_with_occupancy]
+
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
