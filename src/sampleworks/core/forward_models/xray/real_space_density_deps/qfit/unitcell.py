@@ -240,9 +240,9 @@ class UnitCell:
 
 def strRT(R, T):
     """Returns a string for a rotation/translation pair in a readable form."""
-    x = f"[{R[0,0]:6.3f} {R[0,1]:6.3f} {R[0,2]:6.3f} {T[0]:6.3f}]\n"
-    x += f"[{R[1,0]:6.3f} {R[1,1]:6.3f} {R[1,2]:6.3f} {T[1]:6.3f}]\n"
-    x += f"[{R[2,0]:6.3f} {R[2,1]:6.3f} {R[2,2]:6.3f} {T[2]:6.3f}]\n"
+    x = f"[{R[0, 0]:6.3f} {R[0, 1]:6.3f} {R[0, 2]:6.3f} {T[0]:6.3f}]\n"
+    x += f"[{R[1, 0]:6.3f} {R[1, 1]:6.3f} {R[1, 2]:6.3f} {T[1]:6.3f}]\n"
+    x += f"[{R[2, 0]:6.3f} {R[2, 1]:6.3f} {R[2, 2]:6.3f} {T[2]:6.3f}]\n"
 
     return x
 
