@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from atomworks.io import parse
+from atomworks.io.parser import parse
 from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper, PredictArgs
 from sampleworks.utils.setup import try_gpu
 
@@ -17,19 +17,19 @@ def resources_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def structure_1vme(resources_dir: Path) -> dict:
-    return parse(str(resources_dir / "1vme_final.cif"))
+    return parse(resources_dir / "1vme_final.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_6b8x(resources_dir: Path) -> dict:
-    return parse(str(resources_dir / "6b8x_final.pdb"))
+    return parse(resources_dir / "6b8x_final.pdb")
 
 
 @pytest.fixture(
     scope="session", params=["1vme_final.cif", "6b8x_final.pdb"], ids=["cif", "pdb"]
 )
 def test_structure(request, resources_dir: Path) -> dict:
-    return parse(str(resources_dir / request.param))
+    return parse(resources_dir / request.param)
 
 
 @pytest.fixture(scope="session")

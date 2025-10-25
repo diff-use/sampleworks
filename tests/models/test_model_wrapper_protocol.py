@@ -87,7 +87,6 @@ class TestDiffusionModelWrapperProtocol:
         self, wrapper_fixture: str, structure_6b8x: dict, request
     ):
         wrapper = request.getfixturevalue(wrapper_fixture)
-        structure_6b8x["coordinates"] = structure_6b8x["asym_unit"].coord
         noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         assert torch.is_tensor(noisy_coords)
         assert noisy_coords.shape[-1] == 3
@@ -98,9 +97,7 @@ class TestDiffusionModelWrapperProtocol:
     ):
         wrapper = request.getfixturevalue(wrapper_fixture)
         features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        structure_6b8x["coordinates"] = structure_6b8x["asym_unit"].coord
         noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        noisy_coords = noisy_coords.unsqueeze(0)
         output = wrapper.denoise_step(
             features,
             noisy_coords,
@@ -153,9 +150,7 @@ class TestProtocolMethodSignatures:
     ):
         wrapper = request.getfixturevalue(wrapper_fixture)
         features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        structure_6b8x["coordinates"] = structure_6b8x["asym_unit"].coord
         noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        noisy_coords = noisy_coords.unsqueeze(0)
 
         output = wrapper.denoise_step(
             features,
