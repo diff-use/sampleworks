@@ -502,12 +502,31 @@ class TestBoltz1WrapperDenoiseStep:
             structure_6b8x, noise_level=0
         )
         bad_features = {"s": None}
+        with pytest.raises(KeyError, match="token_pad_mask"):
+            boltz1_wrapper.denoise_step(
+                bad_features,
+                noisy_coords,
+                timestep=0,
+                align_to_input=False,
+                overwrite_representations=True,
+            )
+
+        bad_features = {
+            "s": None,
+            "z": None,
+            "s_inputs": None,
+            "relative_position_encoding": None,
+            "feats": None,
+        }
+        boltz1_wrapper.cached_representations = bad_features
+
         with pytest.raises(ValueError, match="Missing required features"):
             boltz1_wrapper.denoise_step(
                 bad_features,
                 noisy_coords,
                 timestep=0,
                 align_to_input=False,
+                overwrite_representations=False,
             )
 
     def test_denoise_step_with_augmentation_disabled(
@@ -524,6 +543,7 @@ class TestBoltz1WrapperDenoiseStep:
             grad_needed=False,
             augmentation=False,
             align_to_input=False,
+            overwrite_representations=True,
         )
         assert torch.is_tensor(output["atom_coords_denoised"])
 
@@ -589,12 +609,32 @@ class TestBoltz2WrapperDenoiseStep:
             structure_6b8x, noise_level=0
         )
         bad_features = {"s": None}
+
+        with pytest.raises(KeyError, match="token_pad_mask"):
+            boltz2_wrapper.denoise_step(
+                bad_features,
+                noisy_coords,
+                timestep=0,
+                align_to_input=False,
+                overwrite_representations=True,
+            )
+
+        bad_features = {
+            "s": None,
+            "z": None,
+            "s_inputs": None,
+            "relative_position_encoding": None,
+            "feats": None,
+        }
+        boltz2_wrapper.cached_representations = bad_features
+
         with pytest.raises(ValueError, match="Missing required features"):
             boltz2_wrapper.denoise_step(
                 bad_features,
                 noisy_coords,
                 timestep=0,
                 align_to_input=False,
+                overwrite_representations=False,
             )
 
     def test_denoise_step_with_augmentation_disabled(
@@ -611,6 +651,7 @@ class TestBoltz2WrapperDenoiseStep:
             grad_needed=False,
             augmentation=False,
             align_to_input=False,
+            overwrite_representations=True,
         )
         assert torch.is_tensor(output["atom_coords_denoised"])
 
@@ -660,6 +701,7 @@ class TestBoltzWrappersEndToEnd:
             timestep=0,
             grad_needed=False,
             align_to_input=False,
+            overwrite_representations=True,
         )
         assert "atom_coords_denoised" in output
         assert torch.is_tensor(output["atom_coords_denoised"])

@@ -43,4 +43,5 @@ repos:
           - jax
           - jaxtyping
           - atomworks
+          - pytest
         exclude: real_space_density # FIXME: later, this should be modified so real_space_density modules pass
