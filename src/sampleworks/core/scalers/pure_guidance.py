@@ -30,7 +30,7 @@ class PureGuidance:
 
         Parameters
         ----------
-        model_wrapper : DiffusionModelWrapper
+        model_wrapper : Boltz1Wrapper | Boltz2Wrapper
             Diffusion model wrapper instance
         reward_function : RewardFunction
             Reward function to guide the diffusion process
@@ -39,6 +39,43 @@ class PureGuidance:
         self.reward_function = reward_function
 
     def run_guidance(self, structure: dict, **kwargs: dict[str, Any]):
+        """Run pure guidance (Diffusion Posterior Sampling) using the provided
+        ModelWrapper
+
+        Parameters
+        ----------
+        structure : dict
+            Atomworks parsed structure.
+        **kwargs : dict
+            step_size : float, optional
+                Gradient step size for guidance (default: 0.1)
+            gradient_normalization : bool, optional
+                Whether to normalize gradients (default: False)
+            use_tweedie : bool, optional
+                If True, use Tweedie's formula (gradient on x̂_0 only).
+                Enables augmentation and alignment. If False, use full
+                backprop through model (default: False)
+            augmentation : bool, optional
+                Enable data augmentation in denoise step (default: True
+                for Tweedie mode, False for full backprop)
+            align_to_input : bool, optional
+                Enable alignment to input in denoise step (default: True
+                for Tweedie mode, False for full backprop)
+
+        Returns
+        -------
+        tuple[dict[str, Any], list[ArrayLike | torch.Tensor], list[float | None]]
+            Structure dict with updated coordinates, trajectory of denoised
+            coordinates, list of losses at each step
+        """
+
+        step_size = kwargs.get("step_size", 0.1)
+        gradient_normalization = kwargs.get("gradient_normalization", False)
+        use_tweedie = kwargs.get("use_tweedie", False)
+        augmentation = kwargs.get("augmentation", True)
+        align_to_input = kwargs.get("align_to_input", use_tweedie)
+        allow_alignment_gradients = True
+
         features = self.model_wrapper.featurize(
             structure, out_dir=kwargs.get("out_dir", "boltz_test")
         )
@@ -48,32 +85,61 @@ class PureGuidance:
             structure, noise_level=0
         )
 
-        atom_coords_next = noisy_coords.clone()
-
         # TODO: this is not generalizable currently, figure this out
         atom_array = structure["asym_unit"]
         reward_param_mask = atom_array.occupancy > 0
-        elements = atom_array.element[:, reward_param_mask]
-        b_factors = atom_array.b_factor[:, reward_param_mask]
-        occupancies = atom_array.occupancy[:, reward_param_mask]
+        elements = atom_array.element[reward_param_mask]
+        b_factors = atom_array.b_factor[reward_param_mask]
+        occupancies = atom_array.occupancy[reward_param_mask]
 
-        def step_size(i: int):
-            return 0.1
+        trajectory = []
+        losses = []
 
-        for i in tqdm(range(cast(int, kwargs.get("n_steps", 200)))):
-            timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
+        n_steps = cast(int, kwargs.get("n_steps", 200))
+        guidance_start = cast(int, kwargs.get("guidance_start", -1))
+
+        if use_tweedie:
+            allow_alignment_gradients = False
+
+        for i in tqdm(range(n_steps)):
+            apply_guidance = i > guidance_start
+
+            if not use_tweedie and apply_guidance:
+                # Technically training free guidance requires grad on noisy_coords, not
+                # on denoised, but DPS uses Tweedie's formula which has its limitations.
+                # Maddipatla et al. 2025 use full backprop through model with grad on
+                # noisy_coords.
+                noisy_coords.requires_grad_(True)
 
             denoised = self.model_wrapper.denoise_step(
                 features,
                 noisy_coords,
                 timestep=i,
-                # TODO: figure out how to handle kwargs in these guidance classes
+                grad_needed=(apply_guidance and not use_tweedie),
+                augmentation=augmentation,
+                align_to_input=align_to_input,
+                allow_alignment_gradients=allow_alignment_gradients,
             )["atom_coords_denoised"]
 
-            denoised_over_sigma = (noisy_coords - denoised) / timestep_scaling["t_hat"]
+            guidance_direction = None
 
-            if i > cast(int, kwargs.get("guidance_start", -1)):
-                with torch.set_grad_enabled(True):
+            if apply_guidance:
+                if use_tweedie:
+                    # Using Tweedie's formula like DPS: gradient on denoised (x̂_0) only
+                    denoised_for_grad = denoised.detach().requires_grad_(True)
+                    loss = self.reward_function(
+                        coordinates=denoised_for_grad,
+                        elements=elements,
+                        b_factors=b_factors,
+                        occupancies=occupancies,
+                    )
+                    loss.backward()
+
+                    with torch.no_grad():
+                        grad = cast(torch.Tensor, denoised_for_grad.grad)
+                        guidance_direction = grad.clone()
+                else:
+                    # Like Maddipatla et al. 2025: gradient through model
                     loss = self.reward_function(
                         coordinates=denoised,
                         elements=elements,
@@ -82,30 +148,47 @@ class PureGuidance:
                     )
                     loss.backward()
 
-                    coords_grad = cast(torch.Tensor, denoised.grad).clone()
+                    with torch.no_grad():
+                        grad = cast(torch.Tensor, noisy_coords.grad)
+                        guidance_direction = grad.clone()
+                        noisy_coords.grad = None
 
-                # TODO: Add gradient normalization
-                delta = denoised_over_sigma + step_size(i) * coords_grad
-
-                atom_coords_next = (
-                    noisy_coords
-                    + self.model_wrapper.model.structure_module.step_scale
-                    * delta
-                    * (timestep_scaling["sigma_t"] - timestep_scaling["t_hat"])
-                )
+                losses.append(loss.item())
             else:
-                atom_coords_next = (
-                    noisy_coords
-                    - self.model_wrapper.model.structure_module.step_scale
-                    * denoised_over_sigma
-                    * (timestep_scaling["sigma_t"] - timestep_scaling["t_hat"])
-                )
-                noisy_coords = atom_coords_next + timestep_scaling[
-                    "eps_scale"
-                ] * torch.randn_like(noisy_coords)
+                losses.append(None)
 
-        structure["asym_unit"].coord = (
-            atom_coords_next.detach().cpu().numpy()[:, reward_param_mask]
+            with torch.no_grad():
+                timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
+                t_hat = timestep_scaling["t_hat"]
+                sigma_t = timestep_scaling["sigma_t"]
+                dt = sigma_t - t_hat
+
+                delta = (noisy_coords - denoised) / t_hat
+
+                if guidance_direction is not None:
+                    if gradient_normalization:
+                        grad_norm = guidance_direction.norm(dim=(1, 2), keepdim=True)
+                        delta_norm = delta.norm(dim=(1, 2), keepdim=True)
+                        guidance_direction = (
+                            guidance_direction * delta_norm / (grad_norm + 1e-8)
+                        )
+                    delta = delta + step_size * guidance_direction
+
+                noisy_coords = (
+                    noisy_coords
+                    + self.model_wrapper.model.structure_module.step_scale * dt * delta
+                )
+
+                if i < n_steps - 1:
+                    eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
+                    noisy_coords = noisy_coords + eps
+
+                noisy_coords = noisy_coords.detach().clone()
+
+            trajectory.append(denoised.detach().cpu().clone())
+
+        structure["asym_unit"].coord[reward_param_mask] = (
+            noisy_coords.detach().cpu().numpy()[0, reward_param_mask]
         )
 
-        return structure
+        return structure, trajectory, losses
