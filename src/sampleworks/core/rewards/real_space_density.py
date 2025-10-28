@@ -136,11 +136,11 @@ class RewardFunction:
         torch.Tensor
             Reward value
         """
-        density = self.transformer(
+        density: torch.Tensor = self.transformer(
             coordinates=coordinates,
             elements=elements,
             b_factors=b_factors,
             occupancies=occupancies,
-        )
+        ).sum(0)  # sum over batch dimension
 
         return self.loss(density, self.transformer.xmap.array)

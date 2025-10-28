@@ -7,9 +7,13 @@ Currently this only works with the Boltz1Wrapper or Boltz2Wrapper
 
 from typing import Any, cast
 
+import einx
 import torch
 from tqdm import tqdm
 
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
+    ATOMIC_NUM_TO_ELEMENT,
+)
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
 
@@ -69,7 +73,7 @@ class PureGuidance:
             coordinates, list of losses at each step
         """
 
-        step_size = kwargs.get("step_size", 0.1)
+        step_size = cast(float, kwargs.get("step_size", 0.1))
         gradient_normalization = kwargs.get("gradient_normalization", False)
         use_tweedie = kwargs.get("use_tweedie", False)
         augmentation = kwargs.get("augmentation", True)
@@ -84,13 +88,30 @@ class PureGuidance:
         noisy_coords = self.model_wrapper.initialize_from_noise(
             structure, noise_level=0
         )
+        ensemble_size = noisy_coords.shape[0]
 
         # TODO: this is not generalizable currently, figure this out
         atom_array = structure["asym_unit"]
         reward_param_mask = atom_array.occupancy > 0
-        elements = atom_array.element[reward_param_mask]
-        b_factors = atom_array.b_factor[reward_param_mask]
-        occupancies = atom_array.occupancy[reward_param_mask]
+
+        # TODO: jank way to get atomic numbers, fix this in real space density
+        elements = [
+            ATOMIC_NUM_TO_ELEMENT.index(
+                e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
+            )
+            for e in atom_array.element[reward_param_mask]
+        ]
+        elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
+        b_factors = einx.rearrange(
+            "n -> b n",
+            torch.Tensor(atom_array.b_factor[reward_param_mask]),
+            b=ensemble_size,
+        )
+        occupancies = einx.rearrange(
+            "n -> b n",
+            torch.Tensor(atom_array.occupancy[reward_param_mask]),
+            b=ensemble_size,
+        )
 
         trajectory = []
         losses = []
@@ -129,9 +150,9 @@ class PureGuidance:
                     denoised_for_grad = denoised.detach().requires_grad_(True)
                     loss = self.reward_function(
                         coordinates=denoised_for_grad,
-                        elements=elements,
-                        b_factors=b_factors,
-                        occupancies=occupancies,
+                        elements=cast(torch.Tensor, elements),
+                        b_factors=cast(torch.Tensor, b_factors),
+                        occupancies=cast(torch.Tensor, occupancies),
                     )
                     loss.backward()
 
@@ -142,9 +163,9 @@ class PureGuidance:
                     # Like Maddipatla et al. 2025: gradient through model
                     loss = self.reward_function(
                         coordinates=denoised,
-                        elements=elements,
-                        b_factors=b_factors,
-                        occupancies=occupancies,
+                        elements=cast(torch.Tensor, elements),
+                        b_factors=cast(torch.Tensor, b_factors),
+                        occupancies=cast(torch.Tensor, occupancies),
                     )
                     loss.backward()
 
@@ -188,7 +209,7 @@ class PureGuidance:
             trajectory.append(denoised.detach().cpu().clone())
 
         structure["asym_unit"].coord[reward_param_mask] = (
-            noisy_coords.detach().cpu().numpy()[0, reward_param_mask]
+            noisy_coords.detach().cpu().numpy()
         )
 
         return structure, trajectory, losses
