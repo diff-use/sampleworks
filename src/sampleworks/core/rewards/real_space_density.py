@@ -1,5 +1,6 @@
 import torch
-from jaxtyping import ArrayLike
+from jaxtyping import ArrayLike, Float
+
 from sampleworks.core.forward_models.xray.real_space_density import (
     DifferentiableTransformer,
     XMap_torch,
@@ -90,7 +91,9 @@ class RewardFunction:
         else:
             raise ValueError("Invalid loss_order, must be 1 or 2")
 
-    def structure_to_reward_input(self, structure: dict):
+    def structure_to_reward_input(
+        self, structure: dict
+    ) -> dict[str, Float[torch.Tensor, "..."]]:
         atom_array = structure["asym_unit"]
         atom_array = atom_array[:, atom_array.occupancy > 0]
 
@@ -109,23 +112,23 @@ class RewardFunction:
 
     def __call__(
         self,
-        coordinates: torch.Tensor,
-        elements: torch.Tensor,
-        b_factors: torch.Tensor,
-        occupancies: torch.Tensor,
-    ) -> torch.Tensor:
+        coordinates: Float[torch.Tensor, "batch n_atoms 3"],
+        elements: Float[torch.Tensor, "batch n_atoms"],
+        b_factors: Float[torch.Tensor, "batch n_atoms"],
+        occupancies: Float[torch.Tensor, "batch n_atoms"],
+    ) -> Float[torch.Tensor, ""]:
         """Pure function for computing reward. Call .backward() on this to get gradients
         w.r.t. input.
 
         Parameters
         ----------
-        coordinates : torch.Tensor
+        coordinates : Float[torch.Tensor, "batch n_atoms 3"]
             Atomic coordinates
-        elements : torch.Tensor
+        elements : Float[torch.Tensor, "batch n_atoms"]
             Atomic elements
-        b_factors : torch.Tensor
+        b_factors : Float[torch.Tensor, "batch n_atoms"]
             Per-atom B-factor
-        occupancies : torch.Tensor
+        occupancies : Float[torch.Tensor, "batch n_atoms"]
             Per-atom occupancies
 
         Returns

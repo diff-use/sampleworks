@@ -8,9 +8,10 @@ Currently this only works with the Boltz1Wrapper or Boltz2Wrapper
 from typing import Any, cast
 
 import torch
+from tqdm import tqdm
+
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
-from tqdm import tqdm
 
 
 class PureGuidance:
