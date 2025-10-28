@@ -14,6 +14,9 @@ requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
 
 [tool.pixi.dependencies]
+gcc_linux-64 = ">=9,<13"
+gxx_linux-64 = ">=9,<13"
+ninja = "*"
 numpy = "<2.0"
 pyarrow = "==17.0.0"
 
@@ -32,6 +35,16 @@ cuda = "12"
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["linux-64"]
+
+[tool.pytest.ini_options]
+addopts = "-v --strict-markers"
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+]
+python_classes = ["Test*"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+testpaths = ["tests"]
 
 [tool.ruff]
 extend-include = ["*.ipynb"]
@@ -52,13 +65,3 @@ combine-as-imports = true
 extra-standard-library = ["typing_extensions"]
 lines-after-imports = 2
 order-by-type = false
-
-[tool.pytest.ini_options]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v --strict-markers"

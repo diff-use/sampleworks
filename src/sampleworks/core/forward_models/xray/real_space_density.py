@@ -100,7 +100,7 @@ class XMap_torch:
             self.resolution = xmap.resolution
             self.hkl = xmap.hkl
             self.origin = xmap.origin
-            self.array = torch.tensor(xmap.array, device=device)
+            self.array = torch.tensor(xmap.array, dtype=torch.float32, device=device)
             self.shape = xmap.shape
 
             self.voxelspacing = torch.tensor(xmap.voxelspacing, device=device)
@@ -113,7 +113,7 @@ class XMap_torch:
             self.origin = (
                 origin if origin is not None else torch.zeros(3, device=device)
             )
-            self.array = array
+            self.array = array.float()
             self.shape = self.array.shape
 
             self.voxelspacing = torch.tensor(
