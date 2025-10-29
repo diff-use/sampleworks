@@ -546,11 +546,21 @@ class Boltz2Wrapper:
         noisy_coords : Float[Tensor, "..."]
             Noisy atom coordinates at the current timestep.
         timestep : float
-            Current timestep/noise level.
+            Current timestep/noise level - for Boltz, this is the reverse timestep.
+            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
+            is the "reverse" diffusion time.
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs : dict, optional
             Additional keyword arguments for Boltz-2 denoising.
+
+            t_hat (float, optional)
+                Precomputed t_hat value for the current timestep; if not provided, it
+                will be computed internally.
+
+            eps (Tensor, optional)
+                Precomputed noise tensor for the current timestep; if not provided, it
+                will be sampled internally.
 
             augmentation (bool, optional)
                 Apply `center_random_augmentation` when True (default True).
@@ -630,10 +640,17 @@ class Boltz2Wrapper:
             else:
                 raise ValueError("pad_len is negative, cannot pad noisy_coords")
 
-            timestep_scaling = self.get_timestep_scaling(timestep)
-            eps = timestep_scaling["eps_scale"] * torch.randn(
-                padded_noisy_coords.shape, device=self.device
-            )
+            if "t_hat" in kwargs and "eps" in kwargs:
+                t_hat = kwargs["t_hat"]
+                eps = cast(Tensor, kwargs["eps"])
+                if pad_len > 0 and eps.shape[1] != padded_noisy_coords.shape[1]:
+                    eps = pad_dim(eps, dim=1, pad_len=pad_len)
+            else:
+                timestep_scaling = self.get_timestep_scaling(timestep)
+                eps = timestep_scaling["eps_scale"] * torch.randn(
+                    padded_noisy_coords.shape, device=self.device
+                )
+                t_hat = timestep_scaling["t_hat"]
 
             if kwargs.get("augmentation", True):
                 padded_noisy_coords = center_random_augmentation(
@@ -647,7 +664,7 @@ class Boltz2Wrapper:
             padded_atom_coords_denoised = (
                 self.model.structure_module.preconditioned_network_forward(
                     padded_noisy_coords_eps,
-                    timestep_scaling.get("t_hat"),
+                    t_hat,
                     network_condition_kwargs=dict(
                         multiplicity=kwargs.get(
                             "multiplicity", padded_noisy_coords_eps.shape[0]
@@ -754,8 +771,9 @@ class Boltz2Wrapper:
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
         noise_level : float
-            Desired noise level/timestep to initialize at. For Boltz, this should be
-            the timestep.
+            Timestep/noise level - for Boltz, this is the reverse timestep.
+            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
+            is the "reverse" diffusion time.
         **kwargs : dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
@@ -777,7 +795,9 @@ class Boltz2Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        noisy_coords = coords + self.get_timestep_scaling(noise_level)["eps_scale"]
+        noisy_coords = coords + self.noise_schedule["sigma_tm"][
+            int(noise_level)
+        ] * torch.randn(coords.shape, device=self.device)
 
         return noisy_coords
 
@@ -1103,11 +1123,21 @@ class Boltz1Wrapper:
         noisy_coords : Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
         timestep : float
-            Current timestep/noise level.
+            Current timestep/noise level - for Boltz, this is the reverse timestep.
+            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
+            is the "reverse" diffusion time.
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs : dict, optional
             Additional keyword arguments for Boltz-1 denoising.
+
+            t_hat (float, optional)
+                Precomputed t_hat value for the current timestep; if not provided, it
+                will be computed internally.
+
+            eps (Tensor, optional)
+                Precomputed noise tensor for the current timestep; if not provided, it
+                will be sampled internally.
 
             augmentation (bool, optional)
                 Apply `center_random_augmentation` when True (default True).
@@ -1181,10 +1211,15 @@ class Boltz1Wrapper:
             else:
                 raise ValueError("pad_len is negative, cannot pad noisy_coords")
 
-            timestep_scaling = self.get_timestep_scaling(timestep)
-            eps = timestep_scaling["eps_scale"] * torch.randn(
-                padded_noisy_coords.shape, device=self.device
-            )
+            if "t_hat" in kwargs and "eps" in kwargs:
+                t_hat = kwargs["t_hat"]
+                eps = kwargs["eps"]
+            else:
+                timestep_scaling = self.get_timestep_scaling(timestep)
+                eps = timestep_scaling["eps_scale"] * torch.randn(
+                    padded_noisy_coords.shape, device=self.device
+                )
+                t_hat = timestep_scaling["t_hat"]
 
             if kwargs.get("augmentation", True):
                 padded_noisy_coords = center_random_augmentation(
@@ -1198,7 +1233,7 @@ class Boltz1Wrapper:
             padded_atom_coords_denoised, _ = (
                 self.model.structure_module.preconditioned_network_forward(
                     padded_noisy_coords_eps,
-                    timestep_scaling.get("t_hat"),
+                    t_hat,
                     training=False,
                     network_condition_kwargs=dict(
                         s_trunk=s,
@@ -1260,7 +1295,9 @@ class Boltz1Wrapper:
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
         noise_level : float
-            Desired noise level/timestep to initialize at.
+            Timestep/noise level - for Boltz, this is the reverse timestep.
+            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
+            is the "reverse" diffusion time.
         **kwargs : dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
@@ -1282,11 +1319,8 @@ class Boltz1Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        noisy_coords = (
-            coords
-            + self.model.structure_module.noise_scale
-            * self.noise_schedule["sigma_t"][int(noise_level)]
-            * torch.randn(coords.shape, device=self.device)
-        )
+        noisy_coords = coords + self.noise_schedule["sigma_tm"][
+            int(noise_level)
+        ] * torch.randn(coords.shape, device=self.device)
 
         return noisy_coords
