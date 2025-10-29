@@ -85,6 +85,7 @@ class PureGuidance:
         )
 
         # Get coordinates from timestep 0
+        # TODO: Partial diffusion from a starting timestep
         noisy_coords = self.model_wrapper.initialize_from_noise(
             structure, noise_level=0
         )
@@ -132,6 +133,11 @@ class PureGuidance:
                 # noisy_coords.
                 noisy_coords.requires_grad_(True)
 
+            timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
+            t_hat = timestep_scaling["t_hat"]
+            sigma_t = timestep_scaling["sigma_t"]
+            eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
+
             denoised = self.model_wrapper.denoise_step(
                 features,
                 noisy_coords,
@@ -140,6 +146,10 @@ class PureGuidance:
                 augmentation=augmentation,
                 align_to_input=align_to_input,
                 allow_alignment_gradients=allow_alignment_gradients,
+                # Provide precomputed t_hat and eps to allow us to calculate the
+                # denoising direction properly
+                t_hat=t_hat,
+                eps=eps,
             )["atom_coords_denoised"]
 
             guidance_direction = None
@@ -179,9 +189,10 @@ class PureGuidance:
                 losses.append(None)
 
             with torch.no_grad():
-                timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
-                t_hat = timestep_scaling["t_hat"]
-                sigma_t = timestep_scaling["sigma_t"]
+                # Use the same eps as in the denoising step to properly compute
+                # the denoising direction
+                noisy_coords = noisy_coords + eps
+
                 dt = sigma_t - t_hat
 
                 delta = (noisy_coords - denoised) / t_hat
@@ -199,10 +210,6 @@ class PureGuidance:
                     noisy_coords
                     + self.model_wrapper.model.structure_module.step_scale * dt * delta
                 )
-
-                if i < n_steps - 1:
-                    eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
-                    noisy_coords = noisy_coords + eps
 
                 noisy_coords = noisy_coords.detach().clone()
 
