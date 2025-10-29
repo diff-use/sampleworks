@@ -66,7 +66,7 @@ class RewardFunction:
         selection: ArrayLike,
         em: bool = False,
         loss_order: int = 2,
-        device: torch.device = try_gpu(),
+        device: torch.device | None = None,
     ):
         """Hardcoded reward function for now, L1 or L2 reward for fitting real space
         electron density.
@@ -74,6 +74,9 @@ class RewardFunction:
         TODO: decide whether these should take in structure or take in
         coords, bfactors, etc. separately. Leaning towards separate, as then
         the functions will be pure and we can do grad w.r.t. input."""
+
+        if device is None:
+            device = try_gpu()
 
         self.transformer = DifferentiableTransformer(
             xmap=XMap_torch(xmap, device=device),
