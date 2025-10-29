@@ -777,12 +777,7 @@ class Boltz2Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        noisy_coords = (
-            coords
-            + self.model.structure_module.noise_scale
-            * self.noise_schedule["sigma_t"][int(noise_level)]
-            * torch.randn(coords.shape, device=self.device)
-        )
+        noisy_coords = coords + self.get_timestep_scaling(noise_level)["eps_scale"]
 
         return noisy_coords
 
