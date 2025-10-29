@@ -208,7 +208,8 @@ class PureGuidance:
 
             trajectory.append(denoised.detach().cpu().clone())
 
-        structure["asym_unit"].coord[reward_param_mask] = (
+        # TODO: Handle ensemble here
+        structure["asym_unit"].coord[:, reward_param_mask] = (
             noisy_coords.detach().cpu().numpy()
         )
 

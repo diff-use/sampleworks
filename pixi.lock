@@ -3296,7 +3296,7 @@ packages:
 - pypi: ./
   name: sampleworks
   version: 0.1.0
-  sha256: 7f24ca51392bf6b0180d70996469684bed3ff1907d99b956f0c6108c61ca7213
+  sha256: 61a547b60fd6a7b5564b8601c2b62665890d6e256511de9f6854f909734f6823
   requires_dist:
   - atomworks[ml]
   - dotenv
