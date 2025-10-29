@@ -81,7 +81,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def save_trajectory(trajectory, atom_array, output_dir, reward_param_mask):
+def save_trajectory(
+    trajectory, atom_array, output_dir, reward_param_mask, save_every=10
+):
     import biotite.structure as struc
     from biotite.structure.io import save_structure
 
@@ -89,13 +91,13 @@ def save_trajectory(trajectory, atom_array, output_dir, reward_param_mask):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     trajectory_arrays = []
-    for coords in trajectory:
+    for coords in trajectory[::save_every]:
         array_copy = atom_array.copy()
-        array_copy.coord[reward_param_mask] = coords.numpy()[0, reward_param_mask]
+        array_copy.coord[:, reward_param_mask] = coords.numpy()
         trajectory_arrays.append(array_copy)
 
     traj_stack = struc.stack(trajectory_arrays)
-    save_structure(traj_stack, output_dir / "trajectory.cif")
+    save_structure(output_dir / "trajectory.cif", traj_stack)
 
 
 def save_losses(losses, output_dir):
@@ -118,7 +120,7 @@ def main():
     print(f"Using device: {device}")
 
     print(f"Loading structure from {args.structure}")
-    structure = parse(args.structure)
+    structure = parse(args.structure, hydrogen_policy="remove")
 
     print(f"Loading density map from {args.density}")
     xmap = XMap.fromfile(args.density, resolution=args.resolution)
@@ -187,9 +189,6 @@ def main():
         print(f"Loss reduction: {valid_losses[0] - valid_losses[-1]:.6f}")
 
     print(f"\nResults saved to {output_dir}/")
-    print("  - refined.pdb: Final refined structure")
-    print("  - trajectory.pdb: Full trajectory (multi-model)")
-    print("  - losses.txt: Loss at each step")
 
 
 if __name__ == "__main__":
