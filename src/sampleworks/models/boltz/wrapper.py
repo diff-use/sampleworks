@@ -530,7 +530,7 @@ class Boltz2Wrapper:
         self,
         features: dict[str, Any],
         noisy_coords: Float[Tensor, "..."],
-        timestep: float,
+        timestep: int,
         grad_needed: bool = False,
         **kwargs,
     ) -> dict[str, Tensor]:
@@ -545,7 +545,7 @@ class Boltz2Wrapper:
             Model features produced by :meth:`featurize` or :meth:`step`.
         noisy_coords : Float[Tensor, "..."]
             Noisy atom coordinates at the current timestep.
-        timestep : float
+        timestep : int
             Current timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -731,13 +731,13 @@ class Boltz2Wrapper:
         """
         return self.noise_schedule
 
-    def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
+    def get_timestep_scaling(self, timestep: int) -> dict[str, float]:
         """
         Return scaling constants for Boltz.
 
         Parameters
         ----------
-        timestep : float
+        timestep : int
             Current timestep/noise level. (starts from 0)
 
         Returns
@@ -762,7 +762,7 @@ class Boltz2Wrapper:
         }
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float, **kwargs
+        self, structure: dict, noise_level: int, **kwargs
     ) -> Float[Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
@@ -770,7 +770,7 @@ class Boltz2Wrapper:
         ----------
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : float
+        noise_level : int
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -795,9 +795,12 @@ class Boltz2Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        noisy_coords = coords + self.noise_schedule["sigma_tm"][
-            int(noise_level)
-        ] * torch.randn(coords.shape, device=self.device)
+        if noise_level == 0:
+            noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
+        else:
+            noisy_coords = coords + self.noise_schedule["sigma_tm"][
+                noise_level
+            ] * torch.randn_like(coords)
 
         return noisy_coords
 
@@ -1008,13 +1011,13 @@ class Boltz1Wrapper:
         """
         return self.noise_schedule
 
-    def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
+    def get_timestep_scaling(self, timestep: int) -> dict[str, float]:
         """
         Return scaling constants for Boltz1.
 
         Parameters
         ----------
-        timestep : float
+        timestep : int
             Current timestep/noise level.
 
         Returns
@@ -1107,7 +1110,7 @@ class Boltz1Wrapper:
         self,
         features: dict[str, Any],
         noisy_coords: Float[Tensor, "..."],
-        timestep: float,
+        timestep: int,
         grad_needed: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
@@ -1122,7 +1125,7 @@ class Boltz1Wrapper:
             Model features produced by :meth:`featurize`.
         noisy_coords : Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
-        timestep : float
+        timestep : int
             Current timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -1286,7 +1289,7 @@ class Boltz1Wrapper:
         return {"atom_coords_denoised": atom_coords_denoised}
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float, **kwargs
+        self, structure: dict, noise_level: int, **kwargs
     ) -> Float[Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
@@ -1294,7 +1297,7 @@ class Boltz1Wrapper:
         ----------
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : float
+        noise_level : int
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -1319,8 +1322,11 @@ class Boltz1Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        noisy_coords = coords + self.noise_schedule["sigma_tm"][
-            int(noise_level)
-        ] * torch.randn(coords.shape, device=self.device)
+        if noise_level == 0:
+            noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
+        else:
+            noisy_coords = coords + self.noise_schedule["sigma_tm"][
+                noise_level
+            ] * torch.randn_like(coords)
 
         return noisy_coords

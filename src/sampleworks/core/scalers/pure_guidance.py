@@ -65,6 +65,10 @@ class PureGuidance:
             align_to_input : bool, optional
                 Enable alignment to input in denoise step (default: True
                 for Tweedie mode, False for full backprop)
+            partial_diffusion_step : int, optional
+                If provided, start diffusion from this timestep instead of 0.
+                (default: None). Will use the provided coordinates in structure
+                to initialize the noise at this timestep.
 
         Returns
         -------
@@ -84,10 +88,9 @@ class PureGuidance:
             structure, out_dir=kwargs.get("out_dir", "boltz_test")
         )
 
-        # Get coordinates from timestep 0
-        # TODO: Partial diffusion from a starting timestep
+        # Get coordinates from timestep
         noisy_coords = self.model_wrapper.initialize_from_noise(
-            structure, noise_level=0
+            structure, noise_level=cast(int, kwargs["partial_diffusion_step"])
         )
         ensemble_size = noisy_coords.shape[0]
 
@@ -117,13 +120,15 @@ class PureGuidance:
         trajectory = []
         losses = []
 
-        n_steps = cast(int, kwargs.get("n_steps", 200))
+        n_steps = self.model_wrapper.model.structure_module.num_sampling_steps
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
 
         if use_tweedie:
             allow_alignment_gradients = False
 
-        for i in tqdm(range(n_steps)):
+        for i in tqdm(
+            range(cast(int, kwargs.get("partial_diffusion_step", 0)), n_steps)
+        ):
             apply_guidance = i > guidance_start
 
             if not use_tweedie and apply_guidance:
