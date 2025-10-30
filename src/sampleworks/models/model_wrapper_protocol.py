@@ -74,7 +74,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
         """
         ...
 
-    def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
+    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
         """
         Return scaling constants.
 
@@ -84,7 +84,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
 
         Parameters
         ----------
-        timestep : float
+        timestep : float | int
             Current timestep/noise level.
 
         Returns
@@ -98,7 +98,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
         self,
         features: dict[str, Any],
         noisy_coords: Float[ArrayLike | Tensor, "..."],
-        timestep: float,
+        timestep: float | int,
         grad_needed: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
@@ -113,7 +113,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
             Model features as returned by `featurize`.
         noisy_coords : Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
-        timestep : float
+        timestep : float | int
             Current timestep/noise level.
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
@@ -128,7 +128,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
         ...
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float, **kwargs
+        self, structure: dict, noise_level: float | int, **kwargs
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
@@ -136,7 +136,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
         ----------
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : float
+        noise_level : float | int
             Desired noise level/timestep to initialize at.
         **kwargs : dict, optional
             Additional keyword arguments needed for classes that implement this Protocol

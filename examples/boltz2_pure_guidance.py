@@ -29,7 +29,10 @@ def parse_args():
         "--output-dir", type=str, default="output", help="Output directory"
     )
     parser.add_argument(
-        "--n-steps", type=int, default=200, help="Number of guidance steps"
+        "--partial-diffusion-step",
+        type=int,
+        default=0,
+        help="Diffusion step to start from",
     )
     parser.add_argument("--step-size", type=float, default=0.1, help="Gradient step")
     parser.add_argument(
@@ -159,12 +162,12 @@ def main():
         use_tweedie=args.use_tweedie,
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
+        partial_diffusion_step=args.partial_diffusion_step,
     )
 
     print(f"Running {args.n_steps} steps of pure guidance")
     refined_structure, trajectory, losses = guidance.run_guidance(
         structure,
-        n_steps=args.n_steps,
         out_dir=args.output_dir,
         guidance_start=args.guidance_start,
     )
