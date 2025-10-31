@@ -46,6 +46,9 @@ def weighted_rigid_align_differentiable(
     Identical to boltz.model.loss.diffusion.weighted_rigid_align but without
     the detach_() call when allow_gradients=True, enabling gradient flow.
 
+    I preserve the same parameter names as the original function, but note that
+    true_coords will be aligned to the pred_coords in both implementations.
+
     Parameters
     ----------
     true_coords: torch.Tensor
@@ -389,7 +392,8 @@ class Boltz2Wrapper:
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
         **kwargs : dict, optional
-            keys:
+            Additional keyword arguments for Boltz-2 featurization.
+
             - out_dir: str | Path
                 Output directory for processed Boltz intermediate files. Defaults first
                 to the structure ID from metadata, then to "boltz2_output" in the
@@ -439,7 +443,8 @@ class Boltz2Wrapper:
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs : dict, optional
-            keys:
+            Additional keyword arguments for Boltz-2 Pairformer step.
+
             - recycling_steps: int
                 Number of recycling steps to perform. Defaults to the value in
                 predict_args.
@@ -680,6 +685,13 @@ class Boltz2Wrapper:
             if kwargs.get("align_to_input", True):
                 input_coords = kwargs.get("input_coords")
                 if input_coords is not None:
+                    if (
+                        pad_len > 0
+                        and input_coords.shape[1]
+                        != padded_atom_coords_denoised.shape[1]
+                    ):
+                        input_coords = pad_dim(input_coords, dim=1, pad_len=pad_len)
+
                     alignment_weights = kwargs.get("alignment_weights", atom_mask)
                     allow_alignment_gradients = kwargs.get(
                         "allow_alignment_gradients", False
@@ -746,6 +758,12 @@ class Boltz2Wrapper:
             Scaling constants.
             "t_hat", "sigma_t", "eps_scale"
         """
+        if timestep < 0 or timestep >= self.predict_args.sampling_steps:
+            raise ValueError(
+                f"timestep {timestep} is out of bounds for sampling steps "
+                f"{self.predict_args.sampling_steps}"
+            )
+
         sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
         sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
         gamma = self.noise_schedule["gamma"][int(timestep)]
@@ -786,6 +804,12 @@ class Boltz2Wrapper:
             raise ValueError(
                 "structure must contain 'asym_unit' key to access"
                 "the coordinates in the asymmetric unit."
+            )
+
+        if noise_level < 0 or noise_level >= self.predict_args.sampling_steps:
+            raise ValueError(
+                f"noise_level {noise_level} is out of bounds for sampling steps "
+                f"{self.predict_args.sampling_steps}"
             )
 
         # We need to make sure the missing atoms are handled correctly
@@ -963,7 +987,8 @@ class Boltz1Wrapper:
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
         **kwargs : dict, optional
-            keys:
+            Additional keyword arguments for Boltz-1 featurization.
+
             - out_dir: str | Path
                 Output directory for processed Boltz intermediate files. Defaults first
                 to the structure ID from metadata, then to "boltz1_output" in the
@@ -1026,6 +1051,13 @@ class Boltz1Wrapper:
             Scaling constants.
             "t_hat", "sigma_t", "eps_scale"
         """
+
+        if timestep < 0 or timestep >= self.predict_args.sampling_steps:
+            raise ValueError(
+                f"timestep {timestep} is out of bounds for sampling steps "
+                f"{self.predict_args.sampling_steps}"
+            )
+
         sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
         sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
         gamma = self.noise_schedule["gamma"][int(timestep)]
@@ -1058,7 +1090,8 @@ class Boltz1Wrapper:
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs : dict, optional
-            keys:
+            Additional keyword arguments for Boltz-1 Pairformer step.
+
             - recycling_steps: int
                 Number of recycling steps to perform. Defaults to the value in
                 predict_args.
@@ -1134,42 +1167,42 @@ class Boltz1Wrapper:
         **kwargs : dict, optional
             Additional keyword arguments for Boltz-1 denoising.
 
-            t_hat (float, optional)
+            - t_hat (float, optional)
                 Precomputed t_hat value for the current timestep; if not provided, it
                 will be computed internally.
 
-            eps (Tensor, optional)
+            - eps (Tensor, optional)
                 Precomputed noise tensor for the current timestep; if not provided, it
                 will be sampled internally.
 
-            augmentation (bool, optional)
+            - augmentation (bool, optional)
                 Apply `center_random_augmentation` when True (default True).
 
-            align_to_input (bool, optional)
+            - align_to_input (bool, optional)
                 Align denoised coordinates to `input_coords` when True (default True).
 
-            input_coords (Tensor, optional)
+            - input_coords (Tensor, optional)
                 Reference coordinates required if `align_to_input` is True.
 
-            alignment_weights (Tensor, optional)
+            - alignment_weights (Tensor, optional)
                 Atom weights for alignment; defaults to `atom_mask`.
 
-            multiplicity (int, optional)
+            - multiplicity (int, optional)
                 Overrides the multiplicity passed to the diffusion network, which is the
                 replicating the model does internally along axis=0; defaults to the
                 batch size of `noisy_coords`.
 
-            overwrite_representations (bool, optional)
+            - overwrite_representations (bool, optional)
                 Whether to overwrite cached representations (default False).
                 Do this if you are running a new input sample through the model.
 
-            recycling_steps (int, optional)
+            - recycling_steps (int, optional)
                 Number of recycling steps to perform (default 3 from PredictArgs).
                 This will only be applied if overwrite_representations is True, as
                 it is passed to the pairformer module computation that is ideally
                 cached for efficiency.
 
-            allow_alignment_gradients (bool, optional)
+            - allow_alignment_gradients (bool, optional)
                 Whether to allow gradients through the alignment step (default True).
                 If False, detaches after alignment (matches original Boltz behavior).
 
@@ -1224,14 +1257,14 @@ class Boltz1Wrapper:
                 )
                 t_hat = timestep_scaling["t_hat"]
 
+            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+
             if kwargs.get("augmentation", True):
-                padded_noisy_coords = center_random_augmentation(
-                    padded_noisy_coords,
+                padded_noisy_coords_eps = center_random_augmentation(
+                    padded_noisy_coords_eps,
                     atom_mask=atom_mask,
                     augmentation=True,
                 )
-
-            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
 
             padded_atom_coords_denoised, _ = (
                 self.model.structure_module.preconditioned_network_forward(
@@ -1245,7 +1278,8 @@ class Boltz1Wrapper:
                         feats=feats,
                         relative_position_encoding=relative_position_encoding,
                         multiplicity=kwargs.get(
-                            "multiplicity", padded_noisy_coords_eps.shape[0]
+                            "multiplicity",
+                            cast(Tensor, padded_noisy_coords_eps).shape[0],
                         ),
                     ),
                 )
@@ -1313,6 +1347,12 @@ class Boltz1Wrapper:
             raise ValueError(
                 "structure must contain 'asym_unit' key to access"
                 "the coordinates in the asymmetric unit."
+            )
+
+        if noise_level < 0 or noise_level >= self.predict_args.sampling_steps:
+            raise ValueError(
+                f"noise_level {noise_level} is out of bounds for sampling steps "
+                f"{self.predict_args.sampling_steps}"
             )
 
         # We need to make sure the missing atoms are handled correctly

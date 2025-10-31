@@ -63,7 +63,7 @@ class RewardFunction:
         self,
         xmap: XMap,
         scattering_params: torch.Tensor,
-        selection: ArrayLike,
+        selection: ArrayLike | torch.Tensor,
         em: bool = False,
         loss_order: int = 2,
         device: torch.device | None = None,
@@ -85,7 +85,12 @@ class RewardFunction:
             device=device,
         )
 
-        self.selection = selection
+        # TODO: selection doesn't do anything right now
+        self.selection = (
+            selection
+            if torch.is_tensor(selection)
+            else torch.tensor(selection).to(device=device, dtype=torch.bool)
+        )
         self.device = device
         if loss_order == 1:
             self.loss = torch.nn.L1Loss()
