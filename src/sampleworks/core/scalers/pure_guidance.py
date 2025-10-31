@@ -15,7 +15,11 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
     ATOMIC_NUM_TO_ELEMENT,
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
-from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
+from sampleworks.models.boltz.wrapper import (
+    Boltz1Wrapper,
+    Boltz2Wrapper,
+    weighted_rigid_align_differentiable,
+)
 
 
 class PureGuidance:
@@ -51,24 +55,43 @@ class PureGuidance:
         structure : dict
             Atomworks parsed structure.
         **kwargs : dict
-            step_size : float, optional
+            Additional keyword arguments for pure guidance.
+
+            - step_size : float, optional
                 Gradient step size for guidance (default: 0.1)
-            gradient_normalization : bool, optional
+
+            - gradient_normalization : bool, optional
                 Whether to normalize gradients (default: False)
-            use_tweedie : bool, optional
+
+            - use_tweedie : bool, optional
                 If True, use Tweedie's formula (gradient on x̂_0 only).
-                Enables augmentation and alignment. If False, use full
-                backprop through model (default: False)
-            augmentation : bool, optional
+                    Enables augmentation and alignment. If False, use full
+                    backprop through model (default: False)
+
+            - augmentation : bool, optional
                 Enable data augmentation in denoise step (default: True
-                for Tweedie mode, False for full backprop)
-            align_to_input : bool, optional
+                    for Tweedie mode, False for full backprop)
+
+            - align_to_input : bool, optional
                 Enable alignment to input in denoise step (default: True
-                for Tweedie mode, False for full backprop)
-            partial_diffusion_step : int, optional
+                    for Tweedie mode, False for full backprop)
+
+            - partial_diffusion_step : int, optional
                 If provided, start diffusion from this timestep instead of 0.
-                (default: None). Will use the provided coordinates in structure
-                to initialize the noise at this timestep.
+                    (default: None). Will use the provided coordinates in structure
+                    to initialize the noise at this timestep.
+
+            - guidance_start : int, optional
+                Diffusion step to start applying guidance (default: -1, meaning
+                    guidance is applied from the beginning)
+
+            - out_dir : str, optional
+                Output directory for Boltz featurization intermediate files
+                (default: "boltz_test")
+
+            - alignment_reverse_diffusion : bool, optional
+                Whether to perform alignment of noisy coords to denoised coords
+                during reverse diffusion steps. This is default True in Boltz-2.
 
         Returns
         -------
@@ -89,10 +112,10 @@ class PureGuidance:
         )
 
         # Get coordinates from timestep
-        noisy_coords = self.model_wrapper.initialize_from_noise(
-            structure, noise_level=cast(int, kwargs["partial_diffusion_step"])
+        coords = self.model_wrapper.initialize_from_noise(
+            structure, noise_level=cast(int, kwargs.get("partial_diffusion_step", 0))
         )
-        ensemble_size = noisy_coords.shape[0]
+        ensemble_size = coords.shape[0]  # TODO: proper ensemble handling
 
         # TODO: this is not generalizable currently, figure this out
         atom_array = structure["asym_unit"]
@@ -117,10 +140,16 @@ class PureGuidance:
             b=ensemble_size,
         )
 
+        input_coords = (
+            torch.from_numpy(atom_array.coord[:, reward_param_mask])
+            .to(dtype=coords.dtype, device=coords.device)
+            .expand(ensemble_size, -1, -1)
+        )
+
         trajectory = []
         losses = []
 
-        n_steps = self.model_wrapper.model.structure_module.num_sampling_steps
+        n_steps = self.model_wrapper.predict_args.sampling_steps
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
 
         if use_tweedie:
@@ -136,16 +165,16 @@ class PureGuidance:
                 # on denoised, but DPS uses Tweedie's formula which has its limitations.
                 # Maddipatla et al. 2025 use full backprop through model with grad on
                 # noisy_coords.
-                noisy_coords.requires_grad_(True)
+                coords.requires_grad_(True)
 
             timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
             t_hat = timestep_scaling["t_hat"]
             sigma_t = timestep_scaling["sigma_t"]
-            eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
+            eps = timestep_scaling["eps_scale"] * torch.randn_like(coords)
 
             denoised = self.model_wrapper.denoise_step(
                 features,
-                noisy_coords,
+                coords,
                 timestep=i,
                 grad_needed=(apply_guidance and not use_tweedie),
                 augmentation=augmentation,
@@ -153,6 +182,7 @@ class PureGuidance:
                 allow_alignment_gradients=allow_alignment_gradients,
                 # Provide precomputed t_hat and eps to allow us to calculate the
                 # denoising direction properly
+                input_coords=input_coords,
                 t_hat=t_hat,
                 eps=eps,
             )["atom_coords_denoised"]
@@ -185,9 +215,9 @@ class PureGuidance:
                     loss.backward()
 
                     with torch.no_grad():
-                        grad = cast(torch.Tensor, noisy_coords.grad)
+                        grad = cast(torch.Tensor, coords.grad)
                         guidance_direction = grad.clone()
-                        noisy_coords.grad = None
+                        coords.grad = None
 
                 losses.append(loss.item())
             else:
@@ -196,7 +226,19 @@ class PureGuidance:
             with torch.no_grad():
                 # Use the same eps as in the denoising step to properly compute
                 # the denoising direction
-                noisy_coords = noisy_coords + eps
+                noisy_coords = coords + eps
+
+                if kwargs.get("alignment_reverse_diffusion", True):
+                    # Boltz aligns the noisy coords to the denoised coords at each step
+                    # to improve stability.
+                    mask_like = torch.ones_like(denoised[..., 0])
+                    noisy_coords = weighted_rigid_align_differentiable(
+                        noisy_coords,
+                        denoised,
+                        weights=mask_like,
+                        mask=mask_like,
+                        allow_gradients=False,
+                    )
 
                 dt = sigma_t - t_hat
 
@@ -211,18 +253,18 @@ class PureGuidance:
                         )
                     delta = delta + step_size * guidance_direction
 
-                noisy_coords = (
+                coords = (
                     noisy_coords
                     + self.model_wrapper.model.structure_module.step_scale * dt * delta
                 )
 
-                noisy_coords = noisy_coords.detach().clone()
+                coords = coords.detach().clone()
 
-            trajectory.append(denoised.detach().cpu().clone())
+            trajectory.append(denoised.clone().cpu())
 
         # TODO: Handle ensemble here
         structure["asym_unit"].coord[:, reward_param_mask] = (
-            noisy_coords.detach().cpu().numpy()
+            coords.detach().cpu().numpy()
         )
 
         return structure, trajectory, losses

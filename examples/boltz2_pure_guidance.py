@@ -54,7 +54,7 @@ def parse_args():
         "--device", type=str, default=None, help="Device (cuda/cpu, auto-detect)"
     )
     parser.add_argument(
-        "--gradient-norm",
+        "--gradient-normalization",
         action="store_true",
         help="Enable gradient normalization",
     )
@@ -87,20 +87,17 @@ def parse_args():
 def save_trajectory(
     trajectory, atom_array, output_dir, reward_param_mask, save_every=10
 ):
-    import biotite.structure as struc
     from biotite.structure.io import save_structure
 
-    output_dir = Path(output_dir)
+    output_dir = Path(output_dir / "trajectory")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    trajectory_arrays = []
-    for coords in trajectory[::save_every]:
+    for i, coords in enumerate(trajectory):
+        if i % save_every != 0:
+            continue
         array_copy = atom_array.copy()
         array_copy.coord[:, reward_param_mask] = coords.numpy()
-        trajectory_arrays.append(array_copy)
-
-    traj_stack = struc.stack(trajectory_arrays)
-    save_structure(output_dir / "trajectory.cif", traj_stack)
+        save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
 
 
 def save_losses(losses, output_dir):
@@ -123,7 +120,7 @@ def main():
     print(f"Using device: {device}")
 
     print(f"Loading structure from {args.structure}")
-    structure = parse(args.structure, hydrogen_policy="remove")
+    structure = parse(args.structure, hydrogen_policy="remove", add_missing_atoms=False)
 
     print(f"Loading density map from {args.density}")
     xmap = XMap.fromfile(args.density, resolution=args.resolution)
@@ -157,19 +154,19 @@ def main():
     guidance = PureGuidance(
         model_wrapper=model_wrapper,
         reward_function=reward_function,
+    )
+
+    print("Running pure guidance")
+    refined_structure, trajectory, losses = guidance.run_guidance(
+        structure,
+        guidance_start=args.guidance_start,
         step_size=args.step_size,
-        gradient_normalization=args.gradient_norm,
+        gradient_normalization=args.gradient_normalization,
         use_tweedie=args.use_tweedie,
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
         partial_diffusion_step=args.partial_diffusion_step,
-    )
-
-    print(f"Running {args.n_steps} steps of pure guidance")
-    refined_structure, trajectory, losses = guidance.run_guidance(
-        structure,
         out_dir=args.output_dir,
-        guidance_start=args.guidance_start,
     )
 
     output_dir = Path(args.output_dir)
@@ -182,7 +179,7 @@ def main():
     set_structure(final_structure, refined_structure["asym_unit"])
     final_structure.write(str(output_dir / "refined.cif"))
 
-    save_trajectory(trajectory, atom_array, output_dir, selection_mask)
+    save_trajectory(trajectory, atom_array, output_dir, selection_mask, save_every=5)
     save_losses(losses, output_dir)
 
     valid_losses = [l for l in losses if l is not None]
