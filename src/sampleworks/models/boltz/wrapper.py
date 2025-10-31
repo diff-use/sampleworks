@@ -468,6 +468,15 @@ class Boltz2Wrapper:
 
             relative_position_encoding = self.model.rel_pos(features)
 
+            z_init = z_init + relative_position_encoding
+            z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
+
+            if self.model.bond_type_feature:
+                z_init = z_init + self.model.token_bonds_type(
+                    features["type_bonds"].long()
+                )
+            z_init = z_init + self.model.contact_conditioning(features)
+
             s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
 
             for _ in range(
@@ -868,12 +877,16 @@ class Boltz1Wrapper:
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
         self.device = torch.device(device)
-
+        # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
         self.cache_path = (
-            Path(checkpoint_path)
-            if isinstance(checkpoint_path, str)
-            else checkpoint_path
-        ).parent
+            (
+                Path(checkpoint_path)
+                if isinstance(checkpoint_path, str)
+                else checkpoint_path
+            )
+            .parent.expanduser()
+            .resolve()
+        )
         self.cache_path.mkdir(parents=True, exist_ok=True)
 
         pairformer_args = PairformerArgs()
@@ -1114,6 +1127,8 @@ class Boltz1Wrapper:
             )
 
             relative_position_encoding = self.model.rel_pos(features)
+            z_init = z_init + relative_position_encoding
+            z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
 
             s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
 
@@ -1123,12 +1138,22 @@ class Boltz1Wrapper:
                 s = s_init + self.model.s_recycle(self.model.s_norm(s))
                 z = z_init + self.model.z_recycle(self.model.z_norm(z))
 
-                z = z + self.model.msa_module(
-                    z, s_inputs, features, use_kernels=self.model.use_kernels
-                )  # type: ignore (Object will be callable here)
+                if not self.model.no_msa:
+                    z = z + self.model.msa_module(
+                        z, s_inputs, features, use_kernels=self.model.use_kernels
+                    )  # type: ignore (Object will be callable here)
 
-                s, z = self.model.pairformer_module(
-                    s, z, mask=mask, pair_mask=pair_mask
+                if self.model.is_pairformer_compiled:
+                    pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                else:
+                    pairformer_module = self.model.pairformer_module
+
+                s, z = pairformer_module(
+                    s,
+                    z,
+                    mask=mask,
+                    pair_mask=pair_mask,
+                    use_kernels=self.model.use_kernels,
                 )  # type: ignore (Object will be callable here)
 
         return {
@@ -1249,7 +1274,9 @@ class Boltz1Wrapper:
 
             if "t_hat" in kwargs and "eps" in kwargs:
                 t_hat = kwargs["t_hat"]
-                eps = kwargs["eps"]
+                eps = cast(Tensor, kwargs["eps"])
+                if pad_len > 0 and eps.shape[1] != padded_noisy_coords.shape[1]:
+                    eps = pad_dim(eps, dim=1, pad_len=pad_len)
             else:
                 timestep_scaling = self.get_timestep_scaling(timestep)
                 eps = timestep_scaling["eps_scale"] * torch.randn(
@@ -1257,14 +1284,14 @@ class Boltz1Wrapper:
                 )
                 t_hat = timestep_scaling["t_hat"]
 
-            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
-
             if kwargs.get("augmentation", True):
-                padded_noisy_coords_eps = center_random_augmentation(
-                    padded_noisy_coords_eps,
+                padded_noisy_coords = center_random_augmentation(
+                    padded_noisy_coords,
                     atom_mask=atom_mask,
                     augmentation=True,
                 )
+
+            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
 
             padded_atom_coords_denoised, _ = (
                 self.model.structure_module.preconditioned_network_forward(
@@ -1288,6 +1315,13 @@ class Boltz1Wrapper:
             if kwargs.get("align_to_input", True):
                 input_coords = kwargs.get("input_coords")
                 if input_coords is not None:
+                    if (
+                        pad_len > 0
+                        and input_coords.shape[1]
+                        != padded_atom_coords_denoised.shape[1]
+                    ):
+                        input_coords = pad_dim(input_coords, dim=1, pad_len=pad_len)
+
                     alignment_weights = kwargs.get("alignment_weights", atom_mask)
                     allow_alignment_gradients = kwargs.get(
                         "allow_alignment_gradients", False
@@ -1318,7 +1352,9 @@ class Boltz1Wrapper:
                         "is True."
                     )
 
-            atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :]
+            atom_coords_denoised = padded_atom_coords_denoised[
+                atom_mask.bool(), :
+            ].reshape(noisy_coords.shape[0], -1, 3)
 
         return {"atom_coords_denoised": atom_coords_denoised}
 
