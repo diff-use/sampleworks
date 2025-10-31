@@ -96,7 +96,7 @@ def save_trajectory(
         if i % save_every != 0:
             continue
         array_copy = atom_array.copy()
-        array_copy.coord[:, reward_param_mask] = coords.numpy()
+        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()
         save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
 
 
