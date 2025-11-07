@@ -17,6 +17,7 @@ from jaxtyping import ArrayLike, Float
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
 from protenix.data.constants import STD_RESIDUES
+from protenix.data.infer_data_pipeline import get_inference_dataloader
 from protenix.data.utils import (
     get_lig_lig_bonds,
     get_ligand_polymer_bond_mask,
@@ -85,6 +86,41 @@ def weighted_rigid_align_differentiable(
         aligned_coords = aligned_coords.detach()
 
     return aligned_coords
+
+
+def create_protenix_input_from_structure(
+    structure: dict, out_dir: str | Path, wrapper: "ProtenixWrapper"
+) -> tuple[Path, dict]:
+    """Create Protenix input JSON from Atomworks structure.
+
+    Parameters
+    ----------
+    structure : dict
+        Atomworks structure dictionary.
+    out_dir : str | Path
+        Output directory for saving JSON file.
+    wrapper : ProtenixWrapper
+        Wrapper instance to access _structure_to_protenix_json method.
+
+    Returns
+    -------
+    tuple[Path, dict]
+        Path to saved JSON file and JSON dictionary.
+    """
+    import json
+
+    out_dir = Path(out_dir) if isinstance(out_dir, str) else out_dir
+    out_dir = out_dir.expanduser().resolve()
+
+    json_dict = wrapper._structure_to_protenix_json(structure)
+
+    protenix_input_path = out_dir / "protenix_input.json"
+    protenix_input_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(protenix_input_path, "w") as f:
+        json.dump([json_dict], f, indent=4)
+
+    return protenix_input_path, json_dict
 
 
 @dataclass
@@ -185,9 +221,17 @@ class ProtenixWrapper:
         )
         download_inference_cache(self.configs)
 
+        # NOTE: weird things might happen here due to the InferenceRunner loading things
+        # onto a different device initially than what we might want. The DIST_WRAPPER
+        # may interact weirdly as well with our code, something to look out for
+        # especially when scaling up and running multiple guidance runs in parallel.
         protenix_runner = InferenceRunner(self.configs)
+        protenix_runner.device = self.device
+        torch.cuda.set_device(self.device)
 
         self.model = protenix_runner.model.to(self.device)
+
+        self.dataloader = get_inference_dataloader(self.configs)
 
         sigmas = self._compute_noise_schedule(
             cast(dict, self.configs.sample_diffusion)["N_step"]
@@ -402,8 +446,8 @@ class ProtenixWrapper:
 
         return merged_covalent_bonds
 
-    def _structure_to_features(self, structure: dict) -> dict[str, Any]:
-        """Convert Atomworks structure to Protenix input features.
+    def _structure_to_protenix_json(self, structure: dict) -> dict[str, Any]:
+        """Convert Atomworks structure to Protenix input JSON.
 
         Parameters
         ----------
@@ -413,10 +457,8 @@ class ProtenixWrapper:
         Returns
         -------
         dict[str, Any]
-            Protenix-compatible feature dictionary.
+            Protenix-compatible JSON dictionary.
         """
-        from protenix.data.json_to_feature import SampleDictToFeatures
-
         if "asym_unit" not in structure:
             raise ValueError("structure must contain asym_unit key")
 
@@ -560,55 +602,61 @@ class ProtenixWrapper:
                     token_mol_types.append("LIGAND")
             atom_array.set_annotation("token_mol_type", np.array(token_mol_types))
 
+        has_modifications = len(entity_id_to_mod_list) > 0
+
         lig_polymer_bonds = get_ligand_polymer_bond_mask(
             atom_array, lig_include_ions=False
         )
         lig_lig_bonds = get_lig_lig_bonds(atom_array, lig_include_ions=False)
-        token_bonds = np.vstack((lig_polymer_bonds, lig_lig_bonds))
 
-        lig_indices = np.where(np.isin(atom_array.chain_id, lig_chain_ids))[0]
-        lig_bond_mask = np.any(np.isin(token_bonds[:, :2], lig_indices), axis=1)
-        token_bonds = token_bonds[lig_bond_mask]
+        has_ligand_bonds = lig_polymer_bonds.size > 0 or lig_lig_bonds.size > 0
 
-        polymer_polymer_bond = get_polymer_polymer_bond(atom_array, entity_poly_type)
-        token_bonds = np.vstack((polymer_polymer_bond, token_bonds))
+        if has_modifications or has_ligand_bonds:
+            token_bonds_list = []
 
-        if token_bonds.size != 0:
-            covalent_bonds = []
-            for atoms in token_bonds[:, :2]:
-                bond_dict = {}
-                for i in range(2):
-                    position = atom_array.res_id[atoms[i]]
-                    bond_dict[f"entity{i + 1}"] = int(
-                        label_entity_id_to_entity_id_in_json[
-                            atom_array.label_entity_id[atoms[i]]
-                        ]
-                    )
-                    bond_dict[f"position{i + 1}"] = int(position)
-                    bond_dict[f"atom{i + 1}"] = atom_array.atom_name[atoms[i]]
-                    bond_dict[f"copy{i + 1}"] = int(atom_array.copy_id[atoms[i]])
+            if has_ligand_bonds:
+                ligand_bonds = np.vstack((lig_polymer_bonds, lig_lig_bonds))
+                lig_indices = np.where(np.isin(atom_array.chain_id, lig_chain_ids))[0]
+                lig_bond_mask = np.any(
+                    np.isin(ligand_bonds[:, :2], lig_indices), axis=1
+                )
+                ligand_bonds = ligand_bonds[lig_bond_mask]
+                if ligand_bonds.size > 0:
+                    token_bonds_list.append(ligand_bonds)
 
-                covalent_bonds.append(bond_dict)
+            if has_modifications:
+                polymer_polymer_bond = get_polymer_polymer_bond(
+                    atom_array, entity_poly_type
+                )
+                if polymer_polymer_bond.size > 0:
+                    token_bonds_list.append(polymer_polymer_bond)
 
-            merged_covalent_bonds = self._merge_covalent_bonds(
-                covalent_bonds, all_entity_counts
-            )
-            json_dict["covalent_bonds"] = merged_covalent_bonds
+            if token_bonds_list:
+                token_bonds = np.vstack(token_bonds_list)
+                covalent_bonds = []
+                for atoms in token_bonds[:, :2]:
+                    bond_dict = {}
+                    for i in range(2):
+                        position = atom_array.res_id[atoms[i]]
+                        bond_dict[f"entity{i + 1}"] = int(
+                            label_entity_id_to_entity_id_in_json[
+                                atom_array.label_entity_id[atoms[i]]
+                            ]
+                        )
+                        bond_dict[f"position{i + 1}"] = int(position)
+                        bond_dict[f"atom{i + 1}"] = atom_array.atom_name[atoms[i]]
+                        bond_dict[f"copy{i + 1}"] = int(atom_array.copy_id[atoms[i]])
+
+                    covalent_bonds.append(bond_dict)
+
+                merged_covalent_bonds = self._merge_covalent_bonds(
+                    covalent_bonds, all_entity_counts
+                )
+                json_dict["covalent_bonds"] = merged_covalent_bonds
 
         json_dict["name"] = structure.get("metadata", {}).get("name", "sample")
 
-        featurizer = SampleDictToFeatures(json_dict)
-        features, _, _ = featurizer.get_feature_dict()
-
-        for key in features:
-            if isinstance(features[key], torch.Tensor):
-                features[key] = features[key].to(self.device)
-            elif isinstance(features[key], dict):
-                for subkey in features[key]:
-                    if isinstance(features[key][subkey], torch.Tensor):
-                        features[key][subkey] = features[key][subkey].to(self.device)
-
-        return features
+        return json_dict
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
         """From an Atomworks structure, calculate Protenix input features.
@@ -619,13 +667,36 @@ class ProtenixWrapper:
             Atomworks structure dictionary.
         **kwargs : dict, optional
             Additional arguments for feature generation.
+            - out_dir: Directory for saving intermediate JSON file
 
         Returns
         -------
         dict[str, Any]
             Protenix input features.
         """
-        features = self._structure_to_features(structure)
+        out_dir = kwargs.get(
+            "out_dir", structure.get("metadata", {}).get("id", "protenix_output")
+        )
+
+        from protenix.data.infer_data_pipeline import InferenceDataset
+
+        _, json_dict = create_protenix_input_from_structure(structure, out_dir, self)
+
+        dataset = cast(InferenceDataset, self.dataloader.dataset)
+        data, atom_array_protenix, _ = dataset.process_one(json_dict)
+
+        atom_array = structure["asym_unit"]
+        residues_with_occupancy = atom_array.occupancy > 0
+
+        if "asym_unit" in structure:
+            n_atoms_protenix = len(atom_array_protenix)
+            n_atoms_atomworks = len(structure["asym_unit"][0][residues_with_occupancy])
+            assert n_atoms_protenix == n_atoms_atomworks, (
+                f"Coordinate count mismatch: Protenix processed {n_atoms_protenix} "
+                f"atoms, Atomworks has {n_atoms_atomworks} atoms"
+            )
+
+        features = cast(dict[str, Any], data["input_feature_dict"])
 
         if "asym_unit" in structure:
             atom_array = structure["asym_unit"]
