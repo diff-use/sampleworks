@@ -4,8 +4,8 @@ requires = ["hatchling"]
 
 [dependency-groups]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
-dev = ["pytest", "pytest-cov", "mypy", "pre-commit"]
-protenix = ["protenix>=0.6.3"]
+dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright"]
+protenix = ["protenix>=0.6.3", "einx"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
@@ -21,14 +21,14 @@ ninja = "*"
 numpy = "<2.0"
 pyarrow = "==17.0.0"
 
-[tool.pixi.feature.protenix.pypi-options.dependency-overrides]
-rdkit = ">=2024.3.5,<2025.9"
-
 [tool.pixi.environments]
 boltz = {features = ["boltz"]}
 boltz-dev = {features = ["boltz", "dev"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
+
+[tool.pixi.feature.protenix.pypi-options.dependency-overrides]
+rdkit = ">=2024.3.5,<2025.9"
 
 [tool.pixi.pypi-dependencies]
 sampleworks = {editable = true, path = "."}
