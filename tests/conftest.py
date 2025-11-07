@@ -7,6 +7,7 @@ import pytest
 import torch
 from atomworks.io.parser import parse
 from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper, PredictArgs
+from sampleworks.models.protenix.wrapper import ProtenixWrapper
 from sampleworks.utils.setup import try_gpu
 
 
@@ -75,6 +76,24 @@ def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device) -> Boltz2
         checkpoint_path=boltz2_checkpoint_path,
         use_msa_server=True,
         predict_args=predict_args,
+        device=device,
+    )
+
+
+@pytest.fixture(scope="session")
+def protenix_checkpoint_path() -> Path:
+    path = Path("~/.protenix/protenix_v1.pt").expanduser()
+    if not path.exists():
+        pytest.skip(f"Protenix checkpoint not found at {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
+def protenix_wrapper(
+    protenix_checkpoint_path: Path, device: torch.device
+) -> ProtenixWrapper:
+    return ProtenixWrapper(
+        checkpoint_path=protenix_checkpoint_path,
         device=device,
     )
 
