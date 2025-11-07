@@ -25,6 +25,22 @@ repos:
         additional_dependencies:
           - toml-sort==0.23.1
 
+      - id: pyright-boltz
+        name: pyright (boltz environment)
+        entry: bash -c 'pixi run -e boltz-dev pyright "$@"' --
+        language: system
+        types: [python]
+        pass_filenames: true
+        exclude: (real_space_density|protenix)
+
+      - id: pyright-protenix
+        name: pyright (protenix environment)
+        entry: bash -c 'pixi run -e protenix-dev pyright "$@"' --
+        language: system
+        types: [python]
+        pass_filenames: true
+        files: protenix
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
@@ -33,15 +49,3 @@ repos:
       - id: ruff
         args: ["--fix"]
         types_or: [python, pyi, jupyter]
-
-  - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.406
-    hooks:
-      - id: pyright
-        additional_dependencies:
-          - boltz
-          - jax
-          - jaxtyping
-          - atomworks
-          - pytest
-        exclude: real_space_density # FIXME: later, this should be modified so real_space_density modules pass

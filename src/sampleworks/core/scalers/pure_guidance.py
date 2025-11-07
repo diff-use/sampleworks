@@ -57,6 +57,9 @@ class PureGuidance:
         **kwargs : dict
             Additional keyword arguments for pure guidance.
 
+            - step_scale : float, optional
+                Scale for the model's step size (default: 1.5)
+
             - step_size : float, optional
                 Gradient step size for guidance (default: 0.1)
 
@@ -255,7 +258,7 @@ class PureGuidance:
 
                 coords = (
                     noisy_coords
-                    + self.model_wrapper.model.structure_module.step_scale * dt * delta
+                    + cast(float, kwargs.get("step_scale", 1.5)) * dt * delta
                 )
 
                 coords = coords.detach().clone()
