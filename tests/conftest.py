@@ -2,13 +2,31 @@
 
 from collections.abc import Generator
 from pathlib import Path
+from site import getsitepackages
 
 import pytest
 import torch
 from atomworks.io.parser import parse
-from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper, PredictArgs
-from sampleworks.models.protenix.wrapper import ProtenixWrapper
 from sampleworks.utils.setup import try_gpu
+
+
+try:
+    from sampleworks.models.boltz.wrapper import (
+        Boltz1Wrapper,
+        Boltz2Wrapper,
+        PredictArgs,
+    )
+
+    BOLTZ_AVAILABLE = True
+except ImportError:
+    BOLTZ_AVAILABLE = False
+
+try:
+    from sampleworks.models.protenix.wrapper import ProtenixWrapper
+
+    PROTENIX_AVAILABLE = True
+except ImportError:
+    PROTENIX_AVAILABLE = False
 
 
 @pytest.fixture(scope="session")
@@ -34,7 +52,14 @@ def test_structure(request, resources_dir: Path) -> dict:
 
 
 @pytest.fixture(scope="session")
+def device() -> torch.device:
+    return try_gpu()
+
+
+@pytest.fixture(scope="session")
 def boltz1_checkpoint_path() -> Path:
+    if not BOLTZ_AVAILABLE:
+        pytest.skip("Boltz dependencies not installed in this environment")
     path = Path("~/.boltz/boltz1_conf.ckpt").expanduser()
     if not path.exists():
         pytest.skip(f"Boltz1 checkpoint not found at {path}")
@@ -43,6 +68,8 @@ def boltz1_checkpoint_path() -> Path:
 
 @pytest.fixture(scope="session")
 def boltz2_checkpoint_path() -> Path:
+    if not BOLTZ_AVAILABLE:
+        pytest.skip("Boltz dependencies not installed in this environment")
     path = Path("~/.boltz/boltz2_conf.ckpt").expanduser()
     if not path.exists():
         pytest.skip(f"Boltz2 checkpoint not found at {path}")
@@ -50,16 +77,13 @@ def boltz2_checkpoint_path() -> Path:
 
 
 @pytest.fixture(scope="session")
-def device() -> torch.device:
-    return try_gpu()
-
-
-@pytest.fixture(scope="session")
-def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device) -> Boltz1Wrapper:
-    predict_args = PredictArgs(
+def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
+    if not BOLTZ_AVAILABLE:
+        pytest.skip("Boltz dependencies not installed in this environment")
+    predict_args = PredictArgs(  # type: ignore[possibly-unbound]
         recycling_steps=1, sampling_steps=10, diffusion_samples=1
     )
-    return Boltz1Wrapper(
+    return Boltz1Wrapper(  # type: ignore[possibly-unbound]
         checkpoint_path=boltz1_checkpoint_path,
         use_msa_server=True,
         predict_args=predict_args,
@@ -68,11 +92,13 @@ def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device) -> Boltz1
 
 
 @pytest.fixture(scope="session")
-def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device) -> Boltz2Wrapper:
-    predict_args = PredictArgs(
+def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device):
+    if not BOLTZ_AVAILABLE:
+        pytest.skip("Boltz dependencies not installed in this environment")
+    predict_args = PredictArgs(  # type: ignore[possibly-unbound]
         recycling_steps=1, sampling_steps=10, diffusion_samples=1
     )
-    return Boltz2Wrapper(
+    return Boltz2Wrapper(  # type: ignore[possibly-unbound]
         checkpoint_path=boltz2_checkpoint_path,
         use_msa_server=True,
         predict_args=predict_args,
@@ -82,17 +108,22 @@ def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device) -> Boltz2
 
 @pytest.fixture(scope="session")
 def protenix_checkpoint_path() -> Path:
-    path = Path("~/.protenix/protenix_v1.pt").expanduser()
+    if not PROTENIX_AVAILABLE:
+        pytest.skip("Protenix dependencies not installed in this environment")
+    path = (
+        Path(getsitepackages()[0])
+        / "release_data/checkpoint//protenix_base_default_v0.5.0.pt"
+    )
     if not path.exists():
         pytest.skip(f"Protenix checkpoint not found at {path}")
     return path
 
 
 @pytest.fixture(scope="session")
-def protenix_wrapper(
-    protenix_checkpoint_path: Path, device: torch.device
-) -> ProtenixWrapper:
-    return ProtenixWrapper(
+def protenix_wrapper(protenix_checkpoint_path: Path, device: torch.device):
+    if not PROTENIX_AVAILABLE:
+        pytest.skip("Protenix dependencies not installed in this environment")
+    return ProtenixWrapper(  # type: ignore[possibly-unbound]
         checkpoint_path=protenix_checkpoint_path,
         device=device,
     )
