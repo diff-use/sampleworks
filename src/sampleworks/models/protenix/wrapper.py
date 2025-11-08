@@ -4,10 +4,7 @@ from logging import getLogger, Logger
 from pathlib import Path
 from typing import Any, cast
 
-import numpy as np
 import torch
-from atomworks.enums import ChainType
-from biotite.structure import get_chain_starts, get_residue_starts
 from configs.configs_base import configs as configs_base
 from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
@@ -16,21 +13,17 @@ from einops import einsum
 from jaxtyping import ArrayLike, Float
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
-from protenix.data.constants import STD_RESIDUES
-from protenix.data.infer_data_pipeline import get_inference_dataloader
-from protenix.data.utils import (
-    get_lig_lig_bonds,
-    get_ligand_polymer_bond_mask,
-    get_polymer_polymer_bond,
-)
-from protenix.model.protenix import InferenceNoiseScheduler
+from protenix.data.data_pipeline import DataPipeline
+from protenix.data.json_to_feature import SampleDictToFeatures
+from protenix.data.msa_featurizer import InferenceMSAFeaturizer
+from protenix.data.utils import data_type_transform, make_dummy_feature
+from protenix.model.protenix import InferenceNoiseScheduler, Protenix
 from protenix.model.utils import centre_random_augmentation
-from protenix.utils.torch_utils import autocasting_disable_decorator
-from runner.inference import (
-    download_infercence_cache as download_inference_cache,
-    InferenceRunner,
-)
+from protenix.utils.torch_utils import autocasting_disable_decorator, dict_to_tensor
+from runner.inference import download_infercence_cache as download_inference_cache
 from torch import Tensor
+
+from .structure_processing import create_protenix_input_from_structure
 
 
 def weighted_rigid_align_differentiable(
@@ -86,41 +79,6 @@ def weighted_rigid_align_differentiable(
         aligned_coords = aligned_coords.detach()
 
     return aligned_coords
-
-
-def create_protenix_input_from_structure(
-    structure: dict, out_dir: str | Path, wrapper: "ProtenixWrapper"
-) -> tuple[Path, dict]:
-    """Create Protenix input JSON from Atomworks structure.
-
-    Parameters
-    ----------
-    structure : dict
-        Atomworks structure dictionary.
-    out_dir : str | Path
-        Output directory for saving JSON file.
-    wrapper : ProtenixWrapper
-        Wrapper instance to access _structure_to_protenix_json method.
-
-    Returns
-    -------
-    tuple[Path, dict]
-        Path to saved JSON file and JSON dictionary.
-    """
-    import json
-
-    out_dir = Path(out_dir) if isinstance(out_dir, str) else out_dir
-    out_dir = out_dir.expanduser().resolve()
-
-    json_dict = wrapper._structure_to_protenix_json(structure)
-
-    protenix_input_path = out_dir / "protenix_input.json"
-    protenix_input_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(protenix_input_path, "w") as f:
-        json.dump([json_dict], f, indent=4)
-
-    return protenix_input_path, json_dict
 
 
 @dataclass
@@ -221,17 +179,41 @@ class ProtenixWrapper:
         )
         download_inference_cache(self.configs)
 
-        # NOTE: weird things might happen here due to the InferenceRunner loading things
-        # onto a different device initially than what we might want. The DIST_WRAPPER
-        # may interact weirdly as well with our code, something to look out for
-        # especially when scaling up and running multiple guidance runs in parallel.
-        protenix_runner = InferenceRunner(self.configs)
-        protenix_runner.device = self.device
-        torch.cuda.set_device(self.device)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(self.device)
 
-        self.model = protenix_runner.model.to(self.device)
+        self.model = Protenix(self.configs).to(self.device)
 
-        self.dataloader = get_inference_dataloader(self.configs)
+        checkpoint_path_str = (
+            f"{self.configs.load_checkpoint_dir}/{self.configs.model_name}.pt"
+        )
+        logger.info(f"Loading checkpoint from {checkpoint_path_str}")
+        checkpoint = torch.load(checkpoint_path_str, map_location=self.device)
+
+        if any(k.startswith("module.") for k in checkpoint["model"].keys()):
+            checkpoint["model"] = {
+                k[len("module.") :]: v for k, v in checkpoint["model"].items()
+            }
+
+        self.model.load_state_dict(
+            state_dict=checkpoint["model"],
+            strict=cast(dict, self.configs).get("load_strict", True),
+        )
+        self.model.eval()
+        logger.info("Finished loading checkpoint")
+
+        if cast(dict, self.configs.get("esm", {})).get("enable", False):
+            from protenix.data.esm_featurizer import ESMFeaturizer
+
+            esm_config = self.configs.esm
+            self.esm_featurizer = ESMFeaturizer(
+                embedding_dir=esm_config.embedding_dir,  # type: ignore (their ConfigDict lacks typing)
+                sequence_fpath=esm_config.sequence_fpath,  # type: ignore (their ConfigDict lacks typing)
+                embedding_dim=esm_config.embedding_dim,  # type: ignore (their ConfigDict lacks typing)
+                error_dir="./esm_embeddings/",
+            )
+        else:
+            self.esm_featurizer = None
 
         sigmas = self._compute_noise_schedule(
             cast(dict, self.configs.sample_diffusion)["N_step"]
@@ -268,396 +250,6 @@ class ProtenixWrapper:
         )
         return scheduler(N_step=num_steps, device=self.device)
 
-    @staticmethod
-    def _add_unique_chain_and_copy_ids(atom_array):
-        """Add unique chain_id and copy_id annotations to AtomArray.
-
-        Parameters
-        ----------
-        atom_array : AtomArray
-            Biotite AtomArray to annotate.
-
-        Returns
-        -------
-        AtomArray
-            Annotated AtomArray with chain_id and copy_id fields.
-        """
-        chain_starts = get_chain_starts(atom_array, add_exclusive_stop=False)
-        chain_starts_atom_array = atom_array[chain_starts]
-
-        unique_label_entity_id = np.unique(atom_array.label_entity_id)
-        chain_id_to_copy_id_dict = {}
-
-        for label_entity_id in unique_label_entity_id:
-            chain_ids_in_entity = chain_starts_atom_array.chain_id[
-                chain_starts_atom_array.label_entity_id == label_entity_id
-            ]
-            for chain_count, chain_id in enumerate(chain_ids_in_entity):
-                chain_id_to_copy_id_dict[chain_id] = chain_count + 1
-
-        copy_id = np.vectorize(chain_id_to_copy_id_dict.get)(atom_array.chain_id)
-        atom_array.set_annotation("copy_id", copy_id)
-
-        return atom_array
-
-    @staticmethod
-    def _get_sequences(atom_array, chain_info):
-        """Extract entity sequences from AtomArray.
-
-        Parameters
-        ----------
-        atom_array : AtomArray
-            Biotite AtomArray containing structure.
-        chain_info : dict[str, Any]
-            Atomworks chain information dictionary.
-
-        Returns
-        -------
-        dict[str, str]
-            Mapping from label_entity_id to sequence string.
-        """
-        entity_seq = {}
-        for label_entity_id in np.unique(atom_array.label_entity_id):
-            for chain_id, info in chain_info.items():
-                chain_atom = atom_array[atom_array.chain_id == chain_id]
-                if len(chain_atom) > 0:
-                    if chain_atom[0].label_entity_id == label_entity_id:
-                        chain_type = info["chain_type"]
-                        if chain_type.is_polymer():
-                            entity_seq[label_entity_id] = info.get(
-                                "processed_entity_canonical_sequence", ""
-                            )
-                        break
-        return entity_seq
-
-    @staticmethod
-    def _get_poly_res_names(atom_array, chain_info):
-        """Get residue names for polymer entities.
-
-        Parameters
-        ----------
-        atom_array : AtomArray
-            Biotite AtomArray containing structure.
-        chain_info : dict[str, Any]
-            Atomworks chain information dictionary.
-
-        Returns
-        -------
-        dict[str, list[str]]
-            Mapping from label_entity_id to list of residue names.
-        """
-        poly_res_names = {}
-        for label_entity_id in np.unique(atom_array.label_entity_id):
-            for chain_id, info in chain_info.items():
-                chain_atom = atom_array[atom_array.chain_id == chain_id]
-                if len(chain_atom) > 0:
-                    if chain_atom[0].label_entity_id == label_entity_id:
-                        chain_type = info["chain_type"]
-                        if chain_type.is_polymer():
-                            entity_array = atom_array[
-                                atom_array.label_entity_id == label_entity_id
-                            ]
-                            starts = get_residue_starts(
-                                entity_array, add_exclusive_stop=True
-                            )
-                            res_names = entity_array.res_name[starts[:-1]].tolist()
-                            poly_res_names[label_entity_id] = res_names
-                        break
-        return poly_res_names
-
-    @staticmethod
-    def _detect_modifications(atom_array, chain_info):
-        """Detect polymer modifications (non-standard residues).
-
-        Parameters
-        ----------
-        atom_array : AtomArray
-            Biotite AtomArray containing structure.
-        chain_info : dict[str, Any]
-            Atomworks chain information dictionary.
-
-        Returns
-        -------
-        dict[str, list[tuple[int, str]]]
-            Mapping from label_entity_id to list of (position, mod_ccd_code).
-        """
-        entity_id_to_mod_list = {}
-        poly_res_names = ProtenixWrapper._get_poly_res_names(atom_array, chain_info)
-
-        for entity_id, res_names in poly_res_names.items():
-            modifications_list = []
-            for idx, res_name in enumerate(res_names):
-                if res_name not in STD_RESIDUES:
-                    position = idx + 1
-                    modifications_list.append((position, f"CCD_{res_name}"))
-            if modifications_list:
-                entity_id_to_mod_list[entity_id] = modifications_list
-
-        return entity_id_to_mod_list
-
-    @staticmethod
-    def _merge_covalent_bonds(covalent_bonds, all_entity_counts):
-        """Merge covalent bonds with same entity and position.
-
-        Parameters
-        ----------
-        covalent_bonds : list[dict]
-            List of covalent bond dictionaries.
-        all_entity_counts : dict[str, int]
-            Mapping of entity_id to chain count.
-
-        Returns
-        -------
-        list[dict]
-            List of merged covalent bond dictionaries.
-        """
-        from collections import defaultdict
-
-        bonds_recorder = defaultdict(list)
-        bonds_entity_counts = {}
-
-        for bond_dict in covalent_bonds:
-            bond_unique_string = []
-            entity_counts = (
-                all_entity_counts[str(bond_dict["entity1"])],
-                all_entity_counts[str(bond_dict["entity2"])],
-            )
-            for i in range(2):
-                for j in ["entity", "position", "atom"]:
-                    k = f"{j}{i + 1}"
-                    bond_unique_string.append(str(bond_dict[k]))
-            bond_unique_string = "_".join(bond_unique_string)
-            bonds_recorder[bond_unique_string].append(bond_dict)
-            bonds_entity_counts[bond_unique_string] = entity_counts
-
-        merged_covalent_bonds = []
-        for k, v in bonds_recorder.items():
-            counts1 = bonds_entity_counts[k][0]
-            counts2 = bonds_entity_counts[k][1]
-            if counts1 == counts2 == len(v):
-                import copy
-
-                bond_dict_copy = copy.deepcopy(v[0])
-                del bond_dict_copy["copy1"]
-                del bond_dict_copy["copy2"]
-                merged_covalent_bonds.append(bond_dict_copy)
-            else:
-                merged_covalent_bonds.extend(v)
-
-        return merged_covalent_bonds
-
-    def _structure_to_protenix_json(self, structure: dict) -> dict[str, Any]:
-        """Convert Atomworks structure to Protenix input JSON.
-
-        Parameters
-        ----------
-        structure : dict
-            Atomworks structure dictionary.
-
-        Returns
-        -------
-        dict[str, Any]
-            Protenix-compatible JSON dictionary.
-        """
-        if "asym_unit" not in structure:
-            raise ValueError("structure must contain asym_unit key")
-
-        atom_array = structure["asym_unit"]
-        chain_info = structure.get("chain_info", {})
-
-        entity_seq = self._get_sequences(atom_array, chain_info)
-        atom_array = self._add_unique_chain_and_copy_ids(atom_array)
-
-        label_entity_id_to_sequences = {}
-        lig_chain_ids = []
-
-        for label_entity_id in np.unique(atom_array.label_entity_id):
-            entity_chain_type = None
-            for chain_id, info in chain_info.items():
-                chain_atom = atom_array[atom_array.chain_id == chain_id]
-                if len(chain_atom) > 0:
-                    if chain_atom[0].label_entity_id == label_entity_id:
-                        entity_chain_type = info["chain_type"]
-                        break
-
-            if entity_chain_type and not entity_chain_type.is_polymer():
-                current_lig_chain_ids = np.unique(
-                    atom_array.chain_id[atom_array.label_entity_id == label_entity_id]
-                ).tolist()
-                lig_chain_ids += current_lig_chain_ids
-
-                for chain_id in current_lig_chain_ids:
-                    lig_atom_array = atom_array[atom_array.chain_id == chain_id]
-                    starts = get_residue_starts(lig_atom_array, add_exclusive_stop=True)
-                    seq = lig_atom_array.res_name[starts[:-1]].tolist()
-                    label_entity_id_to_sequences[label_entity_id] = seq
-                    break
-
-        entity_id_to_mod_list = self._detect_modifications(atom_array, chain_info)
-
-        chain_starts = get_chain_starts(atom_array, add_exclusive_stop=False)
-        chain_starts_atom_array = atom_array[chain_starts]
-
-        json_dict = {"sequences": []}
-
-        unique_label_entity_id = np.unique(atom_array.label_entity_id)
-        all_entity_counts = {}
-        label_entity_id_to_entity_id_in_json = {}
-        entity_idx = 0
-
-        for label_entity_id in unique_label_entity_id:
-            entity_dict = {}
-            asym_chains = chain_starts_atom_array[
-                chain_starts_atom_array.label_entity_id == label_entity_id
-            ]
-
-            entity_chain_type: ChainType | None = None
-            for chain_id, info in chain_info.items():
-                chain_atom = atom_array[atom_array.chain_id == chain_id]
-                if len(chain_atom) > 0:
-                    if chain_atom[0].label_entity_id == label_entity_id:
-                        entity_chain_type = info["chain_type"]
-                        break
-
-            if not entity_chain_type:
-                continue
-
-            if entity_chain_type.is_polymer():
-                if entity_chain_type in (
-                    ChainType.POLYPEPTIDE_L,
-                    ChainType.POLYPEPTIDE_D,
-                ):
-                    entity_type = "proteinChain"
-                elif entity_chain_type == ChainType.DNA:
-                    entity_type = "dnaSequence"
-                elif entity_chain_type == ChainType.RNA:
-                    entity_type = "rnaSequence"
-                else:
-                    continue
-
-                sequence = entity_seq.get(label_entity_id, "")
-                entity_dict["sequence"] = sequence
-            else:
-                entity_type = "ligand"
-                lig_ccd = "_".join(
-                    label_entity_id_to_sequences.get(label_entity_id, ["UNK"])
-                )
-                entity_dict["ligand"] = f"CCD_{lig_ccd}"
-
-            entity_dict["count"] = len(asym_chains)
-            entity_idx += 1
-            entity_id_in_json = str(entity_idx)
-            label_entity_id_to_entity_id_in_json[label_entity_id] = entity_id_in_json
-            all_entity_counts[entity_id_in_json] = len(asym_chains)
-
-            if label_entity_id in entity_id_to_mod_list:
-                modifications = entity_id_to_mod_list[label_entity_id]
-                if entity_type == "proteinChain":
-                    entity_dict["modifications"] = [
-                        {"ptmPosition": position, "ptmType": mod_ccd_code}
-                        for position, mod_ccd_code in modifications
-                    ]
-                elif entity_type in ("dnaSequence", "rnaSequence"):
-                    entity_dict["modifications"] = [
-                        {
-                            "basePosition": position,
-                            "modificationType": mod_ccd_code,
-                        }
-                        for position, mod_ccd_code in modifications
-                    ]
-
-            json_dict["sequences"].append({entity_type: entity_dict})
-
-        atom_array = atom_array[
-            np.isin(
-                atom_array.label_entity_id,
-                list(label_entity_id_to_entity_id_in_json.keys()),
-            )
-        ]
-
-        entity_poly_type = {}
-        for chain_id, info in chain_info.items():
-            chain_atom = atom_array[atom_array.chain_id == chain_id]
-            if len(chain_atom) > 0:
-                label_entity_id = chain_atom[0].label_entity_id
-                chain_type = info["chain_type"]
-                if chain_type.is_polymer():
-                    if chain_type in (
-                        ChainType.POLYPEPTIDE_L,
-                        ChainType.POLYPEPTIDE_D,
-                    ):
-                        entity_poly_type[label_entity_id] = "polypeptide(L)"
-                    elif chain_type == ChainType.DNA:
-                        entity_poly_type[label_entity_id] = "polydeoxyribonucleotide"
-                    elif chain_type == ChainType.RNA:
-                        entity_poly_type[label_entity_id] = "polyribonucleotide"
-
-        if not hasattr(atom_array, "token_mol_type"):
-            token_mol_types = []
-            for i in range(len(atom_array)):
-                label_ent_id = atom_array.label_entity_id[i]
-                if label_ent_id in entity_poly_type:
-                    token_mol_types.append("PROTEIN")
-                else:
-                    token_mol_types.append("LIGAND")
-            atom_array.set_annotation("token_mol_type", np.array(token_mol_types))
-
-        has_modifications = len(entity_id_to_mod_list) > 0
-
-        lig_polymer_bonds = get_ligand_polymer_bond_mask(
-            atom_array, lig_include_ions=False
-        )
-        lig_lig_bonds = get_lig_lig_bonds(atom_array, lig_include_ions=False)
-
-        has_ligand_bonds = lig_polymer_bonds.size > 0 or lig_lig_bonds.size > 0
-
-        if has_modifications or has_ligand_bonds:
-            token_bonds_list = []
-
-            if has_ligand_bonds:
-                ligand_bonds = np.vstack((lig_polymer_bonds, lig_lig_bonds))
-                lig_indices = np.where(np.isin(atom_array.chain_id, lig_chain_ids))[0]
-                lig_bond_mask = np.any(
-                    np.isin(ligand_bonds[:, :2], lig_indices), axis=1
-                )
-                ligand_bonds = ligand_bonds[lig_bond_mask]
-                if ligand_bonds.size > 0:
-                    token_bonds_list.append(ligand_bonds)
-
-            if has_modifications:
-                polymer_polymer_bond = get_polymer_polymer_bond(
-                    atom_array, entity_poly_type
-                )
-                if polymer_polymer_bond.size > 0:
-                    token_bonds_list.append(polymer_polymer_bond)
-
-            if token_bonds_list:
-                token_bonds = np.vstack(token_bonds_list)
-                covalent_bonds = []
-                for atoms in token_bonds[:, :2]:
-                    bond_dict = {}
-                    for i in range(2):
-                        position = atom_array.res_id[atoms[i]]
-                        bond_dict[f"entity{i + 1}"] = int(
-                            label_entity_id_to_entity_id_in_json[
-                                atom_array.label_entity_id[atoms[i]]
-                            ]
-                        )
-                        bond_dict[f"position{i + 1}"] = int(position)
-                        bond_dict[f"atom{i + 1}"] = atom_array.atom_name[atoms[i]]
-                        bond_dict[f"copy{i + 1}"] = int(atom_array.copy_id[atoms[i]])
-
-                    covalent_bonds.append(bond_dict)
-
-                merged_covalent_bonds = self._merge_covalent_bonds(
-                    covalent_bonds, all_entity_counts
-                )
-                json_dict["covalent_bonds"] = merged_covalent_bonds
-
-        json_dict["name"] = structure.get("metadata", {}).get("name", "sample")
-
-        return json_dict
-
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
         """From an Atomworks structure, calculate Protenix input features.
 
@@ -668,6 +260,7 @@ class ProtenixWrapper:
         **kwargs : dict, optional
             Additional arguments for feature generation.
             - out_dir: Directory for saving intermediate JSON file
+            - use_msa: Whether to generate MSA features (default True)
 
         Returns
         -------
@@ -678,29 +271,72 @@ class ProtenixWrapper:
             "out_dir", structure.get("metadata", {}).get("id", "protenix_output")
         )
 
-        from protenix.data.infer_data_pipeline import InferenceDataset
+        _, json_dict = create_protenix_input_from_structure(structure, out_dir)
 
-        _, json_dict = create_protenix_input_from_structure(structure, out_dir, self)
+        sample2feat = SampleDictToFeatures(json_dict)
+        features_dict, atom_array_protenix, token_array = sample2feat.get_feature_dict()
+        features_dict["distogram_rep_atom_mask"] = torch.Tensor(
+            atom_array_protenix.distogram_rep_atom_mask
+        ).long()
 
-        dataset = cast(InferenceDataset, self.dataloader.dataset)
-        data, atom_array_protenix, _ = dataset.process_one(json_dict)
+        use_msa = kwargs.get("use_msa", True)
+        entity_to_asym_id = DataPipeline.get_label_entity_id_to_asym_id_int(
+            atom_array_protenix
+        )
+        msa_features = (
+            InferenceMSAFeaturizer.make_msa_feature(  # type: ignore (they forgot @staticmethod)
+                bioassembly=json_dict["sequences"],
+                entity_to_asym_id=entity_to_asym_id,
+                token_array=token_array,
+                atom_array=atom_array_protenix,
+            )
+            if use_msa
+            else {}
+        )
+
+        if self.esm_featurizer is not None:
+            x_esm = self.esm_featurizer(
+                token_array=token_array,
+                atom_array=atom_array_protenix,
+                bioassembly_dict=json_dict,
+                inference_mode=True,
+            )
+            features_dict["esm_token_embedding"] = x_esm
+
+        dummy_feats = ["template"]
+        if len(msa_features) == 0:
+            dummy_feats.append("msa")
+        else:
+            msa_features = dict_to_tensor(msa_features)
+            features_dict.update(msa_features)
+        features_dict = make_dummy_feature(
+            features_dict=features_dict,
+            dummy_feats=dummy_feats,
+        )
+
+        feat = cast(
+            dict[str, Any], data_type_transform(feat_or_label_dict=features_dict)
+        )
+
+        input_feature_dict = dict_to_tensor(feat)
+        for k, v in input_feature_dict.items():
+            if k != "sample_name":
+                input_feature_dict[k] = v.unsqueeze(0)
 
         atom_array = structure["asym_unit"]
         residues_with_occupancy = atom_array.occupancy > 0
 
         if "asym_unit" in structure:
             n_atoms_protenix = len(atom_array_protenix)
-            n_atoms_atomworks = len(structure["asym_unit"][0][residues_with_occupancy])
+            n_atoms_atomworks = len(atom_array[residues_with_occupancy])
             assert n_atoms_protenix == n_atoms_atomworks, (
                 f"Coordinate count mismatch: Protenix processed {n_atoms_protenix} "
                 f"atoms, Atomworks has {n_atoms_atomworks} atoms"
             )
 
-        features = cast(dict[str, Any], data["input_feature_dict"])
+        features = cast(dict[str, Any], input_feature_dict)
 
         if "asym_unit" in structure:
-            atom_array = structure["asym_unit"]
-            residues_with_occupancy = atom_array.occupancy > 0
             true_coords = atom_array.coord[residues_with_occupancy]
             if not isinstance(true_coords, torch.Tensor):
                 true_coords = torch.tensor(
@@ -771,12 +407,12 @@ class ProtenixWrapper:
 
         if kwargs.get("enable_diffusion_shared_vars_cache", True):
             outputs["pair_z"] = autocasting_disable_decorator(
-                self.model.configs.skip_amp.sample_diffusion
-            )(self.model.diffusion_module.diffusion_conditioning.prepare_cache)(
-                features["relp"], z, False
-            )
+                self.model.configs.skip_amp.sample_diffusion  # type: ignore (their ConfigDict lacks typing)
+            )(
+                self.model.diffusion_module.diffusion_conditioning.prepare_cache
+            )(features["relp"], z, False)
             outputs["p_lm/c_l"] = autocasting_disable_decorator(
-                self.model.configs.skip_amp.sample_diffusion
+                self.model.configs.skip_amp.sample_diffusion  # type: ignore (their ConfigDict lacks typing)
             )(self.model.diffusion_module.atom_attention_encoder.prepare_cache)(
                 features["ref_pos"],
                 features["ref_charge"],
