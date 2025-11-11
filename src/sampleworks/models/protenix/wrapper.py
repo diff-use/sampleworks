@@ -16,14 +16,23 @@ from protenix.data.data_pipeline import DataPipeline
 from protenix.data.json_to_feature import SampleDictToFeatures
 from protenix.data.msa_featurizer import InferenceMSAFeaturizer
 from protenix.data.utils import data_type_transform, make_dummy_feature
-from protenix.model.protenix import InferenceNoiseScheduler, Protenix
+from protenix.model.protenix import (
+    InferenceNoiseScheduler,
+    Protenix,
+    update_input_feature_dict,
+)
 from protenix.model.utils import centre_random_augmentation
 from protenix.utils.torch_utils import autocasting_disable_decorator, dict_to_tensor
 from runner.inference import download_infercence_cache as download_inference_cache
 from runner.msa_search import update_infer_json
 from torch import Tensor
 
-from .structure_processing import create_protenix_input_from_structure
+from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
+
+from .structure_processing import (
+    create_protenix_input_from_structure,
+    ensure_atom_array,
+)
 
 
 def weighted_rigid_align_differentiable(
@@ -346,8 +355,6 @@ class ProtenixWrapper:
             if k != "sample_name":
                 input_feature_dict[k] = v.unsqueeze(0)
 
-        from .structure_processing import ensure_atom_array
-
         atom_array = ensure_atom_array(structure["asym_unit"])
         residues_with_occupancy = atom_array.occupancy > 0
 
@@ -371,6 +378,11 @@ class ProtenixWrapper:
                     true_coords, device=self.device, dtype=torch.float32
                 )
             features["true_coords"] = true_coords
+
+        features = self.model.relative_position_encoding.generate_relp(features)
+        features = update_input_feature_dict(features)
+
+        send_tensors_in_dict_to_device(features, self.device, inplace=True)
 
         return features
 
