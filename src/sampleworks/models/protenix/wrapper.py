@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
 from logging import getLogger, Logger
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +20,7 @@ from protenix.model.protenix import InferenceNoiseScheduler, Protenix
 from protenix.model.utils import centre_random_augmentation
 from protenix.utils.torch_utils import autocasting_disable_decorator, dict_to_tensor
 from runner.inference import download_infercence_cache as download_inference_cache
+from runner.msa_search import update_infer_json
 from torch import Tensor
 
 from .structure_processing import create_protenix_input_from_structure
@@ -33,6 +33,34 @@ def weighted_rigid_align_differentiable(
     mask,
     allow_gradients: bool = True,
 ):
+    """Compute weighted alignment with optional gradient preservation.
+
+    Identical to boltz.model.loss.diffusion.weighted_rigid_align but without
+    the detach_() call when allow_gradients=True, enabling gradient flow.
+
+    I preserve the same parameter names as the original function, but note that
+    true_coords will be aligned to the pred_coords in both implementations.
+
+    Parameters
+    ----------
+    true_coords: torch.Tensor
+        The ground truth atom coordinates
+    pred_coords: torch.Tensor
+        The predicted atom coordinates
+    weights: torch.Tensor
+        The weights for alignment
+    mask: torch.Tensor
+        The atoms mask
+    allow_gradients: bool, optional
+        If True, preserve gradients through alignment. If False, detach
+        (matches original Boltz behavior). Default: True
+
+    Returns
+    -------
+    torch.Tensor
+        Aligned coordinates
+
+    """
     batch_size, num_points, dim = true_coords.shape
     weights = (mask * weights).unsqueeze(-1)
 
@@ -79,30 +107,6 @@ def weighted_rigid_align_differentiable(
         aligned_coords = aligned_coords.detach()
 
     return aligned_coords
-
-
-@dataclass
-class ProtenixPredictArgs:
-    """Arguments for Protenix model prediction."""
-
-    recycling_steps: int = 3
-    sampling_steps: int = 200
-    diffusion_samples: int = 1
-    num_ensemble: int = 1
-
-
-@dataclass
-class ProtenixDiffusionParams:
-    """Diffusion process parameters for Protenix."""
-
-    sigma_min: float = 1e-4
-    sigma_max: float = 160.0
-    sigma_data: float = 16.0
-    rho: float = 7.0
-    gamma0: float = 0.8
-    gamma_min: float = 1.0
-    noise_scale_lambda: float = 1.003
-    step_scale_eta: float = 1.5
 
 
 class ProtenixWrapper:
@@ -246,7 +250,7 @@ class ProtenixWrapper:
             s_max=cast(dict, self.configs.inference_noise_scheduler)["s_max"],
             s_min=cast(dict, self.configs.inference_noise_scheduler)["s_min"],
             rho=cast(dict, self.configs.inference_noise_scheduler)["rho"],
-            sigma_data=cast(dict, self.configs.sample_diffusion)["sigma_data"],
+            sigma_data=cast(dict, self.configs.inference_noise_scheduler)["sigma_data"],
         )
         return scheduler(N_step=num_steps, device=self.device)
 
@@ -271,7 +275,20 @@ class ProtenixWrapper:
             "out_dir", structure.get("metadata", {}).get("id", "protenix_output")
         )
 
-        _, json_dict = create_protenix_input_from_structure(structure, out_dir)
+        json_path, json_dict = create_protenix_input_from_structure(structure, out_dir)
+
+        use_msa = kwargs.get("use_msa", True)
+        if use_msa:
+            import json
+
+            updated_json_path = update_infer_json(
+                json_file=str(json_path),
+                out_dir=str(out_dir),
+                use_msa=True,
+            )
+            with open(updated_json_path) as f:
+                json_data = json.load(f)
+                json_dict = json_data[0]
 
         sample2feat = SampleDictToFeatures(json_dict)
         features_dict, atom_array_protenix, token_array = sample2feat.get_feature_dict()
@@ -279,7 +296,6 @@ class ProtenixWrapper:
             atom_array_protenix.distogram_rep_atom_mask
         ).long()
 
-        use_msa = kwargs.get("use_msa", True)
         entity_to_asym_id = DataPipeline.get_label_entity_id_to_asym_id_int(
             atom_array_protenix
         )
@@ -318,20 +334,32 @@ class ProtenixWrapper:
             dict[str, Any], data_type_transform(feat_or_label_dict=features_dict)
         )
 
+        if "constraint_feature" in feat and isinstance(
+            feat["constraint_feature"], dict
+        ):
+            for k, v in feat["constraint_feature"].items():
+                feat[f"constraint_feature_{k}"] = v
+            del feat["constraint_feature"]
+
         input_feature_dict = dict_to_tensor(feat)
         for k, v in input_feature_dict.items():
             if k != "sample_name":
                 input_feature_dict[k] = v.unsqueeze(0)
 
-        atom_array = structure["asym_unit"]
+        from .structure_processing import ensure_atom_array
+
+        atom_array = ensure_atom_array(structure["asym_unit"])
         residues_with_occupancy = atom_array.occupancy > 0
 
         if "asym_unit" in structure:
             n_atoms_protenix = len(atom_array_protenix)
             n_atoms_atomworks = len(atom_array[residues_with_occupancy])
-            assert n_atoms_protenix == n_atoms_atomworks, (
-                f"Coordinate count mismatch: Protenix processed {n_atoms_protenix} "
-                f"atoms, Atomworks has {n_atoms_atomworks} atoms"
+            atom_diff = abs(n_atoms_protenix - n_atoms_atomworks)
+            assert atom_diff <= 1, (
+                f"Coordinate count mismatch: Protenix processed "
+                f"{n_atoms_protenix} atoms, Atomworks has {n_atoms_atomworks} "
+                f"atoms (difference: {atom_diff}). Expected difference <= 1 "
+                f"(for terminal OXT)"
             )
 
         features = cast(dict[str, Any], input_feature_dict)
