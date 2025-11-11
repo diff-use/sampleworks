@@ -7,7 +7,7 @@ from site import getsitepackages
 import pytest
 import torch
 from atomworks.io.parser import parse
-from sampleworks.utils.setup import try_gpu
+from sampleworks.utils.torch_utils import try_gpu
 
 
 try:

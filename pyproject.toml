@@ -5,11 +5,11 @@ requires = ["hatchling"]
 [dependency-groups]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright"]
-protenix = ["protenix>=0.6.3", "einx"]
+protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
-dependencies = ["atomworks[ml]", "dotenv", "jaxtyping"]
+dependencies = ["atomworks[ml]", "dotenv", "jaxtyping", "jax"]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
@@ -26,6 +26,9 @@ boltz = {features = ["boltz"]}
 boltz-dev = {features = ["boltz", "dev"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
+
+[tool.pixi.feature.protenix.activation.env]
+PYTHONNOUSERSITE = "1"
 
 [tool.pixi.feature.protenix.pypi-options.dependency-overrides]
 rdkit = ">=2024.3.5,<2025.9"

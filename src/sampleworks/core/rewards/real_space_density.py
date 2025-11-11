@@ -13,7 +13,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
 )
-from sampleworks.utils.setup import try_gpu
+from sampleworks.utils.torch_utils import try_gpu
 
 
 def setup_scattering_params(structure: dict, em: bool = False):

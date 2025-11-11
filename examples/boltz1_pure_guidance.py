@@ -16,7 +16,7 @@ from sampleworks.core.rewards.real_space_density import (
 )
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.models.boltz.wrapper import Boltz1Wrapper
-from sampleworks.utils.setup import try_gpu
+from sampleworks.utils.torch_utils import try_gpu
 
 
 def parse_args():
