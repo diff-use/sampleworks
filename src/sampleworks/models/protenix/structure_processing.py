@@ -15,18 +15,48 @@ from protenix.data.utils import (
 )
 
 
+def ensure_atom_array(atom_array):
+    """Convert AtomArrayStack to AtomArray by extracting first frame.
+
+    Parameters
+    ----------
+    atom_array : AtomArray or AtomArrayStack
+        Input structure from atomworks.parse().
+
+    Returns
+    -------
+    AtomArray
+        Single-frame AtomArray. If input is AtomArrayStack, returns first frame.
+        If input is AtomArray, returns unchanged.
+
+    Notes
+    -----
+    atomworks.parse() always returns AtomArrayStack for asym_unit.
+    Since annotations (chain_id, entity_id, etc.) are identical across
+    all frames, we extract the first frame for metadata processing.
+    """
+    if hasattr(atom_array, "stack_depth"):
+        return atom_array[0]
+    return atom_array
+
+
 def add_unique_chain_and_copy_ids(atom_array):
     """Add unique chain_id and copy_id annotations to AtomArray.
 
     Parameters
     ----------
     atom_array : AtomArray
-        Biotite AtomArray to annotate.
+        Biotite AtomArray to annotate (not AtomArrayStack).
 
     Returns
     -------
     AtomArray
         Annotated AtomArray with chain_id and copy_id fields.
+
+    Notes
+    -----
+    Expects AtomArray, not AtomArrayStack. Use ensure_atom_array() first
+    if working with atomworks.parse() output.
     """
     chain_starts = get_chain_starts(atom_array, add_exclusive_stop=False)
     chain_starts_atom_array = atom_array[chain_starts]
@@ -53,7 +83,7 @@ def get_sequences(atom_array, chain_info):
     Parameters
     ----------
     atom_array : AtomArray
-        Biotite AtomArray containing structure.
+        Biotite AtomArray containing structure (not AtomArrayStack).
     chain_info : dict[str, Any]
         Atomworks chain information dictionary.
 
@@ -61,6 +91,11 @@ def get_sequences(atom_array, chain_info):
     -------
     dict[str, str]
         Mapping from label_entity_id to sequence string.
+
+    Notes
+    -----
+    Expects AtomArray, not AtomArrayStack. Use ensure_atom_array() first
+    if working with atomworks.parse() output.
     """
     entity_seq = {}
     for label_entity_id in np.unique(atom_array.label_entity_id):
@@ -83,7 +118,7 @@ def get_poly_res_names(atom_array, chain_info):
     Parameters
     ----------
     atom_array : AtomArray
-        Biotite AtomArray containing structure.
+        Biotite AtomArray containing structure (not AtomArrayStack).
     chain_info : dict[str, Any]
         Atomworks chain information dictionary.
 
@@ -91,6 +126,11 @@ def get_poly_res_names(atom_array, chain_info):
     -------
     dict[str, list[str]]
         Mapping from label_entity_id to list of residue names.
+
+    Notes
+    -----
+    Expects AtomArray, not AtomArrayStack. Use ensure_atom_array() first
+    if working with atomworks.parse() output.
     """
     poly_res_names = {}
     for label_entity_id in np.unique(atom_array.label_entity_id):
@@ -118,7 +158,7 @@ def detect_modifications(atom_array, chain_info):
     Parameters
     ----------
     atom_array : AtomArray
-        Biotite AtomArray containing structure.
+        Biotite AtomArray containing structure (not AtomArrayStack).
     chain_info : dict[str, Any]
         Atomworks chain information dictionary.
 
@@ -126,6 +166,11 @@ def detect_modifications(atom_array, chain_info):
     -------
     dict[str, list[tuple[int, str]]]
         Mapping from label_entity_id to list of (position, mod_ccd_code).
+
+    Notes
+    -----
+    Expects AtomArray, not AtomArrayStack. Use ensure_atom_array() first
+    if working with atomworks.parse() output.
     """
     entity_id_to_mod_list = {}
     poly_res_names = get_poly_res_names(atom_array, chain_info)
@@ -195,18 +240,40 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     Parameters
     ----------
     structure : dict
-        Atomworks structure dictionary.
+        Atomworks structure dictionary with 'asym_unit' key containing
+        AtomArray or AtomArrayStack.
 
     Returns
     -------
     dict[str, Any]
         Protenix-compatible JSON dictionary.
+
+    Notes
+    -----
+    Automatically handles both AtomArray and AtomArrayStack inputs.
+    For AtomArrayStack, extracts first frame since annotations are
+    identical across all frames.
     """
     if "asym_unit" not in structure:
         raise ValueError("structure must contain asym_unit key")
 
     atom_array = structure["asym_unit"]
+    atom_array = ensure_atom_array(atom_array)
     chain_info = structure.get("chain_info", {})
+
+    if not hasattr(atom_array, "label_entity_id"):
+        chain_to_entity = {}
+        for chain_id, info in chain_info.items():
+            entity_id = info.get("rcsb_entity", chain_id)
+            chain_to_entity[chain_id] = str(entity_id)
+
+        label_entity_ids = np.array(
+            [chain_to_entity.get(cid, cid) for cid in atom_array.chain_id]
+        )
+        atom_array.set_annotation("label_entity_id", label_entity_ids)
+
+    if not hasattr(atom_array, "label_asym_id"):
+        atom_array.set_annotation("label_asym_id", atom_array.chain_id)
 
     entity_seq = get_sequences(atom_array, chain_info)
     atom_array = add_unique_chain_and_copy_ids(atom_array)
@@ -280,6 +347,8 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
             sequence = entity_seq.get(label_entity_id, "")
             entity_dict["sequence"] = sequence
+            if entity_type == "proteinChain":
+                entity_dict["msa"] = {}
         else:
             entity_type = "ligand"
             lig_ccd = "_".join(
@@ -344,6 +413,16 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             else:
                 token_mol_types.append("LIGAND")
         atom_array.set_annotation("token_mol_type", np.array(token_mol_types))
+
+    if not hasattr(atom_array, "mol_type"):
+        mol_types = []
+        for i in range(len(atom_array)):
+            label_ent_id = atom_array.label_entity_id[i]
+            if label_ent_id in entity_poly_type:
+                mol_types.append("protein")
+            else:
+                mol_types.append("ligand")
+        atom_array.set_annotation("mol_type", np.array(mol_types))
 
     has_modifications = len(entity_id_to_mod_list) > 0
 
