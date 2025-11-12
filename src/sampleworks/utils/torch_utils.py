@@ -52,7 +52,8 @@ def try_gpu():
 
         print(
             "Returning GPU{} with {} free MiB".format(
-                idx, gpu_df.iloc[idx]["memory.free"]
+                idx,
+                gpu_df.iloc[idx]["memory.free"],  # type: ignore (index will be convertible to int)
             )
         )
 

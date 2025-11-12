@@ -2,11 +2,19 @@ import copy
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from atomworks.enums import ChainType
-from biotite.structure import get_chain_starts, get_residue_starts
+from biotite.structure import (
+    array,
+    Atom,
+    AtomArray,
+    AtomArrayStack,
+    concatenate,
+    get_chain_starts,
+    get_residue_starts,
+)
 from protenix.data.constants import STD_RESIDUES
 from protenix.data.utils import (
     get_lig_lig_bonds,
@@ -15,7 +23,7 @@ from protenix.data.utils import (
 )
 
 
-def ensure_atom_array(atom_array):
+def ensure_atom_array(atom_array: AtomArray | AtomArrayStack) -> AtomArray:
     """Convert AtomArrayStack to AtomArray by extracting first frame.
 
     Parameters
@@ -35,9 +43,123 @@ def ensure_atom_array(atom_array):
     Since annotations (chain_id, entity_id, etc.) are identical across
     all frames, we extract the first frame for metadata processing.
     """
-    if hasattr(atom_array, "stack_depth"):
-        return atom_array[0]
+    if isinstance(atom_array, AtomArrayStack):
+        return cast(AtomArray, atom_array[0])
     return atom_array
+
+
+def add_terminal_oxt_atoms(atom_array: AtomArray, chain_info: dict) -> AtomArray:
+    """Add terminal OXT atoms to C-terminal residues of protein chains with
+    ideal geometry.
+
+    Parameters
+    ----------
+    atom_array : AtomArray
+        Biotite AtomArray to process (not AtomArrayStack).
+    chain_info : dict[str, Any]
+        Atomworks chain information dictionary.
+
+    Returns
+    -------
+    AtomArray
+        AtomArray with OXT atoms added to C-termini of protein chains.
+    """
+    new_oxt_atoms = []
+    chain_starts = get_chain_starts(atom_array, add_exclusive_stop=True)
+
+    for i in range(len(chain_starts) - 1):
+        chain_start = chain_starts[i]
+        chain_end = chain_starts[i + 1]
+        chain_atoms = cast(AtomArray, atom_array[chain_start:chain_end])
+        chain_id = chain_atoms[0].chain_id
+
+        if chain_id not in chain_info:
+            continue
+
+        chain_type = chain_info[chain_id]["chain_type"]
+        if chain_type not in (ChainType.POLYPEPTIDE_L, ChainType.POLYPEPTIDE_D):
+            continue
+
+        residue_starts = get_residue_starts(chain_atoms, add_exclusive_stop=True)
+        if len(residue_starts) < 2:
+            continue
+
+        last_res_start = residue_starts[-2]
+        last_res_end = residue_starts[-1]
+        terminal_residue = cast(AtomArray, chain_atoms[last_res_start:last_res_end])
+
+        if "OXT" in cast(np.ndarray, terminal_residue.atom_name):
+            # check that OXT has coordinates
+            oxt_mask = terminal_residue.atom_name == "OXT"
+            oxt_atom = cast(AtomArray, terminal_residue[oxt_mask])
+            if not np.isnan(cast(np.ndarray, oxt_atom.coord)).any():
+                continue
+
+        c_mask = terminal_residue.atom_name == "C"
+        o_mask = terminal_residue.atom_name == "O"
+        ca_mask = terminal_residue.atom_name == "CA"
+
+        if not (c_mask.any() and o_mask.any() and ca_mask.any()):
+            continue
+
+        c_atom = cast(AtomArray, terminal_residue[c_mask])[0]
+        o_atom = cast(AtomArray, terminal_residue[o_mask])[0]
+        ca_atom = cast(AtomArray, terminal_residue[ca_mask])[0]
+
+        c_coord = cast(np.ndarray, c_atom.coord)
+        o_coord = cast(np.ndarray, o_atom.coord)
+        ca_coord = cast(np.ndarray, ca_atom.coord)
+
+        c_to_o = o_coord - c_coord
+        c_to_ca = ca_coord - c_coord
+
+        c_o_distance = np.linalg.norm(c_to_o)
+
+        plane_normal = np.cross(c_to_ca, c_to_o)
+        plane_normal_length = np.linalg.norm(plane_normal)
+
+        if plane_normal_length < 1e-6:
+            plane_normal = np.array([0.0, 0.0, 1.0])
+            if abs(np.dot(c_to_o / c_o_distance, plane_normal)) > 0.9:
+                plane_normal = np.array([1.0, 0.0, 0.0])
+        else:
+            plane_normal = plane_normal / plane_normal_length
+
+        angle = np.deg2rad(126.0)
+
+        c_to_o_normalized = c_to_o / c_o_distance
+
+        cos_angle = np.cos(angle)
+        sin_angle = np.sin(angle)
+
+        rotated = (
+            c_to_o_normalized * cos_angle
+            + np.cross(plane_normal, c_to_o_normalized) * sin_angle
+            + plane_normal * np.dot(plane_normal, c_to_o_normalized) * (1 - cos_angle)
+        )
+
+        oxt_coord = c_coord + rotated * c_o_distance
+
+        oxt_annotations = {}
+        for annotation in atom_array.get_annotation_categories():
+            oxt_annotations[annotation] = getattr(o_atom, annotation)
+
+        oxt_annotations["atom_name"] = "OXT"
+        oxt_annotations["element"] = "O"
+        oxt_annotations["coord"] = oxt_coord
+
+        oxt_atom = Atom(**oxt_annotations)
+
+        new_oxt_atoms.append(oxt_atom)
+
+    if not new_oxt_atoms:
+        return atom_array
+
+    oxt_atom_array = array([oxt_atom for oxt_atom in new_oxt_atoms])
+
+    combined_array = concatenate([atom_array, oxt_atom_array])
+
+    return cast(AtomArray, combined_array)  # type: ignore (concatenate returns AtomArray if inputs are AtomArray)
 
 
 def add_unique_chain_and_copy_ids(atom_array):
@@ -261,6 +383,8 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     atom_array = ensure_atom_array(atom_array)
     chain_info = structure.get("chain_info", {})
 
+    atom_array = add_terminal_oxt_atoms(atom_array, chain_info)
+
     if not hasattr(atom_array, "label_entity_id"):
         chain_to_entity = {}
         for chain_id, info in chain_info.items():
@@ -268,7 +392,10 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             chain_to_entity[chain_id] = str(entity_id)
 
         label_entity_ids = np.array(
-            [chain_to_entity.get(cid, cid) for cid in atom_array.chain_id]
+            [
+                chain_to_entity.get(cid, cid)
+                for cid in cast(np.ndarray, atom_array.chain_id)
+            ]
         )
         atom_array.set_annotation("label_entity_id", label_entity_ids)
 
@@ -281,50 +408,61 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     label_entity_id_to_sequences = {}
     lig_chain_ids = []
 
-    for label_entity_id in np.unique(atom_array.label_entity_id):
+    for label_entity_id in np.unique(cast(np.ndarray, atom_array.label_entity_id)):
         entity_chain_type = None
         for chain_id, info in chain_info.items():
             chain_atom = atom_array[atom_array.chain_id == chain_id]
-            if len(chain_atom) > 0:
+            if (
+                isinstance(chain_atom, AtomArray | AtomArrayStack)
+                and len(chain_atom) > 0
+            ):
                 if chain_atom[0].label_entity_id == label_entity_id:
                     entity_chain_type = info["chain_type"]
                     break
 
         if entity_chain_type and not entity_chain_type.is_polymer():
             current_lig_chain_ids = np.unique(
-                atom_array.chain_id[atom_array.label_entity_id == label_entity_id]
+                cast(np.ndarray, atom_array.chain_id)[
+                    atom_array.label_entity_id == label_entity_id
+                ]
             ).tolist()
             lig_chain_ids += current_lig_chain_ids
 
             for chain_id in current_lig_chain_ids:
                 lig_atom_array = atom_array[atom_array.chain_id == chain_id]
                 starts = get_residue_starts(lig_atom_array, add_exclusive_stop=True)
-                seq = lig_atom_array.res_name[starts[:-1]].tolist()
+                seq = cast(np.ndarray, lig_atom_array.res_name)[starts[:-1]].tolist()
                 label_entity_id_to_sequences[label_entity_id] = seq
                 break
 
     entity_id_to_mod_list = detect_modifications(atom_array, chain_info)
 
     chain_starts = get_chain_starts(atom_array, add_exclusive_stop=False)
-    chain_starts_atom_array = atom_array[chain_starts]
+    chain_starts_atom_array = cast(AtomArray, atom_array[chain_starts])
 
     json_dict = {"sequences": []}
 
-    unique_label_entity_id = np.unique(atom_array.label_entity_id)
+    unique_label_entity_id = np.unique(cast(np.ndarray, atom_array.label_entity_id))
     all_entity_counts = {}
     label_entity_id_to_entity_id_in_json = {}
     entity_idx = 0
 
     for label_entity_id in unique_label_entity_id:
         entity_dict = {}
-        asym_chains = chain_starts_atom_array[
-            chain_starts_atom_array.label_entity_id == label_entity_id
-        ]
+        asym_chains = cast(
+            AtomArray,
+            chain_starts_atom_array[
+                chain_starts_atom_array.label_entity_id == label_entity_id
+            ],
+        )
 
         entity_chain_type: ChainType | None = None
         for chain_id, info in chain_info.items():
             chain_atom = atom_array[atom_array.chain_id == chain_id]
-            if len(chain_atom) > 0:
+            if (
+                isinstance(chain_atom, AtomArray | AtomArrayStack)
+                and len(chain_atom) > 0
+            ):
                 if chain_atom[0].label_entity_id == label_entity_id:
                     entity_chain_type = info["chain_type"]
                     break
@@ -380,16 +518,19 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
         json_dict["sequences"].append({entity_type: entity_dict})
 
-    atom_array = atom_array[
-        np.isin(
-            atom_array.label_entity_id,
-            list(label_entity_id_to_entity_id_in_json.keys()),
-        )
-    ]
+    atom_array = cast(
+        AtomArray,
+        atom_array[
+            np.isin(
+                cast(np.ndarray, atom_array.label_entity_id),
+                list(label_entity_id_to_entity_id_in_json.keys()),
+            )
+        ],
+    )
 
     entity_poly_type = {}
     for chain_id, info in chain_info.items():
-        chain_atom = atom_array[atom_array.chain_id == chain_id]
+        chain_atom = cast(AtomArray, atom_array[atom_array.chain_id == chain_id])
         if len(chain_atom) > 0:
             label_entity_id = chain_atom[0].label_entity_id
             chain_type = info["chain_type"]
@@ -407,7 +548,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     if not hasattr(atom_array, "token_mol_type"):
         token_mol_types = []
         for i in range(len(atom_array)):
-            label_ent_id = atom_array.label_entity_id[i]
+            label_ent_id = cast(np.ndarray, atom_array.label_entity_id)[i]
             if label_ent_id in entity_poly_type:
                 token_mol_types.append("PROTEIN")
             else:
@@ -417,7 +558,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     if not hasattr(atom_array, "mol_type"):
         mol_types = []
         for i in range(len(atom_array)):
-            label_ent_id = atom_array.label_entity_id[i]
+            label_ent_id = cast(np.ndarray, atom_array.label_entity_id)[i]
             if label_ent_id in entity_poly_type:
                 mol_types.append("protein")
             else:
@@ -436,7 +577,9 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
         if has_ligand_bonds:
             ligand_bonds = np.vstack((lig_polymer_bonds, lig_lig_bonds))
-            lig_indices = np.where(np.isin(atom_array.chain_id, lig_chain_ids))[0]
+            lig_indices = np.where(
+                np.isin(cast(np.ndarray, atom_array.chain_id), lig_chain_ids)
+            )[0]
             lig_bond_mask = np.any(np.isin(ligand_bonds[:, :2], lig_indices), axis=1)
             ligand_bonds = ligand_bonds[lig_bond_mask]
             if ligand_bonds.size > 0:
@@ -455,15 +598,19 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             for atoms in token_bonds[:, :2]:
                 bond_dict = {}
                 for i in range(2):
-                    position = atom_array.res_id[atoms[i]]
+                    position = cast(np.ndarray, atom_array.res_id)[atoms[i]]
                     bond_dict[f"entity{i + 1}"] = int(
                         label_entity_id_to_entity_id_in_json[
-                            atom_array.label_entity_id[atoms[i]]
+                            atom_array.get_annotation("label_entity_id")[atoms[i]]
                         ]
                     )
                     bond_dict[f"position{i + 1}"] = int(position)
-                    bond_dict[f"atom{i + 1}"] = atom_array.atom_name[atoms[i]]
-                    bond_dict[f"copy{i + 1}"] = int(atom_array.copy_id[atoms[i]])
+                    bond_dict[f"atom{i + 1}"] = cast(np.ndarray, atom_array.atom_name)[
+                        atoms[i]
+                    ]
+                    bond_dict[f"copy{i + 1}"] = int(
+                        atom_array.get_annotation("copy_id")[atoms[i]]
+                    )
 
                 covalent_bonds.append(bond_dict)
 
