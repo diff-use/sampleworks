@@ -112,7 +112,7 @@ def protenix_checkpoint_path() -> Path:
         pytest.skip("Protenix dependencies not installed in this environment")
     path = (
         Path(getsitepackages()[0])
-        / "release_data/checkpoint//protenix_base_default_v0.5.0.pt"
+        / "release_data/checkpoint/protenix_base_default_v0.5.0.pt"
     )
     if not path.exists():
         pytest.skip(f"Protenix checkpoint not found at {path}")
