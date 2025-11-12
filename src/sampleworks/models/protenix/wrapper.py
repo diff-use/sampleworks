@@ -9,7 +9,7 @@ from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
 from configs.configs_model_type import model_configs
 from einops import einsum
-from jaxtyping import ArrayLike, Float
+from jaxtyping import Array, ArrayLike, Float
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
 from protenix.data.data_pipeline import DataPipeline
@@ -30,6 +30,7 @@ from torch import Tensor
 from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
 
 from .structure_processing import (
+    add_terminal_oxt_atoms,
     create_protenix_input_from_structure,
     ensure_atom_array,
 )
@@ -351,28 +352,36 @@ class ProtenixWrapper:
             del feat["constraint_feature"]
 
         input_feature_dict = dict_to_tensor(feat)
+        features_without_batch_dim = {
+            "atom_to_token_idx",
+            "d_lm",
+            "v_lm",
+            "pad_info",
+        }
         for k, v in input_feature_dict.items():
-            if k != "sample_name":
+            if k != "sample_name" and k not in features_without_batch_dim:
                 input_feature_dict[k] = v.unsqueeze(0)
 
         atom_array = ensure_atom_array(structure["asym_unit"])
-        residues_with_occupancy = atom_array.occupancy > 0
+        atom_array = add_terminal_oxt_atoms(
+            atom_array=atom_array, chain_info=structure.get("chain_info", {})
+        )
+        residues_with_occupancy = cast(Array, atom_array.occupancy) > 0
 
         if "asym_unit" in structure:
             n_atoms_protenix = len(atom_array_protenix)
-            n_atoms_atomworks = len(atom_array[residues_with_occupancy])
+            n_atoms_atomworks = len(cast(Array, atom_array[residues_with_occupancy]))
             atom_diff = abs(n_atoms_protenix - n_atoms_atomworks)
-            assert atom_diff <= 1, (
+            assert atom_diff == 0, (
                 f"Coordinate count mismatch: Protenix processed "
                 f"{n_atoms_protenix} atoms, Atomworks has {n_atoms_atomworks} "
-                f"atoms (difference: {atom_diff}). Expected difference <= 1 "
-                f"(for terminal OXT)"
+                f"atoms (difference: {atom_diff}). Maybe missing terminal OXT?"
             )
 
         features = cast(dict[str, Any], input_feature_dict)
 
         if "asym_unit" in structure:
-            true_coords = atom_array.coord[residues_with_occupancy]
+            true_coords = cast(Array, atom_array.coord)[residues_with_occupancy]
             if not isinstance(true_coords, torch.Tensor):
                 true_coords = torch.tensor(
                     true_coords, device=self.device, dtype=torch.float32
@@ -422,6 +431,7 @@ class ProtenixWrapper:
                 # chunk_size=chunk_size, # Default in Protenix is 4
             )
 
+        features = dict(features)  # in place modification safety
         keys_to_delete = []
         for key in features.keys():
             if "template_" in key or key in [
@@ -497,7 +507,7 @@ class ProtenixWrapper:
             Additional keyword arguments for Protenix denoising.
             - t_hat: float, optional
                 Precomputed t_hat value; computed internally if not provided.
-            - delta_noise_level: Tensor, optional
+            - eps: Tensor, optional
                 Precomputed noise tensor; sampled internally if not provided.
             - augmentation: bool, optional
                 Apply coordinate augmentation when True (default True).
@@ -530,12 +540,10 @@ class ProtenixWrapper:
         with torch.set_grad_enabled(grad_needed):
             if "t_hat" in kwargs and "eps" in kwargs:
                 t_hat = kwargs["t_hat"]
-                delta_noise_level = cast(Tensor, kwargs["delta_noise_level"])
+                eps = cast(Tensor, kwargs["eps"])
             else:
                 timestep_scaling = self.get_timestep_scaling(timestep)
-                delta_noise_level = timestep_scaling[
-                    "delta_noise_level"
-                ] * torch.randn_like(noisy_coords)
+                eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
                 t_hat = timestep_scaling["t_hat"]
 
             if kwargs.get("augmentation", True):
@@ -545,7 +553,7 @@ class ProtenixWrapper:
                     .to(noisy_coords.dtype)
                 )
 
-            noisy_coords_eps = noisy_coords + delta_noise_level
+            noisy_coords_eps = noisy_coords + eps
 
             t_hat_tensor = torch.tensor(
                 [t_hat], device=noisy_coords.device, dtype=noisy_coords.dtype
@@ -668,7 +676,12 @@ class ProtenixWrapper:
             )
 
         residues_with_occupancy = structure["asym_unit"].occupancy > 0
-        coords = structure["asym_unit"].coord[:, residues_with_occupancy]
+        atom_array = ensure_atom_array(structure["asym_unit"])[residues_with_occupancy]
+        atom_array = add_terminal_oxt_atoms(
+            atom_array=atom_array,  # type: ignore (atom_array will be AtomArray)
+            chain_info=structure.get("chain_info", {}),
+        )
+        coords = cast(Array, atom_array.coord)
 
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
