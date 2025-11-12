@@ -543,11 +543,11 @@ class Boltz2Wrapper:
     def denoise_step(
         self,
         features: dict[str, Any],
-        noisy_coords: Float[Tensor, "..."],
-        timestep: int,
+        noisy_coords: Float[ArrayLike | Tensor, "..."],
+        timestep: float | int,
         grad_needed: bool = False,
         **kwargs,
-    ) -> dict[str, Tensor]:
+    ) -> dict[str, Any]:
         """
         Perform denoising at given timestep/noise level.
         Returns predicted clean sample or predicted noise depending on
@@ -627,6 +627,11 @@ class Boltz2Wrapper:
             )
 
         features = self.cached_representations
+
+        if not isinstance(noisy_coords, torch.Tensor):
+            noisy_coords = torch.tensor(
+                noisy_coords, device=self.device, dtype=torch.float32
+            )
 
         s = features.get("s", None)
         z = features.get("z", None)
@@ -752,13 +757,13 @@ class Boltz2Wrapper:
         """
         return self.noise_schedule
 
-    def get_timestep_scaling(self, timestep: int) -> dict[str, float]:
+    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
         """
         Return scaling constants for Boltz.
 
         Parameters
         ----------
-        timestep : int
+        timestep : float | int
             Current timestep/noise level. (starts from 0)
 
         Returns
@@ -789,15 +794,15 @@ class Boltz2Wrapper:
         }
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: int, **kwargs
-    ) -> Float[Tensor, "*batch _num_atoms 3"]:
+        self, structure: dict, noise_level: float | int, **kwargs
+    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
         Parameters
         ----------
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : int
+        noise_level : float | int
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -806,7 +811,7 @@ class Boltz2Wrapper:
 
         Returns
         -------
-        Float[Tensor, "*batch _num_atoms 3"]
+        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
             Noisy structure coordinates for atoms that have nonzero occupancy.
         """
         if "asym_unit" not in structure:
@@ -832,7 +837,7 @@ class Boltz2Wrapper:
             noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
         else:
             noisy_coords = coords + self.noise_schedule["sigma_tm"][
-                noise_level
+                int(noise_level)
             ] * torch.randn_like(coords)
 
         return noisy_coords
@@ -1049,13 +1054,13 @@ class Boltz1Wrapper:
         """
         return self.noise_schedule
 
-    def get_timestep_scaling(self, timestep: int) -> dict[str, float]:
+    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
         """
         Return scaling constants for Boltz1.
 
         Parameters
         ----------
-        timestep : int
+        timestep : float | int
             Current timestep/noise level.
 
         Returns
@@ -1167,8 +1172,8 @@ class Boltz1Wrapper:
     def denoise_step(
         self,
         features: dict[str, Any],
-        noisy_coords: Float[Tensor, "..."],
-        timestep: int,
+        noisy_coords: Float[ArrayLike | Tensor, "..."],
+        timestep: float | int,
         grad_needed: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
@@ -1183,7 +1188,7 @@ class Boltz1Wrapper:
             Model features produced by :meth:`featurize`.
         noisy_coords : Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
-        timestep : int
+        timestep : float | int
             Current timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -1249,6 +1254,10 @@ class Boltz1Wrapper:
             )
 
         features = self.cached_representations
+        if not isinstance(noisy_coords, torch.Tensor):
+            noisy_coords = torch.tensor(
+                noisy_coords, device=self.device, dtype=torch.float32
+            )
 
         s = features.get("s", None)
         z = features.get("z", None)
@@ -1359,15 +1368,15 @@ class Boltz1Wrapper:
         return {"atom_coords_denoised": atom_coords_denoised}
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: int, **kwargs
-    ) -> Float[Tensor, "*batch _num_atoms 3"]:
+        self, structure: dict, noise_level: float | int, **kwargs
+    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
         Parameters
         ----------
         structure : dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : int
+        noise_level : float | int
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
@@ -1376,7 +1385,7 @@ class Boltz1Wrapper:
 
         Returns
         -------
-        Float[Tensor, "*batch _num_atoms 3"]
+        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
             Noisy structure coordinates for atoms that have nonzero occupancy.
         """
         if "asym_unit" not in structure:
@@ -1402,7 +1411,7 @@ class Boltz1Wrapper:
             noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
         else:
             noisy_coords = coords + self.noise_schedule["sigma_tm"][
-                noise_level
+                int(noise_level)
             ] * torch.randn_like(coords)
 
         return noisy_coords

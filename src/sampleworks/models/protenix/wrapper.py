@@ -486,20 +486,20 @@ class ProtenixWrapper:
     def denoise_step(
         self,
         features: dict[str, Any],
-        noisy_coords: Float[Tensor, "..."],
-        timestep: float,
+        noisy_coords: Float[ArrayLike | Tensor, "..."],
+        timestep: float | int,
         grad_needed: bool = False,
         **kwargs,
-    ) -> dict[str, Tensor]:
+    ) -> dict[str, Any]:
         """Perform denoising at given timestep for Protenix model.
 
         Parameters
         ----------
         features : dict[str, Any]
             Model features produced by featurize or step.
-        noisy_coords : Float[Tensor, "..."]
+        noisy_coords : Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at the current timestep.
-        timestep : float
+        timestep : float | int
             Current timestep or noise level in reverse time (starts from 0).
         grad_needed : bool, optional
             Whether gradients are needed for this pass, by default False.
@@ -536,6 +536,10 @@ class ProtenixWrapper:
             self.cached_representations = self.step(features, grad_needed=grad_needed)
 
         outputs = self.cached_representations
+        if not isinstance(noisy_coords, torch.Tensor):
+            noisy_coords = torch.tensor(
+                noisy_coords, device=self.device, dtype=torch.float32
+            )
 
         with torch.set_grad_enabled(grad_needed):
             if "t_hat" in kwargs and "eps" in kwargs:
@@ -623,12 +627,12 @@ class ProtenixWrapper:
         """
         return self.noise_schedule
 
-    def get_timestep_scaling(self, timestep: float) -> dict[str, float]:
+    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
         """Return scaling constants for Protenix diffusion at given timestep.
 
         Parameters
         ----------
-        timestep : float
+        timestep : float | int
             Current timestep or noise level starting from 0.
 
         Returns
@@ -652,22 +656,22 @@ class ProtenixWrapper:
         }
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float, **kwargs
-    ) -> Float[Tensor, "*batch _num_atoms 3"]:
+        self, structure: dict, noise_level: float | int, **kwargs
+    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure coordinates at given noise level.
 
         Parameters
         ----------
         structure : dict
             Atomworks structure dictionary.
-        noise_level : float
+        noise_level : float | int
             Timestep or noise level in reverse time starting from 0.
         **kwargs : dict, optional
             Additional keyword arguments for initialization.
 
         Returns
         -------
-        Float[Tensor, "*batch _num_atoms 3"]
+        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
             Noisy structure coordinates for atoms with nonzero occupancy.
         """
         if "asym_unit" not in structure:

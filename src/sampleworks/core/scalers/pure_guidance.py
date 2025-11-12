@@ -2,10 +2,11 @@
 Pure diffusion guidance, as described in [DriftLite](http://arxiv.org/abs/2509.21655)
 
 TODO: Make this more generalizable, a reasonable protocol to implement
-Currently this only works with the Boltz1Wrapper or Boltz2Wrapper
+Currently this only works with the implemented wrappers and isn't extensible
 """
 
-from typing import Any, cast
+from collections.abc import Callable
+from typing import Any, cast, TYPE_CHECKING
 
 import einx
 import torch
@@ -15,11 +16,49 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
     ATOMIC_NUM_TO_ELEMENT,
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
-from sampleworks.models.boltz.wrapper import (
-    Boltz1Wrapper,
-    Boltz2Wrapper,
-    weighted_rigid_align_differentiable,
-)
+from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
+
+
+if TYPE_CHECKING:
+    from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
+    from sampleworks.models.protenix.wrapper import ProtenixWrapper
+
+_boltz_available = False
+_protenix_available = False
+_weighted_rigid_align_differentiable: Callable[..., torch.Tensor] | None = None
+
+try:
+    from sampleworks.models.boltz.wrapper import (
+        Boltz1Wrapper,
+        Boltz2Wrapper,
+        weighted_rigid_align_differentiable as _boltz_align,
+    )
+
+    _boltz_available = True
+    _weighted_rigid_align_differentiable = _boltz_align
+    del Boltz1Wrapper, Boltz2Wrapper
+except ModuleNotFoundError:
+    pass
+
+try:
+    from sampleworks.models.protenix.wrapper import (
+        ProtenixWrapper,
+        weighted_rigid_align_differentiable as _protenix_align,
+    )
+
+    _protenix_available = True
+    if _weighted_rigid_align_differentiable is None:
+        _weighted_rigid_align_differentiable = _protenix_align
+    del ProtenixWrapper
+except ModuleNotFoundError:
+    pass
+
+if not _boltz_available and not _protenix_available:
+    raise ImportError(
+        "Neither Boltz nor Protenix wrappers are available. "
+        "Please install at least one model wrapper with the appropriate feature group: "
+        "'pixi install -e boltz' or 'pixi install -e protenix'"
+    )
 
 
 class PureGuidance:
@@ -29,7 +68,7 @@ class PureGuidance:
 
     def __init__(
         self,
-        model_wrapper: Boltz1Wrapper | Boltz2Wrapper,
+        model_wrapper: DiffusionModelWrapper,
         reward_function: RewardFunction,
         **kwargs,
     ):
@@ -38,7 +77,7 @@ class PureGuidance:
 
         Parameters
         ----------
-        model_wrapper : Boltz1Wrapper | Boltz2Wrapper
+        model_wrapper : DiffusionModelWrapper
             Diffusion model wrapper instance
         reward_function : RewardFunction
             Reward function to guide the diffusion process
@@ -115,8 +154,12 @@ class PureGuidance:
         )
 
         # Get coordinates from timestep
-        coords = self.model_wrapper.initialize_from_noise(
-            structure, noise_level=cast(int, kwargs.get("partial_diffusion_step", 0))
+        coords = cast(
+            torch.Tensor,
+            self.model_wrapper.initialize_from_noise(
+                structure,
+                noise_level=cast(int, kwargs.get("partial_diffusion_step", 0)),
+            ),
         )
         ensemble_size = coords.shape[0]  # TODO: proper ensemble handling
 
@@ -152,7 +195,14 @@ class PureGuidance:
         trajectory = []
         losses = []
 
-        n_steps = self.model_wrapper.predict_args.sampling_steps
+        if hasattr(self.model_wrapper, "predict_args"):
+            n_steps = self.model_wrapper.predict_args.sampling_steps  # type: ignore
+        elif hasattr(self.model_wrapper, "configs"):
+            n_steps = cast(dict, self.model_wrapper.configs.sample_diffusion)["N_step"]  # type: ignore
+        else:
+            raise AttributeError(
+                "Only Boltz and Protenix wrappers are supported currently."
+            )
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
 
         if use_tweedie:
@@ -235,7 +285,12 @@ class PureGuidance:
                     # Boltz aligns the noisy coords to the denoised coords at each step
                     # to improve stability.
                     mask_like = torch.ones_like(denoised[..., 0])
-                    noisy_coords = weighted_rigid_align_differentiable(
+                    if _weighted_rigid_align_differentiable is None:
+                        raise RuntimeError(
+                            "weighted_rigid_align_differentiable not available. "
+                            "At least one wrapper should be loaded."
+                        )
+                    noisy_coords = _weighted_rigid_align_differentiable(
                         noisy_coords,
                         denoised,
                         weights=mask_like,
