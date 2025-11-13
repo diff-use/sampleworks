@@ -212,10 +212,9 @@ class TestDiffusionModelWrapperProtocol:
 
         required_keys = {"sigma_tm", "sigma_t", "gamma"}
         missing_keys = required_keys - set(schedule.keys())
-        assert not missing_keys, (
-            f"{wrapper_fixture}.get_noise_schedule missing required keys:"
-            f"{missing_keys}"
-        )
+        assert (
+            not missing_keys
+        ), f"{wrapper_fixture}.get_noise_schedule missing required keys:{missing_keys}"
 
     def test_get_timestep_scaling_runs(self, wrapper_fixture: str, request):
         """Test that get_timestep_scaling executes without exceptions."""
