@@ -711,26 +711,13 @@ class Boltz2Wrapper:
                         "allow_alignment_gradients", False
                     )
 
-                    if allow_alignment_gradients:
-                        padded_atom_coords_denoised = (
-                            weighted_rigid_align_differentiable(
-                                padded_atom_coords_denoised.float(),
-                                cast(Tensor, input_coords).float(),
-                                weights=alignment_weights,
-                                mask=atom_mask,
-                                allow_gradients=True,
-                            )
-                        )
-                    else:
-                        padded_atom_coords_denoised = (
-                            weighted_rigid_align_differentiable(
-                                padded_atom_coords_denoised.float(),
-                                cast(Tensor, input_coords).float(),
-                                weights=alignment_weights,
-                                mask=atom_mask,
-                                allow_gradients=False,
-                            )
-                        )
+                    padded_atom_coords_denoised = weighted_rigid_align_differentiable(
+                        padded_atom_coords_denoised.float(),
+                        cast(Tensor, input_coords).float(),
+                        weights=alignment_weights,
+                        mask=atom_mask,
+                        allow_gradients=allow_alignment_gradients,
+                    )
                 else:
                     raise ValueError(
                         "Input coordinates must be provided when align_to_input "
