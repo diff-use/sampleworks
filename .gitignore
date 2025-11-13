@@ -213,3 +213,6 @@ __marimo__/
 # Claude Code
 .claude/
 CLAUDE.local.md
+
+# Model checkpoints
+release_data/

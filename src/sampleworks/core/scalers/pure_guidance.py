@@ -88,7 +88,7 @@ class PureGuidance:
 
     def run_guidance(
         self, structure: dict, **kwargs: Any
-    ) -> tuple[dict, list[Any], list[Any]]:
+    ) -> tuple[dict, tuple[list[Any], list[Any]], list[Any]]:
         """Run pure guidance (Diffusion Posterior Sampling) using the provided
         ModelWrapper
 
@@ -114,8 +114,7 @@ class PureGuidance:
                     backprop through model (default: False)
 
             - augmentation : bool, optional
-                Enable data augmentation in denoise step (default: True
-                    for Tweedie mode, False for full backprop)
+                Enable data augmentation in denoise step (default: False)
 
             - align_to_input : bool, optional
                 Enable alignment to input in denoise step (default: True
@@ -131,29 +130,32 @@ class PureGuidance:
                     guidance is applied from the beginning)
 
             - out_dir : str, optional
-                Output directory for Boltz featurization intermediate files
-                (default: "boltz_test")
+                Output directory for any featurization intermediate files
+                (default: "test")
 
             - alignment_reverse_diffusion : bool, optional
                 Whether to perform alignment of noisy coords to denoised coords
-                during reverse diffusion steps. This is default True in Boltz-2.
+                during reverse diffusion steps. This is relevant for doing Boltz-2-like
+                alignment during diffusion. (default: False)
 
         Returns
         -------
-        tuple[dict[str, Any], list[ArrayLike | torch.Tensor], list[float | None]]
-            Structure dict with updated coordinates, trajectory of denoised
-            coordinates, list of losses at each step
+        tuple[dict[str, Any], tuple[list[torch.Tensor], list[torch.Tensor]],
+        list[float | None]]
+            Structure dict with updated coordinates, tuple of
+            (trajectory_denoised, trajectory_next_step) containing coordinate
+            tensors at each step, list of losses at each step
         """
 
         step_size = cast(float, kwargs.get("step_size", 0.1))
         gradient_normalization = kwargs.get("gradient_normalization", False)
         use_tweedie = kwargs.get("use_tweedie", False)
-        augmentation = kwargs.get("augmentation", True)
+        augmentation = kwargs.get("augmentation", False)
         align_to_input = kwargs.get("align_to_input", use_tweedie)
         allow_alignment_gradients = True
 
         features = self.model_wrapper.featurize(
-            structure, out_dir=kwargs.get("out_dir", "boltz_test")
+            structure, out_dir=kwargs.get("out_dir", "test")
         )
 
         # Get coordinates from timestep
@@ -209,7 +211,8 @@ class PureGuidance:
                 f" initialized coordinates {coords.shape} shape."
             )
 
-        trajectory = []
+        trajectory_denoised = []
+        trajectory_next_step = []
         losses = []
 
         if hasattr(self.model_wrapper, "predict_args"):
@@ -257,6 +260,8 @@ class PureGuidance:
                 eps=eps,
             )["atom_coords_denoised"]
 
+            trajectory_denoised.append(denoised.clone().cpu())
+
             guidance_direction = None
 
             if apply_guidance:
@@ -275,7 +280,8 @@ class PureGuidance:
                         grad = cast(torch.Tensor, denoised_for_grad.grad)
                         guidance_direction = grad.clone()
                 else:
-                    # Like Maddipatla et al. 2025: gradient through model
+                    # Like Maddipatla et al. 2025 and training free guidance: gradient
+                    # through model
                     loss = self.reward_function(
                         coordinates=denoised,
                         elements=cast(torch.Tensor, elements),
@@ -335,7 +341,7 @@ class PureGuidance:
 
                 coords = coords.detach().clone()
 
-            trajectory.append(coords.clone().cpu())
+            trajectory_next_step.append(coords.clone().cpu())
 
         # TODO: Handle ensemble here
         atom_array = concatenate([atom_array] * ensemble_size)
@@ -343,4 +349,4 @@ class PureGuidance:
 
         structure["asym_unit"] = atom_array
 
-        return structure, trajectory, losses
+        return structure, (trajectory_denoised, trajectory_next_step), losses

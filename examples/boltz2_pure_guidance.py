@@ -91,11 +91,11 @@ def parse_args():
 
 
 def save_trajectory(
-    trajectory, atom_array, output_dir, reward_param_mask, save_every=10
+    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
 ):
     from biotite.structure.io import save_structure
 
-    output_dir = Path(output_dir / "trajectory")
+    output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for i, coords in enumerate(trajectory):
@@ -164,7 +164,7 @@ def main():
     )
 
     print("Running pure guidance")
-    refined_structure, trajectory, losses = guidance.run_guidance(
+    refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
         structure,
         guidance_start=args.guidance_start,
         step_size=args.step_size,
@@ -174,6 +174,7 @@ def main():
         align_to_input=args.align_to_input,
         partial_diffusion_step=args.partial_diffusion_step,
         out_dir=args.output_dir,
+        alignment_reverse_diffusion=True,  # Boltz was trained with this
     )
 
     output_dir = Path(args.output_dir)
@@ -186,7 +187,17 @@ def main():
     set_structure(final_structure, refined_structure["asym_unit"])
     final_structure.write(str(output_dir / "refined.cif"))
 
-    save_trajectory(trajectory, atom_array, output_dir, selection_mask, save_every=5)
+    save_trajectory(
+        traj_denoised, atom_array, output_dir, selection_mask, "denoised", save_every=5
+    )
+    save_trajectory(
+        traj_next_step,
+        atom_array,
+        output_dir,
+        selection_mask,
+        "next_step",
+        save_every=5,
+    )
     save_losses(losses, output_dir)
 
     valid_losses = [l for l in losses if l is not None]
