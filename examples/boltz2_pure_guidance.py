@@ -81,6 +81,12 @@ def parse_args():
         action="store_true",
         help="Enable alignment to input",
     )
+    parser.add_argument(
+        "--method",
+        type=str,
+        default="X-RAY DIFFRACTION",
+        help="Boltz2 sampling method",
+    )
     return parser.parse_args()
 
 
@@ -148,6 +154,7 @@ def main():
         checkpoint_path=args.model_checkpoint,
         use_msa_server=True,
         device=device,
+        method=args.method.upper(),
     )
 
     print("Initializing pure guidance")
