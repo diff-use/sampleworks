@@ -9,6 +9,7 @@ from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
 from configs.configs_model_type import model_configs
 from einops import einsum
+from einx import rearrange
 from jaxtyping import Array, ArrayLike, Float
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
@@ -291,11 +292,13 @@ class ProtenixWrapper:
         if use_msa:
             import json
 
-            updated_json_path = update_infer_json(
-                json_file=str(json_path),
-                out_dir=str(out_dir),
-                use_msa=True,
-            )
+            updated_json_path = json_path.with_name(f"{json_path.stem}-add-msa.json")
+            if not updated_json_path.exists():
+                updated_json_path = update_infer_json(
+                    json_file=str(json_path),
+                    out_dir=str(out_dir),
+                    use_msa=True,
+                )
             with open(updated_json_path) as f:
                 json_data = json.load(f)
                 json_dict = json_data[0]
@@ -380,13 +383,16 @@ class ProtenixWrapper:
 
         features = cast(dict[str, Any], input_feature_dict)
 
+        # TODO: Fix this janky way to get true coords
         if "asym_unit" in structure:
-            true_coords = cast(Array, atom_array.coord)[residues_with_occupancy]
+            atom_array = atom_array[residues_with_occupancy]
+            true_coords = cast(Array, atom_array.coord)
             if not isinstance(true_coords, torch.Tensor):
                 true_coords = torch.tensor(
                     true_coords, device=self.device, dtype=torch.float32
                 )
             features["true_coords"] = true_coords
+            features["true_atom_array"] = atom_array
 
         features = self.model.relative_position_encoding.generate_relp(features)
         features = update_input_feature_dict(features)
@@ -536,6 +542,21 @@ class ProtenixWrapper:
             self.cached_representations = self.step(features, grad_needed=grad_needed)
 
         outputs = self.cached_representations
+        if grad_needed:
+            outputs = {
+                k: (
+                    v.detach()
+                    if isinstance(v, torch.Tensor)
+                    else (
+                        tuple(
+                            x.detach() if isinstance(x, torch.Tensor) else x for x in v
+                        )
+                        if isinstance(v, tuple)
+                        else v
+                    )
+                )
+                for k, v in outputs.items()
+            }
         if not isinstance(noisy_coords, torch.Tensor):
             noisy_coords = torch.tensor(
                 noisy_coords, device=self.device, dtype=torch.float32
@@ -551,19 +572,17 @@ class ProtenixWrapper:
                 t_hat = timestep_scaling["t_hat"]
 
             if kwargs.get("augmentation", True):
-                noisy_coords = (
-                    centre_random_augmentation(x_input_coords=noisy_coords, N_sample=1)
-                    .squeeze(dim=-3)
-                    .to(noisy_coords.dtype)
-                )
+                noisy_coords = centre_random_augmentation(
+                    x_input_coords=noisy_coords, N_sample=1
+                ).to(noisy_coords.dtype)  # shape: (N_ensemble, N_sample, N_atoms, 3)
 
             noisy_coords_eps = noisy_coords + eps
 
             t_hat_tensor = torch.tensor(
-                [t_hat], device=noisy_coords.device, dtype=noisy_coords.dtype
+                [t_hat] * noisy_coords_eps.shape[0],
+                device=noisy_coords.device,
+                dtype=noisy_coords.dtype,
             )
-            if noisy_coords_eps.dim() == 2:
-                noisy_coords_eps = noisy_coords_eps.unsqueeze(0)
 
             atom_coords_denoised = self.model.diffusion_module.forward(
                 x_noisy=noisy_coords_eps,
@@ -577,38 +596,37 @@ class ProtenixWrapper:
                 c_l=cast(Tensor, outputs["p_lm/c_l"][1]),
             )
 
-            if atom_coords_denoised.dim() == 3 and noisy_coords.dim() == 2:
-                atom_coords_denoised = atom_coords_denoised.squeeze(0)
+            # TODO: is there a way to handle this more cleanly?
+            # remove protenix ensemble dim, shape (N_ensemble, 1, N_atoms, 3)
+            # -> (N_ensemble, N_atoms, 3)
+            atom_coords_denoised = atom_coords_denoised.squeeze(1)
 
             if kwargs.get("align_to_input", True):
-                input_coords = kwargs.get("input_coords")
+                input_coords = cast(Tensor, kwargs.get("input_coords"))
                 if input_coords is not None:
                     alignment_weights = kwargs.get(
                         "alignment_weights",
-                        torch.ones_like(noisy_coords[..., 0]),
+                        torch.ones_like(atom_coords_denoised[..., 0]),
                     )
                     allow_alignment_gradients = kwargs.get(
                         "allow_alignment_gradients", False
                     )
 
-                    if atom_coords_denoised.dim() == 2:
-                        atom_coords_denoised = atom_coords_denoised.unsqueeze(0)
-                        input_coords_batch = cast(Tensor, input_coords).unsqueeze(0)
-                        alignment_weights_batch = alignment_weights.unsqueeze(0)
-                    else:
-                        input_coords_batch = cast(Tensor, input_coords)
-                        alignment_weights_batch = alignment_weights
+                    if alignment_weights.shape != atom_coords_denoised.shape[:-1]:
+                        raise ValueError(
+                            "Mismatch between alignment_weights and number of atoms in "
+                            f"denoised coordinates: {alignment_weights.shape} vs. "
+                            f"{atom_coords_denoised.shape[:-1]}"
+                        )
 
                     atom_coords_denoised = weighted_rigid_align_differentiable(
                         atom_coords_denoised.float(),
-                        input_coords_batch.float(),
-                        weights=alignment_weights_batch,
-                        mask=torch.ones_like(alignment_weights_batch),
+                        input_coords.float(),
+                        weights=alignment_weights,
+                        mask=alignment_weights,
                         allow_gradients=allow_alignment_gradients,
                     )
 
-                    if noisy_coords.dim() == 2:
-                        atom_coords_denoised = atom_coords_denoised.squeeze(0)
                 else:
                     raise ValueError(
                         "Input coordinates must be provided when align_to_input is "
@@ -668,6 +686,9 @@ class ProtenixWrapper:
             Timestep or noise level in reverse time starting from 0.
         **kwargs : dict, optional
             Additional keyword arguments for initialization.
+            - ensemble_size: int, optional
+                Number of noisy samples to generate per input structure
+                (default 1).
 
         Returns
         -------
@@ -690,10 +711,15 @@ class ProtenixWrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        coords = coords - coords.mean(dim=-2, keepdim=True)
-
         sigma = self.noise_schedule["sigma_tm"][int(noise_level)]
-        noise = torch.randn(coords.shape, device=self.device, dtype=coords.dtype)
-        noisy_coords = coords + sigma * noise
+
+        ensemble_size = kwargs.get("ensemble_size", 1)
+        coords = cast(Tensor, rearrange("... -> e ...", coords, e=ensemble_size))
+
+        if noise_level == 0:
+            noisy_coords = sigma * torch.randn_like(coords)
+        else:
+            noise = torch.randn_like(coords)
+            noisy_coords = coords + sigma * noise
 
         return noisy_coords

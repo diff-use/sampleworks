@@ -10,6 +10,7 @@ from typing import Any, cast, TYPE_CHECKING
 
 import einx
 import torch
+from biotite.structure import concatenate
 from tqdm import tqdm
 
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
@@ -164,7 +165,10 @@ class PureGuidance:
         ensemble_size = coords.shape[0]  # TODO: proper ensemble handling
 
         # TODO: this is not generalizable currently, figure this out
-        atom_array = structure["asym_unit"]
+        if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
+            atom_array = features["true_atom_array"]
+        else:
+            atom_array = structure["asym_unit"][0]
         reward_param_mask = atom_array.occupancy > 0
 
         # TODO: jank way to get atomic numbers, fix this in real space density
@@ -186,11 +190,22 @@ class PureGuidance:
             b=ensemble_size,
         )
 
-        input_coords = (
-            torch.from_numpy(atom_array.coord[:, reward_param_mask])
-            .to(dtype=coords.dtype, device=coords.device)
-            .expand(ensemble_size, -1, -1)
-        )
+        input_coords = cast(
+            torch.Tensor,
+            einx.rearrange(
+                "... -> e ...",
+                torch.from_numpy(atom_array.coord).to(
+                    dtype=coords.dtype, device=coords.device
+                ),
+                e=ensemble_size,
+            ),
+        )[..., reward_param_mask, :]
+
+        if input_coords.shape != coords.shape:
+            raise ValueError(
+                f"Input coordinates shape {input_coords.shape} does not match"
+                f" initialized coordinates {coords.shape} shape."
+            )
 
         trajectory = []
         losses = []
@@ -318,11 +333,12 @@ class PureGuidance:
 
                 coords = coords.detach().clone()
 
-            trajectory.append(denoised.clone().cpu())
+            trajectory.append(coords.clone().cpu())
 
         # TODO: Handle ensemble here
-        structure["asym_unit"].coord[:, reward_param_mask] = (
-            coords.detach().cpu().numpy()
-        )
+        atom_array = concatenate([atom_array] * ensemble_size)
+        atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
+
+        structure["asym_unit"] = atom_array
 
         return structure, trajectory, losses
