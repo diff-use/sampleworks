@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument(
         "--model-checkpoint",
         type=str,
-        default="release_data/checkpoint/protenix_base_default_v0.5.0.pt",
+        default=".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
         help="Path to Protenix checkpoint directory",
     )
     parser.add_argument(
@@ -85,11 +85,11 @@ def parse_args():
 
 
 def save_trajectory(
-    trajectory, atom_array, output_dir, reward_param_mask, save_every=10
+    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
 ):
     from biotite.structure.io import save_structure
 
-    output_dir = Path(output_dir / "trajectory")
+    output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for i, coords in enumerate(trajectory):
@@ -156,7 +156,7 @@ def main():
     )
 
     print("Running pure guidance")
-    refined_structure, trajectory, losses = guidance.run_guidance(
+    refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
         structure,
         guidance_start=args.guidance_start,
         step_size=args.step_size,
@@ -180,10 +180,19 @@ def main():
     final_structure.write(str(output_dir / "refined.cif"))
 
     save_trajectory(
-        trajectory,
+        traj_denoised,
         refined_structure["asym_unit"],
         output_dir,
         refined_structure["asym_unit"].occupancy > 0,
+        "denoised",
+        save_every=5,
+    )
+    save_trajectory(
+        traj_next_step,
+        refined_structure["asym_unit"],
+        output_dir,
+        refined_structure["asym_unit"].occupancy > 0,
+        "next_step",
         save_every=5,
     )
     save_losses(losses, output_dir)

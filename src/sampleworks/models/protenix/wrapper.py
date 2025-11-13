@@ -18,7 +18,6 @@ from protenix.data.json_to_feature import SampleDictToFeatures
 from protenix.data.msa_featurizer import InferenceMSAFeaturizer
 from protenix.data.utils import data_type_transform, make_dummy_feature
 from protenix.model.protenix import (
-    InferenceNoiseScheduler,
     Protenix,
     update_input_feature_dict,
 )
@@ -173,6 +172,10 @@ class ProtenixWrapper:
         )
 
         # Protenix inference logging
+        self.configs.model_name = (
+            str(self.checkpoint_path).split("/")[-1].replace(".pt", "")
+        )
+        self.configs.load_checkpoint_dir = str(self.cache_path)
         model_name = self.configs.model_name
         _, model_size, model_feature, model_version = cast(str, model_name).split("_")
         logger.info(
@@ -257,13 +260,9 @@ class ProtenixWrapper:
         Tensor
             Noise schedule with shape (num_steps + 1,).
         """
-        scheduler = InferenceNoiseScheduler(
-            s_max=cast(dict, self.configs.inference_noise_scheduler)["s_max"],
-            s_min=cast(dict, self.configs.inference_noise_scheduler)["s_min"],
-            rho=cast(dict, self.configs.inference_noise_scheduler)["rho"],
-            sigma_data=cast(dict, self.configs.inference_noise_scheduler)["sigma_data"],
+        return self.model.inference_noise_scheduler(
+            N_step=num_steps, device=self.device
         )
-        return scheduler(N_step=num_steps, device=self.device)
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
         """From an Atomworks structure, calculate Protenix input features.
@@ -420,6 +419,10 @@ class ProtenixWrapper:
                 Number of recycling steps to perform. Defaults to the value in
                 predict_args.
 
+            - enable_diffusion_shared_vars_cache: bool, optional
+                Enable caching of shared variables in diffusion module
+                (default True).
+
 
         Returns
         -------
@@ -433,8 +436,8 @@ class ProtenixWrapper:
                 N_cycle=kwargs.get(
                     "recycling_steps", cast(ConfigDict, self.configs.model).N_cycle
                 ),
-                # inplace_safe=inplace_safe, # Default in Protenix is True
-                # chunk_size=chunk_size, # Default in Protenix is 4
+                inplace_safe=True,  # Default in Protenix is True
+                chunk_size=4,  # Default in Protenix is 4
             )
 
         features = dict(features)  # in place modification safety
@@ -516,9 +519,9 @@ class ProtenixWrapper:
             - eps: Tensor, optional
                 Precomputed noise tensor; sampled internally if not provided.
             - augmentation: bool, optional
-                Apply coordinate augmentation when True (default True).
+                Apply coordinate augmentation when True (default False).
             - align_to_input: bool, optional
-                Align denoised coordinates to input_coords when True (default True).
+                Align denoised coordinates to input_coords when True (default False).
             - input_coords: Tensor, optional
                 Reference coordinates for alignment.
             - alignment_weights: Tensor, optional
@@ -571,7 +574,7 @@ class ProtenixWrapper:
                 eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
                 t_hat = timestep_scaling["t_hat"]
 
-            if kwargs.get("augmentation", True):
+            if kwargs.get("augmentation", False):
                 noisy_coords = centre_random_augmentation(
                     x_input_coords=noisy_coords, N_sample=1
                 ).to(noisy_coords.dtype)  # shape: (N_ensemble, N_sample, N_atoms, 3)
@@ -601,7 +604,7 @@ class ProtenixWrapper:
             # -> (N_ensemble, N_atoms, 3)
             atom_coords_denoised = atom_coords_denoised.squeeze(1)
 
-            if kwargs.get("align_to_input", True):
+            if kwargs.get("align_to_input", False):
                 input_coords = cast(Tensor, kwargs.get("input_coords"))
                 if input_coords is not None:
                     alignment_weights = kwargs.get(
