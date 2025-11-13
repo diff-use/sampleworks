@@ -86,7 +86,9 @@ class PureGuidance:
         self.model_wrapper = model_wrapper
         self.reward_function = reward_function
 
-    def run_guidance(self, structure: dict, **kwargs: dict[str, Any]):
+    def run_guidance(
+        self, structure: dict, **kwargs: Any
+    ) -> tuple[dict, list[Any], list[Any]]:
         """Run pure guidance (Diffusion Posterior Sampling) using the provided
         ModelWrapper
 
