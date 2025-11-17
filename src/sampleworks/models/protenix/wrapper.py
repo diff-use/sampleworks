@@ -8,7 +8,6 @@ from configs.configs_base import configs as configs_base
 from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
 from configs.configs_model_type import model_configs
-from einops import einsum
 from einx import rearrange
 from jaxtyping import Array, ArrayLike, Float
 from ml_collections import ConfigDict
@@ -21,7 +20,6 @@ from protenix.model.protenix import (
     Protenix,
     update_input_feature_dict,
 )
-from protenix.model.utils import centre_random_augmentation
 from protenix.utils.torch_utils import autocasting_disable_decorator, dict_to_tensor
 from runner.inference import download_infercence_cache as download_inference_cache
 from runner.msa_search import update_infer_json
@@ -34,89 +32,6 @@ from .structure_processing import (
     create_protenix_input_from_structure,
     ensure_atom_array,
 )
-
-
-def weighted_rigid_align_differentiable(
-    true_coords,
-    pred_coords,
-    weights,
-    mask,
-    allow_gradients: bool = True,
-):
-    """Compute weighted alignment with optional gradient preservation.
-
-    Identical to boltz.model.loss.diffusion.weighted_rigid_align but without
-    the detach_() call when allow_gradients=True, enabling gradient flow.
-
-    I preserve the same parameter names as the original function, but note that
-    true_coords will be aligned to the pred_coords in both implementations.
-
-    Parameters
-    ----------
-    true_coords: torch.Tensor
-        The ground truth atom coordinates
-    pred_coords: torch.Tensor
-        The predicted atom coordinates
-    weights: torch.Tensor
-        The weights for alignment
-    mask: torch.Tensor
-        The atoms mask
-    allow_gradients: bool, optional
-        If True, preserve gradients through alignment. If False, detach
-        (matches original Boltz behavior). Default: True
-
-    Returns
-    -------
-    torch.Tensor
-        Aligned coordinates
-
-    """
-    batch_size, num_points, dim = true_coords.shape
-    weights = (mask * weights).unsqueeze(-1)
-
-    true_centroid = (true_coords * weights).sum(dim=1, keepdim=True) / weights.sum(
-        dim=1, keepdim=True
-    )
-    pred_centroid = (pred_coords * weights).sum(dim=1, keepdim=True) / weights.sum(
-        dim=1, keepdim=True
-    )
-
-    true_coords_centered = true_coords - true_centroid
-    pred_coords_centered = pred_coords - pred_centroid
-
-    if num_points < (dim + 1):
-        print(
-            "Warning: The size of one of the point clouds is <= dim+1. "
-            + "`WeightedRigidAlign` cannot return a unique rotation."
-        )
-
-    cov_matrix = einsum(
-        weights * pred_coords_centered, true_coords_centered, "b n i, b n j -> b i j"
-    )
-
-    original_dtype = cov_matrix.dtype
-    cov_matrix_32 = cov_matrix.to(dtype=torch.float32)
-
-    U, _, Vh = torch.linalg.svd(cov_matrix_32)
-
-    rotation = torch.matmul(U, Vh)
-
-    det = torch.det(rotation)
-    diag = torch.ones(batch_size, dim, device=rotation.device, dtype=torch.float32)
-    diag[:, -1] = det
-
-    rotation = torch.matmul(U * diag.unsqueeze(1), Vh)
-
-    rotation = rotation.to(dtype=original_dtype)
-
-    aligned_coords = (
-        einsum(true_coords_centered, rotation, "b n i, b i j -> b n j") + pred_centroid
-    )
-
-    if not allow_gradients:
-        aligned_coords = aligned_coords.detach()
-
-    return aligned_coords
 
 
 class ProtenixWrapper:
@@ -354,15 +269,6 @@ class ProtenixWrapper:
             del feat["constraint_feature"]
 
         input_feature_dict = dict_to_tensor(feat)
-        features_without_batch_dim = {
-            "atom_to_token_idx",
-            "d_lm",
-            "v_lm",
-            "pad_info",
-        }
-        for k, v in input_feature_dict.items():
-            if k != "sample_name" and k not in features_without_batch_dim:
-                input_feature_dict[k] = v.unsqueeze(0)
 
         atom_array = ensure_atom_array(structure["asym_unit"])
         atom_array = add_terminal_oxt_atoms(
@@ -396,7 +302,7 @@ class ProtenixWrapper:
         features = self.model.relative_position_encoding.generate_relp(features)
         features = update_input_feature_dict(features)
 
-        send_tensors_in_dict_to_device(features, self.device, inplace=True)
+        features = send_tensors_in_dict_to_device(features, self.device, inplace=False)
 
         return features
 
@@ -417,7 +323,7 @@ class ProtenixWrapper:
 
             - recycling_steps: int
                 Number of recycling steps to perform. Defaults to the value in
-                predict_args.
+                the Protenix model config.
 
             - enable_diffusion_shared_vars_cache: bool, optional
                 Enable caching of shared variables in diffusion module
@@ -430,17 +336,22 @@ class ProtenixWrapper:
             Protenix model outputs including trunk representations
             (s_inputs, s_trunk, z_trunk).
         """
+        inplace_safe = not grad_needed
+        chunk_size = (
+            cast(ConfigDict, self.configs.infer_setting).chunk_size
+            if inplace_safe
+            else None
+        )
         with torch.set_grad_enabled(grad_needed):
             s_inputs, s, z = self.model.get_pairformer_output(
                 input_feature_dict=features,
                 N_cycle=kwargs.get(
                     "recycling_steps", cast(ConfigDict, self.configs.model).N_cycle
                 ),
-                inplace_safe=True,  # Default in Protenix is True
-                chunk_size=4,  # Default in Protenix is 4
+                inplace_safe=inplace_safe,  # Default in Protenix is True
+                chunk_size=cast(int, chunk_size),  # Default in Protenix is 4
             )
 
-        features = dict(features)  # in place modification safety
         keys_to_delete = []
         for key in features.keys():
             if "template_" in key or key in [
@@ -464,7 +375,10 @@ class ProtenixWrapper:
             "features": features,
         }
 
-        if kwargs.get("enable_diffusion_shared_vars_cache", True):
+        if kwargs.get(
+            "enable_diffusion_shared_vars_cache",
+            self.configs.enable_diffusion_shared_vars_cache,
+        ):
             outputs["pair_z"] = autocasting_disable_decorator(
                 self.model.configs.skip_amp.sample_diffusion  # type: ignore (their ConfigDict lacks typing)
             )(
@@ -518,18 +432,11 @@ class ProtenixWrapper:
                 Precomputed t_hat value; computed internally if not provided.
             - eps: Tensor, optional
                 Precomputed noise tensor; sampled internally if not provided.
-            - augmentation: bool, optional
-                Apply coordinate augmentation when True (default False).
-            - align_to_input: bool, optional
-                Align denoised coordinates to input_coords when True (default False).
-            - input_coords: Tensor, optional
-                Reference coordinates for alignment.
-            - alignment_weights: Tensor, optional
-                Weights for alignment operation.
             - overwrite_representations: bool, optional
                 Whether to recompute cached representations (default False).
-            - allow_alignment_gradients: bool, optional
-                Preserve gradients through alignment (default False).
+            - recycling_steps: int
+                Number of recycling steps to perform. Defaults to the value in
+                the Protenix model config.
             - enable_diffusion_shared_vars_cache: bool, optional
                 Enable caching of shared variables in diffusion module
                 (default True).
@@ -542,7 +449,19 @@ class ProtenixWrapper:
         if not self.cached_representations or kwargs.get(
             "overwrite_representations", False
         ):
-            self.cached_representations = self.step(features, grad_needed=grad_needed)
+            step_kwargs = {
+                "recycling_steps": kwargs.get(
+                    "recycling_steps",
+                    cast(ConfigDict, self.configs.model).N_cycle,
+                ),
+                "enable_diffusion_shared_vars_cache": kwargs.get(
+                    "enable_diffusion_shared_vars_cache",
+                    self.configs.enable_diffusion_shared_vars_cache,
+                ),
+            }
+            self.cached_representations = self.step(
+                features, grad_needed=False, **step_kwargs
+            )
 
         outputs = self.cached_representations
         if grad_needed:
@@ -574,11 +493,6 @@ class ProtenixWrapper:
                 eps = timestep_scaling["eps_scale"] * torch.randn_like(noisy_coords)
                 t_hat = timestep_scaling["t_hat"]
 
-            if kwargs.get("augmentation", False):
-                noisy_coords = centre_random_augmentation(
-                    x_input_coords=noisy_coords, N_sample=1
-                ).to(noisy_coords.dtype)  # shape: (N_ensemble, N_sample, N_atoms, 3)
-
             noisy_coords_eps = noisy_coords + eps
 
             t_hat_tensor = torch.tensor(
@@ -603,38 +517,6 @@ class ProtenixWrapper:
             # remove protenix ensemble dim, shape (N_ensemble, 1, N_atoms, 3)
             # -> (N_ensemble, N_atoms, 3)
             atom_coords_denoised = atom_coords_denoised.squeeze(1)
-
-            if kwargs.get("align_to_input", False):
-                input_coords = cast(Tensor, kwargs.get("input_coords"))
-                if input_coords is not None:
-                    alignment_weights = kwargs.get(
-                        "alignment_weights",
-                        torch.ones_like(atom_coords_denoised[..., 0]),
-                    )
-                    allow_alignment_gradients = kwargs.get(
-                        "allow_alignment_gradients", False
-                    )
-
-                    if alignment_weights.shape != atom_coords_denoised.shape[:-1]:
-                        raise ValueError(
-                            "Mismatch between alignment_weights and number of atoms in "
-                            f"denoised coordinates: {alignment_weights.shape} vs. "
-                            f"{atom_coords_denoised.shape[:-1]}"
-                        )
-
-                    atom_coords_denoised = weighted_rigid_align_differentiable(
-                        atom_coords_denoised.float(),
-                        input_coords.float(),
-                        weights=alignment_weights,
-                        mask=alignment_weights,
-                        allow_gradients=allow_alignment_gradients,
-                    )
-
-                else:
-                    raise ValueError(
-                        "Input coordinates must be provided when align_to_input is "
-                        "True."
-                    )
 
         return {"atom_coords_denoised": atom_coords_denoised}
 
