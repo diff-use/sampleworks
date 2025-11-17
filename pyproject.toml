@@ -9,7 +9,7 @@ protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
-dependencies = ["atomworks[ml]", "dotenv", "jaxtyping", "jax"]
+dependencies = ["atomworks[ml]", "dotenv", "jaxtyping", "jax", "einx"]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
 version = "0.1.0"

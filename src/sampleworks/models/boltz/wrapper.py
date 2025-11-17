@@ -28,111 +28,8 @@ from boltz.main import (
 )
 from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
-from boltz.model.modules.utils import center_random_augmentation
-from einops import einsum
 from jaxtyping import ArrayLike, Float
 from torch import Tensor
-
-
-def weighted_rigid_align_differentiable(
-    true_coords,
-    pred_coords,
-    weights,
-    mask,
-    allow_gradients: bool = True,
-):
-    """Compute weighted alignment with optional gradient preservation.
-
-    Identical to boltz.model.loss.diffusion.weighted_rigid_align but without
-    the detach_() call when allow_gradients=True, enabling gradient flow.
-
-    I preserve the same parameter names as the original function, but note that
-    true_coords will be aligned to the pred_coords in both implementations.
-
-    Parameters
-    ----------
-    true_coords: torch.Tensor
-        The ground truth atom coordinates
-    pred_coords: torch.Tensor
-        The predicted atom coordinates
-    weights: torch.Tensor
-        The weights for alignment
-    mask: torch.Tensor
-        The atoms mask
-    allow_gradients: bool, optional
-        If True, preserve gradients through alignment. If False, detach
-        (matches original Boltz behavior). Default: True
-
-    Returns
-    -------
-    torch.Tensor
-        Aligned coordinates
-
-    """
-    batch_size, num_points, dim = true_coords.shape
-    weights = (mask * weights).unsqueeze(-1)
-
-    # Compute weighted centroids
-    true_centroid = (true_coords * weights).sum(dim=1, keepdim=True) / weights.sum(
-        dim=1, keepdim=True
-    )
-    pred_centroid = (pred_coords * weights).sum(dim=1, keepdim=True) / weights.sum(
-        dim=1, keepdim=True
-    )
-
-    # Center the coordinates
-    true_coords_centered = true_coords - true_centroid
-    pred_coords_centered = pred_coords - pred_centroid
-
-    if num_points < (dim + 1):
-        print(
-            "Warning: The size of one of the point clouds is <= dim+1. "
-            + "`WeightedRigidAlign` cannot return a unique rotation."
-        )
-
-    # Compute the weighted covariance matrix
-    cov_matrix = einsum(
-        weights * pred_coords_centered, true_coords_centered, "b n i, b n j -> b i j"
-    )
-
-    # Compute the SVD of the covariance matrix, required float32 for svd and determinant
-    original_dtype = cov_matrix.dtype
-    cov_matrix_32 = cov_matrix.to(dtype=torch.float32)
-    U, S, V = torch.linalg.svd(
-        cov_matrix_32, driver="gesvd" if cov_matrix_32.is_cuda else None
-    )
-    V = V.mH
-
-    # Catch ambiguous rotation by checking the magnitude of singular values
-    if (S.abs() <= 1e-15).any() and not (num_points < (dim + 1)):
-        print(
-            "Warning: Excessively low rank of "
-            + "cross-correlation between aligned point clouds. "
-            + "`WeightedRigidAlign` cannot return a unique rotation."
-        )
-
-    # Compute the rotation matrix
-    rot_matrix = torch.einsum("b i j, b k j -> b i k", U, V).to(dtype=torch.float32)
-
-    # Ensure proper rotation matrix with determinant 1
-    F = torch.eye(dim, dtype=cov_matrix_32.dtype, device=cov_matrix.device)[
-        None
-    ].repeat(batch_size, 1, 1)
-    F[:, -1, -1] = torch.det(rot_matrix)
-    rot_matrix = einsum(U, F, V, "b i j, b j k, b l k -> b i l")
-    rot_matrix = rot_matrix.to(dtype=original_dtype)
-
-    # Apply the rotation and translation
-    aligned_coords = (
-        einsum(true_coords_centered, rot_matrix, "b n i, b j i -> b n j")
-        + pred_centroid
-    )
-
-    # Conditionally detach based on allow_gradients
-    if not allow_gradients:
-        aligned_coords.detach_()
-
-    return aligned_coords
 
 
 @dataclass
@@ -576,18 +473,6 @@ class Boltz2Wrapper:
                 Precomputed noise tensor for the current timestep; if not provided, it
                 will be sampled internally.
 
-            augmentation (bool, optional)
-                Apply `center_random_augmentation` when True (default True).
-
-            align_to_input (bool, optional)
-                Align denoised coordinates to `input_coords` when True (default True).
-
-            input_coords (Tensor, optional)
-                Reference coordinates required if `align_to_input` is True.
-
-            alignment_weights (Tensor, optional)
-                Atom weights for alignment; defaults to `atom_mask`.
-
             multiplicity (int, optional)
                 Overrides the multiplicity passed to the diffusion network, which is the
                 replicating the model does internally along axis=0; defaults to the
@@ -602,10 +487,6 @@ class Boltz2Wrapper:
                 This will only be applied if overwrite_representations is True, as
                 it is passed to the pairformer module computation that is ideally
                 cached for efficiency.
-
-            allow_alignment_gradients (bool, optional)
-                Whether to allow gradients through the alignment step (default True).
-                If False, detaches after alignment (matches original Boltz behavior).
 
         Returns
         -------
@@ -671,13 +552,6 @@ class Boltz2Wrapper:
                 )
                 t_hat = timestep_scaling["t_hat"]
 
-            if kwargs.get("augmentation", True):
-                padded_noisy_coords = center_random_augmentation(
-                    padded_noisy_coords,
-                    atom_mask=atom_mask,
-                    augmentation=True,
-                )
-
             padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
 
             padded_atom_coords_denoised = (
@@ -695,34 +569,6 @@ class Boltz2Wrapper:
                     ),
                 )
             )
-
-            if kwargs.get("align_to_input", True):
-                input_coords = kwargs.get("input_coords")
-                if input_coords is not None:
-                    if (
-                        pad_len > 0
-                        and input_coords.shape[1]
-                        != padded_atom_coords_denoised.shape[1]
-                    ):
-                        input_coords = pad_dim(input_coords, dim=1, pad_len=pad_len)
-
-                    alignment_weights = kwargs.get("alignment_weights", atom_mask)
-                    allow_alignment_gradients = kwargs.get(
-                        "allow_alignment_gradients", False
-                    )
-
-                    padded_atom_coords_denoised = weighted_rigid_align_differentiable(
-                        padded_atom_coords_denoised.float(),
-                        cast(Tensor, input_coords).float(),
-                        weights=alignment_weights,
-                        mask=atom_mask,
-                        allow_gradients=allow_alignment_gradients,
-                    )
-                else:
-                    raise ValueError(
-                        "Input coordinates must be provided when align_to_input "
-                        "is True."
-                    )
 
             atom_coords_denoised = padded_atom_coords_denoised[
                 atom_mask.bool(), :
@@ -1184,44 +1030,28 @@ class Boltz1Wrapper:
         **kwargs : dict, optional
             Additional keyword arguments for Boltz-1 denoising.
 
-            - t_hat (float, optional)
+            t_hat (float, optional)
                 Precomputed t_hat value for the current timestep; if not provided, it
                 will be computed internally.
 
-            - eps (Tensor, optional)
+            eps (Tensor, optional)
                 Precomputed noise tensor for the current timestep; if not provided, it
                 will be sampled internally.
 
-            - augmentation (bool, optional)
-                Apply `center_random_augmentation` when True (default True).
-
-            - align_to_input (bool, optional)
-                Align denoised coordinates to `input_coords` when True (default True).
-
-            - input_coords (Tensor, optional)
-                Reference coordinates required if `align_to_input` is True.
-
-            - alignment_weights (Tensor, optional)
-                Atom weights for alignment; defaults to `atom_mask`.
-
-            - multiplicity (int, optional)
+            multiplicity (int, optional)
                 Overrides the multiplicity passed to the diffusion network, which is the
                 replicating the model does internally along axis=0; defaults to the
                 batch size of `noisy_coords`.
 
-            - overwrite_representations (bool, optional)
+            overwrite_representations (bool, optional)
                 Whether to overwrite cached representations (default False).
                 Do this if you are running a new input sample through the model.
 
-            - recycling_steps (int, optional)
+            recycling_steps (int, optional)
                 Number of recycling steps to perform (default 3 from PredictArgs).
                 This will only be applied if overwrite_representations is True, as
                 it is passed to the pairformer module computation that is ideally
                 cached for efficiency.
-
-            - allow_alignment_gradients (bool, optional)
-                Whether to allow gradients through the alignment step (default True).
-                If False, detaches after alignment (matches original Boltz behavior).
 
         Returns
         -------
@@ -1280,13 +1110,6 @@ class Boltz1Wrapper:
                 )
                 t_hat = timestep_scaling["t_hat"]
 
-            if kwargs.get("augmentation", True):
-                padded_noisy_coords = center_random_augmentation(
-                    padded_noisy_coords,
-                    atom_mask=atom_mask,
-                    augmentation=True,
-                )
-
             padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
 
             padded_atom_coords_denoised, _ = (
@@ -1307,46 +1130,6 @@ class Boltz1Wrapper:
                     ),
                 )
             )
-
-            if kwargs.get("align_to_input", True):
-                input_coords = kwargs.get("input_coords")
-                if input_coords is not None:
-                    if (
-                        pad_len > 0
-                        and input_coords.shape[1]
-                        != padded_atom_coords_denoised.shape[1]
-                    ):
-                        input_coords = pad_dim(input_coords, dim=1, pad_len=pad_len)
-
-                    alignment_weights = kwargs.get("alignment_weights", atom_mask)
-                    allow_alignment_gradients = kwargs.get(
-                        "allow_alignment_gradients", False
-                    )
-
-                    if allow_alignment_gradients:
-                        padded_atom_coords_denoised = (
-                            weighted_rigid_align_differentiable(
-                                padded_atom_coords_denoised.float(),
-                                cast(Tensor, input_coords).float(),
-                                weights=alignment_weights,
-                                mask=atom_mask,
-                                allow_gradients=True,
-                            )
-                        )
-                    else:
-                        padded_atom_coords_denoised = (
-                            weighted_rigid_align_differentiable(
-                                padded_atom_coords_denoised.float(),
-                                cast(Tensor, input_coords).float(),
-                                weights=alignment_weights,
-                                mask=atom_mask,
-                            )
-                        )
-                else:
-                    raise ValueError(
-                        "Input coordinates must be provided when align_to_input "
-                        "is True."
-                    )
 
             atom_coords_denoised = padded_atom_coords_denoised[
                 atom_mask.bool(), :
