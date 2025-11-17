@@ -68,8 +68,8 @@ def apply_inverse_transform(
     """
     Apply inverse of augmentation transform to coordinates.
 
-    The forward transform is: coords_aug = coords @ R.T + t
-    The inverse transform is: coords = (coords_aug - t) @ R
+    The forward transform is: coords_aug = R @ coords + t
+    The inverse transform is: coords = R.T @ (coords_aug - t)
 
     Parameters
     ----------
@@ -86,7 +86,7 @@ def apply_inverse_transform(
     R = transform["rotation"]
     t = transform["translation"]
     coords_centered = einx.subtract("... n d, ... d -> ... n d", coords, t)
-    return einx.dot("... n i, ... i j -> ... n j", coords_centered, R)
+    return einx.dot("... j i, ... n j -> ... n i", R, coords_centered)
 
 
 def apply_forward_transform(
@@ -96,7 +96,7 @@ def apply_forward_transform(
     """
     Apply augmentation transform to coordinates.
 
-    The forward transform is: coords_aug = coords @ R.T + t
+    The forward transform is: coords_aug = R @ coords + t (standard left multiplication)
 
     Parameters
     ----------
@@ -112,7 +112,7 @@ def apply_forward_transform(
     """
     R = transform["rotation"]
     t = transform["translation"]
-    coords_rotated = einx.dot("... n i, ... j i -> ... n j", coords, R)
+    coords_rotated = einx.dot("... i j, ... n j -> ... n i", R, coords)
     return einx.add("... n d, ... d -> ... n d", coords_rotated, t)
 
 
