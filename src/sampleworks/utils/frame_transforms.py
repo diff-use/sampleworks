@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from types import ModuleType
-from typing import TYPE_CHECKING
+from typing import Literal, overload, TYPE_CHECKING
 
 import einx
 
@@ -61,9 +62,21 @@ def get_backend(
     raise RuntimeError(msg)
 
 
+@overload
+def apply_inverse_transform(
+    coords: Float[Tensor, "... n 3"],
+    transform: Mapping[str, Float[Tensor, "..."]],
+) -> Float[Tensor, "... n 3"]: ...
+@overload
+def apply_inverse_transform(
+    coords: Float[Array, "... n 3"],
+    transform: Mapping[str, Float[Array, "..."]],
+) -> Float[Array, "... n 3"]: ...
+
+
 def apply_inverse_transform(
     coords: Float[Array | Tensor, "... n 3"],
-    transform: dict[str, Float[Array | Tensor, "..."]],
+    transform: Mapping[str, Float[Array | Tensor, "..."]],
 ) -> Float[Array | Tensor, "... n 3"]:
     """
     Apply inverse of augmentation transform to coordinates.
@@ -89,9 +102,21 @@ def apply_inverse_transform(
     return einx.dot("... j i, ... n j -> ... n i", R, coords_centered)
 
 
+@overload
+def apply_forward_transform(
+    coords: Float[Tensor, "... n 3"],
+    transform: Mapping[str, Float[Tensor, "..."]],
+) -> Float[Tensor, "... n 3"]: ...
+@overload
+def apply_forward_transform(
+    coords: Float[Array, "... n 3"],
+    transform: Mapping[str, Float[Array, "..."]],
+) -> Float[Array, "... n 3"]: ...
+
+
 def apply_forward_transform(
     coords: Float[Array | Tensor, "... n 3"],
-    transform: dict[str, Float[Array | Tensor, "..."]],
+    transform: Mapping[str, Float[Array | Tensor, "..."]],
 ) -> Float[Array | Tensor, "... n 3"]:
     """
     Apply augmentation transform to coordinates.
@@ -114,6 +139,16 @@ def apply_forward_transform(
     t = transform["translation"]
     coords_rotated = einx.dot("... i j, ... n j -> ... n i", R, coords)
     return einx.add("... n d, ... d -> ... n d", coords_rotated, t)
+
+
+@overload
+def random_rotation_matrix(
+    coords: Float[Tensor, "... n 3"], key: int | None = ...
+) -> Float[Tensor, "... 3 3"]: ...
+@overload
+def random_rotation_matrix(
+    coords: Float[Array, "... n 3"], key: int | None = ...
+) -> Float[Array, "... 3 3"]: ...
 
 
 def random_rotation_matrix(
@@ -170,12 +205,28 @@ def random_rotation_matrix(
     raise RuntimeError(msg)
 
 
+@overload
+def create_random_transform(
+    coords: Float[Tensor, "... n 3"],
+    center_before_rotation: bool = ...,
+    scale_translation: float = ...,
+    key: int | None = ...,
+) -> Mapping[str, Float[Tensor, "..."]]: ...
+@overload
+def create_random_transform(
+    coords: Float[Array, "... n 3"],
+    center_before_rotation: bool = ...,
+    scale_translation: float = ...,
+    key: int | None = ...,
+) -> Mapping[str, Float[Array, "..."]]: ...
+
+
 def create_random_transform(
     coords: Float[Array | Tensor, "... n 3"],
     center_before_rotation: bool = True,
     scale_translation: float = 1.0,
     key: int | None = None,
-) -> dict[str, Float[Array | Tensor, "... 3"]]:
+) -> Mapping[str, Float[Array | Tensor, "... 3"]]:
     """
     Create a random rotation and translation transform.
 
@@ -216,3 +267,223 @@ def create_random_transform(
             raise RuntimeError(msg)
 
     return {"rotation": R, "translation": t}
+
+
+@overload
+def weighted_rigid_align_differentiable(
+    true_coords: Tensor,
+    pred_coords: Tensor,
+    weights: Tensor,
+    mask: Tensor,
+    return_transforms: Literal[False] = False,
+    allow_gradients: bool = True,
+) -> Tensor: ...
+
+
+@overload
+def weighted_rigid_align_differentiable(
+    true_coords: Tensor,
+    pred_coords: Tensor,
+    weights: Tensor,
+    mask: Tensor,
+    return_transforms: Literal[True],
+    allow_gradients: bool = True,
+) -> tuple[Tensor, Mapping[str, Tensor]]: ...
+
+
+@overload
+def weighted_rigid_align_differentiable(
+    true_coords: Array,
+    pred_coords: Array,
+    weights: Array,
+    mask: Array,
+    return_transforms: Literal[False] = False,
+    allow_gradients: bool = True,
+) -> Array: ...
+
+
+@overload
+def weighted_rigid_align_differentiable(
+    true_coords: Array,
+    pred_coords: Array,
+    weights: Array,
+    mask: Array,
+    return_transforms: Literal[True],
+    allow_gradients: bool = True,
+) -> tuple[Array, Mapping[str, Array]]: ...
+
+
+def weighted_rigid_align_differentiable(
+    true_coords: Array | Tensor,
+    pred_coords: Array | Tensor,
+    weights: Array | Tensor,
+    mask: Array | Tensor,
+    return_transforms: bool = False,
+    allow_gradients: bool = True,
+) -> (Array | Tensor) | tuple[Array | Tensor, Mapping[str, Array | Tensor]]:
+    """Compute weighted alignment with optional gradient preservation.
+
+    Identical to boltz.model.loss.diffusion.weighted_rigid_align but without
+    the detach_() call when allow_gradients=True, enabling gradient flow.
+
+    I preserve the same parameter names as the original function, but note that
+    true_coords will be aligned to the pred_coords in both implementations.
+
+    Parameters
+    ----------
+    true_coords: Array | Tensor
+        The ground truth atom coordinates
+    pred_coords: Array | Tensor
+        The predicted atom coordinates
+    weights: Array | Tensor
+        The weights for alignment
+    mask: Array | Tensor
+        The atoms mask
+    return_transforms: bool, optional
+        If True, also return the computed rotation and translation. Default: False
+    allow_gradients: bool, optional
+        If True, preserve gradients through alignment. If False, detach
+        (matches original Boltz behavior). Default: True
+
+    Returns
+    -------
+    Array | Tensor | tuple[Array | Tensor, dict[str, Array | Tensor]]
+        Aligned coordinates of true -> pred, and optionally the transforms applied
+        to align them.
+
+    """
+    backend_name, backend = get_backend(true_coords)
+    batch_size, num_points, dim = true_coords.shape
+
+    if backend_name == "torch":
+        weights_expanded = (mask * weights).unsqueeze(-1)  # type: ignore[union-attr]
+
+        true_centroid = (true_coords * weights_expanded).sum(  # type: ignore[call-arg]
+            dim=1,  # type: ignore[call-arg]
+            keepdim=True,  # type: ignore[call-arg]
+        ) / weights_expanded.sum(dim=1, keepdim=True)  # type: ignore[call-arg]
+        pred_centroid = (pred_coords * weights_expanded).sum(  # type: ignore[call-arg]
+            dim=1,  # type: ignore[call-arg]
+            keepdim=True,  # type: ignore[call-arg]
+        ) / weights_expanded.sum(dim=1, keepdim=True)  # type: ignore[call-arg]
+
+        true_coords_centered = true_coords - true_centroid
+        pred_coords_centered = pred_coords - pred_centroid
+
+        if num_points < (dim + 1):
+            print(
+                "Warning: The size of one of the point clouds is <= dim+1. "
+                + "`WeightedRigidAlign` cannot return a unique rotation."
+            )
+
+        cov_matrix = einx.dot(
+            "b [n] i, b [n] j -> b i j",
+            weights_expanded * pred_coords_centered,
+            true_coords_centered,
+        )
+
+        original_dtype = cov_matrix.dtype
+        cov_matrix_32 = cov_matrix.to(dtype=backend.float32)  # type: ignore[union-attr]
+
+        U, _, Vh = backend.linalg.svd(cov_matrix_32)
+
+        rotation = backend.matmul(U, Vh)
+
+        det = backend.det(rotation)
+        diag = backend.ones(
+            batch_size, dim, device=rotation.device, dtype=backend.float32
+        )
+        diag[:, -1] = det
+
+        rotation = backend.matmul(U * diag.unsqueeze(1), Vh)
+
+        rotation = rotation.to(dtype=original_dtype)  # type: ignore[union-attr]
+
+        # true @ rot.T
+        aligned_coords = (
+            einx.dot("b n i, b j i -> b n j", true_coords_centered, rotation)
+            + pred_centroid
+        )
+
+        if not allow_gradients:
+            aligned_coords = aligned_coords.detach()
+
+        if return_transforms:
+            # Alignment uses: aligned = true @ rotation.T + pred_centroid
+            # Transform functions use left multiplication: coords' = R @ coords + t
+            # Since we use rotation.T in alignment, return rotation for left-mult
+            translation_uncentered = pred_centroid - einx.dot(  # type: ignore[operator]
+                "b i j, b n j -> b n i", rotation, true_centroid
+            )
+            transforms = {
+                "rotation": rotation,
+                "translation": einx.rearrange("b () d -> b d", translation_uncentered),
+            }
+            return aligned_coords, transforms
+
+        return aligned_coords
+
+    elif backend_name == "jax":
+        weights_expanded = backend.numpy.expand_dims(mask * weights, axis=-1)
+
+        true_centroid = (true_coords * weights_expanded).sum(
+            axis=1, keepdims=True
+        ) / weights_expanded.sum(axis=1, keepdims=True)
+        pred_centroid = (pred_coords * weights_expanded).sum(
+            axis=1, keepdims=True
+        ) / weights_expanded.sum(axis=1, keepdims=True)
+
+        true_coords_centered = true_coords - true_centroid
+        pred_coords_centered = pred_coords - pred_centroid
+
+        if num_points < (dim + 1):
+            print(
+                "Warning: The size of one of the point clouds is <= dim+1. "
+                + "`WeightedRigidAlign` cannot return a unique rotation."
+            )
+
+        cov_matrix = einx.dot(
+            "b [n] i, b [n] j -> b i j",
+            weights_expanded * pred_coords_centered,
+            true_coords_centered,
+        )
+
+        original_dtype = cov_matrix.dtype
+        cov_matrix_32 = cov_matrix.astype(backend.numpy.float32)
+
+        U, _, Vh = backend.numpy.linalg.svd(cov_matrix_32)
+
+        rotation = backend.numpy.matmul(U, Vh)
+
+        det = backend.numpy.linalg.det(rotation)
+        diag = backend.numpy.ones((batch_size, dim), dtype=backend.numpy.float32)
+        diag = diag.at[:, -1].set(det)
+
+        rotation = backend.numpy.matmul(U * backend.numpy.expand_dims(diag, axis=1), Vh)
+
+        rotation = rotation.astype(original_dtype)
+
+        # Note: Same einsum pattern as Boltz - true @ rot.T
+        aligned_coords = (
+            einx.dot("b n i, b j i -> b n j", true_coords_centered, rotation)
+            + pred_centroid
+        )
+
+        if not allow_gradients:
+            aligned_coords = backend.lax.stop_gradient(aligned_coords)
+
+        if return_transforms:
+            # Same as PyTorch - return rotation for left-multiplication
+            translation_uncentered = pred_centroid - einx.dot(
+                "b i j, b n j -> b n i", rotation, true_centroid
+            )
+            transforms = {
+                "rotation": rotation,
+                "translation": einx.rearrange("b () d -> b d", translation_uncentered),
+            }
+            return aligned_coords, transforms  # type: ignore[return-value]
+
+        return aligned_coords
+
+    msg = f"Unsupported backend: {backend_name}"
+    raise RuntimeError(msg)
