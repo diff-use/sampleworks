@@ -5,7 +5,6 @@ TODO: Make this more generalizable, a reasonable protocol to implement
 Currently this only works with the implemented wrappers and isn't extensible
 """
 
-from collections.abc import Callable
 from typing import Any, cast, TYPE_CHECKING
 
 import einx
@@ -18,6 +17,11 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
+from sampleworks.utils.frame_transforms import (
+    apply_forward_transform,
+    create_random_transform,
+    weighted_rigid_align_differentiable,
+)
 
 
 if TYPE_CHECKING:
@@ -26,17 +30,14 @@ if TYPE_CHECKING:
 
 _boltz_available = False
 _protenix_available = False
-_weighted_rigid_align_differentiable: Callable[..., torch.Tensor] | None = None
 
 try:
     from sampleworks.models.boltz.wrapper import (
         Boltz1Wrapper,
         Boltz2Wrapper,
-        weighted_rigid_align_differentiable as _boltz_align,
     )
 
     _boltz_available = True
-    _weighted_rigid_align_differentiable = _boltz_align
     del Boltz1Wrapper, Boltz2Wrapper
 except ModuleNotFoundError:
     pass
@@ -44,12 +45,9 @@ except ModuleNotFoundError:
 try:
     from sampleworks.models.protenix.wrapper import (
         ProtenixWrapper,
-        weighted_rigid_align_differentiable as _protenix_align,
     )
 
     _protenix_available = True
-    if _weighted_rigid_align_differentiable is None:
-        _weighted_rigid_align_differentiable = _protenix_align
     del ProtenixWrapper
 except ModuleNotFoundError:
     pass
@@ -71,7 +69,6 @@ class PureGuidance:
         self,
         model_wrapper: DiffusionModelWrapper,
         reward_function: RewardFunction,
-        **kwargs,
     ):
         """Creates a PureGuidance Scaler for guiding a diffusion model with a
         RewardFunction.
@@ -89,8 +86,8 @@ class PureGuidance:
     def run_guidance(
         self, structure: dict, **kwargs: Any
     ) -> tuple[dict, tuple[list[Any], list[Any]], list[Any]]:
-        """Run pure guidance (Diffusion Posterior Sampling) using the provided
-        ModelWrapper
+        """Run pure guidance (Training-free guidance or Diffusion Posterior Sampling)
+        using the provided ModelWrapper
 
         Parameters
         ----------
@@ -152,7 +149,10 @@ class PureGuidance:
         use_tweedie = kwargs.get("use_tweedie", False)
         augmentation = kwargs.get("augmentation", False)
         align_to_input = kwargs.get("align_to_input", use_tweedie)
-        allow_alignment_gradients = True
+        alignment_reverse_diffusion = kwargs.get(
+            "alignment_reverse_diffusion", not align_to_input
+        )
+        allow_alignment_gradients = not use_tweedie
 
         features = self.model_wrapper.featurize(
             structure, out_dir=kwargs.get("out_dir", "test")
@@ -205,6 +205,9 @@ class PureGuidance:
             ),
         )[..., reward_param_mask, :]
 
+        # TODO: account for missing residues in mask
+        mask_like = torch.ones_like(input_coords[..., 0])
+
         if input_coords.shape != coords.shape:
             raise ValueError(
                 f"Input coordinates shape {input_coords.shape} does not match"
@@ -225,49 +228,72 @@ class PureGuidance:
             )
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
 
-        if use_tweedie:
-            allow_alignment_gradients = False
-
         for i in tqdm(
             range(cast(int, kwargs.get("partial_diffusion_step", 0)), n_steps)
         ):
             apply_guidance = i > guidance_start
 
-            if not use_tweedie and apply_guidance:
-                # Technically training free guidance requires grad on noisy_coords, not
-                # on denoised, but DPS uses Tweedie's formula which has its limitations.
-                # Maddipatla et al. 2025 use full backprop through model with grad on
-                # noisy_coords.
-                coords.requires_grad_(True)
+            centroid = einx.mean("... [n] c", coords)
+            coords = einx.subtract("... n c, ... c -> ... n c", coords, centroid)
 
             timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
             t_hat = timestep_scaling["t_hat"]
             sigma_t = timestep_scaling["sigma_t"]
             eps = timestep_scaling["eps_scale"] * torch.randn_like(coords)
 
+            transform = (
+                create_random_transform(coords, center_before_rotation=False)
+                if augmentation
+                else None
+            )
+            maybe_augmented_coords = cast(
+                torch.Tensor,
+                apply_forward_transform(coords, transform, rotation_only=False)
+                if transform is not None
+                else coords,
+            )
+
+            if not use_tweedie and apply_guidance:
+                # Technically training free guidance requires grad on noisy_coords, not
+                # on denoised, but DPS uses Tweedie's formula which has its limitations.
+                # Maddipatla et al. 2025 use full backprop through model with grad on
+                # noisy_coords.
+                maybe_augmented_coords.clone().detach_().requires_grad_(True)
+
             denoised = self.model_wrapper.denoise_step(
                 features,
-                coords,
+                maybe_augmented_coords,
                 timestep=i,
                 grad_needed=(apply_guidance and not use_tweedie),
-                augmentation=augmentation,
-                align_to_input=align_to_input,
-                allow_alignment_gradients=allow_alignment_gradients,
                 # Provide precomputed t_hat and eps to allow us to calculate the
                 # denoising direction properly
-                input_coords=input_coords,
                 t_hat=t_hat,
                 eps=eps,
             )["atom_coords_denoised"]
 
             trajectory_denoised.append(denoised.clone().cpu())
 
-            guidance_direction = None
+            align_transform = None
+            denoised_working_frame = denoised
+            if align_to_input:
+                denoised_working_frame, align_transform = (
+                    weighted_rigid_align_differentiable(
+                        denoised,
+                        input_coords,
+                        weights=mask_like,
+                        mask=mask_like,
+                        return_transforms=True,
+                        allow_gradients=allow_alignment_gradients,
+                    )
+                )
 
+            guidance_direction = None
             if apply_guidance:
                 if use_tweedie:
                     # Using Tweedie's formula like DPS: gradient on denoised (x̂_0) only
-                    denoised_for_grad = denoised.detach().requires_grad_(True)
+                    denoised_for_grad = denoised_working_frame.detach().requires_grad_(
+                        True
+                    )
                     loss = self.reward_function(
                         coordinates=denoised_for_grad,
                         elements=cast(torch.Tensor, elements),
@@ -283,7 +309,7 @@ class PureGuidance:
                     # Like Maddipatla et al. 2025 and training free guidance: gradient
                     # through model
                     loss = self.reward_function(
-                        coordinates=denoised,
+                        coordinates=denoised_working_frame,
                         elements=cast(torch.Tensor, elements),
                         b_factors=cast(torch.Tensor, b_factors),
                         occupancies=cast(torch.Tensor, occupancies),
@@ -291,9 +317,10 @@ class PureGuidance:
                     loss.backward()
 
                     with torch.no_grad():
-                        grad = cast(torch.Tensor, coords.grad)
+                        grad = maybe_augmented_coords.grad
+                        assert grad is not None
                         guidance_direction = grad.clone()
-                        coords.grad = None
+                        maybe_augmented_coords.grad = None
 
                 losses.append(loss.item())
             else:
@@ -301,21 +328,27 @@ class PureGuidance:
 
             with torch.no_grad():
                 # Use the same eps as in the denoising step to properly compute
-                # the denoising direction
-                noisy_coords = coords + eps
+                # the denoising direction, and put in the denoised working frame
+                coords_in_working_frame = (
+                    apply_forward_transform(
+                        maybe_augmented_coords, align_transform, rotation_only=False
+                    )
+                    if align_transform is not None
+                    else maybe_augmented_coords
+                )
+                eps_in_working_frame = (
+                    apply_forward_transform(eps, align_transform, rotation_only=True)
+                    if align_transform is not None
+                    else eps
+                )
+                noisy_coords = coords_in_working_frame + eps_in_working_frame
 
-                if kwargs.get("alignment_reverse_diffusion", True):
+                if alignment_reverse_diffusion:
                     # Boltz aligns the noisy coords to the denoised coords at each step
                     # to improve stability.
-                    mask_like = torch.ones_like(denoised[..., 0])
-                    if _weighted_rigid_align_differentiable is None:
-                        raise RuntimeError(
-                            "weighted_rigid_align_differentiable not available. "
-                            "At least one wrapper should be loaded."
-                        )
-                    noisy_coords = _weighted_rigid_align_differentiable(
+                    noisy_coords = weighted_rigid_align_differentiable(
                         noisy_coords,
-                        denoised,
+                        denoised_working_frame,
                         weights=mask_like,
                         mask=mask_like,
                         allow_gradients=False,
@@ -323,9 +356,20 @@ class PureGuidance:
 
                 dt = sigma_t - t_hat
 
-                delta = (noisy_coords - denoised) / t_hat
+                delta = (noisy_coords - denoised_working_frame) / t_hat
 
                 if guidance_direction is not None:
+                    # Make sure guidance direction is in working frame, since denoised
+                    # may have been aligned. If using Tweedie/DPS, the grad is already
+                    # in working frame because denoised_for_grad was aligned.
+                    if not use_tweedie:
+                        guidance_direction = (
+                            apply_forward_transform(
+                                guidance_direction, align_transform, rotation_only=True
+                            )
+                            if align_transform is not None
+                            else guidance_direction
+                        )
                     if gradient_normalization:
                         grad_norm = guidance_direction.norm(dim=(1, 2), keepdim=True)
                         delta_norm = delta.norm(dim=(1, 2), keepdim=True)
