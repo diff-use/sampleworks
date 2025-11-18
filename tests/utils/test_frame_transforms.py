@@ -66,6 +66,122 @@ class TestFrameTransforms:
         recovered = apply_inverse_transform(augmented, transform)
         assert recovered.shape == coords.shape
 
+    def test_transform_only_rotation_torch(self, shape: tuple[int, ...]):
+        """Test that rotation_only option works correctly."""
+        coords = torch.randn(*shape)
+        transform = create_random_transform(coords)
+
+        augmented = apply_forward_transform(coords, transform, rotation_only=True)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=True)
+
+        torch.testing.assert_close(coords, recovered, rtol=1e-5, atol=1e-5)
+
+        # translate away from origin
+        translation = torch.tensor([10.0, 20.0, 30.0])
+        coords = coords + translation
+        transform = create_random_transform(coords, center_before_rotation=False)
+
+        # no centering w/o translation
+        augmented = apply_forward_transform(coords, transform, rotation_only=True)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=True)
+
+        torch.testing.assert_close(coords, recovered, rtol=1e-5, atol=1e-5)
+        # check that coordinates are not at origin after rotation-only transform
+        assert not torch.allclose(
+            einx.mean("... n c -> ... c", recovered), torch.zeros_like(translation)
+        )
+        assert not torch.allclose(
+            einx.mean("... n c -> ... c", augmented), torch.zeros_like(translation)
+        )
+        assert not torch.allclose(
+            einx.mean("... n c -> ... c", coords), torch.zeros_like(translation)
+        )
+
+        # check that mixing rotation_only values doesn't recover original coords
+        augmented = apply_forward_transform(coords, transform, rotation_only=False)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=True)
+
+        assert not torch.allclose(coords, recovered)
+
+        augmented = apply_forward_transform(coords, transform, rotation_only=True)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=False)
+
+        assert not torch.allclose(coords, recovered)
+
+        # check that forward transform with rotation_only = False can be undone
+        # by inverse transform with rotation_only = True and modification of the
+        # translation
+        augmented = apply_forward_transform(coords, transform, rotation_only=False)
+        recovered_no_translation = apply_inverse_transform(
+            augmented, transform, rotation_only=True
+        )
+        # R.T @ t
+        translation = einx.dot(
+            "... j i, ... j -> ... i", transform["rotation"], transform["translation"]
+        )
+        recovered = einx.subtract(
+            "... n c, ... c -> ... n c", recovered_no_translation, translation
+        )
+        torch.testing.assert_close(coords, recovered, rtol=1e-5, atol=1e-5)
+
+    def test_transform_only_rotation_jax(self, shape: tuple[int, ...]):
+        """Test that rotation_only option works correctly."""
+        coords = jax.random.normal(jax.random.PRNGKey(0), shape=shape)
+        transform = create_random_transform(coords)
+
+        augmented = apply_forward_transform(coords, transform, rotation_only=True)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=True)
+
+        assert jax.numpy.allclose(coords, recovered, rtol=1e-5, atol=1e-5)
+
+        # translate away from origin
+        translation = jax.numpy.array([10.0, 20.0, 30.0])
+        coords = coords + translation
+        transform = create_random_transform(coords, center_before_rotation=False, key=1)
+
+        # no centering w/o translation
+        augmented = apply_forward_transform(coords, transform, rotation_only=True)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=True)
+
+        assert jax.numpy.allclose(coords, recovered, rtol=1e-5, atol=1e-5)
+        # check that coordinates are not at origin after rotation-only transform
+        assert not jax.numpy.allclose(
+            jax.numpy.mean(recovered, axis=-2), jax.numpy.zeros_like(translation)
+        )
+        assert not jax.numpy.allclose(
+            jax.numpy.mean(augmented, axis=-2), jax.numpy.zeros_like(translation)
+        )
+        assert not jax.numpy.allclose(
+            jax.numpy.mean(coords, axis=-2), jax.numpy.zeros_like(translation)
+        )
+
+        # check that mixing rotation_only values doesn't recover original coords
+        augmented = apply_forward_transform(coords, transform, rotation_only=False)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=True)
+
+        assert not jax.numpy.allclose(coords, recovered)
+
+        augmented = apply_forward_transform(coords, transform, rotation_only=True)
+        recovered = apply_inverse_transform(augmented, transform, rotation_only=False)
+
+        assert not jax.numpy.allclose(coords, recovered)
+
+        # check that forward transform with rotation_only = False can be undone
+        # by inverse transform with rotation_only = True and modification of the
+        # translation
+        augmented = apply_forward_transform(coords, transform, rotation_only=False)
+        recovered_no_translation = apply_inverse_transform(
+            augmented, transform, rotation_only=True
+        )
+        # R.T @ t
+        translation = einx.dot(
+            "... j i, ... j -> ... i", transform["rotation"], transform["translation"]
+        )
+        recovered = einx.subtract(
+            "... n c, ... c -> ... n c", recovered_no_translation, translation
+        )
+        assert jax.numpy.allclose(coords, recovered, rtol=1e-5, atol=1e-5)
+
     def test_transform_rotation_matrix_orthogonal_torch(self, shape: tuple[int, ...]):
         """Test that rotation matrix is orthogonal."""
         coords = torch.randn(*shape)

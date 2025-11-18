@@ -66,17 +66,20 @@ def get_backend(
 def apply_inverse_transform(
     coords: Float[Tensor, "... n 3"],
     transform: Mapping[str, Float[Tensor, "..."]],
+    rotation_only: bool = ...,
 ) -> Float[Tensor, "... n 3"]: ...
 @overload
 def apply_inverse_transform(
     coords: Float[Array, "... n 3"],
     transform: Mapping[str, Float[Array, "..."]],
+    rotation_only: bool = ...,
 ) -> Float[Array, "... n 3"]: ...
 
 
 def apply_inverse_transform(
     coords: Float[Array | Tensor, "... n 3"],
     transform: Mapping[str, Float[Array | Tensor, "..."]],
+    rotation_only: bool = False,
 ) -> Float[Array | Tensor, "... n 3"]:
     """
     Apply inverse of augmentation transform to coordinates.
@@ -90,6 +93,8 @@ def apply_inverse_transform(
         Coordinates in augmented frame
     transform : dict[str, Array | Tensor]
         Transform dictionary with keys "rotation" and "translation"
+    rotation_only : bool, optional
+        If True, only apply rotation without translation, by default False
 
     Returns
     -------
@@ -98,7 +103,9 @@ def apply_inverse_transform(
     """
     R = transform["rotation"]
     t = transform["translation"]
-    coords_centered = einx.subtract("... n d, ... d -> ... n d", coords, t)
+    coords_centered = coords
+    if not rotation_only:
+        coords_centered = einx.subtract("... n d, ... d -> ... n d", coords, t)
     return einx.dot("... j i, ... n j -> ... n i", R, coords_centered)
 
 
@@ -106,17 +113,20 @@ def apply_inverse_transform(
 def apply_forward_transform(
     coords: Float[Tensor, "... n 3"],
     transform: Mapping[str, Float[Tensor, "..."]],
+    rotation_only: bool = ...,
 ) -> Float[Tensor, "... n 3"]: ...
 @overload
 def apply_forward_transform(
     coords: Float[Array, "... n 3"],
     transform: Mapping[str, Float[Array, "..."]],
+    rotation_only: bool = ...,
 ) -> Float[Array, "... n 3"]: ...
 
 
 def apply_forward_transform(
     coords: Float[Array | Tensor, "... n 3"],
     transform: Mapping[str, Float[Array | Tensor, "..."]],
+    rotation_only: bool = False,
 ) -> Float[Array | Tensor, "... n 3"]:
     """
     Apply augmentation transform to coordinates.
@@ -129,6 +139,8 @@ def apply_forward_transform(
         Coordinates in input frame
     transform : dict[str, Array | Tensor]
         Transform dictionary with keys "rotation" and "translation"
+    rotation_only : bool, optional
+        If True, only apply rotation without translation, by default False
 
     Returns
     -------
@@ -138,7 +150,11 @@ def apply_forward_transform(
     R = transform["rotation"]
     t = transform["translation"]
     coords_rotated = einx.dot("... i j, ... n j -> ... n i", R, coords)
-    return einx.add("... n d, ... d -> ... n d", coords_rotated, t)
+    return (
+        einx.add("... n d, ... d -> ... n d", coords_rotated, t)
+        if not rotation_only
+        else coords_rotated
+    )
 
 
 @overload
