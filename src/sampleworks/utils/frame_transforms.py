@@ -28,7 +28,7 @@ def get_backend(
 
     Parameters
     ----------
-    coords : Float[Array | Tensor, "..."]
+    coords: Float[Array | Tensor, "..."]
         Coordinates to infer backend from
 
     Returns
@@ -88,11 +88,11 @@ def apply_inverse_transform(
 
     Parameters
     ----------
-    coords : Float[Array | Tensor, "... n 3"]
+    coords: Float[Array | Tensor, "... n 3"]
         Coordinates in augmented frame
-    transform : dict[str, Array | Tensor]
+    transform: dict[str, Array | Tensor]
         Transform dictionary with keys "rotation" and "translation"
-    rotation_only : bool, optional
+    rotation_only: bool, optional
         If True, only apply rotation without translation, by default False
 
     Returns
@@ -134,11 +134,11 @@ def apply_forward_transform(
 
     Parameters
     ----------
-    coords : Float[Array | Tensor, "... n 3"]
+    coords: Float[Array | Tensor, "... n 3"]
         Coordinates in input frame
-    transform : dict[str, Array | Tensor]
+    transform: dict[str, Array | Tensor]
         Transform dictionary with keys "rotation" and "translation"
-    rotation_only : bool, optional
+    rotation_only: bool, optional
         If True, only apply rotation without translation, by default False
 
     Returns
@@ -177,9 +177,9 @@ def random_rotation_matrix(
 
     Parameters
     ----------
-    coords : Float[Array | Tensor, "... n 3"]
+    coords: Float[Array | Tensor, "... n 3"]
         Coordinates to infer backend and batch shape from
-    key : int | None, optional
+    key: int | None, optional
         Random key for JAX backend, by default None
 
     Returns
@@ -247,13 +247,13 @@ def create_random_transform(
 
     Parameters
     ----------
-    coords : Float[Array | Tensor, "... n 3"]
+    coords: Float[Array | Tensor, "... n 3"]
         Coordinates to base the transform on (for backend dispatch)
-    center_before_rotation : bool, optional
+    center_before_rotation: bool, optional
         If True, center the structure at origin before rotating, by default True
-    scale_translation : float, optional
+    scale_translation: float, optional
         Scale factor for random translation magnitude, by default 1.0
-    key : int | None, optional
+    key: int | None, optional
         Random key for JAX backend, by default None
 
     Returns

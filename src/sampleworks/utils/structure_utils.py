@@ -22,14 +22,14 @@ def save_structure_to_cif(
 
     Parameters
     ----------
-    atom_array : AtomArray | AtomArrayStack
+    atom_array: AtomArray | AtomArrayStack
         The structure to save.
-    output_path : str | Path
+    output_path: str | Path
         Output file path. Parent directories will be created if needed.
-    handle_nan : bool, default=True
+    handle_nan: bool, default=True
         If True, filters out atoms with NaN coordinates and warns.
         If False, passes structure as-is (may cause errors if NaN present).
-    frame_indices : int | list[int] | None, default=None
+    frame_indices: int | list[int] | None, default=None
         Which frames to save:
         - None: Save all frames (if AtomArrayStack) or single frame (if AtomArray)
         - int: Extract single frame at this index (saves single-model CIF)
@@ -75,8 +75,8 @@ def save_structure_to_cif(
 
     See Also
     --------
-    biotite.structure.io.pdbx.set_structure : Underlying save function
-    biotite.structure.stack : Create AtomArrayStack from multiple frames
+    biotite.structure.io.pdbx.set_structure: Underlying save function
+    biotite.structure.stack: Create AtomArrayStack from multiple frames
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

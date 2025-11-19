@@ -25,18 +25,18 @@ class DensityParameters:
 
     Parameters
     ----------
-    rmax : float
+    rmax: float
         Maximum radius for density calculation in Angstroms.
-    rstep : float
+    rstep: float
         Step size for radial grid in Angstroms.
-    smin : float
+    smin: float
         Minimum scattering vector magnitude in inverse Angstroms.
-    smax : float
+    smax: float
         Maximum scattering vector magnitude in inverse Angstroms. Default is based
         on 1.0 Å.
-    quad_points : int
+    quad_points: int
         Number of quadrature points for numerical integration.
-    integration_method : str
+    integration_method: str
         Integration method to use ('gausslegendre' or 'simpson' or 'trapezoid').
     """
 
@@ -79,20 +79,20 @@ class XMap_torch:
 
         Parameters
         ----------
-        xmap : XMap, optional
+        xmap: XMap, optional
             Initialize from qFit XMap (preferred).
-        array : Optional[torch.Tensor], optional
+        array: Optional[torch.Tensor], optional
             Map array, by default None.
-        grid_parameters : Optional[GridParameters], optional
+        grid_parameters: Optional[GridParameters], optional
             Grid parameters for the map, meaning voxel spacing (voxelspacing) and
             offset.
-        unit_cell : Optional[UnitCell], optional
+        unit_cell: Optional[UnitCell], optional
             Crystallographic unit cell information.
-        resolution : Optional[Union[Resolution, float]], optional
+        resolution: Optional[Union[Resolution, float]], optional
             Map resolution in Angstroms, by default None.
-        hkl : Optional[torch.Tensor], optional
+        hkl: Optional[torch.Tensor], optional
             Miller indices for the map, by default None.
-        device : torch.device, optional
+        device: torch.device, optional
             Device to use for computations, by default 'cpu'.
         """
         if xmap is not None:
@@ -205,9 +205,9 @@ class XMap_torch:
 
         Parameters
         ----------
-        filename : str
+        filename: str
             Output filename.
-        density : Union[torch.Tensor, NDArray], optional
+        density: Union[torch.Tensor, NDArray], optional
             Density grid to save, by default None.
             If provided, it will be used to update the map array.
         """
@@ -234,7 +234,7 @@ class XMap_torch:
 
         Parameters
         ----------
-        density : torch.Tensor
+        density: torch.Tensor
             Input density grid of shape (batch_size, *grid_shape).
 
         Returns
@@ -320,12 +320,12 @@ class XMap_torch:
 
         Parameters
         ----------
-        target_resolution : float
+        target_resolution: float
             Target resolution in Angstroms.
-        apply_filter : bool, optional
+        apply_filter: bool, optional
             Apply Gaussian filter when downsampling to prevent aliasing, by default
             True.
-        filter_type : str, optional
+        filter_type: str, optional
             Type of filter to apply ('hamming' or 'brickwall'), by default 'brickwall'.
 
         Returns
@@ -446,24 +446,24 @@ class DifferentiableTransformer(torch.nn.Module):
 
         Parameters
         ----------
-        xmap : DifferentiableXMap
+        xmap: DifferentiableXMap
             Differentiable XMap object.
-        scattering_params : torch.Tensor
+        scattering_params: torch.Tensor
             Atomic scattering parameters for each element, of shape [n_elem, n_coeffs,
             2]. NOTE: The indexing on the elements MUST match the element indices in the
             input to forward!
-        density_params : Optional[DensityParameters], optional
+        density_params: Optional[DensityParameters], optional
             Parameters for density calculation, by default None.
             Min and max scattering vector magnitudes will be updated by resolutions in
             the XMap.
-        em : bool, optional
+        em: bool, optional
             Whether to use electron microscopy mode, by default False.
-        space_group : Optional[int], optional
+        space_group: Optional[int], optional
             Space group number, by default None (in which case it is expected from the
             XMap unit cell).
-        device : torch.device, optional
+        device: torch.device, optional
             Device to use for computations, by default 'cpu'.
-        use_cuda_kernels : bool, optional
+        use_cuda_kernels: bool, optional
             Whether to use CUDA kernels for performance, by default False.
         """
         super().__init__()
@@ -532,17 +532,17 @@ class DifferentiableTransformer(torch.nn.Module):
 
         Parameters
         ----------
-        coordinates : torch.Tensor
+        coordinates: torch.Tensor
             Atomic coordinates of shape (batch_size, n_atoms, 3).
-        elements : torch.Tensor
+        elements: torch.Tensor
             Element indices of shape (batch_size, n_atoms).
             NOTE: The indexing on the elements MUST match the element indices in the
             input to forward!
-        b_factors : torch.Tensor
+        b_factors: torch.Tensor
             B-factors of shape (batch_size, n_atoms).
-        occupancies : torch.Tensor
+        occupancies: torch.Tensor
             Occupancies of shape (batch_size, n_atoms).
-        active : Optional[torch.Tensor], optional
+        active: Optional[torch.Tensor], optional
             Boolean mask of active atoms of shape (batch_size, n_atoms). Defaults to
             all True if None.
 
@@ -645,10 +645,10 @@ class DifferentiableTransformer(torch.nn.Module):
 
         Parameters
         ----------
-        coordinates : torch.Tensor
+        coordinates: torch.Tensor
             Cartesian coordinates of atoms, shape (n_atoms, 3).
             Assumes input coordinates are on the correct device.
-        radius : float
+        radius: float
             Radius in Ångstroms to carve around atoms.
 
         Returns
@@ -742,9 +742,9 @@ class DifferentiableTransformer(torch.nn.Module):
 
         Parameters
         ----------
-        elements : torch.Tensor
+        elements: torch.Tensor
             Element indices of shape (batch_size, n_atoms).
-        b_factors : torch.Tensor
+        b_factors: torch.Tensor
             B-factors of shape (batch_size, n_atoms).
 
         Returns
@@ -820,9 +820,9 @@ class DifferentiableTransformer(torch.nn.Module):
 
         Parameters
         ----------
-        elements : torch.Tensor
+        elements: torch.Tensor
             Element indices of shape (batch_size, n_atoms).
-        b_factors : torch.Tensor
+        b_factors: torch.Tensor
             B-factors of shape (batch_size, n_atoms).
 
         Returns
@@ -893,7 +893,7 @@ class DifferentiableTransformer(torch.nn.Module):
 
         Parameters
         ----------
-        coordinates : torch.Tensor
+        coordinates: torch.Tensor
             Cartesian coordinates of shape (batch_size, n_atoms, 3).
 
         Returns
@@ -937,24 +937,24 @@ def dilate_points_torch(
 
     Parameters
     ----------
-    coordinates : torch.Tensor
+    coordinates: torch.Tensor
         Grid coordinates corresponding to atom positions of shape
         (batch_size, n_atoms, 3).
-    active : torch.Tensor
+    active: torch.Tensor
         Boolean mask of active atoms of shape (batch_size, n_atoms).
-    occupancies : torch.Tensor
+    occupancies: torch.Tensor
         Occupancies of shape (batch_size, n_atoms).
-    lmax : torch.Tensor
+    lmax: torch.Tensor
         Maximum distances from atom to consider in grid units of shape (3,).
-    radial_densities : torch.Tensor
+    radial_densities: torch.Tensor
         Precomputed radial densities of shape (batch_size, n_atoms, n_radial).
-    rstep : float
+    rstep: float
         Step size for radial grid.
-    rmax : float
+    rmax: float
         Maximum radius for density calculation.
-    grid_to_cartesian : torch.Tensor
+    grid_to_cartesian: torch.Tensor
         Transformation matrix from grid to Cartesian of shape (3, 3).
-    grid_shape : tuple[int, int, int]
+    grid_shape: tuple[int, int, int]
         Output grid shape (int, int, int).
 
     Returns
@@ -1099,16 +1099,16 @@ def scattering_integrand(
 
     Parameters
     ----------
-    s : torch.Tensor
+    s: torch.Tensor
         Scattering vector magnitudes, shape (..., n_s).
-    r : torch.Tensor
+    r: torch.Tensor
         Radial distances, shape (n_r,).
-    asf : torch.Tensor
+    asf: torch.Tensor
         Atomic scattering factors with shape (..., n_coeffs, 2).
         The coefficients are [a_i, b_i] pairs for the scattering model.
-    bfactor : torch.Tensor
+    bfactor: torch.Tensor
         B-factors, shape (...,).
-    em : bool, optional
+    em: bool, optional
         Whether to use electron microscopy mode, by default False.
 
     Returns
@@ -1259,17 +1259,17 @@ def scale_map(
 
     Parameters
     ----------
-    xmap_array : torch.Tensor
+    xmap_array: torch.Tensor
         The experimental map array to be scaled.
-    model_map_array : torch.Tensor
+    model_map_array: torch.Tensor
         The calculated model map array used as the reference for scaling.
-    mask : torch.Tensor
+    mask: torch.Tensor
         A boolean mask indicating the regions to use for calculating scaling factors.
-    similarity_threshold : float, optional
+    similarity_threshold: float, optional
         Threshold to determine if maps are already similar enough to skip aggressive
         scaling.
         Default is 0.05 (5% difference).
-    min_scaling_denominator : float, optional
+    min_scaling_denominator: float, optional
         Minimum value for denominator in scaling calculation to ensure numerical
         stability.
         Default is 1e-10.

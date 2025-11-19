@@ -24,11 +24,11 @@ class GaussLegendreQuadrature(torch.nn.Module):
 
         Parameters
         ----------
-        num_points : int, optional
+        num_points: int, optional
             Number of quadrature points to use, by default 5
-        device : torch.device, optional
+        device: torch.device, optional
             Device to place the tensors on, by default torch.device("cpu")
-        dtype : torch.dtype, optional
+        dtype: torch.dtype, optional
             Data type for the tensors, by default torch.float32
         """
         super().__init__()
@@ -81,13 +81,13 @@ class GaussLegendreQuadrature(torch.nn.Module):
 
         Parameters
         ----------
-        func : Callable[[torch.Tensor], torch.Tensor]
+        func: Callable[[torch.Tensor], torch.Tensor]
             Function to integrate. Should accept and return tensors.
-        integration_limits : torch.Tensor
+        integration_limits: torch.Tensor
             Tensor of shape [..., 2] containing lower and upper integration limits.
-        dim : int, optional
+        dim: int, optional
             Dimension of the function output to integrate over, by default -1
-        keepdim : bool, optional
+        keepdim: bool, optional
             Whether to keep the integrated dimension, by default False
 
         Returns
@@ -137,11 +137,11 @@ class GaussLegendreQuadrature(torch.nn.Module):
 
         Parameters
         ----------
-        num_points : int
+        num_points: int
             Number of quadrature points
-        device : torch.device
+        device: torch.device
             Device to place the tensors on
-        dtype : torch.dtype
+        dtype: torch.dtype
             Data type for the tensors
 
         Returns

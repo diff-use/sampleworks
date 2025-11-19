@@ -29,23 +29,23 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
 
         Parameters
         ----------
-        atom_coords_grid : torch.Tensor
+        atom_coords_grid: torch.Tensor
             Atomic coordinates in grid units, shape [batch_size, symmetry_ops, N_atoms, 3]
-        atom_occupancies : torch.Tensor
+        atom_occupancies: torch.Tensor
             Atomic occupancies, shape [batch_size, N_atoms]
-        radial_profiles : torch.Tensor
+        radial_profiles: torch.Tensor
             Pre-calculated radial density values P(r), shape [batch_size, N_atoms, N_radial_points]
-        radial_profiles_derivatives : torch.Tensor
+        radial_profiles_derivatives: torch.Tensor
             Pre-calculated derivatives of radial density P'(r), shape [batch_size, N_atoms, N_radial_points]
-        r_step : float
+        r_step: float
             Step size for radial_profiles sampling
-        rmax_cartesian : float
+        rmax_cartesian: float
             Maximum radius for an atom's influence in Cartesian space
-        lmax_grid_units : torch.Tensor
+        lmax_grid_units: torch.Tensor
             Maximum extent in grid units along each axis, shape [3]
-        grid_dims : torch.Tensor
+        grid_dims: torch.Tensor
             Dimensions of output grid [Dz, Dy, Dx], shape [3]
-        grid_to_cartesian_matrix : torch.Tensor
+        grid_to_cartesian_matrix: torch.Tensor
             Transformation matrix from grid to Cartesian coordinates, shape [3, 3]
 
         Returns
@@ -102,7 +102,7 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
 
         Parameters
         ----------
-        grad_output : torch.Tensor
+        grad_output: torch.Tensor
             Gradient of loss with respect to output density grid
 
         Returns

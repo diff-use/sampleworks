@@ -51,9 +51,9 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
 
     Parameters
     ----------
-    structure : dict
+    structure: dict
         Atomworks parsed structure.
-    out_dir : str | Path
+    out_dir: str | Path
         Path to write the YAML in.
 
     Returns
@@ -134,22 +134,22 @@ class Boltz2Wrapper:
         """
         Parameters
         ----------
-        checkpoint_path : str | Path
+        checkpoint_path: str | Path
             Filesystem path to the Boltz2 checkpoint containing trained weights.
-        use_msa_server : bool, optional
+        use_msa_server: bool, optional
             If ``True``, fetch MSA features from the ColabFold server; otherwise rely
             on precomputed MSAs.
-        predict_args : PredictArgs, optional
+        predict_args: PredictArgs, optional
             Runtime prediction configuration such as recycling depth and sampling
             steps.
-        diffusion_args : Boltz2DiffusionParams, optional
+        diffusion_args: Boltz2DiffusionParams, optional
             Diffusion process parameters passed down to the Boltz2 model.
-        steering_args : BoltzSteeringParams, optional
+        steering_args: BoltzSteeringParams, optional
             Steering configuration controlling external potentials applied during
             sampling.
-        method : str, optional
+        method: str, optional
             Inference method identifier understood by Boltz2 (e.g. ``"MD"``).
-        device : torch.device, optional
+        device: torch.device, optional
             Device to run the model on, by default CUDA if available.
         """
         self.checkpoint_path = checkpoint_path
@@ -222,11 +222,11 @@ class Boltz2Wrapper:
 
         Parameters
         ----------
-        input_path : str | Path
+        input_path: str | Path
             Path to the input Boltz YAML file.
-        out_dir : str | Path
+        out_dir: str | Path
             Directory to output processed input.
-        num_workers : int, optional
+        num_workers: int, optional
             Number of parallel workers for input data processing, by default 8
         """
         input_path = Path(input_path) if isinstance(input_path, str) else input_path
@@ -286,9 +286,9 @@ class Boltz2Wrapper:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Boltz-2 featurization.
 
             - out_dir: str | Path
@@ -335,11 +335,11 @@ class Boltz2Wrapper:
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features as returned by `featurize`.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Boltz-2 Pairformer step.
 
             - recycling_steps: int
@@ -452,17 +452,17 @@ class Boltz2Wrapper:
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features produced by :meth:`featurize` or :meth:`step`.
-        noisy_coords : Float[Tensor, "..."]
+        noisy_coords: Float[Tensor, "..."]
             Noisy atom coordinates at the current timestep.
-        timestep : int
+        timestep: int
             Current timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Boltz-2 denoising.
 
             t_hat (float, optional)
@@ -596,7 +596,7 @@ class Boltz2Wrapper:
 
         Parameters
         ----------
-        timestep : float | int
+        timestep: float | int
             Current timestep/noise level. (starts from 0)
 
         Returns
@@ -633,13 +633,13 @@ class Boltz2Wrapper:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : float | int
+        noise_level: float | int
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
         Returns
@@ -693,20 +693,20 @@ class Boltz1Wrapper:
         """
         Parameters
         ----------
-        checkpoint_path : str | Path
+        checkpoint_path: str | Path
             Filesystem path to the Boltz1 checkpoint containing trained weights.
-        use_msa_server : bool, optional
+        use_msa_server: bool, optional
             If ``True``, fetch MSA features from the ColabFold server; otherwise rely
             on precomputed MSAs.
-        predict_args : PredictArgs, optional
+        predict_args: PredictArgs, optional
             Runtime prediction configuration such as recycling depth and sampling
             steps.
-        diffusion_args : BoltzDiffusionParams, optional
+        diffusion_args: BoltzDiffusionParams, optional
             Diffusion process parameters passed down to the Boltz1 model.
-        steering_args : BoltzSteeringParams, optional
+        steering_args: BoltzSteeringParams, optional
             Steering configuration controlling external potentials applied during
             sampling.
-        device : torch.device, optional
+        device: torch.device, optional
             Device to run the model on, by default CUDA if available.
         """
         self.checkpoint_path = checkpoint_path
@@ -779,11 +779,11 @@ class Boltz1Wrapper:
 
         Parameters
         ----------
-        input_path : str | Path
+        input_path: str | Path
             Path to the input Boltz YAML file.
-        out_dir : str | Path
+        out_dir: str | Path
             Directory to output processed input.
-        num_workers : int, optional
+        num_workers: int, optional
             Number of parallel workers for input data processing, by default 2
         """
         input_path = Path(input_path) if isinstance(input_path, str) else input_path
@@ -835,9 +835,9 @@ class Boltz1Wrapper:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Boltz-1 featurization.
 
             - out_dir: str | Path
@@ -893,7 +893,7 @@ class Boltz1Wrapper:
 
         Parameters
         ----------
-        timestep : float | int
+        timestep: float | int
             Current timestep/noise level.
 
         Returns
@@ -936,11 +936,11 @@ class Boltz1Wrapper:
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features as returned by `featurize`.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Boltz-1 Pairformer step.
 
             - recycling_steps: int
@@ -1017,17 +1017,17 @@ class Boltz1Wrapper:
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features produced by :meth:`featurize`.
-        noisy_coords : Float[ArrayLike | Tensor, "..."]
+        noisy_coords: Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
-        timestep : float | int
+        timestep: float | int
             Current timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Boltz-1 denoising.
 
             t_hat (float, optional)
@@ -1144,13 +1144,13 @@ class Boltz1Wrapper:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : float | int
+        noise_level: float | int
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
         Returns
