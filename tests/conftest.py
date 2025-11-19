@@ -3,30 +3,32 @@
 from collections.abc import Generator
 from pathlib import Path
 from site import getsitepackages
+from typing import TYPE_CHECKING
 
 import pytest
 import torch
 from atomworks.io.parser import parse
+from sampleworks.utils.imports import BOLTZ_AVAILABLE, PROTENIX_AVAILABLE
 from sampleworks.utils.torch_utils import try_gpu
 
 
-try:
+if TYPE_CHECKING:
+    from sampleworks.models.boltz.wrapper import (
+        Boltz1Wrapper,
+        Boltz2Wrapper,
+        PredictArgs,
+    )
+    from sampleworks.models.protenix.wrapper import ProtenixWrapper
+
+if BOLTZ_AVAILABLE:
     from sampleworks.models.boltz.wrapper import (
         Boltz1Wrapper,
         Boltz2Wrapper,
         PredictArgs,
     )
 
-    BOLTZ_AVAILABLE = True
-except ImportError:
-    BOLTZ_AVAILABLE = False
-
-try:
+if PROTENIX_AVAILABLE:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
-
-    PROTENIX_AVAILABLE = True
-except ImportError:
-    PROTENIX_AVAILABLE = False
 
 
 @pytest.fixture(scope="session")
@@ -80,10 +82,10 @@ def boltz2_checkpoint_path() -> Path:
 def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
     if not BOLTZ_AVAILABLE:
         pytest.skip("Boltz dependencies not installed in this environment")
-    predict_args = PredictArgs(  # type: ignore[possibly-unbound]
+    predict_args = PredictArgs(
         recycling_steps=1, sampling_steps=10, diffusion_samples=1
     )
-    return Boltz1Wrapper(  # type: ignore[possibly-unbound]
+    return Boltz1Wrapper(
         checkpoint_path=boltz1_checkpoint_path,
         use_msa_server=True,
         predict_args=predict_args,
@@ -95,10 +97,10 @@ def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
 def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device):
     if not BOLTZ_AVAILABLE:
         pytest.skip("Boltz dependencies not installed in this environment")
-    predict_args = PredictArgs(  # type: ignore[possibly-unbound]
+    predict_args = PredictArgs(
         recycling_steps=1, sampling_steps=10, diffusion_samples=1
     )
-    return Boltz2Wrapper(  # type: ignore[possibly-unbound]
+    return Boltz2Wrapper(
         checkpoint_path=boltz2_checkpoint_path,
         use_msa_server=True,
         predict_args=predict_args,
@@ -123,7 +125,7 @@ def protenix_checkpoint_path() -> Path:
 def protenix_wrapper(protenix_checkpoint_path: Path, device: torch.device):
     if not PROTENIX_AVAILABLE:
         pytest.skip("Protenix dependencies not installed in this environment")
-    return ProtenixWrapper(  # type: ignore[possibly-unbound]
+    return ProtenixWrapper(
         checkpoint_path=protenix_checkpoint_path,
         device=device,
     )

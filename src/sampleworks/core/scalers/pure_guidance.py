@@ -5,7 +5,7 @@ TODO: Make this more generalizable, a reasonable protocol to implement
 Currently this only works with the implemented wrappers and isn't extensible
 """
 
-from typing import Any, cast, TYPE_CHECKING
+from typing import Any, cast
 
 import einx
 import torch
@@ -22,42 +22,10 @@ from sampleworks.utils.frame_transforms import (
     create_random_transform,
     weighted_rigid_align_differentiable,
 )
+from sampleworks.utils.imports import check_any_model_available
 
 
-if TYPE_CHECKING:
-    from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
-    from sampleworks.models.protenix.wrapper import ProtenixWrapper
-
-_boltz_available = False
-_protenix_available = False
-
-try:
-    from sampleworks.models.boltz.wrapper import (
-        Boltz1Wrapper,
-        Boltz2Wrapper,
-    )
-
-    _boltz_available = True
-    del Boltz1Wrapper, Boltz2Wrapper
-except ModuleNotFoundError:
-    pass
-
-try:
-    from sampleworks.models.protenix.wrapper import (
-        ProtenixWrapper,
-    )
-
-    _protenix_available = True
-    del ProtenixWrapper
-except ModuleNotFoundError:
-    pass
-
-if not _boltz_available and not _protenix_available:
-    raise ImportError(
-        "Neither Boltz nor Protenix wrappers are available. "
-        "Please install at least one model wrapper with the appropriate feature group: "
-        "'pixi install -e boltz' or 'pixi install -e protenix'"
-    )
+check_any_model_available()
 
 
 class PureGuidance:
@@ -258,7 +226,7 @@ class PureGuidance:
                 # on denoised, but DPS uses Tweedie's formula which has its limitations.
                 # Maddipatla et al. 2025 use full backprop through model with grad on
                 # noisy_coords.
-                maybe_augmented_coords.clone().detach_().requires_grad_(True)
+                maybe_augmented_coords.detach_().requires_grad_(True)
 
             denoised = self.model_wrapper.denoise_step(
                 features,
