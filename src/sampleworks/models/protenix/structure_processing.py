@@ -412,10 +412,8 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
         entity_chain_type = None
         for chain_id, info in chain_info.items():
             chain_atom = atom_array[atom_array.chain_id == chain_id]
-            if (
-                isinstance(chain_atom, AtomArray | AtomArrayStack)
-                and len(chain_atom) > 0
-            ):
+            assert isinstance(chain_atom, AtomArray | AtomArrayStack)
+            if len(chain_atom) > 0:
                 if chain_atom[0].label_entity_id == label_entity_id:
                     entity_chain_type = info["chain_type"]
                     break

@@ -33,9 +33,8 @@ def get_backend(
 
     Returns
     -------
-    tuple[str, Any, Any]
-        Backend name ("torch" or "jax"), primary module (torch/jnp),
-        and secondary module (torch/jax)
+    tuple[str, ModuleType]
+        Backend name ("torch" or "jax") and backend module (torch or jax)
 
     Raises
     ------
