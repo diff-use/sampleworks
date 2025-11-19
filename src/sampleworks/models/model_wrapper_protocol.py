@@ -128,7 +128,11 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
         ...
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float | int, **kwargs
+        self,
+        structure: dict,
+        noise_level: float | int,
+        ensemble_size: int = 1,
+        **kwargs,
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
@@ -138,6 +142,8 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
         noise_level: float | int
             Desired noise level/timestep to initialize at.
+        ensemble_size: int, optional
+            Number of noisy samples to generate per input structure (default 1).
         **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
