@@ -50,11 +50,11 @@ class ProtenixWrapper:
         """
         Parameters
         ----------
-        checkpoint_path : str | Path
+        checkpoint_path: str | Path
             Filesystem path to the Protenix checkpoint containing trained weights.
-        args_str : str, optional
+        args_str: str, optional
             Command-line style argument string to override default configurations.
-        device : torch.device, optional
+        device: torch.device, optional
             Device to run the model on, by default CUDA if available.
         """
         logger: Logger = getLogger(__name__)
@@ -167,7 +167,7 @@ class ProtenixWrapper:
 
         Parameters
         ----------
-        num_steps : int
+        num_steps: int
             Number of diffusion sampling steps.
 
         Returns
@@ -184,9 +184,9 @@ class ProtenixWrapper:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional arguments for feature generation.
             - out_dir: Directory for saving intermediate JSON file
             - use_msa: Whether to generate MSA features (default True)
@@ -314,11 +314,11 @@ class ProtenixWrapper:
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features as returned by featurize.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional arguments.
 
             - recycling_steps: int
@@ -418,15 +418,15 @@ class ProtenixWrapper:
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features produced by featurize or step.
-        noisy_coords : Float[ArrayLike | Tensor, "..."]
+        noisy_coords: Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at the current timestep.
-        timestep : float | int
+        timestep: float | int
             Current timestep or noise level in reverse time (starts from 0).
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for Protenix denoising.
             - t_hat: float, optional
                 Precomputed t_hat value; computed internally if not provided.
@@ -535,7 +535,7 @@ class ProtenixWrapper:
 
         Parameters
         ----------
-        timestep : float | int
+        timestep: float | int
             Current timestep or noise level starting from 0.
 
         Returns
@@ -565,11 +565,11 @@ class ProtenixWrapper:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary.
-        noise_level : float | int
+        noise_level: float | int
             Timestep or noise level in reverse time starting from 0.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments for initialization.
             - ensemble_size: int, optional
                 Number of noisy samples to generate per input structure

@@ -71,11 +71,11 @@ def send_tensors_in_dict_to_device(
 
     Parameters
     ----------
-    d : dict
+    d: dict
         The input dictionary potentially containing torch.Tensors.
-    device : str | torch.device | int
+    device: str | torch.device | int
         The target device to send the tensors to (e.g., 'cpu', 'cuda:0').
-    inplace : bool, optional
+    inplace: bool, optional
         If True, modifies the input dictionary in place. If False,
         returns a new dictionary.
         Default is True.

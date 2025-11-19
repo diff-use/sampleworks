@@ -17,9 +17,9 @@ class ModelWrapper(Protocol):
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
         Returns
@@ -42,11 +42,11 @@ class ModelWrapper(Protocol):
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features as returned by `featurize`.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
         Returns
@@ -84,7 +84,7 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
 
         Parameters
         ----------
-        timestep : float | int
+        timestep: float | int
             Current timestep/noise level.
 
         Returns
@@ -109,15 +109,15 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
 
         Parameters
         ----------
-        features : dict[str, Any]
+        features: dict[str, Any]
             Model features as returned by `featurize`.
-        noisy_coords : Float[ArrayLike | Tensor, "..."]
+        noisy_coords: Float[ArrayLike | Tensor, "..."]
             Noisy atom coordinates at current timestep.
-        timestep : float | int
+        timestep: float | int
             Current timestep/noise level.
-        grad_needed : bool, optional
+        grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
         Returns
@@ -134,11 +134,11 @@ class DiffusionModelWrapper(ModelWrapper, Protocol):
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level : float | int
+        noise_level: float | int
             Desired noise level/timestep to initialize at.
-        **kwargs : dict, optional
+        **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
         Returns

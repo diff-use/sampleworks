@@ -43,9 +43,9 @@ class PureGuidance:
 
         Parameters
         ----------
-        model_wrapper : DiffusionModelWrapper
+        model_wrapper: DiffusionModelWrapper
             Diffusion model wrapper instance
-        reward_function : RewardFunction
+        reward_function: RewardFunction
             Reward function to guide the diffusion process
         """
         self.model_wrapper = model_wrapper
@@ -59,46 +59,46 @@ class PureGuidance:
 
         Parameters
         ----------
-        structure : dict
+        structure: dict
             Atomworks parsed structure.
-        **kwargs : dict
+        **kwargs: dict
             Additional keyword arguments for pure guidance.
 
-            - step_scale : float, optional
+            - step_scale: float, optional
                 Scale for the model's step size (default: 1.5)
 
-            - step_size : float, optional
+            - step_size: float, optional
                 Gradient step size for guidance (default: 0.1)
 
-            - gradient_normalization : bool, optional
+            - gradient_normalization: bool, optional
                 Whether to normalize gradients (default: False)
 
-            - use_tweedie : bool, optional
+            - use_tweedie: bool, optional
                 If True, use Tweedie's formula (gradient on x̂_0 only).
                     Enables augmentation and alignment. If False, use full
                     backprop through model (default: False)
 
-            - augmentation : bool, optional
+            - augmentation: bool, optional
                 Enable data augmentation in denoise step (default: False)
 
-            - align_to_input : bool, optional
+            - align_to_input: bool, optional
                 Enable alignment to input in denoise step (default: True
                     for Tweedie mode, False for full backprop)
 
-            - partial_diffusion_step : int, optional
+            - partial_diffusion_step: int, optional
                 If provided, start diffusion from this timestep instead of 0.
                     (default: None). Will use the provided coordinates in structure
                     to initialize the noise at this timestep.
 
-            - guidance_start : int, optional
+            - guidance_start: int, optional
                 Diffusion step to start applying guidance (default: -1, meaning
                     guidance is applied from the beginning)
 
-            - out_dir : str, optional
+            - out_dir: str, optional
                 Output directory for any featurization intermediate files
                 (default: "test")
 
-            - alignment_reverse_diffusion : bool, optional
+            - alignment_reverse_diffusion: bool, optional
                 Whether to perform alignment of noisy coords to denoised coords
                 during reverse diffusion steps. This is relevant for doing Boltz-2-like
                 alignment during diffusion. (default: False)
@@ -121,6 +121,7 @@ class PureGuidance:
             "alignment_reverse_diffusion", not align_to_input
         )
         allow_alignment_gradients = not use_tweedie
+        partial_diffusion_step = cast(int, kwargs.get("partial_diffusion_step", 0))
 
         features = self.model_wrapper.featurize(
             structure, out_dir=kwargs.get("out_dir", "test")
@@ -131,7 +132,7 @@ class PureGuidance:
             torch.Tensor,
             self.model_wrapper.initialize_from_noise(
                 structure,
-                noise_level=cast(int, kwargs.get("partial_diffusion_step", 0)),
+                noise_level=partial_diffusion_step,
             ),
         )
         ensemble_size = coords.shape[0]  # TODO: proper ensemble handling
