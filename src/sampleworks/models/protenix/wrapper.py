@@ -559,7 +559,11 @@ class ProtenixWrapper:
         }
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float | int, **kwargs
+        self,
+        structure: dict,
+        noise_level: float | int,
+        ensemble_size: int = 1,
+        **kwargs,
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure coordinates at given noise level.
 
@@ -569,11 +573,10 @@ class ProtenixWrapper:
             Atomworks structure dictionary.
         noise_level: float | int
             Timestep or noise level in reverse time starting from 0.
+        ensemble_size: int, optional
+            Number of noisy samples to generate per input structure (default 1).
         **kwargs: dict, optional
             Additional keyword arguments for initialization.
-            - ensemble_size: int, optional
-                Number of noisy samples to generate per input structure
-                (default 1).
 
         Returns
         -------
@@ -598,7 +601,6 @@ class ProtenixWrapper:
 
         sigma = self.noise_schedule["sigma_tm"][int(noise_level)]
 
-        ensemble_size = kwargs.get("ensemble_size", 1)
         coords = cast(Tensor, rearrange("... -> e ...", coords, e=ensemble_size))
 
         if noise_level == 0:

@@ -28,6 +28,7 @@ from boltz.main import (
 )
 from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
+from einx import rearrange
 from jaxtyping import ArrayLike, Float
 from torch import Tensor
 
@@ -627,7 +628,11 @@ class Boltz2Wrapper:
         }
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float | int, **kwargs
+        self,
+        structure: dict,
+        noise_level: float | int,
+        ensemble_size: int = 1,
+        **kwargs,
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
@@ -639,6 +644,8 @@ class Boltz2Wrapper:
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
+        ensemble_size: int, optional
+            Number of noisy samples to generate per input structure (default 1).
         **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
@@ -665,6 +672,8 @@ class Boltz2Wrapper:
 
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
+
+        coords = cast(Tensor, rearrange("... -> e ...", coords, e=ensemble_size))
 
         if noise_level == 0:
             noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
@@ -1138,7 +1147,11 @@ class Boltz1Wrapper:
         return {"atom_coords_denoised": atom_coords_denoised}
 
     def initialize_from_noise(
-        self, structure: dict, noise_level: float | int, **kwargs
+        self,
+        structure: dict,
+        noise_level: float | int,
+        ensemble_size: int = 1,
+        **kwargs,
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
         """Create a noisy version of structure's coordinates at given noise level.
 
@@ -1150,6 +1163,8 @@ class Boltz1Wrapper:
             Timestep/noise level - for Boltz, this is the reverse timestep.
             This means that it starts from 0 and goes up to (sampling_steps - 1), so it
             is the "reverse" diffusion time.
+        ensemble_size: int, optional
+            Number of noisy samples to generate per input structure (default 1).
         **kwargs: dict, optional
             Additional keyword arguments needed for classes that implement this Protocol
 
@@ -1176,6 +1191,8 @@ class Boltz1Wrapper:
 
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
+
+        coords = cast(Tensor, rearrange("... -> e ...", coords, e=ensemble_size))
 
         if noise_level == 0:
             noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
