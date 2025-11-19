@@ -111,21 +111,21 @@ class PureGuidance:
             (trajectory_denoised, trajectory_next_step) containing coordinate
             tensors at each step, list of losses at each step
         """
-
+        step_scale = cast(float, kwargs.get("step_scale", 1.5))
         step_size = cast(float, kwargs.get("step_size", 0.1))
         gradient_normalization = kwargs.get("gradient_normalization", False)
         use_tweedie = kwargs.get("use_tweedie", False)
         augmentation = kwargs.get("augmentation", False)
         align_to_input = kwargs.get("align_to_input", use_tweedie)
+        partial_diffusion_step = cast(int, kwargs.get("partial_diffusion_step", 0))
+        guidance_start = cast(int, kwargs.get("guidance_start", -1))
+        out_dir = kwargs.get("out_dir", "test")
         alignment_reverse_diffusion = kwargs.get(
             "alignment_reverse_diffusion", not align_to_input
         )
         allow_alignment_gradients = not use_tweedie
-        partial_diffusion_step = cast(int, kwargs.get("partial_diffusion_step", 0))
 
-        features = self.model_wrapper.featurize(
-            structure, out_dir=kwargs.get("out_dir", "test")
-        )
+        features = self.model_wrapper.featurize(structure, out_dir=out_dir)
 
         # Get coordinates from timestep
         coords = cast(
@@ -195,11 +195,8 @@ class PureGuidance:
             raise AttributeError(
                 "Only Boltz and Protenix wrappers are supported currently."
             )
-        guidance_start = cast(int, kwargs.get("guidance_start", -1))
 
-        for i in tqdm(
-            range(cast(int, kwargs.get("partial_diffusion_step", 0)), n_steps)
-        ):
+        for i in tqdm(range(partial_diffusion_step, n_steps)):
             apply_guidance = i > guidance_start
 
             centroid = einx.mean("... [n] c", coords)
@@ -347,10 +344,7 @@ class PureGuidance:
                         )
                     delta = delta + step_size * guidance_direction
 
-                coords = (
-                    noisy_coords
-                    + cast(float, kwargs.get("step_scale", 1.5)) * dt * delta
-                )
+                coords = noisy_coords + step_scale * dt * delta
 
                 coords = coords.detach().clone()
 
