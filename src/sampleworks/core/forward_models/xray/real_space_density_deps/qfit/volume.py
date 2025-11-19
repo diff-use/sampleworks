@@ -25,17 +25,17 @@ def extend_to_p1(grid, offset, R_matrix, t_vector, grid_shape_out, out):
     grid_shape_out).
 
     Parameters:
-      grid : 3D NumPy array of floats.
+      grid: 3D NumPy array of floats.
         Input density grid with shape (nz, ny, nx)
-      offset : Sequence of 3 integers [offset_z, offset_y, offset_x].
+      offset: Sequence of 3 integers [offset_z, offset_y, offset_x].
         Grid offset in grid coordinates
-      R_matrix : 3x3 NumPy array of floats.
+      R_matrix: 3x3 NumPy array of floats.
         Rotation matrix component of symmetry operation
-      t_vector : 1D NumPy array of 3 floats.
+      t_vector: 1D NumPy array of 3 floats.
         Translation vector component of symmetry operation (in fractional coordinates)
-      grid_shape_out : Sequence of 3 integers [nz_out, ny_out, nx_out].
+      grid_shape_out: Sequence of 3 integers [nz_out, ny_out, nx_out].
         Shape of output grid for coordinate wrapping
-      out : 3D NumPy array of floats.
+      out: 3D NumPy array of floats.
         Output array where transformed values are written
     """
     # Get grid shape (assumed to be (nz, ny, nx))

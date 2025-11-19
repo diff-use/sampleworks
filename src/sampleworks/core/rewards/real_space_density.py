@@ -130,13 +130,13 @@ class RewardFunction:
 
         Parameters
         ----------
-        coordinates : Float[torch.Tensor, "batch n_atoms 3"]
+        coordinates: Float[torch.Tensor, "batch n_atoms 3"]
             Atomic coordinates
-        elements : Float[torch.Tensor, "batch n_atoms"]
+        elements: Float[torch.Tensor, "batch n_atoms"]
             Atomic elements
-        b_factors : Float[torch.Tensor, "batch n_atoms"]
+        b_factors: Float[torch.Tensor, "batch n_atoms"]
             Per-atom B-factor
-        occupancies : Float[torch.Tensor, "batch n_atoms"]
+        occupancies: Float[torch.Tensor, "batch n_atoms"]
             Per-atom occupancies
 
         Returns

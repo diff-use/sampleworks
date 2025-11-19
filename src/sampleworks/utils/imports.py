@@ -36,7 +36,7 @@ def require_boltz(message: str | None = None) -> Callable[[F], F]:
 
     Parameters
     ----------
-    message : str, optional
+    message: str, optional
         Custom error message. If None, uses default message.
 
     Returns
@@ -81,7 +81,7 @@ def require_protenix(message: str | None = None) -> Callable[[F], F]:
 
     Parameters
     ----------
-    message : str, optional
+    message: str, optional
         Custom error message. If None, uses default message.
 
     Returns
@@ -127,7 +127,7 @@ def require_any_model(message: str | None = None) -> Callable[[F], F]:
 
     Parameters
     ----------
-    message : str, optional
+    message: str, optional
         Custom error message. If None, uses default message.
 
     Returns
@@ -174,7 +174,7 @@ def check_boltz_available(message: str | None = None) -> None:
 
     Parameters
     ----------
-    message : str, optional
+    message: str, optional
         Custom error message. If None, uses default message.
 
     Raises
@@ -194,7 +194,7 @@ def check_protenix_available(message: str | None = None) -> None:
 
     Parameters
     ----------
-    message : str, optional
+    message: str, optional
         Custom error message. If None, uses default message.
 
     Raises
@@ -215,7 +215,7 @@ def check_any_model_available(message: str | None = None) -> None:
 
     Parameters
     ----------
-    message : str, optional
+    message: str, optional
         Custom error message. If None, uses default message.
 
     Raises

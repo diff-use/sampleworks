@@ -28,7 +28,7 @@ def ensure_atom_array(atom_array: AtomArray | AtomArrayStack) -> AtomArray:
 
     Parameters
     ----------
-    atom_array : AtomArray or AtomArrayStack
+    atom_array: AtomArray or AtomArrayStack
         Input structure from atomworks.parse().
 
     Returns
@@ -54,9 +54,9 @@ def add_terminal_oxt_atoms(atom_array: AtomArray, chain_info: dict) -> AtomArray
 
     Parameters
     ----------
-    atom_array : AtomArray
+    atom_array: AtomArray
         Biotite AtomArray to process (not AtomArrayStack).
-    chain_info : dict[str, Any]
+    chain_info: dict[str, Any]
         Atomworks chain information dictionary.
 
     Returns
@@ -167,7 +167,7 @@ def add_unique_chain_and_copy_ids(atom_array):
 
     Parameters
     ----------
-    atom_array : AtomArray
+    atom_array: AtomArray
         Biotite AtomArray to annotate (not AtomArrayStack).
 
     Returns
@@ -204,9 +204,9 @@ def get_sequences(atom_array, chain_info):
 
     Parameters
     ----------
-    atom_array : AtomArray
+    atom_array: AtomArray
         Biotite AtomArray containing structure (not AtomArrayStack).
-    chain_info : dict[str, Any]
+    chain_info: dict[str, Any]
         Atomworks chain information dictionary.
 
     Returns
@@ -239,9 +239,9 @@ def get_poly_res_names(atom_array, chain_info):
 
     Parameters
     ----------
-    atom_array : AtomArray
+    atom_array: AtomArray
         Biotite AtomArray containing structure (not AtomArrayStack).
-    chain_info : dict[str, Any]
+    chain_info: dict[str, Any]
         Atomworks chain information dictionary.
 
     Returns
@@ -279,9 +279,9 @@ def detect_modifications(atom_array, chain_info):
 
     Parameters
     ----------
-    atom_array : AtomArray
+    atom_array: AtomArray
         Biotite AtomArray containing structure (not AtomArrayStack).
-    chain_info : dict[str, Any]
+    chain_info: dict[str, Any]
         Atomworks chain information dictionary.
 
     Returns
@@ -314,9 +314,9 @@ def merge_covalent_bonds(covalent_bonds, all_entity_counts):
 
     Parameters
     ----------
-    covalent_bonds : list[dict]
+    covalent_bonds: list[dict]
         List of covalent bond dictionaries.
-    all_entity_counts : dict[str, int]
+    all_entity_counts: dict[str, int]
         Mapping of entity_id to chain count.
 
     Returns
@@ -361,7 +361,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
     Parameters
     ----------
-    structure : dict
+    structure: dict
         Atomworks structure dictionary with 'asym_unit' key containing
         AtomArray or AtomArrayStack.
 
@@ -629,9 +629,9 @@ def create_protenix_input_from_structure(
 
     Parameters
     ----------
-    structure : dict
+    structure: dict
         Atomworks structure dictionary.
-    out_dir : str | Path
+    out_dir: str | Path
         Output directory for saving JSON file.
 
     Returns

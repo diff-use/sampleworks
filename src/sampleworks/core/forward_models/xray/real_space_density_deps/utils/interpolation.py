@@ -9,10 +9,10 @@ def trilinear_interpolation_torch(
 
     Parameters:
     ----------
-    density_map : torch.Tensor
+    density_map: torch.Tensor
         The 3D density map, expected to have shape [Mz, My, Mx],
         where Mz, My, Mx are the grid dimensions along z, y, and x axes.
-    points_zyx : torch.Tensor
+    points_zyx: torch.Tensor
         A tensor of points at which to interpolate values, with shape
         [..., N_points, 3], where "..." represents any number of leading
         batch dimensions. Each innermost [N_points, 3] slice represents
@@ -124,10 +124,10 @@ def tricubic_interpolation_torch(
 
     Parameters:
     ----------
-    density_map : torch.Tensor
+    density_map: torch.Tensor
         The 3D density map, expected to have shape [Mz, My, Mx],
         where Mz, My, Mx are the grid dimensions along z, y, and x axes.
-    points_zyx : torch.Tensor
+    points_zyx: torch.Tensor
         A tensor of points at which to interpolate values, with shape
         [..., N_points, 3], where "..." represents any number of leading
         batch dimensions. Each innermost [N_points, 3] slice represents
@@ -250,7 +250,7 @@ def compute_derivatives_torch(
 
     Parameters:
     ----------
-    density_map : torch.Tensor
+    density_map: torch.Tensor
         The 3D density map of shape [Mz, My, Mx]
 
     Returns:
