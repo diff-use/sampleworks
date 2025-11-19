@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+jobs:
+  pre-commit:
+    name: Pre-commit Hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+          cache: true
+          environments: boltz-dev protenix-dev
+
+      - name: Cache pre-commit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit hooks
+        run: pixi run pre-commit run --all-files
+
+  test:
+    name: Fast Tests (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    needs: pre-commit
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [boltz-dev, protenix-dev]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+          cache: true
+          cache-key: pixi-${{ hashFiles('pixi.lock') }}-${{ matrix.environment }}
+          environments: ${{ matrix.environment }}
+
+      - name: Run fast tests
+        run: pixi run -e ${{ matrix.environment }} pytest -m "not slow" -v --cov=sampleworks --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        if: matrix.environment == 'boltz-dev'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+          flags: fast-tests
+          name: fast-tests-${{ matrix.environment }}
+          fail_ci_if_error: true
