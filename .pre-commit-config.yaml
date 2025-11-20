@@ -4,7 +4,7 @@ minimum_pre_commit_version: "3.5.0"
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
         exclude: \.(cif|pdb|ccp4|mtz)$
@@ -42,7 +42,7 @@ repos:
         files: protenix
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.14.5
     hooks:
       - id: ruff-format
         types_or: [python, pyi, jupyter]
