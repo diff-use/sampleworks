@@ -14,8 +14,7 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
 
     @staticmethod
     def forward(
-        ctx: torch.autograd.function.FunctionCtx,
-        atom_coords_grid: torch.Tensor,  # [batch_size, N_atoms, 3] grid units
+        atom_coords_grid: torch.Tensor,  # [batch_size, symmetry_ops, N_atoms, 3] grid units
         atom_occupancies: torch.Tensor,  # [batch_size, N_atoms]
         radial_profiles: torch.Tensor,  # [batch_size, N_atoms, N_radial_points]
         radial_profiles_derivatives: torch.Tensor,  # [batch_size, N_atoms, N_radial_points]
@@ -53,20 +52,6 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
         torch.Tensor
             Output density grid, shape [batch_size, Dz, Dy, Dx]
         """
-
-        # Clone inputs and store the original tensors in context
-        ctx.save_for_backward(
-            atom_coords_grid,
-            atom_occupancies,
-            radial_profiles,
-            radial_profiles_derivatives,
-            lmax_grid_units,
-            grid_dims,
-            grid_to_cartesian_matrix,
-        )
-        ctx.r_step = r_step
-        ctx.rmax_cartesian = rmax_cartesian
-
         atom_coords_grid = atom_coords_grid.contiguous()
         atom_occupancies = atom_occupancies.contiguous()
         radial_profiles = radial_profiles.contiguous()
@@ -93,6 +78,46 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
             raise RuntimeError("CUDA is not available.")
 
         return output_density_grid
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        """Setup context for backward pass.
+
+        This method is called after forward() and saves information needed
+        for the backward pass. Required for functorch compatibility.
+
+        Parameters
+        ----------
+        ctx: Context object
+            Context to save information for backward pass
+        inputs: Tuple
+            All inputs passed to forward() in order
+        output: torch.Tensor
+            Output from forward()
+        """
+        (
+            atom_coords_grid,
+            atom_occupancies,
+            radial_profiles,
+            radial_profiles_derivatives,
+            r_step,
+            rmax_cartesian,
+            lmax_grid_units,
+            grid_dims,
+            grid_to_cartesian_matrix,
+        ) = inputs
+
+        ctx.save_for_backward(
+            atom_coords_grid,
+            atom_occupancies,
+            radial_profiles,
+            radial_profiles_derivatives,
+            lmax_grid_units,
+            grid_dims,
+            grid_to_cartesian_matrix,
+        )
+        ctx.r_step = r_step
+        ctx.rmax_cartesian = rmax_cartesian
 
     @staticmethod
     def backward(
@@ -154,6 +179,86 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
             None,  # grid_dims
             None,  # grid_to_cartesian_matrix
         )
+
+    @staticmethod
+    def vmap(info, in_dims, *args):
+        """Vectorize dilate operation across vmap batch dimension.
+
+        Handles case where vmap adds an extra batch dimension to inputs that
+        already have a batch dimension. Uses reshape-and-merge strategy for
+        efficiency: merges vmap batch with existing batch, runs CUDA kernel
+        once, then reshapes output.
+
+        Parameters
+        ----------
+        info : object
+            vmap metadata (unused)
+        in_dims : tuple
+            Batching dimension for each input. Expected pattern:
+            (0, 0, 0, 0, None, None, None, None, None) meaning first 4
+            tensor inputs are batched at dim 0, scalars and grid params
+            are not batched.
+        *args : tuple
+            All input arguments to forward() in order
+
+        Returns
+        -------
+        tuple[torch.Tensor, int]
+            - output: Batched density grid
+            - out_dim: 0 (indicating vmap batch is at position 0)
+        """
+        (
+            atom_coords_grid,
+            atom_occupancies,
+            radial_profiles,
+            radial_profiles_derivatives,
+            r_step,
+            rmax_cartesian,
+            lmax_grid_units,
+            grid_dims,
+            grid_to_cartesian_matrix,
+        ) = args
+
+        if in_dims[0] is not None:
+            vmap_B = atom_coords_grid.shape[0]
+            batch_B = atom_coords_grid.shape[1]
+            sym_ops = atom_coords_grid.shape[2]
+            N_atoms = atom_coords_grid.shape[3]
+            N_radial = radial_profiles.shape[-1]
+
+            coords_merged = atom_coords_grid.reshape(
+                vmap_B * batch_B, sym_ops, N_atoms, 3
+            ).contiguous()
+            occs_merged = atom_occupancies.reshape(
+                vmap_B * batch_B, N_atoms
+            ).contiguous()
+            profiles_merged = radial_profiles.reshape(
+                vmap_B * batch_B, N_atoms, N_radial
+            ).contiguous()
+            derivs_merged = radial_profiles_derivatives.reshape(
+                vmap_B * batch_B, N_atoms, N_radial
+            ).contiguous()
+
+            output_merged = DilateAtomCentricCUDA.apply(
+                coords_merged,
+                occs_merged,
+                profiles_merged,
+                derivs_merged,
+                r_step,
+                rmax_cartesian,
+                lmax_grid_units,
+                grid_dims,
+                grid_to_cartesian_matrix,
+            )
+
+            Dz, Dy, Dx = output_merged.shape[-3:]
+            output = output_merged.reshape(vmap_B, batch_B, Dz, Dy, Dx)
+
+            return output, 0
+        else:
+            raise NotImplementedError(
+                "Unexpected batching pattern for DilateAtomCentricCUDA.vmap"
+            )
 
 
 def dilate_atom_centric(

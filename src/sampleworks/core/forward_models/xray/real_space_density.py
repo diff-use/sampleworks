@@ -527,6 +527,8 @@ class DifferentiableTransformer(torch.nn.Module):
         b_factors: torch.Tensor,
         occupancies: torch.Tensor,
         active: torch.Tensor | None = None,
+        unique_combinations: torch.Tensor | None = None,
+        inverse_indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass computing electron density with symmetry.
 
@@ -545,6 +547,10 @@ class DifferentiableTransformer(torch.nn.Module):
         active: Optional[torch.Tensor], optional
             Boolean mask of active atoms of shape (batch_size, n_atoms). Defaults to
             all True if None.
+        unique_combinations: torch.Tensor | None, optional
+            Pre-computed unique (element, b_factor) pairs for vmap compatibility
+        inverse_indices: torch.Tensor | None, optional
+            Pre-computed inverse indices for vmap compatibility
 
         Returns
         -------
@@ -585,7 +591,7 @@ class DifferentiableTransformer(torch.nn.Module):
 
         if self.use_cuda_kernels:
             radial_densities, radial_derivatives = self._compute_radial_derivatives(
-                elements, b_factors
+                elements, b_factors, unique_combinations, inverse_indices
             )
             radial_densities = radial_densities.to(dtype=self.dtype).float()
             radial_derivatives = radial_derivatives.to(dtype=self.dtype).float()
@@ -615,9 +621,9 @@ class DifferentiableTransformer(torch.nn.Module):
                 self.grid_to_cartesian,
             )
         else:
-            radial_densities = self._compute_radial_densities(elements, b_factors).to(
-                dtype=self.dtype
-            )
+            radial_densities = self._compute_radial_densities(
+                elements, b_factors, unique_combinations, inverse_indices
+            ).to(dtype=self.dtype)
             base_density = dilate_points_torch(
                 grid_coordinates,
                 active,
@@ -736,7 +742,11 @@ class DifferentiableTransformer(torch.nn.Module):
         return final_mask.bool()
 
     def _compute_radial_densities(
-        self, elements: torch.Tensor, b_factors: torch.Tensor
+        self,
+        elements: torch.Tensor,
+        b_factors: torch.Tensor,
+        unique_combinations: torch.Tensor | None = None,
+        inverse_indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute radial densities using numerical integration.
 
@@ -746,6 +756,10 @@ class DifferentiableTransformer(torch.nn.Module):
             Element indices of shape (batch_size, n_atoms).
         b_factors: torch.Tensor
             B-factors of shape (batch_size, n_atoms).
+        unique_combinations: torch.Tensor | None, optional
+            Pre-computed unique (element, b_factor) pairs for vmap compatibility
+        inverse_indices: torch.Tensor | None, optional
+            Pre-computed inverse indices for vmap compatibility
 
         Returns
         -------
@@ -764,13 +778,13 @@ class DifferentiableTransformer(torch.nn.Module):
         )
         n_radial = r.shape[0]
 
-        elements_flat = elements.reshape(-1)
-        b_factors_flat = b_factors.reshape(-1)
-
-        combined = torch.stack([elements_flat, b_factors_flat], dim=1)
-        unique_combinations, inverse_indices = torch.unique(
-            combined, dim=0, return_inverse=True
-        )
+        if unique_combinations is None or inverse_indices is None:
+            elements_flat = elements.reshape(-1)
+            b_factors_flat = b_factors.reshape(-1)
+            combined = torch.stack([elements_flat, b_factors_flat], dim=1)
+            unique_combinations, inverse_indices = torch.unique(
+                combined, dim=0, return_inverse=True
+            )
 
         unique_elements = unique_combinations[:, 0].int()
         element_asf = self.scattering_params[
@@ -814,7 +828,11 @@ class DifferentiableTransformer(torch.nn.Module):
         return densities
 
     def _compute_radial_derivatives(
-        self, elements: torch.Tensor, b_factors: torch.Tensor
+        self,
+        elements: torch.Tensor,
+        b_factors: torch.Tensor,
+        unique_combinations: torch.Tensor | None = None,
+        inverse_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute radial density derivatives efficiently.
 
@@ -824,6 +842,10 @@ class DifferentiableTransformer(torch.nn.Module):
             Element indices of shape (batch_size, n_atoms).
         b_factors: torch.Tensor
             B-factors of shape (batch_size, n_atoms).
+        unique_combinations: torch.Tensor | None, optional
+            Pre-computed unique (element, b_factor) pairs for vmap compatibility
+        inverse_indices: torch.Tensor | None, optional
+            Pre-computed inverse indices for vmap compatibility
 
         Returns
         -------
@@ -831,7 +853,9 @@ class DifferentiableTransformer(torch.nn.Module):
             Radial densities and their approximate derivatives of shape
             (batch_size, n_atoms, n_radial).
         """
-        densities = self._compute_radial_densities(elements, b_factors)
+        densities = self._compute_radial_densities(
+            elements, b_factors, unique_combinations, inverse_indices
+        )
 
         r = torch.arange(
             0,
@@ -843,13 +867,14 @@ class DifferentiableTransformer(torch.nn.Module):
         batch_size, n_atoms = (
             elements.shape if elements.ndim == 2 else (1, elements.shape[0])
         )
-        elements_flat = elements.reshape(-1)
-        b_factors_flat = b_factors.reshape(-1)
 
-        combined = torch.stack([elements_flat, b_factors_flat], dim=1)
-        unique_combinations, inverse_indices = torch.unique(
-            combined, dim=0, return_inverse=True
-        )
+        if unique_combinations is None or inverse_indices is None:
+            elements_flat = elements.reshape(-1)
+            b_factors_flat = b_factors.reshape(-1)
+            combined = torch.stack([elements_flat, b_factors_flat], dim=1)
+            unique_combinations, inverse_indices = torch.unique(
+                combined, dim=0, return_inverse=True
+            )
 
         unique_elements = unique_combinations[:, 0].int()
         element_asf = self.scattering_params[unique_elements]
