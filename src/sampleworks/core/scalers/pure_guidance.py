@@ -67,6 +67,9 @@ class PureGuidance:
             - step_scale: float, optional
                 Scale for the model's step size (default: 1.5)
 
+            - ensemble_size: int, optional
+                Size of ensemble to generate (default: 1)
+
             - step_size: float, optional
                 Gradient step size for guidance (default: 0.1)
 
@@ -112,6 +115,7 @@ class PureGuidance:
             tensors at each step, list of losses at each step
         """
         step_scale = cast(float, kwargs.get("step_scale", 1.5))
+        ensemble_size = cast(int, kwargs.get("ensemble_size", 1))
         step_size = cast(float, kwargs.get("step_size", 0.1))
         gradient_normalization = kwargs.get("gradient_normalization", False)
         use_tweedie = kwargs.get("use_tweedie", False)
@@ -133,9 +137,9 @@ class PureGuidance:
             self.model_wrapper.initialize_from_noise(
                 structure,
                 noise_level=partial_diffusion_step,
+                ensemble_size=ensemble_size,
             ),
         )
-        ensemble_size = coords.shape[0]  # TODO: proper ensemble handling
 
         # TODO: this is not generalizable currently, figure this out
         if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
