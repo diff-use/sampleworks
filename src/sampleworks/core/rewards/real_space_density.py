@@ -99,15 +99,62 @@ class RewardFunction:
         else:
             raise ValueError("Invalid loss_order, must be 1 or 2")
 
+    def precompute_unique_combinations(
+        self,
+        elements: torch.Tensor,
+        b_factors: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Pre-compute unique (element, b_factor) combinations for vmap compatibility.
+
+        This allows torch.unique to be called outside of vmap contexts, avoiding
+        the dynamic shapes.
+
+        Parameters
+        ----------
+        elements: torch.Tensor
+            Atomic elements
+        b_factors: torch.Tensor
+            Per-atom B-factors
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            unique_combinations: Unique (element, b_factor) pairs
+            inverse_indices: Indices to reconstruct original from unique
+        """
+        elements_flat = elements.reshape(-1)
+        b_factors_flat = b_factors.reshape(-1)
+        combined = torch.stack([elements_flat, b_factors_flat], dim=1)
+        unique_combinations, inverse_indices = torch.unique(
+            combined, dim=0, return_inverse=True
+        )
+        return unique_combinations, inverse_indices
+
     def structure_to_reward_input(
         self, structure: dict
     ) -> dict[str, Float[torch.Tensor, "..."]]:
         atom_array = structure["asym_unit"]
         atom_array = atom_array[:, atom_array.occupancy > 0]
+        elements = [ATOMIC_NUM_TO_ELEMENT.index(elem) for elem in atom_array.element]
 
-        elements = torch.from_numpy(atom_array.element).to(self.device)
-        b_factors = torch.from_numpy(atom_array.b_factor).to(self.device)
-        occupancies = torch.from_numpy(atom_array.occupancy).to(self.device)
+        elements = (
+            torch.from_numpy(elements)
+            .to(self.device)
+            .unsqueeze(0)
+            .expand(atom_array.shape[0], -1)
+        )
+        b_factors = (
+            torch.from_numpy(atom_array.b_factor)
+            .to(self.device)
+            .unsqueeze(0)
+            .expand(atom_array.shape[0], -1)
+        )
+        occupancies = (
+            torch.from_numpy(atom_array.occupancy)
+            .to(self.device)
+            .unsqueeze(0)
+            .expand(atom_array.shape[0], -1)
+        )
 
         coordinates = torch.from_numpy(atom_array.coord).to(self.device)
 
@@ -124,6 +171,8 @@ class RewardFunction:
         elements: Float[torch.Tensor, "batch n_atoms"],
         b_factors: Float[torch.Tensor, "batch n_atoms"],
         occupancies: Float[torch.Tensor, "batch n_atoms"],
+        unique_combinations: torch.Tensor | None = None,
+        inverse_indices: torch.Tensor | None = None,
     ) -> Float[torch.Tensor, ""]:
         """Pure function for computing reward. Call .backward() on this to get gradients
         w.r.t. input.
@@ -138,6 +187,10 @@ class RewardFunction:
             Per-atom B-factor
         occupancies: Float[torch.Tensor, "batch n_atoms"]
             Per-atom occupancies
+        unique_combinations: torch.Tensor | None, optional
+            Pre-computed unique (element, b_factor) pairs for vmap compatibility
+        inverse_indices: torch.Tensor | None, optional
+            Pre-computed inverse indices for vmap compatibility
 
         Returns
         -------
@@ -149,6 +202,8 @@ class RewardFunction:
             elements=elements,
             b_factors=b_factors,
             occupancies=occupancies,
+            unique_combinations=unique_combinations,
+            inverse_indices=inverse_indices,
         ).sum(0)  # sum over batch dimension
 
         return self.loss(density, self.transformer.xmap.array)
