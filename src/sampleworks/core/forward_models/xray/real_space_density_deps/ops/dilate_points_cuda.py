@@ -219,46 +219,80 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
             grid_to_cartesian_matrix,
         ) = args
 
-        if in_dims[0] is not None:
+        if in_dims[0] is None:
+            output = DilateAtomCentricCUDA.apply(*args)
+            return output, None
+
+        # coords, occupancies, radial_profiles, radial_profiles_derivatives can be vmapped
+        if in_dims[0] == 0:  # atom_coords_grid is vmapped
+            # Shape: [vmap_B, batch_B, sym_ops, N_atoms, 3]
             vmap_B = atom_coords_grid.shape[0]
             batch_B = atom_coords_grid.shape[1]
             sym_ops = atom_coords_grid.shape[2]
             N_atoms = atom_coords_grid.shape[3]
-            N_radial = radial_profiles.shape[-1]
 
             coords_merged = atom_coords_grid.reshape(
                 vmap_B * batch_B, sym_ops, N_atoms, 3
             ).contiguous()
+        else:
+            # Shape: [batch_B, sym_ops, N_atoms, 3]
+            vmap_B = 1
+            batch_B = atom_coords_grid.shape[0]
+            sym_ops = atom_coords_grid.shape[1]
+            N_atoms = atom_coords_grid.shape[2]
+
+            coords_merged = atom_coords_grid
+
+        if in_dims[1] == 0:  # atom_occupancies is vmapped
+            # Shape: [vmap_B, batch_B, N_atoms]
             occs_merged = atom_occupancies.reshape(
                 vmap_B * batch_B, N_atoms
             ).contiguous()
+        else:
+            # Shape: [batch_B, N_atoms], need to expand for vmap
+            occs_merged = atom_occupancies.repeat_interleave(vmap_B, dim=0).contiguous()
+
+        N_radial = radial_profiles.shape[-1]
+        if in_dims[2] == 0:  # radial_profiles is vmapped
+            # Shape: [vmap_B, batch_B, N_atoms, N_radial]
             profiles_merged = radial_profiles.reshape(
                 vmap_B * batch_B, N_atoms, N_radial
             ).contiguous()
+        else:
+            # Shape: [batch_B, N_atoms, N_radial], need to expand for vmap
+            profiles_merged = radial_profiles.repeat_interleave(
+                vmap_B, dim=0
+            ).contiguous()
+
+        if in_dims[3] == 0:  # radial_profiles_derivatives is vmapped
+            # Shape: [vmap_B, batch_B, N_atoms, N_radial]
             derivs_merged = radial_profiles_derivatives.reshape(
                 vmap_B * batch_B, N_atoms, N_radial
             ).contiguous()
+        else:
+            # Shape: [batch_B, N_atoms, N_radial], need to expand for vmap
+            derivs_merged = radial_profiles_derivatives.repeat_interleave(
+                vmap_B, dim=0
+            ).contiguous()
 
-            output_merged = DilateAtomCentricCUDA.apply(
-                coords_merged,
-                occs_merged,
-                profiles_merged,
-                derivs_merged,
-                r_step,
-                rmax_cartesian,
-                lmax_grid_units,
-                grid_dims,
-                grid_to_cartesian_matrix,
-            )
+        output_merged = DilateAtomCentricCUDA.apply(
+            coords_merged,
+            occs_merged,
+            profiles_merged,
+            derivs_merged,
+            r_step,
+            rmax_cartesian,
+            lmax_grid_units,
+            grid_dims,
+            grid_to_cartesian_matrix,
+        )
 
+        if in_dims[0] == 0:
             Dz, Dy, Dx = output_merged.shape[-3:]
             output = output_merged.reshape(vmap_B, batch_B, Dz, Dy, Dx)
-
             return output, 0
         else:
-            raise NotImplementedError(
-                "Unexpected batching pattern for DilateAtomCentricCUDA.vmap"
-            )
+            return output_merged, None
 
 
 def dilate_atom_centric(
