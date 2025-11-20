@@ -785,6 +785,9 @@ class DifferentiableTransformer(torch.nn.Module):
             unique_combinations, inverse_indices = torch.unique(
                 combined, dim=0, return_inverse=True
             )
+        else:
+            unique_combinations = unique_combinations.to(self.device)
+            inverse_indices = inverse_indices.to(self.device)
 
         unique_elements = unique_combinations[:, 0].int()
         element_asf = self.scattering_params[
@@ -875,6 +878,9 @@ class DifferentiableTransformer(torch.nn.Module):
             unique_combinations, inverse_indices = torch.unique(
                 combined, dim=0, return_inverse=True
             )
+        else:
+            unique_combinations = unique_combinations.to(self.device)
+            inverse_indices = inverse_indices.to(self.device)
 
         unique_elements = unique_combinations[:, 0].int()
         element_asf = self.scattering_params[unique_elements]

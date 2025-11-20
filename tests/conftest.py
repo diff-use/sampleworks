@@ -38,19 +38,21 @@ def resources_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def structure_1vme(resources_dir: Path) -> dict:
-    return parse(resources_dir / "1vme_final.cif")
+    return parse(resources_dir / "1vme" / "1vme_final.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_6b8x(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6b8x_final.pdb")
+    return parse(resources_dir / "6b8x" / "6b8x_final.pdb")
 
 
 @pytest.fixture(
     scope="session", params=["1vme_final.cif", "6b8x_final.pdb"], ids=["cif", "pdb"]
 )
 def test_structure(request, resources_dir: Path) -> dict:
-    return parse(resources_dir / request.param)
+    # this requires the 1st 4 characters of the filename to match the folder name,
+    # so PDB IDs need to be matching case
+    return parse(resources_dir / request.param[:4] / request.param)
 
 
 @pytest.fixture(scope="session")
@@ -136,3 +138,54 @@ def temp_output_dir(tmp_path: Path) -> Generator[Path, None, None]:
     output_dir = tmp_path / "boltz_output"
     output_dir.mkdir(parents=True, exist_ok=True)
     yield output_dir
+
+
+@pytest.fixture(scope="session")
+def density_map_1vme(resources_dir: Path):
+    from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (  # noqa: E501
+        XMap,
+    )
+
+    map_path = (
+        resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4"
+    )
+    if not map_path.exists():
+        pytest.skip(f"Density map not found at {map_path}")
+    return XMap.fromfile(str(map_path), resolution=1.8)
+
+
+@pytest.fixture(scope="session")
+def structure_1vme_density(resources_dir: Path):
+    cif_path = resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB.cif"
+    if not cif_path.exists():
+        pytest.skip(f"Structure not found at {cif_path}")
+    return parse(cif_path)
+
+
+@pytest.fixture(scope="session")
+def reward_function_1vme(
+    density_map_1vme, structure_1vme_density, device: torch.device
+):
+    from sampleworks.core.rewards.real_space_density import (
+        RewardFunction,
+        setup_scattering_params,
+    )
+
+    params = setup_scattering_params(structure_1vme_density)
+    rf = RewardFunction(density_map_1vme, params, torch.tensor([1], device=device))
+    return rf
+
+
+@pytest.fixture(scope="session")
+def test_coordinates_1vme(structure_1vme_density, device: torch.device):
+    atom_array = structure_1vme_density["asym_unit"]
+
+    # Handle both AtomArray and AtomArrayStack
+    if hasattr(atom_array, "stack_depth"):
+        # AtomArrayStack - take first model
+        atom_array = atom_array[0]
+
+    mask = atom_array.occupancy > 0
+    atom_array = atom_array[mask]
+    coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
+    return coords, atom_array

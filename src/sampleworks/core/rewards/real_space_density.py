@@ -1,5 +1,5 @@
 import torch
-from jaxtyping import ArrayLike, Float
+from jaxtyping import ArrayLike, Float, Int
 
 from sampleworks.core.forward_models.xray.real_space_density import (
     DifferentiableTransformer,
@@ -101,8 +101,8 @@ class RewardFunction:
 
     def precompute_unique_combinations(
         self,
-        elements: torch.Tensor,
-        b_factors: torch.Tensor,
+        elements: Int[torch.Tensor, "batch n_atoms"],
+        b_factors: Float[torch.Tensor, "batch n_atoms"],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Pre-compute unique (element, b_factor) combinations for vmap compatibility.
 
@@ -112,9 +112,9 @@ class RewardFunction:
         Parameters
         ----------
         elements: torch.Tensor
-            Atomic elements
+            Atomic elements, shape [batch n_atoms]
         b_factors: torch.Tensor
-            Per-atom B-factors
+            Per-atom B-factors, shape [batch n_atoms]
 
         Returns
         -------
@@ -122,38 +122,31 @@ class RewardFunction:
             unique_combinations: Unique (element, b_factor) pairs
             inverse_indices: Indices to reconstruct original from unique
         """
+        device = self.device
         elements_flat = elements.reshape(-1)
         b_factors_flat = b_factors.reshape(-1)
         combined = torch.stack([elements_flat, b_factors_flat], dim=1)
         unique_combinations, inverse_indices = torch.unique(
             combined, dim=0, return_inverse=True
         )
-        return unique_combinations, inverse_indices
+        return unique_combinations.to(device), inverse_indices.to(device)
 
     def structure_to_reward_input(
         self, structure: dict
     ) -> dict[str, Float[torch.Tensor, "..."]]:
         atom_array = structure["asym_unit"]
         atom_array = atom_array[:, atom_array.occupancy > 0]
-        elements = [ATOMIC_NUM_TO_ELEMENT.index(elem) for elem in atom_array.element]
+        elements = [
+            ATOMIC_NUM_TO_ELEMENT.index(
+                elem.upper() if len(elem) == 1 else elem[0].upper() + elem[1:].lower()
+            )
+            for elem in atom_array.element
+        ]
 
-        elements = (
-            torch.from_numpy(elements)
-            .to(self.device)
-            .unsqueeze(0)
-            .expand(atom_array.shape[0], -1)
-        )
-        b_factors = (
-            torch.from_numpy(atom_array.b_factor)
-            .to(self.device)
-            .unsqueeze(0)
-            .expand(atom_array.shape[0], -1)
-        )
+        elements = torch.tensor(elements, device=self.device).unsqueeze(0)
+        b_factors = torch.from_numpy(atom_array.b_factor).to(self.device).unsqueeze(0)
         occupancies = (
-            torch.from_numpy(atom_array.occupancy)
-            .to(self.device)
-            .unsqueeze(0)
-            .expand(atom_array.shape[0], -1)
+            torch.from_numpy(atom_array.occupancy).to(self.device).unsqueeze(0)
         )
 
         coordinates = torch.from_numpy(atom_array.coord).to(self.device)
