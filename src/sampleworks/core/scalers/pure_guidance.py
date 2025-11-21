@@ -74,7 +74,7 @@ class PureGuidance:
                 Gradient step size for guidance (default: 0.1)
 
             - gradient_normalization: bool, optional
-                Whether to normalize gradients (default: False)
+                Whether to normalize/clip gradients (default: False)
 
             - use_tweedie: bool, optional
                 If True, use Tweedie's formula (gradient on x̂_0 only).
@@ -191,6 +191,7 @@ class PureGuidance:
         trajectory_next_step = []
         losses = []
 
+        # TODO: this is not generalizable currently, figure this out
         if hasattr(self.model_wrapper, "predict_args"):
             n_steps = self.model_wrapper.predict_args.sampling_steps  # type: ignore
         elif hasattr(self.model_wrapper, "configs"):
@@ -354,7 +355,7 @@ class PureGuidance:
 
             trajectory_next_step.append(coords.clone().cpu())
 
-        # TODO: Handle ensemble here
+        # Concatenate atom array to match ensemble size
         atom_array = concatenate([atom_array] * ensemble_size)
         atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
 
