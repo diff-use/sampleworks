@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 from atomworks.io.parser import parse
+from biotite.structure import stack
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
 )
@@ -93,10 +94,12 @@ def save_trajectory(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for i, coords in enumerate(trajectory):
+        ensemble_size = coords.shape[0]
         if i % save_every != 0:
             continue
-        array_copy = atom_array.copy()
-        array_copy.coord[..., reward_param_mask, :] = coords.detach().numpy()
+        array_copy = atom_array[0].copy()
+        array_copy = stack([array_copy] * ensemble_size)
+        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
         save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
 
 

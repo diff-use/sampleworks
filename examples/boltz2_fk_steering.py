@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 from atomworks.io.parser import parse
+from biotite.structure import stack
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
 )
@@ -56,8 +57,14 @@ def parse_args():
     parser.add_argument(
         "--num-particles",
         type=int,
-        default=10,
+        default=3,
         help="Number of particles for FK steering",
+    )
+    parser.add_argument(
+        "--ensemble-size",
+        type=int,
+        default=4,
+        help="Ensemble size per particle",
     )
     parser.add_argument(
         "--fk-resampling-interval",
@@ -74,13 +81,13 @@ def parse_args():
     parser.add_argument(
         "--num-gd-steps",
         type=int,
-        default=0,
+        default=1,
         help="Number of gradient descent steps on x0",
     )
     parser.add_argument(
         "--guidance-weight",
         type=float,
-        default=0.0,
+        default=0.01,
         help="Weight for gradient descent guidance",
     )
     parser.add_argument(
@@ -128,10 +135,12 @@ def save_trajectory(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for i, coords in enumerate(trajectory):
+        ensemble_size = coords.shape[1]
         if i % save_every != 0:
             continue
-        array_copy = atom_array.copy()
-        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()
+        array_copy = atom_array[0].copy()
+        array_copy = stack([array_copy] * ensemble_size)
+        array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
         save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
 
 
@@ -196,6 +205,7 @@ def main():
     refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
         structure,
         num_particles=args.num_particles,
+        ensemble_size=args.ensemble_size,
         fk_resampling_interval=args.fk_resampling_interval,
         fk_lambda=args.fk_lambda,
         num_gd_steps=args.num_gd_steps,

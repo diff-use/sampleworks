@@ -673,7 +673,24 @@ class Boltz2Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        coords = cast(Tensor, rearrange("... -> e ...", coords, e=ensemble_size))
+        if coords.ndim == 2:  # single structure
+            coords = cast(Tensor, rearrange("n c -> e n c", coords, e=ensemble_size))
+        elif coords.ndim == 3 and coords.shape[0] == 1:  # single structure
+            coords = cast(Tensor, rearrange("() n c -> e n c", coords, e=ensemble_size))
+        elif coords.ndim == 3 and coords.shape[0] != ensemble_size:
+            coords = cast(
+                Tensor,
+                rearrange(
+                    "n c -> e n c", coords[0], e=ensemble_size
+                ),  # grab only the first structure
+            )
+
+        # validate coords shape
+        if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
+            raise ValueError(
+                "coords shape should be (ensemble_size, N_atoms, 3), but is "
+                f"{coords.shape}"
+            )
 
         if noise_level == 0:
             noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
@@ -1192,7 +1209,24 @@ class Boltz1Wrapper:
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
 
-        coords = cast(Tensor, rearrange("... -> e ...", coords, e=ensemble_size))
+        if coords.ndim == 2:  # single structure
+            coords = cast(Tensor, rearrange("n c -> e n c", coords, e=ensemble_size))
+        elif coords.ndim == 3 and coords.shape[0] == 1:  # single structure
+            coords = cast(Tensor, rearrange("() n c -> e n c", coords, e=ensemble_size))
+        elif coords.ndim == 3 and coords.shape[0] != ensemble_size:
+            coords = cast(
+                Tensor,
+                rearrange(
+                    "n c -> e n c", coords[0], e=ensemble_size
+                ),  # grab only the first structure
+            )
+
+        # validate coords shape
+        if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
+            raise ValueError(
+                "coords shape should be (ensemble_size, N_atoms, 3), but is "
+                f"{coords.shape}"
+            )
 
         if noise_level == 0:
             noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
