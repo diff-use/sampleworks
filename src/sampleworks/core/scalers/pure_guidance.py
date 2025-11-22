@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import einx
 import torch
-from biotite.structure import concatenate
+from biotite.structure import stack
 from tqdm import tqdm
 
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
@@ -161,11 +161,13 @@ class PureGuidance:
             torch.Tensor(atom_array.b_factor[reward_param_mask]),
             b=ensemble_size,
         )
-        occupancies = einx.rearrange(
-            "n -> b n",
-            torch.Tensor(atom_array.occupancy[reward_param_mask]),
-            b=ensemble_size,
-        )
+        # TODO: properly handle occupancy values in structure processing
+        # occupancies = einx.rearrange(
+        #     "n -> b n",
+        #     torch.Tensor(atom_array.occupancy[reward_param_mask]),
+        #     b=ensemble_size,
+        # )
+        occupancies = torch.ones_like(cast(torch.Tensor, b_factors)) / ensemble_size
 
         input_coords = cast(
             torch.Tensor,
@@ -356,7 +358,7 @@ class PureGuidance:
             trajectory_next_step.append(coords.clone().cpu())
 
         # Concatenate atom array to match ensemble size
-        atom_array = concatenate([atom_array] * ensemble_size)
+        atom_array = stack([atom_array] * ensemble_size)
         atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
 
         structure["asym_unit"] = atom_array

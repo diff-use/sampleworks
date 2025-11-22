@@ -11,7 +11,7 @@ from typing import Any, cast
 import einx
 import torch
 import torch.nn.functional as F
-from biotite.structure import concatenate
+from biotite.structure import stack
 from tqdm import tqdm
 
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
@@ -136,8 +136,8 @@ class FKSteering:
         fk_lambda = kwargs.get("fk_lambda", 1.0)
 
         # Guidance Parameters
-        num_gd_steps = kwargs.get("num_gd_steps", 0)
-        guidance_weight = kwargs.get("guidance_weight", 0.0)
+        num_gd_steps = kwargs.get("num_gd_steps", 1)
+        guidance_weight = kwargs.get("guidance_weight", 0.01)
         gradient_normalization = kwargs.get("gradient_normalization", False)
         guidance_interval = kwargs.get("guidance_interval", 1)
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
@@ -198,15 +198,17 @@ class FKSteering:
                 e=ensemble_size,
             ),
         )
-        occupancies = cast(
-            torch.Tensor,
-            einx.rearrange(
-                "n -> p e n",
-                torch.Tensor(atom_array.occupancy[reward_param_mask]),
-                p=num_particles,
-                e=ensemble_size,
-            ),
-        )
+        # TODO: properly handle occupancy values in structure processing
+        # occupancies = cast(
+        #     torch.Tensor,
+        #     einx.rearrange(
+        #         "n -> p e n",
+        #         torch.Tensor(atom_array.occupancy[reward_param_mask]),
+        #         p=num_particles,
+        #         e=ensemble_size,
+        #     ),
+        # )
+        occupancies = torch.ones_like(cast(torch.Tensor, b_factors)) / ensemble_size
 
         # Pre-compute unique combinations for vmap compatibility
         # since torch.unique returns dynamic shape
@@ -257,7 +259,8 @@ class FKSteering:
                 "Only Boltz and Protenix wrappers are supported currently."
             )
 
-        for i in tqdm(range(partial_diffusion_step, n_steps)):
+        pbar = tqdm(range(partial_diffusion_step, n_steps))
+        for i in pbar:
             # (num_particles * ensemble_size, N_atoms, 3) for denoising,
             # will reshape for FK steering usage
             coords = cast(torch.Tensor, einx.rearrange("... n c -> (...) n c", coords))
@@ -303,7 +306,7 @@ class FKSteering:
                     features,
                     maybe_augmented_coords,
                     timestep=i,
-                    grad_needed=(num_gd_steps > 0),
+                    grad_needed=False,
                     # Provide precomputed t_hat and eps to allow us to calculate the
                     # denoising direction properly
                     t_hat=t_hat,
@@ -327,7 +330,7 @@ class FKSteering:
                     )
                 )
 
-            # we need coords and eps in working frame
+            # we need coords and eps and scaled_guidance_update in working frame
             coords_in_working_frame = (
                 apply_forward_transform(
                     maybe_augmented_coords, align_transform, rotation_only=False
@@ -340,15 +343,29 @@ class FKSteering:
                 if align_transform is not None
                 else eps
             )
+            if num_gd_steps > 0:
+                scaled_guidance_update = (
+                    apply_forward_transform(
+                        scaled_guidance_update.reshape(
+                            num_particles * ensemble_size, -1, 3
+                        ),
+                        align_transform,
+                        rotation_only=True,
+                    ).reshape(num_particles, ensemble_size, -1, 3)
+                    if align_transform is not None
+                    else scaled_guidance_update
+                )
 
             # reshape to be (num_particles, ensemble_size, N_atoms, 3)
             denoised_working_frame = denoised_working_frame.reshape(
                 num_particles, ensemble_size, -1, 3
             )
-            maybe_augmented_coords = maybe_augmented_coords.reshape(
+            coords_in_working_frame = coords_in_working_frame.reshape(
                 num_particles, ensemble_size, -1, 3
             )
-            eps = eps.reshape(num_particles, ensemble_size, -1, 3)
+            eps_in_working_frame = eps_in_working_frame.reshape(
+                num_particles, ensemble_size, -1, 3
+            )
             align_transform = (
                 {
                     key: value.reshape(num_particles, ensemble_size, *value.shape[1:])
@@ -392,10 +409,13 @@ class FKSteering:
                     # eps is the noise added. scaled_guidance_update is the shift.
                     # ll_diff = (eps^2 - (eps + shift)^2) / 2var
                     # Sum over dimensions to get total log likelihood difference
-                    diff = eps**2 - (eps + scaled_guidance_update) ** 2
+                    diff = (
+                        eps_in_working_frame**2
+                        - (eps_in_working_frame + scaled_guidance_update) ** 2
+                    )
 
-                    # shape (num_particles, ensemble_size)
-                    ll_difference = diff.sum(dim=(-1, -2)) / (2 * noise_var)
+                    # shape (num_particles,)
+                    ll_difference = diff.sum(dim=(-1, -2, -3)) / (2 * noise_var)
 
                 # Resampling weights
                 log_weights = ll_difference + fk_lambda * log_G
@@ -452,8 +472,7 @@ class FKSteering:
                             ),
                         ).mean()
 
-                        loss.backward()
-                        grad = current_x0.grad
+                        (grad,) = torch.autograd.grad(loss, current_x0)
 
                         if gradient_normalization:
                             grad_norm = torch.linalg.norm(
@@ -473,6 +492,7 @@ class FKSteering:
             losses.append(
                 energy_traj[:, -1].mean().item() if energy_traj.shape[1] > 0 else 0.0
             )
+            pbar.set_postfix({"loss": losses[-1]})
 
             with torch.no_grad():
                 noisy_coords = coords_in_working_frame + eps_in_working_frame
@@ -502,9 +522,14 @@ class FKSteering:
 
             trajectory_next_step.append(coords.clone().cpu())
 
-        # Concatenate atom array to match ensemble size
-        final_atom_array = concatenate([atom_array] * ensemble_size)
-        final_atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore
+        # Stack atom array to match ensemble size
+        final_atom_array = stack([atom_array] * ensemble_size)
+
+        # Get lowest energy particle
+        min_energy_index = torch.argmin(energy_traj[:, -1])
+        final_atom_array.coord[..., reward_param_mask, :] = (  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+            coords[min_energy_index].cpu().numpy()
+        )
 
         structure["asym_unit"] = final_atom_array
 
