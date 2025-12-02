@@ -1,0 +1,130 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sampleworks"
+version = "0.1.0"
+description = "Add a short description here"
+authors = [
+    { name = "K. Chrispens", email = "karson.chrispens@ucsf.edu" }
+]
+requires-python = ">= 3.11"
+readme = "README.md"
+license = { file = "LICENSE" }
+dependencies = [
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.1",
+    "pandas>=2.2.3",
+    "seaborn>=0.13.2",
+    "torch>=2.5.1",
+    "tqdm>=4.67.1",
+    "gemmi>=0.6.7",
+    "reciprocalspaceship>=1.0.3",
+    "scipy>=1.15.1",
+    "loguru",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.hatch.version]
+path = "src/sampleworks/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sampleworks"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+]
+
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov=sampleworks --cov-report=term-missing {args:tests}"
+cov-report = [
+    "pytest --cov=sampleworks --cov-report=html {args:tests}",
+    "python -m http.server 8000 --directory htmlcov",
+]
+
+[tool.hatch.envs.lint]
+detached = true
+dependencies = [
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[tool.hatch.envs.lint.scripts]
+check = [
+    "ruff check {args:.}",
+    "mypy {args:src/sampleworks}",
+]
+fmt = [
+    "ruff format {args:.}",
+    "ruff check --fix {args:.}",
+]
+
+[tool.hatch.envs.boltz]
+description = "Environment for molecular modeling with Boltz and RDKit"
+dependencies = [
+    "boltz",
+    "cuequivariance-torch",
+    "cuequivariance-ops-torch-cu12",
+    "rdkit>=2025.3.6",
+]
+
+[tool.hatch.envs.boltz.scripts]
+# Add custom scripts for this environment if needed
+check-imports = "python -c 'import boltz; import rdkit; from cuequivariance_torch import *; print(\"All imports successful\")'"
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
