@@ -48,6 +48,130 @@ def ensure_atom_array(atom_array: AtomArray | AtomArrayStack) -> AtomArray:
     return atom_array
 
 
+# TODO: Fix this so that we can handle multiple altlocs properly
+def filter_altloc(atom_array: AtomArray) -> AtomArray:
+    """Filter atom array to single conformation per residue.
+
+    Keeps atoms with no alternative location ('') or first alternative ('A').
+    This ensures each residue is counted once even when multiple conformations exist.
+    """
+    if not hasattr(atom_array, "altloc"):
+        return atom_array
+    altloc = cast(np.ndarray, atom_array.altloc)
+    mask = (altloc == "") | (altloc == "A")
+    return cast(AtomArray, atom_array[mask])
+
+
+def filter_zero_occupancy(atom_array: AtomArray) -> AtomArray:
+    """Filter out atoms with zero occupancy or NaN coordinates."""
+    mask = np.ones(len(atom_array), dtype=bool)
+
+    if hasattr(atom_array, "occupancy"):
+        mask &= cast(np.ndarray, atom_array.occupancy) > 0
+
+    coords = cast(np.ndarray, atom_array.coord)
+    mask &= ~np.any(np.isnan(coords), axis=-1)
+
+    return cast(AtomArray, atom_array[mask])
+
+
+def get_valid_residue_positions(atom_array: AtomArray) -> dict[str, set[int]]:
+    """Get residue positions that have at least one atom with valid coordinates.
+
+    Parameters
+    ----------
+    atom_array: AtomArray
+        Biotite AtomArray (should be BEFORE filter_zero_occupancy is applied).
+
+    Returns
+    -------
+    dict[str, set[int]]
+        Mapping from chain_id to set of res_id values that have valid coordinates.
+    """
+    valid_positions: dict[str, set[int]] = defaultdict(set)
+    coords = cast(np.ndarray, atom_array.coord)
+    chain_ids = cast(np.ndarray, atom_array.chain_id)
+    res_ids = cast(np.ndarray, atom_array.res_id)
+
+    valid_mask = ~np.any(np.isnan(coords), axis=-1)
+    for i in np.where(valid_mask)[0]:
+        valid_positions[str(chain_ids[i])].add(int(res_ids[i]))
+
+    return dict(valid_positions)
+
+
+def reconcile_atom_arrays(
+    atomworks_array: AtomArray, protenix_array: AtomArray
+) -> AtomArray:
+    """Add atoms from protenix_array missing in atomworks_array with inferred positions.
+
+    Matches atoms by (chain_index, relative_position, atom_name) to handle
+    cases where chain_ids and res_id numbering differ between arrays.
+    Chain index is based on order of first appearance in each array.
+
+    If both arrays have the same count, returns atomworks_array unchanged
+    (handles cases like SE vs SD naming differences in MSE/MET residues).
+    """
+    if len(atomworks_array) == len(protenix_array):
+        return atomworks_array
+
+    aw_chain_ids = cast(np.ndarray, atomworks_array.chain_id)
+    px_chain_ids = cast(np.ndarray, protenix_array.chain_id)
+
+    aw_unique_chains = list(dict.fromkeys(aw_chain_ids))
+    px_unique_chains = list(dict.fromkeys(px_chain_ids))
+
+    aw_chain_to_idx = {c: i for i, c in enumerate(aw_unique_chains)}
+    px_chain_to_idx = {c: i for i, c in enumerate(px_unique_chains)}
+    idx_to_aw_chain = {i: c for c, i in aw_chain_to_idx.items()}
+
+    aw_res_offsets: dict[str, int] = {}
+    for chain_id in aw_unique_chains:
+        chain_mask = aw_chain_ids == chain_id
+        chain_res_ids = cast(np.ndarray, atomworks_array.res_id)[chain_mask]
+        aw_res_offsets[str(chain_id)] = int(np.min(chain_res_ids))
+
+    px_res_offsets: dict[str, int] = {}
+    for chain_id in px_unique_chains:
+        chain_mask = px_chain_ids == chain_id
+        chain_res_ids = cast(np.ndarray, protenix_array.res_id)[chain_mask]
+        px_res_offsets[str(chain_id)] = int(np.min(chain_res_ids))
+
+    aw_index: dict[tuple[int, int, str], int] = {}
+    for i in range(len(atomworks_array)):
+        atom = atomworks_array[i]
+        chain = str(atom.chain_id)
+        chain_idx = aw_chain_to_idx[chain]
+        rel_pos = int(cast(int, atom.res_id)) - aw_res_offsets.get(chain, 0)
+        key = (chain_idx, rel_pos, str(atom.atom_name))
+        aw_index[key] = i
+
+    missing_atoms: list[Atom] = []
+    for i in range(len(protenix_array)):
+        atom = protenix_array[i]
+        px_chain = str(atom.chain_id)
+        chain_idx = px_chain_to_idx[px_chain]
+        rel_pos = int(cast(int, atom.res_id)) - px_res_offsets.get(px_chain, 0)
+        key = (chain_idx, rel_pos, str(atom.atom_name))
+        if key not in aw_index:
+            aw_chain = idx_to_aw_chain.get(chain_idx, px_chain)
+            new_atom = Atom(
+                coord=cast(np.ndarray, atom.coord),
+                chain_id=aw_chain,
+                res_id=rel_pos + aw_res_offsets.get(aw_chain, 0),
+                res_name=str(atom.res_name),
+                atom_name=str(atom.atom_name),
+                element=str(atom.element),
+            )
+            missing_atoms.append(new_atom)
+
+    if not missing_atoms:
+        return atomworks_array
+
+    missing_array = array(missing_atoms)
+    return cast(AtomArray, concatenate([atomworks_array, missing_array]))
+
+
 def add_terminal_oxt_atoms(atom_array: AtomArray, chain_info: dict) -> AtomArray:
     """Add terminal OXT atoms to C-terminal residues of protein chains with
     ideal geometry.
@@ -199,7 +323,7 @@ def add_unique_chain_and_copy_ids(atom_array):
     return atom_array
 
 
-def get_sequences(atom_array, chain_info):
+def get_sequences(atom_array, chain_info, valid_positions=None):
     """Extract entity sequences from AtomArray.
 
     Parameters
@@ -208,6 +332,9 @@ def get_sequences(atom_array, chain_info):
         Biotite AtomArray containing structure (not AtomArrayStack).
     chain_info: dict[str, Any]
         Atomworks chain information dictionary.
+    valid_positions: dict[str, set[int]] | None
+        Optional mapping from chain_id to set of res_id values with valid coords.
+        If provided, sequences are filtered to only include residues at valid positions.
 
     Returns
     -------
@@ -227,15 +354,34 @@ def get_sequences(atom_array, chain_info):
                 if chain_atom[0].label_entity_id == label_entity_id:
                     chain_type = info["chain_type"]
                     if chain_type.is_polymer():
-                        entity_seq[label_entity_id] = info.get(
+                        canonical_seq = info.get(
                             "processed_entity_canonical_sequence", ""
                         )
+                        if valid_positions is not None and chain_id in valid_positions:
+                            chain_valid = valid_positions[chain_id]
+                            n_valid = len(chain_valid)
+                            n_seq = len(canonical_seq)
+                            if n_valid == n_seq:
+                                entity_seq[label_entity_id] = canonical_seq
+                            elif n_valid == 0:
+                                entity_seq[label_entity_id] = ""
+                            else:
+                                min_pos = min(chain_valid)
+                                max_pos = max(chain_valid)
+                                n_missing_start = min_pos - 1
+                                n_missing_end = n_seq - max_pos
+                                start_idx = n_missing_start
+                                end_idx = n_seq - n_missing_end
+                                filtered = canonical_seq[start_idx:end_idx]
+                                entity_seq[label_entity_id] = filtered
+                        else:
+                            entity_seq[label_entity_id] = canonical_seq
                     break
     return entity_seq
 
 
-def get_poly_res_names(atom_array, chain_info):
-    """Get residue names for polymer entities.
+def get_poly_res_names(atom_array, chain_info, valid_positions=None):
+    """Get residue names and sequence positions for polymer entities.
 
     Parameters
     ----------
@@ -243,16 +389,23 @@ def get_poly_res_names(atom_array, chain_info):
         Biotite AtomArray containing structure (not AtomArrayStack).
     chain_info: dict[str, Any]
         Atomworks chain information dictionary.
+    valid_positions: dict[str, set[int]] | None
+        Optional mapping from chain_id to set of res_id values with valid coords.
+        If provided, only residues at valid positions are included.
 
     Returns
     -------
-    dict[str, list[str]]
-        Mapping from label_entity_id to list of residue names.
+    dict[str, list[tuple[int, str]]]
+        Mapping from label_entity_id to list of (position, res_name) tuples.
+        Position is 1-indexed based on label_seq_id.
 
     Notes
     -----
     Expects AtomArray, not AtomArrayStack. Use ensure_atom_array() first
     if working with atomworks.parse() output.
+
+    Filters to single conformation (altloc '' or 'A') and single chain instance
+    per entity to ensure correct residue counting.
     """
     poly_res_names = {}
     for label_entity_id in np.unique(atom_array.label_entity_id):
@@ -262,19 +415,42 @@ def get_poly_res_names(atom_array, chain_info):
                 if chain_atom[0].label_entity_id == label_entity_id:
                     chain_type = info["chain_type"]
                     if chain_type.is_polymer():
-                        entity_array = atom_array[
-                            atom_array.label_entity_id == label_entity_id
-                        ]
+                        chain_array = filter_altloc(chain_atom)
+                        if len(chain_array) == 0:
+                            break
                         starts = get_residue_starts(
-                            entity_array, add_exclusive_stop=True
+                            chain_array, add_exclusive_stop=True
                         )
-                        res_names = entity_array.res_name[starts[:-1]].tolist()
-                        poly_res_names[label_entity_id] = res_names
+                        res_names = cast(np.ndarray, chain_array.res_name)[
+                            starts[:-1]
+                        ].tolist()
+                        if hasattr(chain_array, "res_id"):
+                            res_ids = cast(np.ndarray, chain_array.res_id)[
+                                starts[:-1]
+                            ].tolist()
+                            min_res_id = min(res_ids) if res_ids else 1
+                            positions = [r - min_res_id + 1 for r in res_ids]
+                        else:
+                            positions = list(range(1, len(res_names) + 1))
+
+                        pos_res_pairs = list(zip(positions, res_names, strict=False))
+                        if valid_positions is not None and chain_id in valid_positions:
+                            chain_valid = valid_positions[chain_id]
+                            min_valid = min(chain_valid) if chain_valid else 1
+                            valid_seq_positions = {
+                                r - min_valid + 1 for r in chain_valid
+                            }
+                            pos_res_pairs = [
+                                (p, r)
+                                for p, r in pos_res_pairs
+                                if p in valid_seq_positions
+                            ]
+                        poly_res_names[label_entity_id] = pos_res_pairs
                     break
     return poly_res_names
 
 
-def detect_modifications(atom_array, chain_info):
+def detect_modifications(atom_array, chain_info, valid_positions=None):
     """Detect polymer modifications (non-standard residues).
 
     Parameters
@@ -283,11 +459,14 @@ def detect_modifications(atom_array, chain_info):
         Biotite AtomArray containing structure (not AtomArrayStack).
     chain_info: dict[str, Any]
         Atomworks chain information dictionary.
+    valid_positions: dict[str, set[int]] | None
+        Optional mapping from chain_id to set of res_id values with valid coords.
 
     Returns
     -------
     dict[str, list[tuple[int, str]]]
         Mapping from label_entity_id to list of (position, mod_ccd_code).
+        Position is 1-indexed based on label_seq_id from the structure.
 
     Notes
     -----
@@ -295,13 +474,12 @@ def detect_modifications(atom_array, chain_info):
     if working with atomworks.parse() output.
     """
     entity_id_to_mod_list = {}
-    poly_res_names = get_poly_res_names(atom_array, chain_info)
+    poly_res_data = get_poly_res_names(atom_array, chain_info, valid_positions)
 
-    for entity_id, res_names in poly_res_names.items():
+    for entity_id, pos_res_pairs in poly_res_data.items():
         modifications_list = []
-        for idx, res_name in enumerate(res_names):
+        for position, res_name in pos_res_pairs:
             if res_name not in STD_RESIDUES:
-                position = idx + 1
                 modifications_list.append((position, f"CCD_{res_name}"))
         if modifications_list:
             entity_id_to_mod_list[entity_id] = modifications_list
@@ -383,13 +561,21 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     atom_array = ensure_atom_array(atom_array)
     chain_info = structure.get("chain_info", {})
 
+    valid_positions = get_valid_residue_positions(atom_array)
+    atom_array = filter_zero_occupancy(atom_array)
+
     atom_array = add_terminal_oxt_atoms(atom_array, chain_info)
 
     if not hasattr(atom_array, "label_entity_id"):
         chain_to_entity = {}
         for chain_id, info in chain_info.items():
-            entity_id = info.get("rcsb_entity", chain_id)
-            chain_to_entity[chain_id] = str(entity_id)
+            base_entity_id = info.get("rcsb_entity", chain_id)
+            chain_type = info["chain_type"]
+            if not chain_type.is_polymer():
+                entity_id = f"{base_entity_id}_lig"
+            else:
+                entity_id = str(base_entity_id)
+            chain_to_entity[chain_id] = entity_id
 
         label_entity_ids = np.array(
             [
@@ -402,7 +588,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     if not hasattr(atom_array, "label_asym_id"):
         atom_array.set_annotation("label_asym_id", atom_array.chain_id)
 
-    entity_seq = get_sequences(atom_array, chain_info)
+    entity_seq = get_sequences(atom_array, chain_info, valid_positions)
     atom_array = add_unique_chain_and_copy_ids(atom_array)
 
     label_entity_id_to_sequences = {}
@@ -433,10 +619,9 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 label_entity_id_to_sequences[label_entity_id] = seq
                 break
 
-    entity_id_to_mod_list = detect_modifications(atom_array, chain_info)
-
-    chain_starts = get_chain_starts(atom_array, add_exclusive_stop=False)
-    chain_starts_atom_array = cast(AtomArray, atom_array[chain_starts])
+    entity_id_to_mod_list = detect_modifications(
+        atom_array, chain_info, valid_positions
+    )
 
     json_dict = {"sequences": []}
 
@@ -447,12 +632,11 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
     for label_entity_id in unique_label_entity_id:
         entity_dict = {}
-        asym_chains = cast(
-            AtomArray,
-            chain_starts_atom_array[
-                chain_starts_atom_array.label_entity_id == label_entity_id
-            ],
+        entity_mask = atom_array.label_entity_id == label_entity_id
+        unique_chain_ids_for_entity = np.unique(
+            cast(np.ndarray, atom_array.chain_id)[entity_mask]
         )
+        n_chains_for_entity = len(unique_chain_ids_for_entity)
 
         entity_chain_type: ChainType | None = None
         for chain_id, info in chain_info.items():
@@ -492,11 +676,11 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             )
             entity_dict["ligand"] = f"CCD_{lig_ccd}"
 
-        entity_dict["count"] = len(asym_chains)
+        entity_dict["count"] = n_chains_for_entity
         entity_idx += 1
         entity_id_in_json = str(entity_idx)
         label_entity_id_to_entity_id_in_json[label_entity_id] = entity_id_in_json
-        all_entity_counts[entity_id_in_json] = len(asym_chains)
+        all_entity_counts[entity_id_in_json] = n_chains_for_entity
 
         if label_entity_id in entity_id_to_mod_list:
             modifications = entity_id_to_mod_list[label_entity_id]
