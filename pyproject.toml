@@ -3,16 +3,23 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [dependency-groups]
+analysis = ["polars", "mdtraj", "marimo", "matplotlib", "seaborn", "pandas", "pyzmq"]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
-dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright", "ipython"]
+dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
-dependencies = ["atomworks[ml]", "dotenv", "jaxtyping", "jax", "einx", "loguru"]
+dependencies = ["atomworks[ml] @ git+https://github.com/RosettaCommons/atomworks.git@production", "python-dotenv", "jaxtyping", "jax", "einx"]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pixi.activation.env]
+PYTHONNOUSERSITE = "1"
 
 [tool.pixi.dependencies]
 gcc_linux-64 = ">=9,<13"
@@ -22,7 +29,9 @@ numpy = "<2.0"
 pyarrow = "==17.0.0"
 
 [tool.pixi.environments]
+analysis = {features = ["analysis"]}
 boltz = {features = ["boltz"]}
+boltz-analysis = {features = ["boltz", "analysis"]}
 boltz-dev = {features = ["boltz", "dev"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
