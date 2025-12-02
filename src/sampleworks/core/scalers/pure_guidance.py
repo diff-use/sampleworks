@@ -8,6 +8,7 @@ Currently this only works with the implemented wrappers and isn't extensible
 from typing import Any, cast
 
 import einx
+import numpy as np
 import torch
 from biotite.structure import stack
 from tqdm import tqdm
@@ -146,7 +147,9 @@ class PureGuidance:
             atom_array = features["true_atom_array"]
         else:
             atom_array = structure["asym_unit"][0]
-        reward_param_mask = atom_array.occupancy > 0
+        occupancy_mask = atom_array.occupancy > 0
+        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
+        reward_param_mask = occupancy_mask & nan_mask
 
         # TODO: jank way to get atomic numbers, fix this in real space density
         elements = [

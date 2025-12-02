@@ -666,9 +666,20 @@ class Boltz2Wrapper:
                 f"{self.predict_args.sampling_steps}"
             )
 
-        # We need to make sure the missing atoms are handled correctly
-        residues_with_occupancy = structure["asym_unit"].occupancy > 0
-        coords = structure["asym_unit"].coord[:, residues_with_occupancy]
+        # Filter atoms with zero occupancy or NaN coordinates
+        import numpy as np
+
+        asym_unit = structure["asym_unit"]
+        occupancy_mask = asym_unit.occupancy > 0
+        coord_array = np.asarray(asym_unit.coord)
+        if coord_array.ndim == 3:
+            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
+            valid_mask = occupancy_mask & nan_mask
+            coords = asym_unit.coord[:, valid_mask]
+        else:
+            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
+            valid_mask = occupancy_mask & nan_mask
+            coords = asym_unit.coord[valid_mask]
 
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
@@ -1202,9 +1213,20 @@ class Boltz1Wrapper:
                 f"{self.predict_args.sampling_steps}"
             )
 
-        # We need to make sure the missing atoms are handled correctly
-        residues_with_occupancy = structure["asym_unit"].occupancy > 0
-        coords = structure["asym_unit"].coord[:, residues_with_occupancy]
+        # Filter atoms with zero occupancy or NaN coordinates
+        import numpy as np
+
+        asym_unit = structure["asym_unit"]
+        occupancy_mask = asym_unit.occupancy > 0
+        coord_array = np.asarray(asym_unit.coord)
+        if coord_array.ndim == 3:
+            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
+            valid_mask = occupancy_mask & nan_mask
+            coords = asym_unit.coord[:, valid_mask]
+        else:
+            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
+            valid_mask = occupancy_mask & nan_mask
+            coords = asym_unit.coord[valid_mask]
 
         if isinstance(coords, ArrayLike):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
