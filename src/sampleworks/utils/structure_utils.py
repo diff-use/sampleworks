@@ -43,7 +43,7 @@ def save_structure_to_cif(
     Examples
     --------
     >>> from atomworks.io import parse
-    >>> structure = parse("structure.pdb")
+    >>> structure = parse("structure.pdb", ccd_mirror_path=None)
     >>> atom_array = structure["asym_unit"]
     >>>
     >>> save_structure_to_cif(atom_array, "output.cif")
