@@ -31,6 +31,8 @@ from .structure_processing import (
     add_terminal_oxt_atoms,
     create_protenix_input_from_structure,
     ensure_atom_array,
+    filter_zero_occupancy,
+    reconcile_atom_arrays,
 )
 
 
@@ -271,26 +273,23 @@ class ProtenixWrapper:
         input_feature_dict = dict_to_tensor(feat)
 
         atom_array = ensure_atom_array(structure["asym_unit"])
+        atom_array = filter_zero_occupancy(atom_array)
         atom_array = add_terminal_oxt_atoms(
             atom_array=atom_array, chain_info=structure.get("chain_info", {})
         )
-        residues_with_occupancy = cast(Array, atom_array.occupancy) > 0
+        atom_array = reconcile_atom_arrays(atom_array, atom_array_protenix)
 
         if "asym_unit" in structure:
             n_atoms_protenix = len(atom_array_protenix)
-            n_atoms_atomworks = len(cast(Array, atom_array[residues_with_occupancy]))
-            atom_diff = abs(n_atoms_protenix - n_atoms_atomworks)
-            assert atom_diff == 0, (
-                f"Coordinate count mismatch: Protenix processed "
-                f"{n_atoms_protenix} atoms, Atomworks has {n_atoms_atomworks} "
-                f"atoms (difference: {atom_diff}). Maybe missing terminal OXT?"
+            n_atoms_atomworks = len(atom_array)
+            assert n_atoms_protenix == n_atoms_atomworks, (
+                f"Atom count mismatch after reconciliation: Protenix has "
+                f"{n_atoms_protenix} atoms, Atomworks has {n_atoms_atomworks} atoms."
             )
 
         features = cast(dict[str, Any], input_feature_dict)
 
-        # TODO: Fix this janky way to get true coords
         if "asym_unit" in structure:
-            atom_array = atom_array[residues_with_occupancy]
             true_coords = cast(Array, atom_array.coord)
             if not isinstance(true_coords, torch.Tensor):
                 true_coords = torch.tensor(
@@ -588,10 +587,10 @@ class ProtenixWrapper:
                 "structure must contain asym_unit key to access coordinates."
             )
 
-        residues_with_occupancy = structure["asym_unit"].occupancy > 0
-        atom_array = ensure_atom_array(structure["asym_unit"])[residues_with_occupancy]
+        atom_array = ensure_atom_array(structure["asym_unit"])
+        atom_array = filter_zero_occupancy(atom_array)
         atom_array = add_terminal_oxt_atoms(
-            atom_array=atom_array,  # type: ignore (atom_array will be AtomArray)
+            atom_array=atom_array,
             chain_info=structure.get("chain_info", {}),
         )
         coords = cast(Array, atom_array.coord)

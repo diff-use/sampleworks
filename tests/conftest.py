@@ -38,12 +38,12 @@ def resources_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def structure_1vme(resources_dir: Path) -> dict:
-    return parse(resources_dir / "1vme" / "1vme_final.cif")
+    return parse(resources_dir / "1vme" / "1vme_final.cif", ccd_mirror_path=None)
 
 
 @pytest.fixture(scope="session")
 def structure_6b8x(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6b8x" / "6b8x_final.pdb")
+    return parse(resources_dir / "6b8x" / "6b8x_final.pdb", ccd_mirror_path=None)
 
 
 @pytest.fixture(
@@ -52,7 +52,9 @@ def structure_6b8x(resources_dir: Path) -> dict:
 def test_structure(request, resources_dir: Path) -> dict:
     # this requires the 1st 4 characters of the filename to match the folder name,
     # so PDB IDs need to be matching case
-    return parse(resources_dir / request.param[:4] / request.param)
+    return parse(
+        resources_dir / request.param[:4] / request.param, ccd_mirror_path=None
+    )
 
 
 @pytest.fixture(scope="session")
@@ -159,7 +161,7 @@ def structure_1vme_density(resources_dir: Path):
     cif_path = resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB.cif"
     if not cif_path.exists():
         pytest.skip(f"Structure not found at {cif_path}")
-    return parse(cif_path)
+    return parse(cif_path, ccd_mirror_path=None)
 
 
 @pytest.fixture(scope="session")
