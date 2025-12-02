@@ -210,9 +210,14 @@ __marimo__/
 .pixi/*
 !.pixi/config.toml
 
-# Claude Code
+# AI
 .claude/
 CLAUDE.local.md
+CLAUDE.md
+.github/workflows/claude*.yml
 
 # Model checkpoints
 release_data/
+
+# Large results from runs
+grid_search_results/
