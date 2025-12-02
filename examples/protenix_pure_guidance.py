@@ -82,22 +82,34 @@ def parse_args():
         action="store_true",
         help="Enable alignment to input",
     )
+    parser.add_argument(
+        "--ensemble-size",
+        type=int,
+        default=1,
+        help="Number of ensemble members to generate",
+    )
     return parser.parse_args()
 
 
 def save_trajectory(
     trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
 ):
+    from biotite.structure import AtomArray
     from biotite.structure.io import save_structure
 
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        assert isinstance(atom_array, AtomArray)
+    except AssertionError:
+        atom_array = atom_array[0]
+
     for i, coords in enumerate(trajectory):
         ensemble_size = coords.shape[0]
         if i % save_every != 0:
             continue
-        array_copy = atom_array[0].copy()
+        array_copy = atom_array.copy()
         array_copy = stack([array_copy] * ensemble_size)
         array_copy.coord[:, reward_param_mask] = coords.detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
         save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
@@ -123,7 +135,12 @@ def main():
     print(f"Using device: {device}")
 
     print(f"Loading structure from {args.structure}")
-    structure = parse(args.structure, hydrogen_policy="remove", add_missing_atoms=False)
+    structure = parse(
+        args.structure,
+        hydrogen_policy="remove",
+        add_missing_atoms=False,
+        ccd_mirror_path=None,
+    )
 
     print(f"Loading density map from {args.density}")
     xmap = XMap.fromfile(args.density, resolution=args.resolution)
@@ -170,6 +187,7 @@ def main():
         partial_diffusion_step=args.partial_diffusion_step,
         out_dir=args.output_dir,
         alignment_reverse_diffusion=False,  # Protenix was not trained with this
+        ensemble_size=args.ensemble_size,
     )
 
     output_dir = Path(args.output_dir)
@@ -188,7 +206,7 @@ def main():
         output_dir,
         refined_structure["asym_unit"].occupancy > 0,
         "denoised",
-        save_every=5,
+        save_every=10,
     )
     save_trajectory(
         traj_next_step,
@@ -196,7 +214,7 @@ def main():
         output_dir,
         refined_structure["asym_unit"].occupancy > 0,
         "next_step",
-        save_every=5,
+        save_every=10,
     )
     save_losses(losses, output_dir)
 
