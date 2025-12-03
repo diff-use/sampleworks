@@ -215,6 +215,7 @@ __marimo__/
 CLAUDE.local.md
 CLAUDE.md
 .github/workflows/claude*.yml
+.github/agents/
 
 # Model checkpoints
 release_data/
