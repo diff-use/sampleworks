@@ -10,7 +10,7 @@ protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
-dependencies = ["atomworks[ml]==2.1.1", "python-dotenv", "jaxtyping", "jax", "einx"]
+dependencies = ["atomworks[ml]==2.1.1", "python-dotenv", "jaxtyping", "jax", "einx", "loguru"]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
@@ -64,6 +64,8 @@ testpaths = ["tests"]
 [tool.ruff]
 extend-include = ["*.ipynb"]
 src = []
+line-length = 100
+target-version = "py312"
 
 [tool.ruff.lint]
 fixable = ["I001", "F401", "UP"]
