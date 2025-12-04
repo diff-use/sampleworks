@@ -10,10 +10,17 @@ protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
-dependencies = ["atomworks[ml]==2.1.1", "python-dotenv", "jaxtyping", "jax", "einx"]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
+dependencies = [
+    "atomworks[ml]==2.1.1",
+    "python-dotenv",
+    "jaxtyping",
+    "jax",
+    "einx",
+    "loguru"
+]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -35,9 +42,6 @@ boltz-analysis = {features = ["boltz", "analysis"]}
 boltz-dev = {features = ["boltz", "dev"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
-
-[tool.pixi.feature.protenix.activation.env]
-PYTHONNOUSERSITE = "1"
 
 [tool.pixi.feature.protenix.pypi-options.dependency-overrides]
 rdkit = ">=2024.3.5,<2025.9"
@@ -67,6 +71,8 @@ testpaths = ["tests"]
 [tool.ruff]
 extend-include = ["*.ipynb"]
 src = []
+line-length = 100
+target-version = "py312"
 
 [tool.ruff.lint]
 fixable = ["I001", "F401", "UP"]
@@ -83,3 +89,6 @@ combine-as-imports = true
 extra-standard-library = ["typing_extensions"]
 lines-after-imports = 2
 order-by-type = false
+
+[tool.ruff.lint.per-file-ignores]
+"*.mo.py" = ["ALL"]
