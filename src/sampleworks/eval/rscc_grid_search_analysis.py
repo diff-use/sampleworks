@@ -1,5 +1,7 @@
 import marimo
 
+from sampleworks.eval.rscc_grid_search_script import get_method_and_name_from_model_dir
+
 __generated_with = "0.18.1"
 app = marimo.App()
 
@@ -259,17 +261,7 @@ def _(GRID_SEARCH_DIR, extract_protein_and_occupancy, re):
                 if not model_dir.is_dir():
                     continue
 
-                model_name = model_dir.name
-                # Determine method from model directory name
-                if "MD" in model_name:
-                    method = "MD"
-                    model = model_name.replace("_MD", "")
-                elif "X-RAY" in model_name:
-                    method = "X-RAY"
-                    model = model_name.replace("_X-RAY_DIFFRACTION", "")
-                else:
-                    method = None
-                    model = model_name
+                method, model = get_method_and_name_from_model_dir(model_dir)
 
                 # Iterate through scaler directories (pure_guidance, fk_steering)
                 for scaler_dir in model_dir.iterdir():

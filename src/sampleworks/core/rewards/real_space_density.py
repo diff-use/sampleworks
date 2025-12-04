@@ -16,7 +16,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.utils.torch_utils import try_gpu
 
 
-def setup_scattering_params(structure: dict, em: bool = False):
+def setup_scattering_params(structure: dict, em: bool = False) -> torch.Tensor:
     """Set up scattering parameters for density calculation."""
     unique_elements = set(structure["asym_unit"].element)
     unique_elements = sorted(

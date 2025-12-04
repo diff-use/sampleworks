@@ -13,6 +13,11 @@ requires-python = ">= 3.11"
 readme = "README.md"
 license = { file = "LICENSE" }
 dependencies = [
+    "atomworks[ml]",
+    "dotenv",
+    "einx",
+    "jax",
+    "jaxtyping",
     "matplotlib>=3.10.0",
     "numpy>=2.2.1",
     "pandas>=2.2.3",
