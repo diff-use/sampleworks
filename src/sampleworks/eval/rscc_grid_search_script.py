@@ -17,8 +17,10 @@ import copy
 import re
 import traceback
 
+from biotite.structure import AtomArrayStack, AtomArray
 from loguru import logger
 from pathlib import Path
+from typing import Union
 
 import numpy as np
 import pandas as pd
@@ -167,6 +169,12 @@ def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor
     # expand the first dimension to the ensemble size, all others remain the same
     return tensor.repeat(ensemble_size, *[1]*(tensor.ndim - 1))
 
+    # Check if we have any valid coordinates left
+    if len(selected_coords) == 0:
+        raise RuntimeError(
+            f"No valid (finite) coordinates after filtering NaN/Inf from "
+            f"selection: '{selection}'"
+        )
 
 def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> np.ndarray:
     """
@@ -374,7 +382,7 @@ def main(args: argparse.Namespace):
 
             # Create an XMap from the computed density by copying the base xmap
             # and replacing its array with the computed density
-            _computed_xmap = copy.deepcopy(_base_xmap)  
+            _computed_xmap = copy.deepcopy(_base_xmap)
             _computed_xmap.array = _computed_density
             _extracted_computed = _computed_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
 
