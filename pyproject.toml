@@ -1,9 +1,10 @@
 [build-system]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [dependency-groups]
-analysis = ["polars", "mdtraj", "marimo", "matplotlib", "seaborn", "pandas", "pyzmq"]
+analysis = ["polars", "mdtraj", "marimo", "matplotlib", "seaborn", "pandas", "pyzmq", "ipython"]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
@@ -85,3 +86,17 @@ order-by-type = false
 
 [tool.ruff.lint.per-file-ignores]
 "*.mo.py" = ["ALL"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
