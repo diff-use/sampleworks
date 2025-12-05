@@ -78,7 +78,7 @@ def parse_experiment_dir(exp_dir: Path) -> dict[str, Union[int, float, None]]:
 def scan_grid_search_results(
         current_directory: Path,
         current_depth: int = 0,
-        target_depth: int = 3,
+        target_depth: int = 4,
         target_filename: str = "refined.cif",
 ) -> ExperimentList:
     """
@@ -387,12 +387,12 @@ def main(args: argparse.Namespace):
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
     # Test base map path resolution
-    logger.info("Testing base map path resolution:")
+    logger.debug("Testing base map path resolution:")
     for _, config in protein_configs.items():
         for _occ in OCCUPANCY_LEVELS:  # TODO make configurable
             _path = config.get_base_map_path_for_occupancy(_occ)  # will warn if not found
             if _path:
-                logger.info(f"  {config.protein} occ={_occ}: {_path}")
+                logger.debug(f"  {config.protein} occ={_occ}: {_path}")
 
 
     # Scan for experiments (look for refined.cif files)
@@ -437,7 +437,6 @@ def main(args: argparse.Namespace):
 
     results = []
     for _i, _exp in enumerate(all_experiments):  # TODO parallelize this loop? It uses GPU, so be careful.
-
         if _exp.protein not in protein_configs:
             logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
             continue
@@ -461,7 +460,7 @@ def main(args: argparse.Namespace):
         try:
             # TODO: we will reload these maps A LOT. Fix that by caching them somewhere?
             # Load base map for canonical unit cell, don't extract selection as we'll use the full map later too.
-            _base_xmap = _protein_config.load_map(_exp.occ_a)
+            _base_xmap = _protein_config.load_map(_base_map_path)
 
             # Extract the region around altloc residues from the base map
             _extracted_base = _base_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
@@ -499,7 +498,7 @@ def main(args: argparse.Namespace):
 
         results.append(_exp)
         if (_i + 1) % 10 == 0 or _i == 0:
-            logger.info(
+            logger.debug(
                 f"  [{_i + 1}/{len(all_experiments)}] {_exp.protein_dir_name} / "
                 f"{_exp.model} / {_exp.scaler} / ens{_exp.ensemble_size}_"
                 f"gw{_exp.guidance_weight}: RSCC = {_exp.rscc:.4f}"
@@ -585,9 +584,11 @@ def main(args: argparse.Namespace):
 
                 except Exception as _e:
                     logger.error(f"  Error processing occ_A={_occ_a} for {_protein_key}: {_e}")
+                    logger.error(f"  Traceback: {traceback.format_exc()}")
 
         except Exception as _e:
             logger.error(f"Error calculating correlations for {_protein_key}: {_e}")
+            logger.error(f"  Traceback: {traceback.format_exc()}")
 
     df_base_vs_pure = pd.DataFrame(base_pure_correlations)
     df.to_csv(grid_search_dir / "rscc_results_for_pure_conformer_maps.csv", index=False)
@@ -595,3 +596,7 @@ def main(args: argparse.Namespace):
         f"\nCalculated single conformer explanatory power for "
         f"{len(df_base_vs_pure)} occupancy points"
     )
+
+if __name__ == "__main__":
+    args = parse_args()
+    main(args)

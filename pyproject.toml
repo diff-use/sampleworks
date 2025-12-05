@@ -1,136 +1,76 @@
 [build-system]
-requires = ["hatchling"]
 build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[dependency-groups]
+boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
+dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright", "ipython"]
+protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
+authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
+dependencies = ["atomworks[ml]", "dotenv", "jaxtyping", "jax", "einx", "loguru"]
 name = "sampleworks"
+requires-python = ">= 3.11, <3.14"
 version = "0.1.0"
-description = "Add a short description here"
-authors = [
-    { name = "K. Chrispens", email = "karson.chrispens@ucsf.edu" }
-]
-requires-python = ">=3.11,<3.14"
-readme = "README.md"
-license = { file = "LICENSE" }
-dependencies = [
-    "atomworks[ml]",
-    "dotenv",
-    "einx",
-    "jax",
-    "jaxtyping",
-    "matplotlib>=3.10.0",
-    "numpy>=2.2.1",
-    "pandas>=2.2.3",
-    "seaborn>=0.13.2",
-    "torch>=2.5.1",
-    "tqdm>=4.67.1",
-    "gemmi>=0.6.7",
-    "reciprocalspaceship>=1.0.3",
-    "scipy>=1.15.1",
-    "loguru",
-]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
-]
-test = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-]
+[tool.pixi.dependencies]
+gcc_linux-64 = ">=9,<13"
+gxx_linux-64 = ">=9,<13"
+ninja = "*"
+numpy = "<2.0"
+pyarrow = "==17.0.0"
 
-[tool.hatch.version]
-path = "src/sampleworks/__init__.py"
+[tool.pixi.environments]
+boltz = {features = ["boltz"]}
+boltz-dev = {features = ["boltz", "dev"]}
+protenix = {features = ["protenix"]}
+protenix-dev = {features = ["protenix", "dev"]}
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/sampleworks"]
+[tool.pixi.feature.protenix.activation.env]
+PYTHONNOUSERSITE = "1"
 
-[tool.hatch.build.targets.sdist]
-include = [
-    "/src",
-    "/tests",
-    "/README.md",
-    "/LICENSE",
-]
+[tool.pixi.feature.protenix.pypi-options.dependency-overrides]
+rdkit = ">=2024.3.5,<2025.9"
 
-[tool.hatch.envs.default]
-python="3.12"
-dependencies = [
-    "pytest",
-    "pytest-cov",
-]
+[tool.pixi.pypi-dependencies]
+sampleworks = {editable = true, path = "."}
 
-[tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
-test-cov = "pytest --cov=sampleworks --cov-report=term-missing {args:tests}"
-cov-report = [
-    "pytest --cov=sampleworks --cov-report=html {args:tests}",
-    "python -m http.server 8000 --directory htmlcov",
-]
+[tool.pixi.system-requirements]
+cuda = "12"
 
-[tool.hatch.envs.lint]
-detached = true
-dependencies = [
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
-]
+[tool.pixi.tasks]
 
-[tool.hatch.envs.lint.scripts]
-check = [
-    "ruff check {args:.}",
-    "mypy {args:src/sampleworks}",
-]
-fmt = [
-    "ruff format {args:.}",
-    "ruff check --fix {args:.}",
-]
-
-[tool.hatch.envs.boltz]
-description = "Environment for molecular modeling with Boltz and RDKit"
-dependencies = [
-    "boltz",
-    "cuequivariance-torch",
-    "cuequivariance-ops-torch-cu12",
-    "rdkit>=2025.3.6",
-]
-
-[tool.hatch.envs.boltz.scripts]
-# Add custom scripts for this environment if needed
-check-imports = "python -c 'import boltz; import rdkit; from cuequivariance_torch import *; print(\"All imports successful\")'"
-
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-]
-ignore = []
-
-[tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
+addopts = "-v --strict-markers"
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+]
 python_classes = ["Test*"]
+python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v"
+testpaths = ["tests"]
 
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-ignore_missing_imports = true
+[tool.ruff]
+extend-include = ["*.ipynb"]
+src = []
+
+[tool.ruff.lint]
+fixable = ["I001", "F401", "UP"]
+ignore = ["E402", "E721", "E731", "E741", "F722"]
+select = ["E", "F", "I001", "UP"]
+
+[tool.ruff.lint.flake8-import-conventions.extend-aliases]
+"collections" = "co"
+"functools" = "ft"
+"itertools" = "it"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+extra-standard-library = ["typing_extensions"]
+lines-after-imports = 2
+order-by-type = false
