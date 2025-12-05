@@ -17,10 +17,8 @@ import copy
 import re
 import traceback
 
-from biotite.structure import AtomArrayStack, AtomArray
 from loguru import logger
 from pathlib import Path
-from typing import Union
 
 import numpy as np
 import pandas as pd
@@ -40,11 +38,12 @@ from sampleworks.eval.constants import OCCUPANCY_LEVELS, DEFAULT_SELECTION_PADDI
 from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList, ProteinConfig
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
+from sampleworks.eval.structure_utils import get_asym_unit_from_structure, get_reference_structure
 
 
-# TODO: this either (both) needs tests or (and) there needs to be a clearer "API" for how the folder names
-#   are generated.
-def parse_experiment_dir(exp_dir: Path) -> dict[str, Union[int, float, None]]:
+# TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
+#  for how the folder names are generated.
+def parse_experiment_dir(exp_dir: Path) -> dict[str, int | float | None]:
     """Parse experiment directory name to extract parameters.
 
     Handles both:
@@ -73,8 +72,8 @@ def parse_experiment_dir(exp_dir: Path) -> dict[str, Union[int, float, None]]:
     }
 
 
-# TODO: this method is now more flexible about how it scans the grid search results directory, but that
-#       means we should be more strict about the output "API" directory structure.
+# TODO: this method is now more flexible about how it scans the grid search results directory,
+#  but that means we should be more strict about the output "API" directory structure.
 def scan_grid_search_results(
         current_directory: Path,
         current_depth: int = 0,
@@ -148,7 +147,7 @@ def scan_grid_search_results(
     return experiments
 
 
-def get_method_and_model_name(model_name: str) -> tuple[Union[str, None], str]:
+def get_method_and_model_name(model_name: str) -> tuple[str | None, str]:
     if "MD" in model_name:
         method = "MD"
         model = model_name.replace("_MD", "")
@@ -161,111 +160,14 @@ def get_method_and_model_name(model_name: str) -> tuple[Union[str, None], str]:
     return method, model
 
 
-def parse_selection_string(selection: str) -> tuple[Union[str, None], Union[int, None], Union[int, None]]:
-    """Parse a selection string like 'chain A and resi 326-339'.
-
-    Parameters
-    ----------
-    selection : str Selection string
-
-    Returns
-    -------
-    tuple (chain_id, resi_start, resi_end)
-    """
-    # Parse "chain X and resi N-M" format and generalizations of that.
-    chain = re.search(r"chain\s+(\w+)", selection, re.IGNORECASE)
-    if chain is not None:
-        chain = chain.group(1).upper()
-
-    residues = re.search(r"resi\s+(\d+)-(\d+)", selection, re.IGNORECASE)
-    if residues is not None:
-        resi_start, resi_end = map(int, residues.groups())
-    else:
-        resi_start = resi_end = None
-
-    return chain, resi_start, resi_end
+def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor:
+    """Resize a tensor to the specified ensemble size by repeating the first dimension."""
+    if tensor.ndim < 2:
+        tensor = tensor.unsqueeze(0)
+    # expand the first dimension to the ensemble size, all others remain the same
+    return tensor.repeat(ensemble_size, *[1]*(tensor.ndim - 1))
 
 
-def extract_selection_coordinates(structure: dict, selection: str) -> np.ndarray:
-    """
-    Extract coordinates for atoms matching a selection from an atomworks structure.
-
-    Parameters
-    ----------
-    structure : dict Atomworks parsed structure dictionary
-    selection : str Selection string like 'chain A and resi 326-339'
-
-    Returns
-    -------
-    np.ndarray Coordinates of selected atoms, shape (n_atoms, 3)
-
-    Raises
-    ------
-    RuntimeError: If no atoms match the selection or coordinates are invalid
-    TypeError: If the "asym_unit" in `structure` is not an AtomArray or AtomArrayStack
-    """
-    atom_array = get_atom_array_from_structure(structure)
-
-    # TODO: we will need to handle other kinds of selections later, like radius around a point.
-    #   surely biotite has this capability?
-    chain_id, resi_start, resi_end = parse_selection_string(selection)
-
-    # Create the selection mask
-    mask = np.ones(len(atom_array), dtype=bool)
-
-    if chain_id is not None:
-        mask &= atom_array.chain_id == chain_id
-
-    if resi_start is not None and resi_end is not None:
-        mask &= (atom_array.res_id >= resi_start) & (atom_array.res_id <= resi_end)
-
-    selected_coords: np.ndarray = atom_array.coord[mask]
-
-    # VALIDATION
-    if len(selected_coords) == 0:
-        raise RuntimeError(
-            f"No atoms matched selection: '{selection}'. "
-            f"Chain ID: {chain_id}, Residue range: {resi_start}-{resi_end}. "
-            f"Total atoms in structure: {len(atom_array)}"
-        )
-
-    # TODO? if there are missing atoms, what happens to the computed density?
-    #  Do we need to be careful here?
-    # Filter out atoms with NaN or Inf coordinates (common in alt conf structures)
-    finite_mask = np.isfinite(selected_coords).all(axis=1)
-    if not finite_mask.all():
-        n_invalid = (~finite_mask).sum()
-        n_total = len(selected_coords)
-        logger.warning(
-            f"Filtered {n_invalid} atoms with NaN/Inf coordinates from "
-            f"selection '{selection}' ({n_total - n_invalid} valid atoms remaining)"
-        )
-        selected_coords = selected_coords[finite_mask]
-
-    # Check if we have any valid coordinates left
-    if len(selected_coords) == 0:
-        raise RuntimeError(
-            f"No valid (finite) coordinates after filtering NaN/Inf from "
-            f"selection: '{selection}'"
-        )
-
-    return selected_coords
-
-
-def get_atom_array_from_structure(structure: dict, atom_array_index=0) -> AtomArray:
-    """
-    Extract the AtomArray from a structure dictionary, handling AtomArrayStack if present.
-    optionally specify the index of the AtomArray in the stack (e.g. for NMR models).
-    """
-    atom_array = structure["asym_unit"]
-    if isinstance(atom_array, AtomArrayStack):
-        atom_array = atom_array.get_array(atom_array_index)
-    if not isinstance(atom_array, AtomArray):
-        raise TypeError(f"Unexpected atom array type: {type(atom_array)}")
-    return atom_array
-
-
-# TODO: currently only takes the first structure in the ensemble. FIXME!!!
 def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> np.ndarray:
     """
     Compute electron density from a structure dictionary.
@@ -287,10 +189,9 @@ def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Get atom array from structure and filter out positions with zero occupancy
-    # TODO: I think we will need to iterate over the atom arrays in the stack, since we will generate ensembles usu.
-    atom_array = get_atom_array_from_structure(structure, atom_array_index=0)
-    atom_array = atom_array[atom_array.occupancy > 0]
+    # Get atom array from the input structure and filter out positions with zero occupancy
+    atom_array = get_asym_unit_from_structure(structure)
+    # atom_array = atom_array[atom_array.occupancy > 0]
 
     # Set up scattering parameters
     scattering_params = setup_scattering_params(structure, em=False)
@@ -305,21 +206,25 @@ def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> 
         use_cuda_kernels=torch.cuda.is_available(),
     )
 
-    # Prepare input tensors
-    elements = [
-        ATOMIC_NUM_TO_ELEMENT.index(elem.title())
-        for elem in atom_array.element
-    ]
-    elements = torch.tensor(elements, device=device).unsqueeze(0)
-    coordinates = torch.from_numpy(atom_array.coord).float().to(device).unsqueeze(0)
-    b_factors = (
-        torch.from_numpy(atom_array.b_factor).float().to(device).unsqueeze(0)
-    )
-    occupancies = (
-        torch.from_numpy(atom_array.occupancy).float().to(device).unsqueeze(0)
-    )
+    # get the ensemble size to weight each structure.
+    ensemble_size = atom_array.shape[0] if len(atom_array.shape) < 3 else 1
 
-    # Compute density
+    # Prepare input tensors
+    # borrowed from another of @k.chrispens' scripts, not sure this actually works for AtomArray
+    elements = torch.tensor(
+        [ATOMIC_NUM_TO_ELEMENT.index(elem.title()) for elem in atom_array.element], device=device
+    )
+    coordinates = torch.from_numpy(atom_array.coord).float().to(device)
+    b_factors = torch.from_numpy(atom_array.b_factor).float().to(device)
+
+    # resize the tensors to the ensemble size
+    elements = resize_to_ensemble(elements, ensemble_size)
+    b_factors = resize_to_ensemble(b_factors, ensemble_size)
+    # TODO: I need to think or not to use the original occupancies--they should be one anyway
+    #  for a computed structure.
+    occupancies = torch.ones_like(b_factors).float().to(device) / ensemble_size
+
+    # Compute density--use the batch functionality to handle the ensemble.
     with torch.no_grad():
         density = transformer(
             coordinates=coordinates,
@@ -327,6 +232,9 @@ def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> 
             b_factors=b_factors,
             occupancies=occupancies,
         )
+
+    if density.ndim == 4:
+        density = density.sum(dim=0)
 
     return density.cpu().numpy().squeeze()
 
@@ -402,30 +310,12 @@ def main(args: argparse.Namespace):
     if all_experiments:
         all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
 
-    logger.info("Pre-loading reference structures for each protein (at 0.5 occupancy) for coordinate extraction")
-    _ref_coords = {}
-    for _protein_key, _protein_config in protein_configs.items():
-        _ref_path = _protein_config.get_reference_structure_path(0.5)  # will warn if not found
-        if _ref_path:  # if not None, it is already a validated Path object
-            try:
-                _ref_struct = parse(_ref_path, ccd_mirror_path=None)
-                # TODO: enumerate actual exceptions this can raise.
-                _coords = extract_selection_coordinates(_ref_struct, _protein_config.selection)
-                if not len(_coords):
-                    logger.warning(f"  No atoms in selection '{_protein_config.selection}' for {_protein_key}")
-                elif not np.isfinite(_coords).all():
-                    logger.warning(f"  NaN/Inf coordinates in selection '{_protein_config.selection}' for {_protein_key}")
-                else:
-                    _ref_coords[_protein_key] = _coords
-                    logger.info(
-                        f"  Loaded reference structure for {_protein_key}: "
-                        f"{len(_coords)} atoms in selection '{_protein_config.selection}'"
-                    )
-            except Exception as _e:
-                logger.error(f"  ERROR: Failed to load reference structure for {_protein_key}: {_e}\n"
-                             f"    Path: {_ref_path}\n"
-                             f"    Selection: {_protein_config.selection if _protein_config.selection else '(none)'}\n"
-                             f"    Traceback: {traceback.format_exc()}")
+    logger.info("Pre-loading reference structures for each protein for coordinate extraction")
+    ref_coords = {}
+    for protein_key, protein_config in protein_configs.items():
+        protein_ref_coords = get_reference_structure(protein_config, protein_key)
+        if protein_ref_coords is not None:
+            ref_coords[protein_key] = protein_ref_coords
 
     # Calculate RSCC for all experiments
     # (BIG) TODO: implement a sliding-window version (global can be achieved with different selections.
@@ -436,23 +326,24 @@ def main(args: argparse.Namespace):
     logger.info(f"Using device: {_device}")
 
     results = []
+    base_map_cache: dict[tuple[str, float], tuple[XMap, XMap]] = {}
     for _i, _exp in enumerate(all_experiments):  # TODO parallelize this loop? It uses GPU, so be careful.
         if _exp.protein not in protein_configs:
             logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
             continue
 
-        _protein_config = protein_configs[_exp.protein]
+        protein_config = protein_configs[_exp.protein]
 
         # Check if we have reference coordinates for region extraction
-        if _exp.protein not in _ref_coords:
+        if _exp.protein not in ref_coords:
             logger.warning(
                 f"Skipping {_exp.protein_dir_name}: no reference structure available for {_exp.protein}, "
                 f"this may be due to a selection with zero atoms or NaN/Inf coordinates. Check logs above."
             )
             continue
 
-        _selection_coords = _ref_coords[_exp.protein]
-        _base_map_path = _protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
+        _selection_coords = ref_coords[_exp.protein]
+        _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
         if _base_map_path is None:
             logger.warning(f"Skipping {_exp.protein_dir_name}: base map for occupancy {_exp.occ_a} not found")
             continue
@@ -460,10 +351,16 @@ def main(args: argparse.Namespace):
         try:
             # TODO: we will reload these maps A LOT. Fix that by caching them somewhere?
             # Load base map for canonical unit cell, don't extract selection as we'll use the full map later too.
-            _base_xmap = _protein_config.load_map(_base_map_path)
+            if (_exp.protein, _exp.occ_a) not in base_map_cache:
+                _base_xmap = protein_config.load_map(_base_map_path)
 
-            # Extract the region around altloc residues from the base map
-            _extracted_base = _base_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
+                # Extract the region around altloc residues from the base map
+                _extracted_base = _base_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
+                logger.info(f"Caching base and subselected maps for {_exp.protein} occ_a={_exp.occ_a}")
+                base_map_cache[(_exp.protein, _exp.occ_a)] = (_base_xmap, _extracted_base)
+            else:
+                _base_map, _extracted_base = base_map_cache[(_exp.protein, _exp.occ_a)]
+
 
             # Validate extraction
             if _extracted_base.array.size == 0:
@@ -472,12 +369,12 @@ def main(args: argparse.Namespace):
             # Load refined structure
             _structure = parse(_exp.refined_cif_path, ccd_mirror_path=None)
 
-            # Compute density from refined structure--TODO: how do we handle ensembles from e.g. Boltz?
+            # Compute density from refined structure
             _computed_density = compute_density_from_structure(_structure, _base_xmap, _device)
 
             # Create an XMap from the computed density by copying the base xmap
             # and replacing its array with the computed density
-            _computed_xmap = copy.deepcopy(_base_xmap)  # TODO, not sure if this is necessary... do we re-use this map anywhere else?
+            _computed_xmap = copy.deepcopy(_base_xmap)  
             _computed_xmap.array = _computed_density
             _extracted_computed = _computed_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
 
@@ -533,38 +430,38 @@ def main(args: argparse.Namespace):
 
     base_pure_correlations = []
 
-    for _protein_key, _protein_config in protein_configs.items():
-        if _protein_key not in _ref_coords:
-            print(f"Skipping {_protein_key}: no reference coordinates available")
+    for protein_key, protein_config in protein_configs.items():
+        if protein_key not in ref_coords:
+            print(f"Skipping {protein_key}: no reference coordinates available")
             continue
 
         # We re-use the selection coordinates from the reference structure computed at 0.5 occupancy above.
-        _selection_coords = _ref_coords[_protein_key]
+        _selection_coords = ref_coords[protein_key]
 
-        logger.info(f"\nProcessing {_protein_key} single conformer explanatory power:")
-        map_path_1occA = _protein_config.get_base_map_path_for_occupancy(1.0)
-        map_path_1occB = _protein_config.get_base_map_path_for_occupancy(0.0)
+        logger.info(f"\nProcessing {protein_key} single conformer explanatory power:")
+        map_path_1occA = protein_config.get_base_map_path_for_occupancy(1.0)
+        map_path_1occB = protein_config.get_base_map_path_for_occupancy(0.0)
         if map_path_1occA is None or map_path_1occB is None:
-            logger.warning(f"Skipping {_protein_key}: pure conformer maps not found")
+            logger.warning(f"Skipping {protein_key}: pure conformer maps not found")
             continue
         try:
             # Load pure conformer maps--returns canonical unit cell by default, extract selection with padding 0.0
-            _extracted_pure_A = _protein_config.load_map(map_path_1occA, selection_coords=_selection_coords)
-            _extracted_pure_B = _protein_config.load_map(map_path_1occB, selection_coords=_selection_coords)
+            _extracted_pure_A = protein_config.load_map(map_path_1occA, selection_coords=_selection_coords)
+            _extracted_pure_B = protein_config.load_map(map_path_1occB, selection_coords=_selection_coords)
 
             logger.info(f"  Pure A reference: {map_path_1occA}\n  Pure B reference: {map_path_1occB}")
 
             # Calculate correlations for each occupancy
             for _occ_a in OCCUPANCY_LEVELS:  # TODO make configurable
                 try:
-                    _base_map_path = _protein_config.get_base_map_path_for_occupancy(_occ_a)
+                    _base_map_path = protein_config.get_base_map_path_for_occupancy(_occ_a)
                     if _base_map_path is None:  # map file not found, will warn.
                         continue
 
                     logger.info(f"  Processing occ_A={_occ_a}: {_base_map_path.name}")
 
                     # Load the base map for this occupancy, and do the selection--default padding is zero.
-                    _extracted_base = _protein_config.load_map(_base_map_path, selection_coords=_selection_coords)
+                    _extracted_base = protein_config.load_map(_base_map_path, selection_coords=_selection_coords)
 
                     # Calculate correlations
                     _corr_base_vs_pureA = rscc(_extracted_base.array, _extracted_pure_A.array)
@@ -572,7 +469,7 @@ def main(args: argparse.Namespace):
 
                     base_pure_correlations.append(
                         {
-                            "protein": _protein_key,
+                            "protein": protein_key,
                             "occ_a": _occ_a,
                             "base_vs_1occA": _corr_base_vs_pureA,
                             "base_vs_1occB": _corr_base_vs_pureB,
@@ -583,11 +480,11 @@ def main(args: argparse.Namespace):
                     logger.info(f"    Base map vs pure B: {_corr_base_vs_pureB:.4f}")
 
                 except Exception as _e:
-                    logger.error(f"  Error processing occ_A={_occ_a} for {_protein_key}: {_e}")
+                    logger.error(f"  Error processing occ_A={_occ_a} for {protein_key}: {_e}")
                     logger.error(f"  Traceback: {traceback.format_exc()}")
 
         except Exception as _e:
-            logger.error(f"Error calculating correlations for {_protein_key}: {_e}")
+            logger.error(f"Error calculating correlations for {protein_key}: {_e}")
             logger.error(f"  Traceback: {traceback.format_exc()}")
 
     df_base_vs_pure = pd.DataFrame(base_pure_correlations)
@@ -596,6 +493,7 @@ def main(args: argparse.Namespace):
         f"\nCalculated single conformer explanatory power for "
         f"{len(df_base_vs_pure)} occupancy points"
     )
+
 
 if __name__ == "__main__":
     args = parse_args()
