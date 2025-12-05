@@ -73,8 +73,8 @@ class ProteinConfig:
 
         xmap = XMap.fromfile(str(map_path), resolution=self.resolution)
         if canonical_unit_cell:
-            xmap = xmap.to_canonical_unit_cell()
-        if selection_coords:
+            xmap = xmap.canonical_unit_cell()
+        if selection_coords is not None:
             xmap = xmap.extract(selection_coords, padding=padding)
 
         return xmap
