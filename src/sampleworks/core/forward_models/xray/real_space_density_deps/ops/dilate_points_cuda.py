@@ -238,7 +238,6 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
             # Shape: [batch_B, sym_ops, N_atoms, 3]
             vmap_B = 1
             batch_B = atom_coords_grid.shape[0]
-            sym_ops = atom_coords_grid.shape[1]
             N_atoms = atom_coords_grid.shape[2]
 
             coords_merged = atom_coords_grid

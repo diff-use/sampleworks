@@ -1,5 +1,5 @@
 """
-Pure diffusion guidance, as described in [DriftLite](http://arxiv.org/abs/2509.21655)
+Feynman-Kaç Steering scaler implementation.
 
 TODO: Make this more generalizable, a reasonable protocol to implement
 Currently this only works with the implemented wrappers and isn't extensible
@@ -369,14 +369,6 @@ class FKSteering:
             eps_in_working_frame = eps_in_working_frame.reshape(
                 num_particles, ensemble_size, -1, 3
             )
-            align_transform = (
-                {
-                    key: value.reshape(num_particles, ensemble_size, *value.shape[1:])
-                    for key, value in align_transform.items()
-                }
-                if align_transform is not None
-                else None
-            )
 
             ### FK Resampling
             noise_var = eps_scale**2
@@ -435,10 +427,6 @@ class FKSteering:
                 eps_in_working_frame = eps_in_working_frame[indices]
                 energy_traj = energy_traj[indices]
                 scaled_guidance_update = scaled_guidance_update[indices]
-                if align_transform is not None:
-                    align_transform = {
-                        key: value[indices] for key, value in align_transform.items()
-                    }
 
             ### Guidance on x̂_0
             if num_gd_steps > 0 and i < n_steps - 1 and i >= guidance_start:
