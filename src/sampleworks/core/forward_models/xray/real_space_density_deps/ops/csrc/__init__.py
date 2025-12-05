@@ -6,12 +6,12 @@ from torch.utils.cpp_extension import load
 
 
 def _ensure_toolchain_env() -> None:
-    """Ensure torch extensions pick the pixi-provisioned toolchain.
+    """Ensure torch extensions pick the right toolchain.
 
-    When VS Code launches Python directly (e.g., for marimo) it does not run
+    When Python is launched directly (e.g., for marimo) it does not run
     through ``pixi run`` so environment variables like CC/CXX are unset.
-    Torch falls back to the system g++ (8.5 on this host), which is too old
-    for PyTorch 2.7 kernels. We derive the conda toolchain that lives next to
+    Torch falls back to the system g++, which may be too old
+    for PyTorch kernels. This derives the conda toolchain that lives next to
     the active interpreter and export it on-demand so every execution path
     (scripts, notebooks, marimo) uses the supported compiler versions.
     """
