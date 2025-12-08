@@ -19,6 +19,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
     ATOMIC_NUM_TO_ELEMENT,
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
+from sampleworks.core.samplers.af3 import sample_af3_step
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
@@ -504,12 +505,18 @@ class FKSteering:
                         allow_gradients=False,
                     ).reshape(num_particles, ensemble_size, -1, 3)
 
-                dt = sigma_t - t_hat
-                denoised_over_sigma = (noisy_coords - denoised_working_frame) / t_hat
+                coords = sample_af3_step(
+                    noisy_coords=noisy_coords,
+                    denoised_coords=denoised_working_frame,
+                    t_hat=t_hat,
+                    sigma_t=sigma_t,
+                    step_scale=step_scale,
+                    step_size=0.0,
+                    gradient_normalization=False,
+                    guidance_direction=None,
+                )
 
-                coords_next = noisy_coords + step_scale * dt * denoised_over_sigma
-
-                coords = coords_next.detach().clone()
+                coords = coords.detach().clone()
 
             trajectory_next_step.append(coords.clone().cpu())
 

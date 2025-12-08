@@ -17,6 +17,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
     ATOMIC_NUM_TO_ELEMENT,
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
+from sampleworks.core.samplers.af3 import sample_af3_step
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
@@ -330,10 +331,6 @@ class PureGuidance:
                         allow_gradients=False,
                     )
 
-                dt = sigma_t - t_hat
-
-                delta = (noisy_coords - denoised_working_frame) / t_hat
-
                 if guidance_direction is not None:
                     # Make sure guidance direction is in working frame, since denoised
                     # may have been aligned. If using Tweedie/DPS, the grad is already
@@ -346,15 +343,17 @@ class PureGuidance:
                             if align_transform is not None
                             else guidance_direction
                         )
-                    if gradient_normalization:
-                        grad_norm = guidance_direction.norm(dim=(1, 2), keepdim=True)
-                        delta_norm = delta.norm(dim=(1, 2), keepdim=True)
-                        guidance_direction = (
-                            guidance_direction * delta_norm / (grad_norm + 1e-8)
-                        )
-                    delta = delta + step_size * guidance_direction
 
-                coords = noisy_coords + step_scale * dt * delta
+                coords = sample_af3_step(
+                    noisy_coords=noisy_coords,
+                    denoised_coords=denoised_working_frame,
+                    t_hat=t_hat,
+                    sigma_t=sigma_t,
+                    step_scale=step_scale,
+                    step_size=step_size,
+                    gradient_normalization=gradient_normalization,
+                    guidance_direction=guidance_direction,
+                )
 
                 coords = coords.detach().clone()
 
