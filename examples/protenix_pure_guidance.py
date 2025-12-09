@@ -7,7 +7,6 @@ from pathlib import Path
 
 import torch
 from atomworks.io.parser import parse
-from biotite.structure import stack
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
 )
@@ -16,121 +15,13 @@ from sampleworks.core.rewards.real_space_density import (
     setup_scattering_params,
 )
 from sampleworks.core.scalers.pure_guidance import PureGuidance
+from sampleworks.utils.grid_search_utils import save_trajectory, save_losses
+from sampleworks.utils.guidance_script_utils import parse_protenix_fk_steering_args
 from sampleworks.models.protenix.wrapper import ProtenixWrapper
 from sampleworks.utils.torch_utils import try_gpu
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Protenix and real-space density"
-    )
-    parser.add_argument("--structure", type=str, required=True, help="Input structure")
-    parser.add_argument("--density", type=str, required=True, help="Input density map")
-    parser.add_argument(
-        "--output-dir", type=str, default="output", help="Output directory"
-    )
-    parser.add_argument(
-        "--partial-diffusion-step",
-        type=int,
-        default=0,
-        help="Diffusion step to start from",
-    )
-    parser.add_argument("--step-size", type=float, default=0.1, help="Gradient step")
-    parser.add_argument(
-        "--loss-order", type=int, default=2, choices=[1, 2], help="L1 or L2 loss"
-    )
-    parser.add_argument(
-        "--resolution",
-        type=float,
-        required=True,
-        help="Map resolution in Angstroms (required for CCP4/MRC/MAP)",
-    )
-    parser.add_argument(
-        "--model-checkpoint",
-        type=str,
-        default=".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
-        help="Path to Protenix checkpoint directory",
-    )
-    parser.add_argument(
-        "--device", type=str, default=None, help="Device (cuda/cpu, auto-detect)"
-    )
-    parser.add_argument(
-        "--gradient-normalization",
-        action="store_true",
-        help="Enable gradient normalization",
-    )
-    parser.add_argument("--em", action="store_true", help="Use EM scattering factors")
-    parser.add_argument(
-        "--guidance-start",
-        type=int,
-        default=-1,
-        help="Step to start guidance (default: -1, starts immediately)",
-    )
-    parser.add_argument(
-        "--use-tweedie",
-        action="store_true",
-        help="Use Tweedie's formula for gradient computation "
-        "(enables augmentation/alignment)",
-    )
-    parser.add_argument(
-        "--augmentation",
-        action="store_true",
-        help="Enable data augmentation",
-    )
-    parser.add_argument(
-        "--align-to-input",
-        action="store_true",
-        help="Enable alignment to input",
-    )
-    parser.add_argument(
-        "--ensemble-size",
-        type=int,
-        default=1,
-        help="Number of ensemble members to generate",
-    )
-    return parser.parse_args()
-
-
-def save_trajectory(
-    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
-):
-    from biotite.structure import AtomArray
-    from biotite.structure.io import save_structure
-
-    output_dir = Path(output_dir / "trajectory" / subdir_name)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        assert isinstance(atom_array, AtomArray)
-    except AssertionError:
-        atom_array = atom_array[0]
-
-    for i, coords in enumerate(trajectory):
-        ensemble_size = coords.shape[0]
-        if i % save_every != 0:
-            continue
-        array_copy = atom_array.copy()
-        array_copy = stack([array_copy] * ensemble_size)
-        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
-        save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
-
-
-def save_losses(losses, output_dir):
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(output_dir / "losses.txt", "w") as f:
-        f.write("step,loss\n")
-        for i, loss in enumerate(losses):
-            if loss is not None:
-                f.write(f"{i},{loss}\n")
-            else:
-                f.write(f"{i},NA\n")
-
-
-def main():
-    args = parse_args()
-
+def main(args: argparse.Namespace):
     device = torch.device(args.device) if args.device else try_gpu()
     print(f"Using device: {device}")
 
@@ -228,4 +119,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_protenix_fk_steering_args()
+    main(args)
