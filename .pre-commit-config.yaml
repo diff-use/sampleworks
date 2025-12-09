@@ -31,7 +31,15 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
-        exclude: (real_space_density|protenix)
+        exclude: (real_space_density|protenix|rf3)
+
+      - id: pyright-rf3
+        name: pyright (rf3 environment)
+        entry: bash -c 'pixi run -e rf3-dev pyright "$@"' --
+        language: system
+        types: [python]
+        pass_filenames: true
+        files: rf3
 
       - id: pyright-protenix
         name: pyright (protenix environment)
