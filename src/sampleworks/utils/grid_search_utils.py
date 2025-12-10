@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from biotite.structure import AtomArray, stack
 from biotite.structure.io import save_structure
 
@@ -6,7 +7,6 @@ from biotite.structure.io import save_structure
 def save_trajectory(
     trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
 ):
-
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -42,7 +42,8 @@ def save_fk_steering_trajectory(
             continue
         array_copy = atom_array.copy()
         array_copy = stack([array_copy] * ensemble_size)
-        # TODO: k.chripens can you add a comment here explaining why you take coords[0]?
+        # we save only the first ensemble out of n_particles, since saving
+        # each particle at every step would clog trajectory saving
         array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
         save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
 
