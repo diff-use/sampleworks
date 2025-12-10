@@ -16,6 +16,8 @@ from rf3.utils.inference import InferenceInput, InferenceInputDataset
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
+
 
 class RF3Wrapper:
     """Wrapper for RosettaFold 3 (Baker Lab AlphaFold 3 replication)."""
@@ -65,21 +67,29 @@ class RF3Wrapper:
         self.n_recycles = n_recycles
 
         self.inference_engine = RF3InferenceEngine(
-            checkpoint=str(self.checkpoint_path),
+            ckpt_path=str(self.checkpoint_path),
             n_recycles=n_recycles,
             diffusion_batch_size=1,
             num_steps=num_steps,
         )
+        self.inference_engine.initialize()
+
         self.inference_engine.trainer = cast(
             RF3TrainerWithConfidence, self.inference_engine.trainer
         )
-        self.model = cast(
-            RF3WithConfidence, self.inference_engine.trainer.state["model"]
-        )
+        self.model = self.inference_engine.trainer.state["model"]
         self.model.to(self.device).eval()
 
         self.cached_representations: dict[str, Any] = {}
         self.noise_schedule = self._compute_noise_schedule(num_steps)
+
+    @property
+    def _inner_model(self) -> RF3WithConfidence:
+        """Access the unwrapped RF3WithConfidence model through EMA wrappers."""
+        model = self.model
+        if hasattr(model, "shadow"):
+            model = model.shadow
+        return cast(RF3WithConfidence, model)
 
     def _compute_noise_schedule(
         self, num_steps: int
@@ -122,7 +132,7 @@ class RF3Wrapper:
             "gamma": gammas[1:],
         }
 
-    def featurize(self, structure: dict) -> dict[str, Any]:
+    def featurize(self, structure: dict, **kwargs: dict) -> dict[str, Any]:
         """From an Atomworks structure, calculate RF3 input features.
 
         Parameters
@@ -193,6 +203,8 @@ class RF3Wrapper:
             msg=f"network_input for example_id: {example['example_id']}",
         )
 
+        features = send_tensors_in_dict_to_device(features, self.device)
+
         return features
 
     def step(
@@ -220,9 +232,12 @@ class RF3Wrapper:
         """
         recycling_steps = kwargs.get("recycling_steps", self.n_recycles)
 
-        with torch.set_grad_enabled(grad_needed):
-            recycling_output_generator = self.model.trunk_forward_with_recycling(
-                features, n_recycles=recycling_steps
+        with (
+            torch.set_grad_enabled(grad_needed),
+            torch.autocast("cuda", dtype=torch.bfloat16),
+        ):  # TODO: this will require new GPUs and new CUDA for now, may want to fix?
+            recycling_output_generator = self._inner_model.trunk_forward_with_recycling(
+                features["f"], n_recycles=recycling_steps
             )
 
             # (We use `deque` with maxlen=1 to ensure that we only keep the last output
@@ -233,9 +248,9 @@ class RF3Wrapper:
                 # Handle the case where the generator is empty
                 raise RuntimeError("Recycling generator produced no outputs")
 
-        s_inputs = (recycling_outputs["S_inputs_I"],)
-        s_trunk = (recycling_outputs["S_I"],)
-        z_trunk = (recycling_outputs["Z_II"],)
+        s_inputs = recycling_outputs["S_inputs_I"]
+        s_trunk = recycling_outputs["S_I"]
+        z_trunk = recycling_outputs["Z_II"]
 
         return {
             "s_inputs": s_inputs,
@@ -296,7 +311,10 @@ class RF3Wrapper:
                 noisy_coords, device=self.device, dtype=torch.float32
             )
 
-        with torch.set_grad_enabled(grad_needed):
+        with (
+            torch.set_grad_enabled(grad_needed),
+            torch.autocast("cuda", dtype=torch.bfloat16),
+        ):  # TODO: this will require new GPUs and new CUDA for now, may want to fix?
             if "t_hat" in kwargs and "eps" in kwargs:
                 t_hat = kwargs["t_hat"]
                 eps = cast(Tensor, kwargs["eps"])
@@ -314,7 +332,7 @@ class RF3Wrapper:
                 (batch_size,), t_hat, device=self.device, dtype=noisy_coords.dtype
             )
 
-            atom_coords_denoised = self.model.diffusion_module(
+            atom_coords_denoised = self._inner_model.diffusion_module(
                 X_noisy_L=noisy_coords_eps,
                 t=t_tensor,
                 f=outputs["features"],
