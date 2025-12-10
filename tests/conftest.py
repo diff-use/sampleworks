@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 import torch
 from atomworks.io.parser import parse
-from sampleworks.utils.imports import BOLTZ_AVAILABLE, PROTENIX_AVAILABLE
+from sampleworks.utils.imports import BOLTZ_AVAILABLE, PROTENIX_AVAILABLE, RF3_AVAILABLE
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         PredictArgs,
     )
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
+    from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 if BOLTZ_AVAILABLE:
     from sampleworks.models.boltz.wrapper import (
@@ -29,6 +30,9 @@ if BOLTZ_AVAILABLE:
 
 if PROTENIX_AVAILABLE:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
+
+if RF3_AVAILABLE:
+    from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 
 @pytest.fixture(scope="session")
@@ -132,6 +136,30 @@ def protenix_wrapper(protenix_checkpoint_path: Path, device: torch.device):
     return ProtenixWrapper(
         checkpoint_path=protenix_checkpoint_path,
         device=device,
+    )
+
+
+@pytest.fixture(scope="session")
+def rf3_checkpoint_path() -> Path:
+    if not RF3_AVAILABLE:
+        pytest.skip("RF3 dependencies not installed in this environment")
+    path = Path(
+        "~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt"
+    ).expanduser()
+    if not path.exists():
+        pytest.skip(f"RF3 checkpoint not found at {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
+def rf3_wrapper(rf3_checkpoint_path: Path, device: torch.device):
+    if not RF3_AVAILABLE:
+        pytest.skip("RF3 dependencies not installed in this environment")
+    return RF3Wrapper(
+        checkpoint_path=rf3_checkpoint_path,
+        device=device,
+        num_steps=10,
+        n_recycles=1,
     )
 
 

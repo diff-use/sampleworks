@@ -8,9 +8,11 @@ from typing import Any, TYPE_CHECKING, TypeVar
 if TYPE_CHECKING:
     from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
+    from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 BOLTZ_AVAILABLE = False
 PROTENIX_AVAILABLE = False
+RF3_AVAILABLE = False
 
 try:
     from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
@@ -25,6 +27,14 @@ try:
 
     PROTENIX_AVAILABLE = True
     del ProtenixWrapper
+except (ImportError, ModuleNotFoundError):
+    pass
+
+try:
+    from sampleworks.models.rf3.wrapper import RF3Wrapper
+
+    RF3_AVAILABLE = True
+    del RF3Wrapper
 except (ImportError, ModuleNotFoundError):
     pass
 
@@ -108,6 +118,51 @@ def require_protenix(message: str | None = None) -> Callable[[F], F]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             if not PROTENIX_AVAILABLE:
+                error_msg = message or default_message
+                try:
+                    import pytest
+
+                    pytest.skip(error_msg)
+                except ImportError:
+                    raise ImportError(error_msg) from None
+            return func(*args, **kwargs)
+
+        return wrapper  # type: ignore
+
+    return decorator
+
+
+def require_rf3(message: str | None = None) -> Callable[[F], F]:
+    """Decorator to require RF3 model availability.
+
+    Parameters
+    ----------
+    message: str, optional
+        Custom error message. If None, uses default message.
+
+    Returns
+    -------
+    Callable
+        Decorator function
+
+    Examples
+    --------
+    >>> @require_rf3
+    ... def train_rf3_model():
+    ...     pass
+
+    >>> @require_rf3("Custom error message")
+    ... def custom_function():
+    ...     pass
+    """
+    default_message = (
+        "RF3 model wrapper is not available. Install with: pixi install -e rf3"
+    )
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if not RF3_AVAILABLE:
                 error_msg = message or default_message
                 try:
                     import pytest
@@ -210,6 +265,26 @@ def check_protenix_available(message: str | None = None) -> None:
         raise ImportError(message or default_message)
 
 
+def check_rf3_available(message: str | None = None) -> None:
+    """Check if RF3 is available, raise ImportError if not.
+
+    Parameters
+    ----------
+    message: str, optional
+        Custom error message. If None, uses default message.
+
+    Raises
+    ------
+    ImportError
+        If RF3 model wrapper is not available.
+    """
+    if not RF3_AVAILABLE:
+        default_message = (
+            "RF3 model wrapper is not available. Install with: pixi install -e rf3"
+        )
+        raise ImportError(message or default_message)
+
+
 def check_any_model_available(message: str | None = None) -> None:
     """Check if at least one model is available, raise ImportError if not.
 
@@ -221,12 +296,13 @@ def check_any_model_available(message: str | None = None) -> None:
     Raises
     ------
     ImportError
-        If neither Boltz nor Protenix model wrapper is available.
+        If no model wrapper is available.
     """
-    if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE:
+    if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE and not RF3_AVAILABLE:
         default_message = (
-            "Neither Boltz nor Protenix wrappers are available. "
+            "No model wrappers are available. "
             "Please install at least one model wrapper with the appropriate "
-            "feature group: 'pixi install -e boltz' or 'pixi install -e protenix'"
+            "feature group: 'pixi install -e boltz', 'pixi install -e protenix', "
+            "or 'pixi install -e rf3'"
         )
         raise ImportError(message or default_message)
