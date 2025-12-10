@@ -26,9 +26,9 @@ def sample_af3_step(
         Noisy coordinates.
     denoised_coords: Float[torch.Tensor, "*batch num_points 3"]
         Denoised coordinates predicted by the model.
-    t_hat: Float[torch.Tensor, "*batch 1 1"]
+    t_hat: float
         Noise level.
-    sigma_t: Float[torch.Tensor, "*batch 1 1"]
+    sigma_t: float
         Next noise level.
     step_scale: float
         Scale for the Euler step.
