@@ -1,213 +1,222 @@
-import argparse
+from typing import Any
 
-def add_generic_args(parser: argparse.ArgumentParser):
-    parser.add_argument("--structure", type=str, required=True, help="Input structure")
-    parser.add_argument("--density", type=str, required=True, help="Input density map")
-    parser.add_argument(
-        "--output-dir", type=str, default="output", help="Output directory"
-    )
-    parser.add_argument(
-        "--partial-diffusion-step",
-        type=int,
-        default=0,
-        help="Diffusion step to start from",
-    )
-    parser.add_argument(
-        "--loss-order", type=int, default=2, choices=[1, 2], help="L1 or L2 loss"
-    )
-    parser.add_argument(
-        "--resolution",
-        type=float,
-        required=True,
-        help="Map resolution in Angstroms (required for CCP4/MRC/MAP)",
-    )
-    parser.add_argument(
-        "--device", type=str, default=None, help="Device (cuda/cpu, auto-detect)"
-    )
-    parser.add_argument(
-        "--gradient-normalization",
-        action="store_true",
-        help="Enable gradient normalization",
-    )
-    parser.add_argument("--em", action="store_true", help="Use EM scattering factors")
-    parser.add_argument(
-        "--guidance-start",
-        type=int,
-        default=-1,
-        help="Step to start guidance (default: -1, starts immediately)",
-    )
-    parser.add_argument(
-        "--augmentation",
-        action="store_true",
-        help="Enable data augmentation",
-    )
-    parser.add_argument(
-        "--align-to-input",
-        action="store_true",
-        help="Enable alignment to input",
-    )
+from atomworks import parse
+from loguru import logger
+from pathlib import Path
+
+import torch
+
+from biotite.structure import AtomArray, stack
+from biotite.structure.io import save_structure
+
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
+from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
+from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
+from sampleworks.models.protenix.wrapper import ProtenixWrapper
+from sampleworks.utils.torch_utils import try_gpu
 
 
-######################
-# Guidance type specific arguments
-######################
-def add_pure_guidance_args(parser: argparse.ArgumentParser):
-    parser.add_argument("--step-size", type=float, default=0.1, help="Gradient step")
-    parser.add_argument(
-        "--use-tweedie",
-        action="store_true",
-        help="Use Tweedie's formula for gradient computation "
-             "(enables augmentation/alignment)",
+def save_trajectory(
+    scaler_type: str,
+    trajectory,
+    atom_array,
+    output_dir,
+    reward_param_mask,
+    subdir_name,
+    save_every=10
+):
+    if scaler_type == "pure_guidance":
+        _save_trajectory(
+            trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=save_every
+        )
+    elif scaler_type == "fk_steering":
+        _save_fk_steering_trajectory(
+            trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=save_every
+        )
+    else:  # we shouldn't ever get here, since we can't have run guidance w/o this!
+        raise ValueError(f"Invalid scaler type: {scaler_type}")
+
+
+def _save_trajectory(
+    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
+):
+
+    output_dir = Path(output_dir / "trajectory" / subdir_name)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # TODO: @marcus.collins swap try/except for if/else in next PR
+    try:
+        assert isinstance(atom_array, AtomArray)
+    except AssertionError:
+        atom_array = atom_array[0]
+
+    for i, coords in enumerate(trajectory):
+        ensemble_size = coords.shape[0]
+        if i % save_every != 0:
+            continue
+        array_copy = atom_array.copy()
+        array_copy = stack([array_copy] * ensemble_size)
+        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+        save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
+
+
+def _save_fk_steering_trajectory(
+    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every=10
+):
+    output_dir = Path(output_dir / "trajectory" / subdir_name)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        assert isinstance(atom_array, AtomArray)
+    except AssertionError:
+        atom_array = atom_array[0]
+
+    for i, coords in enumerate(trajectory):
+        ensemble_size = coords.shape[1]  # first dim is the particle dim
+        if i % save_every != 0:
+            continue
+        array_copy = atom_array.copy()
+        array_copy = stack([array_copy] * ensemble_size)
+        # TODO: k.chripens can you add a comment here explaining why you take coords[0]?
+        #   are we only saving the first particle?
+        array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+        save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
+
+
+def save_losses(losses, output_dir):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(output_dir / "losses.txt", "w") as f:
+        f.write("step,loss\n")
+        for i, loss in enumerate(losses):
+            if loss is not None:
+                f.write(f"{i},{loss}\n")
+            else:
+                f.write(f"{i},NA\n")
+
+
+def get_model_and_device(
+        device: str,
+        model_checkpoint_path: str,
+        model_type: str,
+        method: str | None = None,
+) -> tuple[torch.device, ProtenixWrapper | Boltz1Wrapper | Boltz2Wrapper]:
+    device = torch.device(device) if device else try_gpu()
+    logger.debug(f"Using device: {device}")
+    if model_type == "protenix":
+        logger.debug(f"Loading Protenix model from {model_checkpoint_path}")
+        model_wrapper = ProtenixWrapper(
+            checkpoint_path=model_checkpoint_path,
+            device=device,
+        )
+    elif model_type == "boltz1":
+        print(f"Loading Boltz1 model from {model_checkpoint_path}")
+        model_wrapper = Boltz1Wrapper(
+            checkpoint_path=model_checkpoint_path,
+            use_msa_server=True,
+            device=device,
+        )
+    elif model_type == "boltz2":
+        if method is None:
+            # TODO: make a useful error msg that includes options for method
+            raise ValueError("Method must be specified for Boltz2")
+        print(f"Loading Boltz2 model from {model_checkpoint_path}")
+        model_wrapper = Boltz2Wrapper(
+            checkpoint_path=model_checkpoint_path,
+            use_msa_server=True,
+            device=device,
+            method=method.upper(),
+        )
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    return device, model_wrapper
+
+
+# TODO: further atomize for easier testing.
+def get_reward_function_and_structure(
+        density: str | Path,
+        device: torch.device,
+        em,
+        loss_order,
+        resolution,
+        structure: str | Path
+) -> tuple[RewardFunction, dict[str, Any]]:
+    print(f"Loading structure from {structure}")
+    structure = parse(
+        structure,
+        hydrogen_policy="remove",
+        add_missing_atoms=False,
+        ccd_mirror_path=None,
     )
-    parser.add_argument(
-        "--ensemble-size",
-        type=int,
-        default=1,
-        help="Number of ensemble members to generate",
+
+    print(f"Loading density map from {density}")
+    xmap = XMap.fromfile(density, resolution=resolution)
+
+    print("Setting up scattering parameters")
+    scattering_params = setup_scattering_params(structure, em=em)
+
+    atom_array = structure["asym_unit"]
+    selection_mask = atom_array.occupancy > 0
+    n_selected = selection_mask.sum()
+    print(f"Selected {n_selected} atoms with occupancy > 0")
+
+    print("Creating reward function")
+    reward_function = RewardFunction(
+        xmap,
+        scattering_params,
+        selection_mask,
+        em=em,
+        loss_order=loss_order,
+        device=device,
     )
+    return reward_function, structure
 
 
-def add_fk_steering_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--num-particles",
-        type=int,
-        default=3,
-        help="Number of particles for FK steering",
+def save_everything(
+        output_dir: str | Path,
+        losses: list[Any],
+        refined_structure: dict,
+        traj_denoised: list[Any],
+        traj_next_step: list[Any],
+        scaler_type: str
+        ) -> None:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Saving results")
+    from biotite.structure.io.pdbx import CIFFile, set_structure
+
+    final_structure = CIFFile()
+    set_structure(final_structure, refined_structure["asym_unit"])
+    final_structure.write(str(output_dir / "refined.cif"))
+
+    # Two calls to save_trajectory, very similar, but saving different trajectories!
+    save_trajectory(
+        scaler_type,
+        traj_denoised,  # <--- the difference is here!
+        refined_structure["asym_unit"],  # this is just used as a dummy structure
+        output_dir,
+        refined_structure["asym_unit"].occupancy > 0,
+        "denoised",
+        save_every=10,
     )
-    parser.add_argument(
-        "--ensemble-size",
-        type=int,
-        default=4,
-        help="Ensemble size per particle",
+    save_trajectory(
+        scaler_type,
+        traj_next_step,  # <--- and here!
+        refined_structure["asym_unit"],
+        output_dir,
+        refined_structure["asym_unit"].occupancy > 0,
+        "next_step",
+        save_every=10,
     )
-    parser.add_argument(
-        "--fk-resampling-interval",
-        type=int,
-        default=1,
-        help="How often to apply resampling",
-    )
-    parser.add_argument(
-        "--fk-lambda",
-        type=float,
-        default=1.0,
-        help="Weighting factor for resampling",
-    )
-    parser.add_argument(
-        "--num-gd-steps",
-        type=int,
-        default=1,
-        help="Number of gradient descent steps on x0",
-    )
-    parser.add_argument(
-        "--guidance-weight",
-        type=float,
-        default=0.01,
-        help="Weight for gradient descent guidance",
-    )
-    parser.add_argument(
-        "--guidance-interval",
-        type=int,
-        default=1,
-        help="How often to apply guidance",
-    )
+    save_losses(losses, output_dir)
 
+    valid_losses = [l for l in losses if l is not None]
+    if valid_losses:
+        print(f"\nFinal loss: {valid_losses[-1]:.6f}")
+        print(f"Initial loss: {valid_losses[0]:.6f}")
+        print(f"Loss reduction: {valid_losses[0] - valid_losses[-1]:.6f}")
 
-###########
-# Model specific arguments
-###########
-def add_boltz2_specific_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--model-checkpoint",
-        type=str,
-        default="~/.boltz/boltz2_conf.ckpt",
-        help="Path to Boltz2 checkpoint",
-    )
-    parser.add_argument(
-        "--method",
-        type=str,
-        default="X-RAY DIFFRACTION",
-        help="Boltz2 sampling method",
-    )
-
-def add_protenix_specific_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--model-checkpoint",
-        type=str,
-        default=".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
-        help="Path to Protenix checkpoint directory",
-    )
-
-
-def add_boltz1_specific_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--model-checkpoint",
-        type=str,
-        default="~/.boltz/boltz1_conf.ckpt",
-        help="Path to Boltz1 checkpoint",
-    )
-
-
-##############
-#  Use these methods to parse arguments in scripts which load the model themselves.
-##############
-def parse_boltz2_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Boltz-2 and real-space density"
-    )
-    add_generic_args(parser)
-    add_boltz2_specific_args(parser)
-    add_pure_guidance_args(parser)
-
-    return parser.parse_args()
-
-
-def parse_boltz1_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Boltz-1 and real-space density"
-    )
-    add_generic_args(parser)
-    add_boltz1_specific_args(parser)
-    add_pure_guidance_args(parser)
-
-    return parser.parse_args()
-
-
-def parse_protenix_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Protenix and real-space density"
-    )
-    add_generic_args(parser)
-    add_protenix_specific_args(parser)
-    add_pure_guidance_args(parser)
-
-    return parser.parse_args()
-
-
-def parse_protenix_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with Protenix and real-space density"
-    )
-    add_protenix_specific_args(parser)
-    add_generic_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
-
-
-def parse_boltz2_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with Boltz-2 and real-space density"
-    )
-    add_boltz2_specific_args(parser)
-    add_generic_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
-
-
-def parse_boltz1_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with Boltz-1 and real-space density"
-    )
-    add_boltz1_specific_args(parser)
-    add_generic_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
+    print(f"\nResults saved to {output_dir}/")
