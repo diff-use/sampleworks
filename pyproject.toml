@@ -1,5 +1,4 @@
 [build-system]
-requires = ["hatchling"]
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
@@ -18,6 +17,13 @@ version = "0.1.0"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.mypy]
+disallow_untyped_defs = false
+ignore_missing_imports = true
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
 
 [tool.pixi.activation.env]
 PYTHONNOUSERSITE = "1"
@@ -64,8 +70,8 @@ testpaths = ["tests"]
 
 [tool.ruff]
 extend-include = ["*.ipynb"]
-src = []
 line-length = 100
+src = []
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -86,17 +92,3 @@ order-by-type = false
 
 [tool.ruff.lint.per-file-ignores]
 "*.mo.py" = ["ALL"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v"
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-ignore_missing_imports = true
