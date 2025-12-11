@@ -7,7 +7,6 @@ analysis = ["polars", "mdtraj", "marimo", "matplotlib", "seaborn", "pandas", "py
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
-rf3 = ["rc-foundry[rf3]"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
@@ -57,6 +56,9 @@ rf3-dev = {features = ["rf3", "dev"]}
 
 [tool.pixi.feature.protenix.pypi-options.dependency-overrides]
 rdkit = ">=2024.3.5,<2025.9"
+
+[tool.pixi.feature.rf3.pypi-dependencies]
+rc-foundry = {editable = true, extras = ["rf3"], path = "../foundry"}
 
 [tool.pixi.pypi-dependencies]
 sampleworks = {editable = true, path = "."}
