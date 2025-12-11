@@ -34,9 +34,6 @@ class RF3Wrapper:
     def __init__(
         self,
         checkpoint_path: str | Path,
-        device: torch.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        ),
         num_steps: int = 200,
         n_recycles: int = 10,
     ):
@@ -45,14 +42,10 @@ class RF3Wrapper:
         ----------
         checkpoint_path: str | Path
             Filesystem path to the checkpoint containing trained weights.
-        device: torch.device, optional
-            Device to run the model on, by default CUDA if available.
         num_steps: int, optional
             Number of diffusion sampling steps (default 50).
         n_recycles: int, optional
             Number of recycling iterations (default 10).
-        diffusion_batch_size: int, optional
-            Number of diffusion samples per inference (default 5).
         """
         logger: Logger = getLogger(__name__)
         logger.info("Loading RF3 Inference Engine")
@@ -62,7 +55,6 @@ class RF3Wrapper:
             if isinstance(checkpoint_path, str)
             else checkpoint_path.expanduser().resolve()
         )
-        self.device = torch.device(device)
         self.num_steps = num_steps
         self.n_recycles = n_recycles
 
@@ -78,7 +70,7 @@ class RF3Wrapper:
             RF3TrainerWithConfidence, self.inference_engine.trainer
         )
         self.model = self.inference_engine.trainer.state["model"]
-        self.model.to(self.device).eval()
+        self.device = self.inference_engine.trainer.fabric.device
 
         self.cached_representations: dict[str, Any] = {}
         self.noise_schedule = self._compute_noise_schedule(num_steps)
@@ -91,9 +83,7 @@ class RF3Wrapper:
             model = model.shadow
         return cast(RF3WithConfidence, model)
 
-    def _compute_noise_schedule(
-        self, num_steps: int
-    ) -> dict[str, Float[Tensor, "..."]]:
+    def _compute_noise_schedule(self, num_steps: int) -> dict[str, Float[Tensor, "..."]]:
         """Compute the noise schedule for diffusion sampling.
 
         Uses RF3's EDM-style schedule formula:
@@ -155,9 +145,7 @@ class RF3Wrapper:
         atom_array = structure["asym_unit"]
         chain_info = structure.get("chain_info", {})
 
-        inference_input = InferenceInput.from_atom_array(
-            atom_array, chain_info=chain_info
-        )
+        inference_input = InferenceInput.from_atom_array(atom_array, chain_info=chain_info)
 
         inference_dataset = InferenceInputDataset([inference_input])
         trainer = cast(RF3TrainerWithConfidence, self.inference_engine.trainer)
@@ -190,11 +178,7 @@ class RF3Wrapper:
         pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # type: ignore (Hydra instantiation of pipeline means it is going to be hard to type check here)
         pipeline_output = trainer.fabric.to_device(pipeline_output)
 
-        example = (
-            pipeline_output[0]
-            if not isinstance(pipeline_output, dict)
-            else pipeline_output
-        )
+        example = pipeline_output[0] if not isinstance(pipeline_output, dict) else pipeline_output
 
         features = trainer._assemble_network_inputs(example)
 
@@ -207,9 +191,7 @@ class RF3Wrapper:
 
         return features
 
-    def step(
-        self, features: dict[str, Any], grad_needed: bool = False, **kwargs
-    ) -> dict[str, Any]:
+    def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
         """Perform a pass through the RF3 Pairformer to obtain representations.
 
         Parameters
@@ -295,9 +277,7 @@ class RF3Wrapper:
         dict[str, Tensor]
             Dictionary containing atom_coords_denoised with cleaned coordinates.
         """
-        if not self.cached_representations or kwargs.get(
-            "overwrite_representations", False
-        ):
+        if not self.cached_representations or kwargs.get("overwrite_representations", False):
             self.cached_representations = self.step(
                 features,
                 grad_needed=False,
@@ -307,9 +287,7 @@ class RF3Wrapper:
         outputs = self.cached_representations
 
         if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(
-                noisy_coords, device=self.device, dtype=torch.float32
-            )
+            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
 
         with (
             torch.set_grad_enabled(grad_needed),
@@ -367,9 +345,7 @@ class RF3Wrapper:
             Dictionary containing t_hat, sigma_t, and eps_scale.
         """
         if timestep < 0 or timestep >= self.num_steps:
-            raise ValueError(
-                f"timestep {timestep} is out of bounds for {self.num_steps} steps"
-            )
+            raise ValueError(f"timestep {timestep} is out of bounds for {self.num_steps} steps")
 
         sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
         sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
@@ -410,9 +386,7 @@ class RF3Wrapper:
             Noisy structure coordinates for atoms with nonzero occupancy.
         """
         if "asym_unit" not in structure:
-            raise ValueError(
-                "structure must contain 'asym_unit' key to access coordinates"
-            )
+            raise ValueError("structure must contain 'asym_unit' key to access coordinates")
 
         if noise_level < 0 or noise_level >= self.num_steps:
             raise ValueError(
@@ -442,15 +416,10 @@ class RF3Wrapper:
         elif coords.ndim == 3 and coords.shape[0] != ensemble_size:
             coords = cast(Tensor, rearrange("n c -> e n c", coords[0], e=ensemble_size))
 
-        valid_shape = (
-            coords.ndim == 3
-            and coords.shape[0] == ensemble_size
-            and coords.shape[2] == 3
-        )
+        valid_shape = coords.ndim == 3 and coords.shape[0] == ensemble_size and coords.shape[2] == 3
         if not valid_shape:
             raise ValueError(
-                f"coords shape should be ({ensemble_size}, N_atoms, 3), "
-                f"got {coords.shape}"
+                f"coords shape should be ({ensemble_size}, N_atoms, 3), got {coords.shape}"
             )
 
         sigma = self.noise_schedule["sigma_tm"][int(noise_level)]
