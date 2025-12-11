@@ -166,9 +166,7 @@ class FKSteering:
         )
 
         # (num_particles, ensemble_size, N_atoms, 3)
-        coords = cast(
-            torch.Tensor, einx.rearrange("e n c -> p e n c", coords, p=num_particles)
-        )
+        coords = cast(torch.Tensor, einx.rearrange("e n c -> p e n c", coords, p=num_particles))
 
         # TODO: this is not generalizable currently, figure this out
         if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
@@ -181,16 +179,12 @@ class FKSteering:
 
         # TODO: jank way to get atomic numbers, fix this in real space density
         elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(
-                e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-            )
+            ATOMIC_NUM_TO_ELEMENT.index(e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower())
             for e in atom_array.element[reward_param_mask]
         ]
         elements = cast(
             torch.Tensor,
-            einx.rearrange(
-                "n -> p e n", torch.Tensor(elements), p=num_particles, e=ensemble_size
-            ),
+            einx.rearrange("n -> p e n", torch.Tensor(elements), p=num_particles, e=ensemble_size),
         )
         b_factors = cast(
             torch.Tensor,
@@ -216,11 +210,9 @@ class FKSteering:
         # Pre-compute unique combinations for vmap compatibility
         # since torch.unique returns dynamic shape
         # NOTE: For now, this blocks grad w.r.t. B-factor
-        unique_combinations, inverse_indices = (
-            self.reward_function.precompute_unique_combinations(
-                elements[0].detach(),  # shape: (batch, n_atoms)
-                b_factors[0].detach(),  # shape: (batch, n_atoms)
-            )
+        unique_combinations, inverse_indices = self.reward_function.precompute_unique_combinations(
+            elements[0].detach(),  # shape: (batch, n_atoms)
+            b_factors[0].detach(),  # shape: (batch, n_atoms)
         )
 
         partial_reward_function = partial(
@@ -234,9 +226,7 @@ class FKSteering:
             torch.Tensor,
             einx.rearrange(
                 "... -> b ...",
-                torch.from_numpy(atom_array.coord).to(
-                    dtype=coords.dtype, device=coords.device
-                ),
+                torch.from_numpy(atom_array.coord).to(dtype=coords.dtype, device=coords.device),
                 b=num_particles * ensemble_size,
             ),
         )[..., reward_param_mask, :]
@@ -257,9 +247,11 @@ class FKSteering:
             n_steps = self.model_wrapper.predict_args.sampling_steps  # type: ignore
         elif hasattr(self.model_wrapper, "configs"):
             n_steps = cast(dict, self.model_wrapper.configs.sample_diffusion)["N_step"]  # type: ignore
+        elif hasattr(self.model_wrapper, "num_steps"):
+            n_steps = self.model_wrapper.num_steps  # type: ignore
         else:
             raise AttributeError(
-                "Only Boltz and Protenix wrappers are supported currently."
+                "Model wrapper must have predict_args, configs, or num_steps attribute"
             )
 
         pbar = tqdm(range(partial_diffusion_step, n_steps))
@@ -293,9 +285,7 @@ class FKSteering:
             if num_gd_steps > 0:
                 scaled_guidance_update = (
                     apply_forward_transform(
-                        scaled_guidance_update.reshape(
-                            num_particles * ensemble_size, -1, 3
-                        ),
+                        scaled_guidance_update.reshape(num_particles * ensemble_size, -1, 3),
                         transform,
                         rotation_only=True,
                     ).reshape(num_particles, ensemble_size, -1, 3)
@@ -322,15 +312,13 @@ class FKSteering:
             align_transform = None
             denoised_working_frame = denoised
             if align_to_input:
-                denoised_working_frame, align_transform = (
-                    weighted_rigid_align_differentiable(
-                        denoised,
-                        input_coords,
-                        weights=mask_like,
-                        mask=mask_like,
-                        return_transforms=True,
-                        allow_gradients=False,
-                    )
+                denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
+                    denoised,
+                    input_coords,
+                    weights=mask_like,
+                    mask=mask_like,
+                    return_transforms=True,
+                    allow_gradients=False,
                 )
 
             # we need coords and eps and scaled_guidance_update in working frame
@@ -349,9 +337,7 @@ class FKSteering:
             if num_gd_steps > 0:
                 scaled_guidance_update = (
                     apply_forward_transform(
-                        scaled_guidance_update.reshape(
-                            num_particles * ensemble_size, -1, 3
-                        ),
+                        scaled_guidance_update.reshape(num_particles * ensemble_size, -1, 3),
                         align_transform,
                         rotation_only=True,
                     ).reshape(num_particles, ensemble_size, -1, 3)
@@ -366,9 +352,7 @@ class FKSteering:
             coords_in_working_frame = coords_in_working_frame.reshape(
                 num_particles, ensemble_size, -1, 3
             )
-            eps_in_working_frame = eps_in_working_frame.reshape(
-                num_particles, ensemble_size, -1, 3
-            )
+            eps_in_working_frame = eps_in_working_frame.reshape(num_particles, ensemble_size, -1, 3)
 
             ### FK Resampling
             noise_var = eps_scale**2
@@ -434,13 +418,9 @@ class FKSteering:
                 delta_norm = guidance_update.clone()
                 if gradient_normalization:
                     original_delta = (
-                        coords_in_working_frame
-                        + eps_in_working_frame
-                        - denoised_working_frame
+                        coords_in_working_frame + eps_in_working_frame - denoised_working_frame
                     ) / t_hat
-                    delta_norm = torch.linalg.norm(
-                        original_delta, dim=(-1, -2), keepdim=True
-                    )
+                    delta_norm = torch.linalg.norm(original_delta, dim=(-1, -2), keepdim=True)
 
                 current_x0 = denoised_working_frame.detach().clone()
 
@@ -466,9 +446,7 @@ class FKSteering:
                         (grad,) = torch.autograd.grad(loss, current_x0)
 
                         if gradient_normalization:
-                            grad_norm = torch.linalg.norm(
-                                grad, dim=(-1, -2), keepdim=True
-                            )
+                            grad_norm = torch.linalg.norm(grad, dim=(-1, -2), keepdim=True)
                             grad = grad * (delta_norm / (grad_norm + 1e-8))
 
                         current_x0 = current_x0.detach() - guidance_weight * grad
@@ -480,9 +458,7 @@ class FKSteering:
                 scaled_guidance_update = guidance_update * -1 * step_scale * dt / t_hat
 
             trajectory_denoised.append(denoised_working_frame.clone().cpu())
-            losses.append(
-                energy_traj[:, -1].mean().item() if energy_traj.shape[1] > 0 else 0.0
-            )
+            losses.append(energy_traj[:, -1].mean().item() if energy_traj.shape[1] > 0 else 0.0)
             pbar.set_postfix({"loss": losses[-1]})
 
             with torch.no_grad():
@@ -496,9 +472,7 @@ class FKSteering:
                     # weighted_rigid_align_differentiable only supports 1 batch dim
                     noisy_coords = weighted_rigid_align_differentiable(
                         noisy_coords.reshape(num_particles * ensemble_size, -1, 3),
-                        denoised_working_frame.reshape(
-                            num_particles * ensemble_size, -1, 3
-                        ),
+                        denoised_working_frame.reshape(num_particles * ensemble_size, -1, 3),
                         weights=mask_like,
                         mask=mask_like,
                         allow_gradients=False,

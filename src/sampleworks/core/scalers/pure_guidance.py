@@ -127,9 +127,7 @@ class PureGuidance:
         partial_diffusion_step = cast(int, kwargs.get("partial_diffusion_step", 0))
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
         out_dir = kwargs.get("out_dir", "test")
-        alignment_reverse_diffusion = kwargs.get(
-            "alignment_reverse_diffusion", not align_to_input
-        )
+        alignment_reverse_diffusion = kwargs.get("alignment_reverse_diffusion", not align_to_input)
         allow_alignment_gradients = not use_tweedie
 
         features = self.model_wrapper.featurize(structure, out_dir=out_dir)
@@ -155,9 +153,7 @@ class PureGuidance:
 
         # TODO: jank way to get atomic numbers, fix this in real space density
         elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(
-                e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-            )
+            ATOMIC_NUM_TO_ELEMENT.index(e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower())
             for e in atom_array.element[reward_param_mask]
         ]
         elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
@@ -178,9 +174,7 @@ class PureGuidance:
             torch.Tensor,
             einx.rearrange(
                 "... -> e ...",
-                torch.from_numpy(atom_array.coord).to(
-                    dtype=coords.dtype, device=coords.device
-                ),
+                torch.from_numpy(atom_array.coord).to(dtype=coords.dtype, device=coords.device),
                 e=ensemble_size,
             ),
         )[..., reward_param_mask, :]
@@ -203,9 +197,11 @@ class PureGuidance:
             n_steps = self.model_wrapper.predict_args.sampling_steps  # type: ignore
         elif hasattr(self.model_wrapper, "configs"):
             n_steps = cast(dict, self.model_wrapper.configs.sample_diffusion)["N_step"]  # type: ignore
+        elif hasattr(self.model_wrapper, "num_steps"):
+            n_steps = self.model_wrapper.num_steps  # type: ignore
         else:
             raise AttributeError(
-                "Only Boltz and Protenix wrappers are supported currently."
+                "Model wrapper must have predict_args, configs, or num_steps attribute"
             )
 
         for i in tqdm(range(partial_diffusion_step, n_steps)):
@@ -254,24 +250,20 @@ class PureGuidance:
             align_transform = None
             denoised_working_frame = denoised
             if align_to_input:
-                denoised_working_frame, align_transform = (
-                    weighted_rigid_align_differentiable(
-                        denoised,
-                        input_coords,
-                        weights=mask_like,
-                        mask=mask_like,
-                        return_transforms=True,
-                        allow_gradients=allow_alignment_gradients,
-                    )
+                denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
+                    denoised,
+                    input_coords,
+                    weights=mask_like,
+                    mask=mask_like,
+                    return_transforms=True,
+                    allow_gradients=allow_alignment_gradients,
                 )
 
             guidance_direction = None
             if apply_guidance:
                 if use_tweedie:
                     # Using Tweedie's formula like DPS: gradient on denoised (x̂_0) only
-                    denoised_for_grad = denoised_working_frame.detach().requires_grad_(
-                        True
-                    )
+                    denoised_for_grad = denoised_working_frame.detach().requires_grad_(True)
                     loss = self.reward_function(
                         coordinates=denoised_for_grad,
                         elements=cast(torch.Tensor, elements),
@@ -351,9 +343,7 @@ class PureGuidance:
                     if gradient_normalization:
                         grad_norm = guidance_direction.norm(dim=(1, 2), keepdim=True)
                         delta_norm = delta.norm(dim=(1, 2), keepdim=True)
-                        guidance_direction = (
-                            guidance_direction * delta_norm / (grad_norm + 1e-8)
-                        )
+                        guidance_direction = guidance_direction * delta_norm / (grad_norm + 1e-8)
                     delta = delta + step_size * guidance_direction
 
                 coords = noisy_coords + step_scale * dt * delta
