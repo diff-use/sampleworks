@@ -64,6 +64,7 @@ def main(args):
     print("Running FK steering")
     refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
         structure,
+        msa_path=args.msa_path,
         num_particles=args.num_particles,
         ensemble_size=args.ensemble_size,
         fk_resampling_interval=args.fk_resampling_interval,
