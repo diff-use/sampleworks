@@ -96,8 +96,8 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
             ligand_info[chain]["entity_type"] = "ligand"
             ligand_info[chain]["ccd"] = chain_info[chain]["res_name"][0]
 
-    boltz_input_path = out_dir / "boltz_input.yaml"
-    boltz_input_path.parent.mkdir(parents=True, exist_ok=True)
+    boltz_input_path = out_dir / f"{structure.get('metadata', {}).get('id', 'boltz_input')}.yaml"
+    boltz_input_path.parent.mkdir(parents=True, exist_ok=False)
     with open(boltz_input_path, "w") as f:
         f.write("sequences:\n")
         for chain_id, info in polymer_info.items():
@@ -128,9 +128,7 @@ class Boltz2Wrapper:
         diffusion_args: Boltz2DiffusionParams = Boltz2DiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         method: str = "MD",
-        device: torch.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        ),
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     ):
         """
         Parameters
@@ -162,11 +160,7 @@ class Boltz2Wrapper:
         self.device = torch.device(device)
         # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
         self.cache_path = (
-            (
-                Path(checkpoint_path)
-                if isinstance(checkpoint_path, str)
-                else checkpoint_path
-            )
+            (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
             .parent.expanduser()
             .resolve()
         )
@@ -199,9 +193,7 @@ class Boltz2Wrapper:
         self.data_module: Boltz2InferenceDataModule
         self.cached_representations: dict[str, Any] = {}
 
-        sigmas = self.model.structure_module.sample_schedule(
-            self.predict_args.sampling_steps
-        )
+        sigmas = self.model.structure_module.sample_schedule(self.predict_args.sampling_steps)
         gammas = torch.where(
             sigmas > self.model.structure_module.gamma_min,
             self.model.structure_module.gamma_0,
@@ -261,9 +253,7 @@ class Boltz2Wrapper:
             template_dir=processed_dir / "templates"
             if (processed_dir / "templates").exists()
             else None,
-            extra_mols_dir=processed_dir / "mols"
-            if (processed_dir / "mols").exists()
-            else None,
+            extra_mols_dir=processed_dir / "mols" if (processed_dir / "mols").exists() else None,
         )
 
         self.data_module = Boltz2InferenceDataModule(
@@ -276,9 +266,7 @@ class Boltz2Wrapper:
             template_dir=processed_dir / "templates"
             if (processed_dir / "templates").exists()
             else None,
-            extra_mols_dir=processed_dir / "mols"
-            if (processed_dir / "mols").exists()
-            else None,
+            extra_mols_dir=processed_dir / "mols" if (processed_dir / "mols").exists() else None,
             override_method=self.method,
         )
 
@@ -304,12 +292,14 @@ class Boltz2Wrapper:
         dict[str, Any]
             Boltz-2 input features (from dataloader).
         """
+        # If featurize is called again, we should clear cached representations
+        # to avoid using stale data
+        self.cached_representations.clear()
+
         # Side effect: creates Boltz input YAML file in out_dir
         input_path = create_boltz_input_from_structure(
             structure,
-            kwargs.get(
-                "out_dir", structure.get("metadata", {}).get("id", "boltz2_output")
-            ),
+            kwargs.get("out_dir", structure.get("metadata", {}).get("id", "boltz2_output")),
         )
 
         # Side effect: creates files in the processed directory of out_dir
@@ -325,9 +315,7 @@ class Boltz2Wrapper:
 
         return batch
 
-    def step(
-        self, features: dict[str, Any], grad_needed: bool = False, **kwargs
-    ) -> dict[str, Any]:
+    def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
         """
         Perform a pass through the Pairformer module to obtain output, which can then be
         passed into the diffusion module. Pretty much only here to match the protocol
@@ -370,9 +358,7 @@ class Boltz2Wrapper:
             z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
 
             if self.model.bond_type_feature:
-                z_init = z_init + self.model.token_bonds_type(
-                    features["type_bonds"].long()
-                )
+                z_init = z_init + self.model.token_bonds_type(features["type_bonds"].long())
             z_init = z_init + self.model.contact_conditioning(features)
 
             s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
@@ -400,9 +386,7 @@ class Boltz2Wrapper:
                 else:
                     msa_module = self.model.msa_module
 
-                z = z + msa_module(
-                    z, s_inputs, features, use_kernels=self.model.use_kernels
-                )  # type: ignore (Object will be callable here)
+                z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)  # type: ignore (Object will be callable here)
 
                 if self.model.is_pairformer_compiled:
                     pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
@@ -496,24 +480,18 @@ class Boltz2Wrapper:
             coordinate tensor.
         """
 
-        if not self.cached_representations or kwargs.get(
-            "overwrite_representations", False
-        ):
+        if not self.cached_representations or kwargs.get("overwrite_representations", False):
             # Side effect: overwrites class attribute
             self.cached_representations = self.step(
                 features,
                 grad_needed=grad_needed,
-                recycling_steps=kwargs.get(
-                    "recycling_steps", self.predict_args.recycling_steps
-                ),
+                recycling_steps=kwargs.get("recycling_steps", self.predict_args.recycling_steps),
             )
 
         features = self.cached_representations
 
         if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(
-                noisy_coords, device=self.device, dtype=torch.float32
-            )
+            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
 
         s = features.get("s", None)
         z = features.get("z", None)
@@ -522,9 +500,7 @@ class Boltz2Wrapper:
         # These are the input features to the conditioning networks
         feats = features.get("feats", None)
 
-        if any(
-            x is None for x in [s, z, s_inputs, relative_position_encoding, features]
-        ):
+        if any(x is None for x in [s, z, s_inputs, relative_position_encoding, features]):
             raise ValueError("Missing required features for denoise_step")
 
         # shape [1, N_padded]
@@ -560,9 +536,7 @@ class Boltz2Wrapper:
                     padded_noisy_coords_eps,
                     t_hat,
                     network_condition_kwargs=dict(
-                        multiplicity=kwargs.get(
-                            "multiplicity", padded_noisy_coords_eps.shape[0]
-                        ),
+                        multiplicity=kwargs.get("multiplicity", padded_noisy_coords_eps.shape[0]),
                         s_inputs=s_inputs,
                         s_trunk=s,
                         feats=feats,
@@ -571,9 +545,9 @@ class Boltz2Wrapper:
                 )
             )
 
-            atom_coords_denoised = padded_atom_coords_denoised[
-                atom_mask.bool(), :
-            ].reshape(noisy_coords.shape[0], -1, 3)
+            atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :].reshape(
+                noisy_coords.shape[0], -1, 3
+            )
 
         return {"atom_coords_denoised": atom_coords_denoised}
 
@@ -617,9 +591,7 @@ class Boltz2Wrapper:
         gamma = self.noise_schedule["gamma"][int(timestep)]
 
         t_hat = sigma_tm * (1 + gamma)
-        eps_scale = self.model.structure_module.noise_scale * torch.sqrt(
-            t_hat**2 - sigma_tm**2
-        )
+        eps_scale = self.model.structure_module.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
 
         return {
             "t_hat": t_hat.item(),
@@ -699,8 +671,7 @@ class Boltz2Wrapper:
         # validate coords shape
         if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
             raise ValueError(
-                "coords shape should be (ensemble_size, N_atoms, 3), but is "
-                f"{coords.shape}"
+                f"coords shape should be (ensemble_size, N_atoms, 3), but is {coords.shape}"
             )
 
         if noise_level == 0:
@@ -723,9 +694,7 @@ class Boltz1Wrapper:
         predict_args: PredictArgs = PredictArgs(),
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
-        device: torch.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        ),
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     ):
         """
         Parameters
@@ -754,11 +723,7 @@ class Boltz1Wrapper:
         self.device = torch.device(device)
         # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
         self.cache_path = (
-            (
-                Path(checkpoint_path)
-                if isinstance(checkpoint_path, str)
-                else checkpoint_path
-            )
+            (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
             .parent.expanduser()
             .resolve()
         )
@@ -792,9 +757,7 @@ class Boltz1Wrapper:
         self.data_module: BoltzInferenceDataModule
         self.cached_representations: dict[str, Any] = {}
 
-        sigmas = self.model.structure_module.sample_schedule(
-            self.predict_args.sampling_steps
-        )
+        sigmas = self.model.structure_module.sample_schedule(self.predict_args.sampling_steps)
         gammas = torch.where(
             sigmas > self.model.structure_module.gamma_min,
             self.model.structure_module.gamma_0,
@@ -854,9 +817,7 @@ class Boltz1Wrapper:
             template_dir=processed_dir / "templates"
             if (processed_dir / "templates").exists()
             else None,
-            extra_mols_dir=processed_dir / "mols"
-            if (processed_dir / "mols").exists()
-            else None,
+            extra_mols_dir=processed_dir / "mols" if (processed_dir / "mols").exists() else None,
         )
 
         self.data_module = BoltzInferenceDataModule(
@@ -889,12 +850,15 @@ class Boltz1Wrapper:
         dict[str, Any]
             Boltz-1 input features (raw batch from dataloader).
         """
+
+        # If featurize is called again, we should clear cached representations
+        # to avoid using stale data
+        self.cached_representations.clear()
+
         # Side effect: creates Boltz input YAML file in out_dir
         input_path = create_boltz_input_from_structure(
             structure,
-            kwargs.get(
-                "out_dir", structure.get("metadata", {}).get("id", "boltz1_output")
-            ),
+            kwargs.get("out_dir", structure.get("metadata", {}).get("id", "boltz1_output")),
         )
 
         # Side effect: creates files in the processed directory of out_dir
@@ -951,9 +915,7 @@ class Boltz1Wrapper:
         gamma = self.noise_schedule["gamma"][int(timestep)]
 
         t_hat = sigma_tm * (1 + gamma)
-        eps_scale = self.model.structure_module.noise_scale * torch.sqrt(
-            t_hat**2 - sigma_tm**2
-        )
+        eps_scale = self.model.structure_module.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
 
         return {
             "t_hat": t_hat.item(),
@@ -1095,23 +1057,17 @@ class Boltz1Wrapper:
         dict[str, Any]
             Predicted clean sample or predicted noise.
         """
-        if not self.cached_representations or kwargs.get(
-            "overwrite_representations", False
-        ):
+        if not self.cached_representations or kwargs.get("overwrite_representations", False):
             # Side effect: overwrites class attribute
             self.cached_representations = self.step(
                 features,
                 grad_needed=grad_needed,
-                recycling_steps=kwargs.get(
-                    "recycling_steps", self.predict_args.recycling_steps
-                ),
+                recycling_steps=kwargs.get("recycling_steps", self.predict_args.recycling_steps),
             )
 
         features = self.cached_representations
         if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(
-                noisy_coords, device=self.device, dtype=torch.float32
-            )
+            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
 
         s = features.get("s", None)
         z = features.get("z", None)
@@ -1168,9 +1124,9 @@ class Boltz1Wrapper:
                 )
             )
 
-            atom_coords_denoised = padded_atom_coords_denoised[
-                atom_mask.bool(), :
-            ].reshape(noisy_coords.shape[0], -1, 3)
+            atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :].reshape(
+                noisy_coords.shape[0], -1, 3
+            )
 
         return {"atom_coords_denoised": atom_coords_denoised}
 
@@ -1246,8 +1202,7 @@ class Boltz1Wrapper:
         # validate coords shape
         if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
             raise ValueError(
-                "coords shape should be (ensemble_size, N_atoms, 3), but is "
-                f"{coords.shape}"
+                f"coords shape should be (ensemble_size, N_atoms, 3), but is {coords.shape}"
             )
 
         if noise_level == 0:
