@@ -69,6 +69,7 @@ def main(args: argparse.Namespace):
     print("Running pure guidance")
     refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
         structure,
+        msa_path=args.msa_path,
         guidance_start=args.guidance_start,
         step_size=args.step_size,
         gradient_normalization=args.gradient_normalization,

@@ -103,6 +103,10 @@ class PureGuidance:
                 Output directory for any featurization intermediate files
                 (default: "test")
 
+            - msa_path: dict | str | Path | None, optional
+                MSA specification to be passed to model wrapper for featurization.
+                Currently only used by RF3. # TODO: use kwargs better!!
+
             - alignment_reverse_diffusion: bool, optional
                 Whether to perform alignment of noisy coords to denoised coords
                 during reverse diffusion steps. This is relevant for doing Boltz-2-like
@@ -127,10 +131,11 @@ class PureGuidance:
         partial_diffusion_step = cast(int, kwargs.get("partial_diffusion_step", 0))
         guidance_start = cast(int, kwargs.get("guidance_start", -1))
         out_dir = kwargs.get("out_dir", "test")
+        msa_path = kwargs.get("msa_path", None)
         alignment_reverse_diffusion = kwargs.get("alignment_reverse_diffusion", not align_to_input)
         allow_alignment_gradients = not use_tweedie
 
-        features = self.model_wrapper.featurize(structure, out_dir=out_dir)
+        features = self.model_wrapper.featurize(structure, msa_path=msa_path, out_dir=out_dir)
 
         # Get coordinates from timestep
         coords = cast(

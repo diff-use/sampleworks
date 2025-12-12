@@ -1,3 +1,4 @@
+import json
 from collections import deque
 from collections.abc import Mapping
 from logging import getLogger, Logger
@@ -6,6 +7,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
+from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
@@ -122,17 +124,23 @@ class RF3Wrapper:
             "gamma": gammas[1:],
         }
 
-    def featurize(self, structure: dict, **kwargs: dict) -> dict[str, Any]:
+    def featurize(
+        self, structure: dict, msa_path: str | Path | dict | None, **kwargs: dict
+    ) -> dict[str, Any]:
         """From an Atomworks structure, calculate RF3 input features.
 
         Parameters
         ----------
         structure: dict
             Atomworks structure dictionary.
+        msa_path: dict | str | Path | None
+            MSA specification. Can be:
+            - dict: chain_id -> MSA file path mapping
+            - str/Path to .json: JSON file with chain_id -> MSA path mapping
+            - str/Path to .a3m: Single MSA file applied to all protein chains
+            - None: No MSA information is used
         **kwargs: dict, optional
             Additional arguments for feature generation.
-            - out_dir: Directory for saving intermediate JSON file
-            - use_msa: Whether to generate MSA features (default True)
 
         Returns
         -------
@@ -144,6 +152,24 @@ class RF3Wrapper:
 
         atom_array = structure["asym_unit"]
         chain_info = structure.get("chain_info", {})
+
+        # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
+        if isinstance(msa_path, (str, Path)):
+            msa_path_obj = Path(msa_path)
+            if msa_path_obj.suffix == ".json" and msa_path_obj.exists():
+                with open(msa_path_obj) as f:
+                    msa_path = json.load(f)
+
+        # InferenceInput expects msa_path in chain_info
+        for chain_id in chain_info:
+            if chain_info[chain_id]["chain_type"] == ChainType.POLYPEPTIDE_L:
+                if isinstance(msa_path, dict):
+                    chain_msa_path = msa_path.get(chain_id, None)
+                else:
+                    chain_msa_path = msa_path
+
+                if chain_msa_path is not None:
+                    chain_info[chain_id]["msa_path"] = chain_msa_path
 
         inference_input = InferenceInput.from_atom_array(atom_array, chain_info=chain_info)
 

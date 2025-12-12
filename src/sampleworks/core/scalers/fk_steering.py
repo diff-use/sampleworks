@@ -116,6 +116,10 @@ class FKSteering:
                     (default: None). Will use the provided coordinates in structure
                     to initialize the noise at this timestep.
 
+            - msa_path: dict | str | Path | None, optional
+                MSA specification to be passed to model wrapper for featurization.
+                Currently only used by RF3. # TODO: use kwargs better!!
+
             - out_dir: str, optional
                 Output directory for any featurization intermediate files
                 (default: "test")
@@ -149,10 +153,11 @@ class FKSteering:
         augmentation = kwargs.get("augmentation", True)
         align_to_input = kwargs.get("align_to_input", False)
         partial_diffusion_step = kwargs.get("partial_diffusion_step", 0)
+        msa_path = kwargs.get("msa_path", None)
         out_dir = kwargs.get("out_dir", "test")
         alignment_reverse_diffusion = kwargs.get("alignment_reverse_diffusion", False)
 
-        features = self.model_wrapper.featurize(structure, out_dir=out_dir)
+        features = self.model_wrapper.featurize(structure, msa_path=msa_path, out_dir=out_dir)
 
         # Get coordinates from timestep
         # coords shape: (ensemble_size, N_atoms, 3)
