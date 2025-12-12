@@ -45,9 +45,7 @@ class ProtenixWrapper:
         self,
         checkpoint_path: str | Path,
         args_str: str = "",
-        device: torch.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        ),
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     ):
         """
         Parameters
@@ -64,11 +62,7 @@ class ProtenixWrapper:
         self.device = torch.device(device)
 
         self.cache_path = (
-            (
-                Path(checkpoint_path)
-                if isinstance(checkpoint_path, str)
-                else checkpoint_path
-            )
+            (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
             .parent.expanduser()
             .resolve()
         )
@@ -89,9 +83,7 @@ class ProtenixWrapper:
         )
 
         # Protenix inference logging
-        self.configs.model_name = (
-            str(self.checkpoint_path).split("/")[-1].replace(".pt", "")
-        )
+        self.configs.model_name = str(self.checkpoint_path).split("/")[-1].replace(".pt", "")
         self.configs.load_checkpoint_dir = str(self.cache_path)
         model_name = self.configs.model_name
         _, model_size, model_feature, model_version = cast(str, model_name).split("_")
@@ -119,16 +111,12 @@ class ProtenixWrapper:
 
         self.model = Protenix(self.configs).to(self.device)
 
-        checkpoint_path_str = (
-            f"{self.configs.load_checkpoint_dir}/{self.configs.model_name}.pt"
-        )
+        checkpoint_path_str = f"{self.configs.load_checkpoint_dir}/{self.configs.model_name}.pt"
         logger.info(f"Loading checkpoint from {checkpoint_path_str}")
         checkpoint = torch.load(checkpoint_path_str, map_location=self.device)
 
         if any(k.startswith("module.") for k in checkpoint["model"].keys()):
-            checkpoint["model"] = {
-                k[len("module.") :]: v for k, v in checkpoint["model"].items()
-            }
+            checkpoint["model"] = {k[len("module.") :]: v for k, v in checkpoint["model"].items()}
 
         self.model.load_state_dict(
             state_dict=checkpoint["model"],
@@ -150,9 +138,7 @@ class ProtenixWrapper:
         else:
             self.esm_featurizer = None
 
-        sigmas = self._compute_noise_schedule(
-            cast(dict, self.configs.sample_diffusion)["N_step"]
-        )
+        sigmas = self._compute_noise_schedule(cast(dict, self.configs.sample_diffusion)["N_step"])
         gammas = torch.where(
             sigmas > cast(dict, self.configs.sample_diffusion)["gamma_min"],
             cast(dict, self.configs.sample_diffusion)["gamma0"],
@@ -177,9 +163,7 @@ class ProtenixWrapper:
         Tensor
             Noise schedule with shape (num_steps + 1,).
         """
-        return self.model.inference_noise_scheduler(
-            N_step=num_steps, device=self.device
-        )
+        return self.model.inference_noise_scheduler(N_step=num_steps, device=self.device)
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
         """From an Atomworks structure, calculate Protenix input features.
@@ -198,9 +182,7 @@ class ProtenixWrapper:
         dict[str, Any]
             Protenix input features.
         """
-        out_dir = kwargs.get(
-            "out_dir", structure.get("metadata", {}).get("id", "protenix_output")
-        )
+        out_dir = kwargs.get("out_dir", structure.get("metadata", {}).get("id", "protenix_output"))
 
         json_path, json_dict = create_protenix_input_from_structure(structure, out_dir)
 
@@ -225,9 +207,7 @@ class ProtenixWrapper:
             atom_array_protenix.distogram_rep_atom_mask
         ).long()
 
-        entity_to_asym_id = DataPipeline.get_label_entity_id_to_asym_id_int(
-            atom_array_protenix
-        )
+        entity_to_asym_id = DataPipeline.get_label_entity_id_to_asym_id_int(atom_array_protenix)
         msa_features = (
             InferenceMSAFeaturizer.make_msa_feature(  # type: ignore (they forgot @staticmethod)
                 bioassembly=json_dict["sequences"],
@@ -259,13 +239,9 @@ class ProtenixWrapper:
             dummy_feats=dummy_feats,
         )
 
-        feat = cast(
-            dict[str, Any], data_type_transform(feat_or_label_dict=features_dict)
-        )
+        feat = cast(dict[str, Any], data_type_transform(feat_or_label_dict=features_dict))
 
-        if "constraint_feature" in feat and isinstance(
-            feat["constraint_feature"], dict
-        ):
+        if "constraint_feature" in feat and isinstance(feat["constraint_feature"], dict):
             for k, v in feat["constraint_feature"].items():
                 feat[f"constraint_feature_{k}"] = v
             del feat["constraint_feature"]
@@ -292,9 +268,7 @@ class ProtenixWrapper:
         if "asym_unit" in structure:
             true_coords = cast(Array, atom_array.coord)
             if not isinstance(true_coords, torch.Tensor):
-                true_coords = torch.tensor(
-                    true_coords, device=self.device, dtype=torch.float32
-                )
+                true_coords = torch.tensor(true_coords, device=self.device, dtype=torch.float32)
             features["true_coords"] = true_coords
             features["true_atom_array"] = atom_array
 
@@ -305,9 +279,7 @@ class ProtenixWrapper:
 
         return features
 
-    def step(
-        self, features: dict[str, Any], grad_needed: bool = False, **kwargs
-    ) -> dict[str, Any]:
+    def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
         """Perform a pass through the Protenix Pairformer to obtain
         representations.
 
@@ -335,18 +307,18 @@ class ProtenixWrapper:
             Protenix model outputs including trunk representations
             (s_inputs, s_trunk, z_trunk).
         """
+        # If featurize is called again, we should clear cached representations
+        # to avoid using stale data
+        self.cached_representations.clear()
+
         inplace_safe = not grad_needed
         chunk_size = (
-            cast(ConfigDict, self.configs.infer_setting).chunk_size
-            if inplace_safe
-            else None
+            cast(ConfigDict, self.configs.infer_setting).chunk_size if inplace_safe else None
         )
         with torch.set_grad_enabled(grad_needed):
             s_inputs, s, z = self.model.get_pairformer_output(
                 input_feature_dict=features,
-                N_cycle=kwargs.get(
-                    "recycling_steps", cast(ConfigDict, self.configs.model).N_cycle
-                ),
+                N_cycle=kwargs.get("recycling_steps", cast(ConfigDict, self.configs.model).N_cycle),
                 inplace_safe=inplace_safe,  # Default in Protenix is True
                 chunk_size=cast(int, chunk_size),  # Default in Protenix is 4
             )
@@ -445,9 +417,7 @@ class ProtenixWrapper:
         dict[str, Tensor]
             Dictionary containing atom_coords_denoised with cleaned coordinates.
         """
-        if not self.cached_representations or kwargs.get(
-            "overwrite_representations", False
-        ):
+        if not self.cached_representations or kwargs.get("overwrite_representations", False):
             step_kwargs = {
                 "recycling_steps": kwargs.get(
                     "recycling_steps",
@@ -458,9 +428,7 @@ class ProtenixWrapper:
                     self.configs.enable_diffusion_shared_vars_cache,
                 ),
             }
-            self.cached_representations = self.step(
-                features, grad_needed=False, **step_kwargs
-            )
+            self.cached_representations = self.step(features, grad_needed=False, **step_kwargs)
 
         outputs = self.cached_representations
         if grad_needed:
@@ -469,9 +437,7 @@ class ProtenixWrapper:
                     v.detach()
                     if isinstance(v, torch.Tensor)
                     else (
-                        tuple(
-                            x.detach() if isinstance(x, torch.Tensor) else x for x in v
-                        )
+                        tuple(x.detach() if isinstance(x, torch.Tensor) else x for x in v)
                         if isinstance(v, tuple)
                         else v
                     )
@@ -479,9 +445,7 @@ class ProtenixWrapper:
                 for k, v in outputs.items()
             }
         if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(
-                noisy_coords, device=self.device, dtype=torch.float32
-            )
+            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
 
         with torch.set_grad_enabled(grad_needed):
             if "t_hat" in kwargs and "eps" in kwargs:
@@ -547,9 +511,9 @@ class ProtenixWrapper:
         gamma = self.noise_schedule["gamma"][int(timestep)]
 
         t_hat = sigma_tm * (1 + gamma)
-        eps_scale = cast(dict, self.configs.sample_diffusion)[
-            "noise_scale_lambda"
-        ] * torch.sqrt(t_hat**2 - sigma_tm**2)
+        eps_scale = cast(dict, self.configs.sample_diffusion)["noise_scale_lambda"] * torch.sqrt(
+            t_hat**2 - sigma_tm**2
+        )
 
         return {
             "t_hat": t_hat.item(),
@@ -583,9 +547,7 @@ class ProtenixWrapper:
             Noisy structure coordinates for atoms with nonzero occupancy.
         """
         if "asym_unit" not in structure:
-            raise ValueError(
-                "structure must contain asym_unit key to access coordinates."
-            )
+            raise ValueError("structure must contain asym_unit key to access coordinates.")
 
         atom_array = ensure_atom_array(structure["asym_unit"])
         atom_array = filter_zero_occupancy(atom_array)
@@ -613,8 +575,7 @@ class ProtenixWrapper:
         # validate coords shape
         if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
             raise ValueError(
-                "coords shape should be (ensemble_size, N_atoms, 3), but is "
-                f"{coords.shape}"
+                f"coords shape should be (ensemble_size, N_atoms, 3), but is {coords.shape}"
             )
 
         sigma = self.noise_schedule["sigma_tm"][int(noise_level)]
