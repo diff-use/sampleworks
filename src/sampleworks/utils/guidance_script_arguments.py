@@ -1,6 +1,80 @@
-import argparse
+from __future__ import annotations
 
-def add_generic_args(parser: argparse.ArgumentParser):
+import argparse
+from dataclasses import dataclass
+from typing import Any
+
+from sampleworks.utils.guidance_constants import (
+    PURE_GUIDANCE, FK_STEERING, BOLTZ_2, PROTENIX, BOLTZ_1, X_RAY_DIFFRACTION
+)
+
+
+@dataclass
+class GuidanceConfig:
+    # TODO add a class method to set this up completely from args and job config.
+    """
+    Class to hold guidance config arguments, compatible with argparse, but which
+    also can do some basic validation.
+    """
+    # add basic arguments by default.
+    protein: str
+    structure: str  # actually a path to a structure file
+    density: str
+    output_dir: str = "output"
+    partial_diffusion_step: int = 0
+    loss_order: int = 2
+    resolution: float = None
+    device: str = None
+    gradient_normalization: bool = False
+    em: bool = False
+    guidance_start: int = -1
+    augmentation: bool = False
+    align_to_input: bool = False
+    model: str = None
+    guidance_type: str = None
+    log_path: str = None
+
+    # DO NOT remove the **kwargs, it is for compatibility with argparse.
+    def add_argument(self, name: str, default: Any = None, **kwargs):
+        """ Add an argument to the guidance config, in a form compatible with argparse """
+        setattr(self, name, default)
+
+    def __post_init__(self):
+        """ Set up guidance config for a given model and guidance type """
+        if self.guidance_type == PURE_GUIDANCE:
+            add_pure_guidance_args(self)
+        elif self.guidance_type == FK_STEERING:
+            add_fk_steering_args(self)
+        else:
+            raise ValueError(f"Unknown guidance type: {self.guidance_type}")
+
+        if self.model == BOLTZ_1:
+            add_boltz1_specific_args(self)
+        elif self.model == BOLTZ_2:
+            add_boltz2_specific_args(self)
+        elif self.model == PROTENIX:
+            add_protenix_specific_args(self)
+        else:
+            raise ValueError(f"Unknown model type: {self.model}")
+
+    def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
+        self.model_checkpoint = get_checkpoint(self.model, args)
+        if job.model == BOLTZ_2 and job.method:
+            self.method = job.method
+
+        if job.scaler == FK_STEERING:
+            self.guidance_weight = str(job.gradient_weight)
+            self.num_gd_steps = str(job.gd_steps)
+            self.num_particles = str(args.num_particles)
+            self.fk_lambda = str(args.fk_lambda)
+            self.fk_resampling_interval = str(args.fk_resampling_interval)
+        else:
+            self.step_size = str(job.gradient_weight)
+            if args.use_tweedie:
+                self.use_tweedie = True
+
+
+def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--structure", type=str, required=True, help="Input structure")
     parser.add_argument("--density", type=str, required=True, help="Input density map")
     parser.add_argument(
@@ -51,7 +125,7 @@ def add_generic_args(parser: argparse.ArgumentParser):
 ######################
 # Guidance type specific arguments
 ######################
-def add_pure_guidance_args(parser: argparse.ArgumentParser):
+def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--step-size", type=float, default=0.1, help="Gradient step")
     parser.add_argument(
         "--use-tweedie",
@@ -67,13 +141,15 @@ def add_pure_guidance_args(parser: argparse.ArgumentParser):
     )
 
 
-def add_fk_steering_args(parser: argparse.ArgumentParser):
+def add_fk_steering_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--num-particles",
         type=int,
         default=3,
         help="Number of particles for FK steering",
     )
+    # TODO: k.chrispens, is --ensemble-size actually the same as for pure guidance?,
+    #  should we move it to generic args?
     parser.add_argument(
         "--ensemble-size",
         type=int,
@@ -115,7 +191,7 @@ def add_fk_steering_args(parser: argparse.ArgumentParser):
 ###########
 # Model specific arguments
 ###########
-def add_boltz2_specific_args(parser: argparse.ArgumentParser):
+def add_boltz2_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -129,7 +205,8 @@ def add_boltz2_specific_args(parser: argparse.ArgumentParser):
         help="Boltz2 sampling method",
     )
 
-def add_protenix_specific_args(parser: argparse.ArgumentParser):
+
+def add_protenix_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -138,7 +215,7 @@ def add_protenix_specific_args(parser: argparse.ArgumentParser):
     )
 
 
-def add_boltz1_specific_args(parser: argparse.ArgumentParser):
+def add_boltz1_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -211,3 +288,48 @@ def parse_boltz1_fk_steering_args():
     add_generic_args(parser)
     add_fk_steering_args(parser)
     return parser.parse_args()
+
+
+# TODO move somewhere better
+def get_checkpoint(model: str, args: argparse.Namespace) -> str | None:
+    if model == "boltz1":
+        return args.boltz1_checkpoint
+    elif model == "boltz2":
+        return args.boltz2_checkpoint
+    elif model == "protenix":
+        return args.protenix_checkpoint
+    return None
+
+
+@dataclass
+class JobConfig:
+    protein: str
+    structure_path: str
+    density_path: str
+    resolution: float
+    model: str
+    scaler: str
+    ensemble_size: int
+    gradient_weight: float
+    gd_steps: int
+    method: str | None
+    output_dir: str
+    log_path: str
+
+
+@dataclass
+class JobResult:
+    protein: str
+    model: str
+    method: str | None
+    scaler: str
+    ensemble_size: int
+    gradient_weight: float
+    gd_steps: int
+    status: str
+    exit_code: int
+    runtime_seconds: float
+    started_at: str
+    finished_at: str
+    log_path: str
+    output_dir: str

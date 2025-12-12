@@ -1,4 +1,7 @@
+import argparse
+import os
 import time
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -15,8 +18,18 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
-from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
-from sampleworks.models.protenix.wrapper import ProtenixWrapper
+from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
+
+# The following imports aren't compatible with each other and are supported in separate
+# hatch/pixi envs
+try:
+    from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
+except ImportError:
+    logger.warning("Failed to import Boltz, hopefully you're running a different model")
+try:
+    from sampleworks.models.protenix.wrapper import ProtenixWrapper
+except ImportError:
+    logger.warning("Failed to import Protenix, hopefully you're running a different model")
 from sampleworks.utils.guidance_constants import FK_STEERING, PURE_GUIDANCE
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -106,7 +119,7 @@ def get_model_and_device(
         model_checkpoint_path: str,
         model_type: str,
         method: str | None = None,
-) -> tuple[torch.device, ProtenixWrapper | Boltz1Wrapper | Boltz2Wrapper]:
+) -> tuple[torch.device, Any]:
     device = torch.device(device) if device else try_gpu()
     logger.debug(f"Using device: {device}")
     if model_type == "protenix":
@@ -116,7 +129,7 @@ def get_model_and_device(
             device=device,
         )
     elif model_type == "boltz1":
-        print(f"Loading Boltz1 model from {model_checkpoint_path}")
+        logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
         model_wrapper = Boltz1Wrapper(
             checkpoint_path=model_checkpoint_path,
             use_msa_server=True,
@@ -242,7 +255,7 @@ def setup_guidance_worker(args, model_name):
     # TODO better argument handling would help here
     # FIXME? UNCLEAR whether this will work given that we may be using Lightning/Fabric (for RF3)
     device, model_wrapper = get_model_and_device(
-        device=args.device,
+        device="",  # automatically look for a free GPU
         model_checkpoint_path=args.model_checkpoint,
         model_type=model_name,
         method=args.method if model_name == "boltz2" else None
@@ -254,24 +267,46 @@ def setup_guidance_worker(args, model_name):
     return None
 
 
+def run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str) -> JobResult:
+    """
+    Wrapper around the actual _run_guidance function, to redirect logs and generate a JobResult.
+    Args:
+        args:
+        guidance_type:
+
+    Returns:
+    """
+
+    os.makedirs(os.path.dirname(args.log_path), exist_ok=True)
+
+    logger.add(args.log_path, level="INFO")
+    started_at = datetime.now()
+    try:
+        _run_guidance(args, guidance_type)
+        return get_job_result(args, started_at, datetime.now(), 0, "success")
+    except Exception as e:
+        logger.error(f"Error running guidance: {e}")
+        return get_job_result(args, started_at, datetime.now(), 1, "failed")
+
+
 # "guidance_type" is also called "scaler" in many places
-def run_guidance(args, guidance_type):
+def _run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str):
     global model_wrapper
 
     reward_function, structure = get_reward_function_and_structure(
-        args.density,  # actually a str/path to a map file.
-        args.device,
+        args.density,  # str/path to a map file.
+        args.device,  # noqa
         args.em,
         args.loss_order,
         args.resolution,
-        args.structure  # also actually a path or string
+        args.structure  # path/string to a structure file.
     )
 
     if guidance_type == PURE_GUIDANCE:
         logger.info("Initializing pure guidance")
         guidance = PureGuidance(model_wrapper=model_wrapper, reward_function=reward_function)
 
-        logger.info("Running pure guidance using model with hash {model_wrapper.__hash__()}")
+        logger.info(f"Running pure guidance using model with hash {model_wrapper.__hash__()}")
         refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
             structure,
             guidance_start=args.guidance_start,
@@ -318,4 +353,36 @@ def run_guidance(args, guidance_type):
         traj_next_step,
         guidance_type
     )
+
+
+def epoch_seconds(time_to_convert: datetime) -> float:
+    return (time_to_convert - datetime(1970, 1, 1)).total_seconds()
+
+
+def get_job_result(
+        args: GuidanceConfig | argparse.Namespace,
+        started_at: datetime,
+        ended_at: datetime,
+        exit_code: int,
+        status: str
+) -> JobResult:
+    start_time = epoch_seconds(started_at)
+    end_time = epoch_seconds(ended_at)
+    result = JobResult(
+        protein=args.protein,
+        model=args.model,
+        method=args.method,
+        scaler=args.guidance_type,
+        ensemble_size=args.ensemble_size,
+        gradient_weight=args.guidance_weight if hasattr(args, "guidance_weight") else None,
+        gd_steps=args.num_gd_steps if hasattr(args, "num_gd_steps") else None,
+        status=status,
+        exit_code=exit_code,
+        runtime_seconds=round(end_time - start_time, 2),
+        started_at=started_at.isoformat(),
+        finished_at=ended_at.isoformat(),
+        log_path=args.log_path,
+        output_dir=args.output_dir,
+    )
+    return result
 
