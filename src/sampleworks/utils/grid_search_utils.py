@@ -59,3 +59,5 @@ def save_losses(losses, output_dir):
                 f.write(f"{i},{loss}\n")
             else:
                 f.write(f"{i},NA\n")
+
+

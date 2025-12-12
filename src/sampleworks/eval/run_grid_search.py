@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent
 import csv
 import json
 import logging
@@ -16,7 +17,12 @@ from datetime import datetime
 from pathlib import Path
 from queue import Queue
 from threading import Lock
+from typing import Any
 
+from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, get_checkpoint, \
+    JobResult
+from sampleworks.utils.guidance_script_utils import setup_guidance_worker, \
+    run_guidance
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,40 +30,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class JobConfig:
-    protein: str
-    structure_path: str
-    density_path: str
-    resolution: float
-    model: str
-    scaler: str
-    ensemble_size: int
-    gradient_weight: float
-    gd_steps: int
-    method: str | None
-    output_dir: str
-    log_path: str
-
-
-@dataclass
-class JobResult:
-    protein: str
-    model: str
-    method: str | None
-    scaler: str
-    ensemble_size: int
-    gradient_weight: float
-    gd_steps: int
-    status: str
-    exit_code: int
-    runtime_seconds: float
-    started_at: str
-    finished_at: str
-    log_path: str
-    output_dir: str
 
 
 @dataclass
@@ -131,14 +103,147 @@ def get_pixi_env(model: str) -> str:
         raise ValueError(f"Unknown model: {model}")
 
 
-def get_checkpoint(model: str, args: argparse.Namespace) -> str | None:
-    if model == "boltz1":
-        return args.boltz1_checkpoint
-    elif model == "boltz2":
-        return args.boltz2_checkpoint
-    elif model == "protenix":
-        return args.protenix_checkpoint
-    return None
+# TODO: this should probably just be a class method of GuidanceConfig?
+def build_args_for_process_pool(job: JobConfig, args: argparse.Namespace) -> GuidanceConfig:
+    guidance_config = GuidanceConfig(
+        protein=job.protein,
+        structure=job.structure_path,
+        density=job.density_path,
+        output_dir=job.output_dir,
+        loss_order=args.loss_order,
+        partial_diffusion_step=args.partial_diffusion_step,
+        resolution=job.resolution,
+        device="",  # is this what we need to hunt for GPUs?
+        gradient_normalization=args.gradient_normalization,
+        augmentation=args.augmentation,
+        align_to_input=args.align_to_input,
+        model=job.model,
+        guidance_type=job.scaler,
+        log_path=job.log_path,
+    )
+    # given model_type and guidance_type, the GuidanceConfig class will set itself up
+    # with defaults for remaining required args, but we want to set them further here.
+    guidance_config.populate_config_for_guidance_type(job, args)
+    return guidance_config
+
+
+def run_grid_search_pipeline(
+    jobs: list[JobConfig],
+    gpus: list[str],
+    args: argparse.Namespace,
+    job_statuses: dict[int, str] | None = None,
+) -> list[JobResult]:
+    """
+    Replacing run_job, and run_grid_search, avoiding model reloads
+    of the model.
+    Args:
+        config:
+        args:
+
+    Returns:
+
+    """
+    results: list[JobResult] = []
+    successful = 0
+    failed = 0
+
+    if args.dry_run:
+        # legacy behavior to print out the commands to run one-off jobs TODO: something better?
+        for job in jobs:
+            cmd = build_command(job, args)
+            log.info(f"[DRY-RUN] {' '.join(cmd)}")
+        return results
+
+    max_workers = len(gpus)
+    log.info(f"Running {len(jobs)} jobs with {max_workers} parallel workers")
+
+    with ProcessPoolExecutor(
+        max_workers=4*max_workers,  # TODO: may need to tune this or make a flag.
+        initializer=setup_guidance_worker,  # args: device, model_checkpoint_path, model_type, method
+        initargs=(args, jobs[0].model),  # TODO kluge-y to get values from first job.
+    ) as executor:
+        futures = {}
+        for i, job in enumerate(jobs):
+            clean_output = False
+            if job_statuses is not None:
+                clean_output = job_statuses.get(id(job), "not_run") != "not_run"
+            if clean_output and os.path.exists(args.output_dir):
+                log.info(f"Cleaning existing output directory: {args.output_dir}")
+                shutil.rmtree(args.output_dir)
+
+            guidance_config = build_args_for_process_pool(job, args)
+            # I add the extra argument for guidance type because the old scripts require it
+            # as they populate the arguments differently.
+            future = executor.submit(run_guidance, guidance_config, guidance_config.guidance_type, clean_output=False)
+            futures[future] = guidance_config
+
+        for completed in concurrent.futures.as_completed(futures):
+            try:
+                result: JobResult = completed.result()
+                results.append(result)
+                if result.status == "success":
+                    successful += 1
+                    log.info(
+                        f"SUCCESS (GPU {gpus[completed.result().gpu_id]}, "
+                        f"{result.runtime_seconds:.1f}s): {result.log_path}"
+                    )
+                else:
+                    failed += 1
+                    log.error(
+                        f"FAILED (GPU {gpus[completed.result().gpu_id]}, "
+                        f"exit={result.exit_code}): {result.log_path}"
+                    )
+            except Exception as e:
+                failed += 1
+                log.error(f"Job failed with exception: {e}")  # TODO can we give a better error?
+
+
+def main_pipeline(args: argparse.Namespace):
+    """
+    Main pipeline for running grid search experiments.
+    Args:
+        args: Command-line arguments.
+    """
+    gpus = detect_gpus()
+    log.info(f"Detected {len(gpus)} GPUs: {gpus}")
+    if args.max_parallel != "auto":
+        gpus = gpus[: int(args.max_parallel)]
+
+    log_args(args, gpus)
+
+    if len(args.models.split()) > 1:
+        # this is designed to run one type of model per script, # TODO to allow multiple models
+        raise ValueError("Multiple models selected, this is not compatible with the new script!")
+
+    filtered_jobs, job_statuses = generate_and_filter_jobs(args)
+
+    if len(filtered_jobs) == 0:
+        log.info("No jobs to run!")
+        return
+
+    config = GridSearchConfig(
+        models=args.models.split(),
+        scalers=args.scalers.split(),
+        ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
+        gradient_weights=[float(x) for x in args.gradient_weights.split()],
+        gd_steps=[int(x) for x in args.num_gd_steps.split()],
+        methods=[m.strip() for m in args.methods.split(",")],
+        proteins_file=args.proteins,
+        output_dir=args.output_dir,
+    )
+
+    start_time = time.time()
+
+    results = run_grid_search_pipeline(filtered_jobs, gpus, args, job_statuses=job_statuses)
+
+    if not args.dry_run and results:
+        save_results(results, config, args.output_dir, time.time() - start_time)
+
+    log.info("=" * 50)
+    log.info("Grid search complete")
+    log.info("=" * 50)
+
+
 
 
 def build_command(job: JobConfig, args: argparse.Namespace) -> list[str]:
@@ -588,6 +693,38 @@ def main():
     if args.max_parallel != "auto":
         gpus = gpus[: int(args.max_parallel)]
 
+    log_args(args, gpus)
+
+    filtered_jobs, job_statuses = generate_and_filter_jobs(args)
+
+    if len(filtered_jobs) == 0:
+        log.info("No jobs to run!")
+        return
+
+    config = GridSearchConfig(
+        models=args.models.split(),
+        scalers=args.scalers.split(),
+        ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
+        gradient_weights=[float(x) for x in args.gradient_weights.split()],
+        gd_steps=[int(x) for x in args.num_gd_steps.split()],
+        methods=[m.strip() for m in args.methods.split(",")],
+        proteins_file=args.proteins,
+        output_dir=args.output_dir,
+    )
+
+    start_time = time.time()
+    results = run_grid_search(filtered_jobs, gpus, args, job_statuses)
+    total_time = time.time() - start_time
+
+    if not args.dry_run and results:
+        save_results(results, config, args.output_dir, total_time)
+
+    log.info("=" * 50)
+    log.info("Grid search complete")
+    log.info("=" * 50)
+
+
+def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info("=" * 50)
     log.info("Starting grid search")
     log.info(f"Models: {args.models}")
@@ -601,6 +738,10 @@ def main():
     log.info(f"Dry run: {args.dry_run}")
     log.info("=" * 50)
 
+
+# TODO make job statuses a proper class
+# TODO: there are many constants here like "not_run" that should be defined in only one place.
+def generate_and_filter_jobs(args: argparse.Namespace) -> tuple[list[JobConfig], dict[Any, Any]]:
     jobs = generate_jobs(args)
     log.info(f"Generated {len(jobs)} total jobs")
 
@@ -635,32 +776,7 @@ def main():
             job for job in jobs if job_statuses[id(job)] in ("failed", "not_run")
         ]
         log.info(f"Running failed and un-run jobs (default): {len(filtered_jobs)} jobs")
-
-    if len(filtered_jobs) == 0:
-        log.info("No jobs to run!")
-        return
-
-    config = GridSearchConfig(
-        models=args.models.split(),
-        scalers=args.scalers.split(),
-        ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
-        gradient_weights=[float(x) for x in args.gradient_weights.split()],
-        gd_steps=[int(x) for x in args.num_gd_steps.split()],
-        methods=[m.strip() for m in args.methods.split(",")],
-        proteins_file=args.proteins,
-        output_dir=args.output_dir,
-    )
-
-    start_time = time.time()
-    results = run_grid_search(filtered_jobs, gpus, args, job_statuses)
-    total_time = time.time() - start_time
-
-    if not args.dry_run and results:
-        save_results(results, config, args.output_dir, total_time)
-
-    log.info("=" * 50)
-    log.info("Grid search complete")
-    log.info("=" * 50)
+    return filtered_jobs, job_statuses
 
 
 if __name__ == "__main__":
