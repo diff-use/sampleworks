@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from sampleworks.utils.guidance_constants import (
-    PURE_GUIDANCE, FK_STEERING, BOLTZ_2, PROTENIX, BOLTZ_1, X_RAY_DIFFRACTION
+    PURE_GUIDANCE, FK_STEERING, BOLTZ_2, PROTENIX, BOLTZ_1
 )
+from sampleworks.utils.checkpoint_utils import get_checkpoint
 
 
 @dataclass
@@ -37,7 +38,7 @@ class GuidanceConfig:
     # DO NOT remove the **kwargs, it is for compatibility with argparse.
     def add_argument(self, name: str, default: Any = None, **kwargs):
         """ Add an argument to the guidance config, in a form compatible with argparse """
-        setattr(self, name, default)
+        setattr(self, name.lstrip("-").replace("-", "_"), default)
 
     def __post_init__(self):
         """ Set up guidance config for a given model and guidance type """
@@ -63,15 +64,18 @@ class GuidanceConfig:
             self.method = job.method
 
         if job.scaler == FK_STEERING:
-            self.guidance_weight = str(job.gradient_weight)
-            self.num_gd_steps = str(job.gd_steps)
-            self.num_particles = str(args.num_particles)
-            self.fk_lambda = str(args.fk_lambda)
-            self.fk_resampling_interval = str(args.fk_resampling_interval)
+            self.guidance_weight = job.gradient_weight
+            self.num_gd_steps = job.gd_steps
+            self.num_particles = args.num_particles
+            self.fk_lambda = args.fk_lambda
+            self.fk_resampling_interval = args.fk_resampling_interval
+            self.ensemble_size = job.ensemble_size
         else:
-            self.step_size = str(job.gradient_weight)
-            if args.use_tweedie:
-                self.use_tweedie = True
+            self.step_size = job.gradient_weight
+            self.use_tweedie = args.use_tweedie
+            self.ensemble_size = job.ensemble_size
+
+
 
 
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
@@ -288,17 +292,6 @@ def parse_boltz1_fk_steering_args():
     add_generic_args(parser)
     add_fk_steering_args(parser)
     return parser.parse_args()
-
-
-# TODO move somewhere better
-def get_checkpoint(model: str, args: argparse.Namespace) -> str | None:
-    if model == "boltz1":
-        return args.boltz1_checkpoint
-    elif model == "boltz2":
-        return args.boltz2_checkpoint
-    elif model == "protenix":
-        return args.protenix_checkpoint
-    return None
 
 
 @dataclass

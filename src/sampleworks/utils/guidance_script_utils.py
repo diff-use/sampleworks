@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import argparse
 import os
 import time
+import traceback
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +21,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
+from sampleworks.utils.checkpoint_utils import get_checkpoint
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 
 # The following imports aren't compatible with each other and are supported in separate
@@ -243,26 +247,43 @@ def save_everything(
 #####################
 # Methods for running model guidance in separate processes, avoiding reloading of the model.
 #####################
-def setup_guidance_worker(args, model_name):
+# TODO: these args are ultimately defined in run_grid_search.py, which is a terrible place
+#  for that. Need to refactor this.
+# TODO: can't seem to get the delay to work properly...
+def setup_guidance_worker(args, model_name, delay=0.0):
     global device, model_wrapper  # pylint: disable=global-statement
 
     # Might want to introduce a random delay here to avoid all workers starting at the same time.
     # this would allow the method below to find a free GPU and avoid a race?
-    sleep_time = np.random.randint(0, 50)
-    logger.info(f"Waiting {sleep_time} seconds before initializing model")
-    time.sleep(sleep_time)
+    logger.info(f"Waiting {delay} seconds before initializing model")
+    time.sleep(delay)
+
+    if hasattr(args, "model_checkpoint"):
+        model_checkpoint_path = args.model_checkpoint
+    else:
+        model_checkpoint_path = get_checkpoint(model_name, args)
+
+    if hasattr(args, "method"):
+        method = args.method
+    elif hasattr(args, "methods") and len(methods := args.methods.split(",")) == 1:
+        method = methods[0]
+    else:
+        raise ValueError(
+            "setup_guidance_worker requires either --method or --methods to be a "
+            "single string with no commas"
+        )
 
     # TODO better argument handling would help here
     # FIXME? UNCLEAR whether this will work given that we may be using Lightning/Fabric (for RF3)
     device, model_wrapper = get_model_and_device(
         device="",  # automatically look for a free GPU
-        model_checkpoint_path=args.model_checkpoint,
+        model_checkpoint_path=model_checkpoint_path,
         model_type=model_name,
-        method=args.method if model_name == "boltz2" else None
+        method=method if model_name == "boltz2" else None
     )
 
     logger.info(
-        f"Model {model_name} initialized with has {model_wrapper.__hash__()} on device: {device}"
+        f"Model {model_name} initialized with hash {model_wrapper.__hash__()} on device: {device}"
     )
     return None
 
@@ -276,26 +297,32 @@ def run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str) 
 
     Returns:
     """
-
+    global device
     os.makedirs(os.path.dirname(args.log_path), exist_ok=True)
 
-    logger.add(args.log_path, level="INFO")
+    # need to finish spawning separate logs for each worker
+    logger.add(
+        args.log_path, level="INFO", filter=lambda rec: rec["extra"].get("special", False) is True
+    )
     started_at = datetime.now()
     try:
-        _run_guidance(args, guidance_type)
-        return get_job_result(args, started_at, datetime.now(), 0, "success")
+        with logger.contextualize(special=True):
+            _run_guidance(args, guidance_type)
+        logger.info("Guidance run successfully!")
+        return get_job_result(args, device, started_at, datetime.now(), 0, "success")
     except Exception as e:
         logger.error(f"Error running guidance: {e}")
-        return get_job_result(args, started_at, datetime.now(), 1, "failed")
+        logger.error(traceback.format_exc())
+        return get_job_result(args, device, started_at, datetime.now(), 1, "failed")
 
 
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str):
-    global model_wrapper
+    global device, model_wrapper
 
     reward_function, structure = get_reward_function_and_structure(
         args.density,  # str/path to a map file.
-        args.device,  # noqa
+        device,  # this needs to come from the global context, not the args object.
         args.em,
         args.loss_order,
         args.resolution,
@@ -361,6 +388,7 @@ def epoch_seconds(time_to_convert: datetime) -> float:
 
 def get_job_result(
         args: GuidanceConfig | argparse.Namespace,
+        device: torch.device,
         started_at: datetime,
         ended_at: datetime,
         exit_code: int,

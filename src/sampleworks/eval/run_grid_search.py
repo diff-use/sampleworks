@@ -7,6 +7,7 @@ import concurrent
 import csv
 import json
 import logging
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -19,10 +20,10 @@ from queue import Queue
 from threading import Lock
 from typing import Any
 
-from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, get_checkpoint, \
-    JobResult
+from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
 from sampleworks.utils.guidance_script_utils import setup_guidance_worker, \
     run_guidance
+from sampleworks.utils.checkpoint_utils import get_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -157,8 +158,10 @@ def run_grid_search_pipeline(
     max_workers = len(gpus)
     log.info(f"Running {len(jobs)} jobs with {max_workers} parallel workers")
 
+
     with ProcessPoolExecutor(
-        max_workers=4*max_workers,  # TODO: may need to tune this or make a flag.
+        max_workers=max_workers,  # TODO: may need to tune this or make a flag.
+        mp_context=multiprocessing.get_context("spawn"),
         initializer=setup_guidance_worker,  # args: device, model_checkpoint_path, model_type, method
         initargs=(args, jobs[0].model),  # TODO kluge-y to get values from first job.
     ) as executor:
@@ -172,9 +175,9 @@ def run_grid_search_pipeline(
                 shutil.rmtree(args.output_dir)
 
             guidance_config = build_args_for_process_pool(job, args)
-            # I add the extra argument for guidance type because the old scripts require it
+            # I add the extra argument for the guidance type because the old scripts require it
             # as they populate the arguments differently.
-            future = executor.submit(run_guidance, guidance_config, guidance_config.guidance_type, clean_output=False)
+            future = executor.submit(run_guidance, guidance_config, guidance_config.guidance_type)
             futures[future] = guidance_config
 
         for completed in concurrent.futures.as_completed(futures):
@@ -184,13 +187,13 @@ def run_grid_search_pipeline(
                 if result.status == "success":
                     successful += 1
                     log.info(
-                        f"SUCCESS (GPU {gpus[completed.result().gpu_id]}, "
+                        f"SUCCESS ({result.protein}, {result.model}, {result.method}, {result.scaler} "
                         f"{result.runtime_seconds:.1f}s): {result.log_path}"
                     )
                 else:
                     failed += 1
                     log.error(
-                        f"FAILED (GPU {gpus[completed.result().gpu_id]}, "
+                        f"FAILED ({result.protein}, {result.model}, {result.method}, {result.scaler} "
                         f"exit={result.exit_code}): {result.log_path}"
                     )
             except Exception as e:
@@ -213,7 +216,10 @@ def main_pipeline(args: argparse.Namespace):
 
     if len(args.models.split()) > 1:
         # this is designed to run one type of model per script, # TODO to allow multiple models
-        raise ValueError("Multiple models selected, this is not compatible with the new script!")
+        raise ValueError("Multiple --models selected, this is not compatible with the new script!")
+    if len(args.methods.split(",")) > 1:
+        # this is designed to run one type of model per script, # TODO to allow multiple models
+        raise ValueError("Multiple --methods selected, this is not compatible with the new script!")
 
     filtered_jobs, job_statuses = generate_and_filter_jobs(args)
 
@@ -242,8 +248,6 @@ def main_pipeline(args: argparse.Namespace):
     log.info("=" * 50)
     log.info("Grid search complete")
     log.info("=" * 50)
-
-
 
 
 def build_command(job: JobConfig, args: argparse.Namespace) -> list[str]:
@@ -780,4 +784,5 @@ def generate_and_filter_jobs(args: argparse.Namespace) -> tuple[list[JobConfig],
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main_pipeline(args)
