@@ -30,6 +30,7 @@ from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
+from loguru import logger
 from torch import Tensor
 
 
@@ -129,6 +130,7 @@ class Boltz2Wrapper:
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         method: str = "MD",
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        model: Boltz2 | None = None
     ):
         """
         Parameters
@@ -150,6 +152,7 @@ class Boltz2Wrapper:
             Inference method identifier understood by Boltz2 (e.g. ``"MD"``).
         device: torch.device, optional
             Device to run the model on, by default CUDA if available.
+
         """
         self.checkpoint_path = checkpoint_path
         self.use_msa_server = use_msa_server
@@ -160,7 +163,6 @@ class Boltz2Wrapper:
         self.device = torch.device(device)
         # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
         self.cache_path = Path(checkpoint_path).parent.expanduser().resolve()
-
         self.cache_path.mkdir(parents=True, exist_ok=True)
 
         pairformer_args = PairformerArgsV2()
@@ -171,21 +173,24 @@ class Boltz2Wrapper:
             use_paired_feature=True,  # Required for Boltz2
         )
 
-        self.model = (
-            Boltz2.load_from_checkpoint(
-                checkpoint_path,
-                strict=True,
-                predict_args=asdict(predict_args),
-                map_location="cpu",
-                diffusion_process_args=asdict(diffusion_args),
-                ema=False,
-                pairformer_args=asdict(pairformer_args),
-                msa_args=asdict(msa_args),
-                steering_args=asdict(steering_args),
+        if not model:
+            self.model = (
+                Boltz2.load_from_checkpoint(
+                    checkpoint_path,
+                    strict=True,
+                    predict_args=asdict(predict_args),
+                    map_location="cpu",
+                    diffusion_process_args=asdict(diffusion_args),
+                    ema=False,
+                    pairformer_args=asdict(pairformer_args),
+                    msa_args=asdict(msa_args),
+                    steering_args=asdict(steering_args),
+                )
+                .to(self.device)
+                .eval()
             )
-            .to(self.device)
-            .eval()
-        )
+        else:
+            self.model = model.to(self.device).eval()
 
         self.data_module: Boltz2InferenceDataModule
         self.cached_representations: dict[str, Any] = {}
@@ -309,7 +314,6 @@ class Boltz2Wrapper:
         batch = self.data_module.transfer_batch_to_device(
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
-
         return batch
 
     def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
@@ -431,6 +435,9 @@ class Boltz2Wrapper:
         Perform denoising at given timestep/noise level.
         Returns predicted clean sample or predicted noise depending on
         model parameterization.
+
+        Note that once this is run, a cached set of features will be stored--to avoid this,
+        the best practice to re-instantiate the wrapper.
 
         Parameters
         ----------
@@ -692,6 +699,7 @@ class Boltz1Wrapper:
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        model: Boltz1 | None = None
     ):
         """
         Parameters
@@ -719,11 +727,7 @@ class Boltz1Wrapper:
         self.steering_args = steering_args
         self.device = torch.device(device)
         # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
-        self.cache_path = (
-            (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
-            .parent.expanduser()
-            .resolve()
-        )
+        self.cache_path = Path(checkpoint_path).parent.expanduser().resolve()
         self.cache_path.mkdir(parents=True, exist_ok=True)
 
         pairformer_args = PairformerArgs()
@@ -734,22 +738,25 @@ class Boltz1Wrapper:
             use_paired_feature=False,
         )
 
-        self.model = (
-            Boltz1.load_from_checkpoint(
-                checkpoint_path,
-                strict=True,
-                predict_args=asdict(predict_args),
-                map_location="cpu",
-                diffusion_process_args=asdict(diffusion_args),
-                ema=False,
-                use_kernels=True,
-                pairformer_args=asdict(pairformer_args),
-                msa_args=asdict(msa_args),
-                steering_args=asdict(steering_args),
+        if not model:
+            self.model = (
+                Boltz1.load_from_checkpoint(
+                    checkpoint_path,
+                    strict=True,
+                    predict_args=asdict(predict_args),
+                    map_location="cpu",
+                    diffusion_process_args=asdict(diffusion_args),
+                    ema=False,
+                    use_kernels=True,
+                    pairformer_args=asdict(pairformer_args),
+                    msa_args=asdict(msa_args),
+                    steering_args=asdict(steering_args),
+                )
+                .to(self.device)
+                .eval()
             )
-            .to(self.device)
-            .eval()
-        )
+        else:
+            self.model = model.to(self.device).eval()
 
         self.data_module: BoltzInferenceDataModule
         self.cached_representations: dict[str, Any] = {}
