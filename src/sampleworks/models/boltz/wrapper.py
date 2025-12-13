@@ -97,7 +97,7 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
             ligand_info[chain]["ccd"] = chain_info[chain]["res_name"][0]
 
     boltz_input_path = out_dir / f"{structure.get('metadata', {}).get('id', 'boltz_input')}.yaml"
-    boltz_input_path.parent.mkdir(parents=True, exist_ok=False)
+    boltz_input_path.parent.mkdir(parents=True, exist_ok=True)
     with open(boltz_input_path, "w") as f:
         f.write("sequences:\n")
         for chain_id, info in polymer_info.items():
@@ -159,11 +159,8 @@ class Boltz2Wrapper:
         self.method = method
         self.device = torch.device(device)
         # NOTE: assumes checkpoint and ccd dictionary get downloaded to the same place
-        self.cache_path = (
-            (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
-            .parent.expanduser()
-            .resolve()
-        )
+        self.cache_path = Path(checkpoint_path).parent.expanduser().resolve()
+
         self.cache_path.mkdir(parents=True, exist_ok=True)
 
         pairformer_args = PairformerArgsV2()
