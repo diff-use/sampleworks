@@ -182,6 +182,11 @@ class ProtenixWrapper:
         dict[str, Any]
             Protenix input features.
         """
+
+        # If featurize is called again, we should clear cached representations
+        # to avoid using stale data
+        self.cached_representations.clear()
+
         out_dir = kwargs.get("out_dir", structure.get("metadata", {}).get("id", "protenix_output"))
 
         json_path, json_dict = create_protenix_input_from_structure(structure, out_dir)
@@ -307,10 +312,6 @@ class ProtenixWrapper:
             Protenix model outputs including trunk representations
             (s_inputs, s_trunk, z_trunk).
         """
-        # If featurize is called again, we should clear cached representations
-        # to avoid using stale data
-        self.cached_representations.clear()
-
         inplace_safe = not grad_needed
         chunk_size = (
             cast(ConfigDict, self.configs.infer_setting).chunk_size if inplace_safe else None
