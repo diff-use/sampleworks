@@ -11,6 +11,7 @@ import einx
 import numpy as np
 import torch
 from biotite.structure import stack
+from loguru import logger
 from tqdm import tqdm
 
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
@@ -115,6 +116,7 @@ class PureGuidance:
             (trajectory_denoised, trajectory_next_step) containing coordinate
             tensors at each step, list of losses at each step
         """
+        # TODO: having defaults this deep can be a problem, remove
         step_scale = cast(float, kwargs.get("step_scale", 1.5))
         ensemble_size = cast(int, kwargs.get("ensemble_size", 1))
         step_size = cast(float, kwargs.get("step_size", 0.1))
@@ -142,7 +144,7 @@ class PureGuidance:
             ),
         )
 
-        # TODO: this is not generalizable currently, figure this out
+         # TODO: this is not generalizable currently, figure this out
         if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
             atom_array = features["true_atom_array"]
         else:
@@ -367,3 +369,10 @@ class PureGuidance:
         structure["asym_unit"] = atom_array
 
         return structure, (trajectory_denoised, trajectory_next_step), losses
+
+    def __del__(self):
+        logger.debug("Resetting model wrapper cached representations before deleting scaler.")
+        if hasattr(self.model_wrapper, "cached_representations"):
+            self.model_wrapper.cached_representations = {}  # see boltz.wrapper L201
+        # if there are other reset tasks, they can be added here
+        logger.debug("PureGuidance scaler deleted.")

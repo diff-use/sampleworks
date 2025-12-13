@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import pickle
 import time
 import traceback
 from datetime import datetime
@@ -21,6 +22,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
+from sampleworks.models.model_wrapper_protocol import ModelWrapper
 from sampleworks.utils.checkpoint_utils import get_checkpoint
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 
@@ -123,6 +125,7 @@ def get_model_and_device(
         model_checkpoint_path: str,
         model_type: str,
         method: str | None = None,
+        model: Any = None,
 ) -> tuple[torch.device, Any]:
     device = torch.device(device) if device else try_gpu()
     logger.debug(f"Using device: {device}")
@@ -131,6 +134,7 @@ def get_model_and_device(
         model_wrapper = ProtenixWrapper(
             checkpoint_path=model_checkpoint_path,
             device=device,
+            model=model
         )
     elif model_type == "boltz1":
         logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
@@ -138,6 +142,7 @@ def get_model_and_device(
             checkpoint_path=model_checkpoint_path,
             use_msa_server=True,
             device=device,
+            model=model
         )
     elif model_type == "boltz2":
         if method is None:
@@ -149,6 +154,7 @@ def get_model_and_device(
             use_msa_server=True,
             device=device,
             method=method.upper(),
+            model=model
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -165,7 +171,7 @@ def get_reward_function_and_structure(
         resolution,
         structure: str | Path
 ) -> tuple[RewardFunction, dict[str, Any]]:
-    print(f"Loading structure from {structure}")
+    logger.debug(f"Loading structure from {structure}")
     structure = parse(
         structure,
         hydrogen_policy="remove",
@@ -173,16 +179,16 @@ def get_reward_function_and_structure(
         ccd_mirror_path=None,
     )
 
-    print(f"Loading density map from {density}")
+    logger.debug(f"Loading density map from {density}")
     xmap = XMap.fromfile(density, resolution=resolution)
 
-    print("Setting up scattering parameters")
+    logger.debug("Setting up scattering parameters")
     scattering_params = setup_scattering_params(structure, em=em)
 
     atom_array = structure["asym_unit"]
     selection_mask = atom_array.occupancy > 0
     n_selected = selection_mask.sum()
-    print(f"Selected {n_selected} atoms with occupancy > 0")
+    logger.info(f"Selected {n_selected} atoms with occupancy > 0")
 
     print("Creating reward function")
     reward_function = RewardFunction(
@@ -273,8 +279,6 @@ def setup_guidance_worker(args, model_name, delay=0.0):
             "single string with no commas"
         )
 
-    # TODO better argument handling would help here
-    # FIXME? UNCLEAR whether this will work given that we may be using Lightning/Fabric (for RF3)
     device, model_wrapper = get_model_and_device(
         device="",  # automatically look for a free GPU
         model_checkpoint_path=model_checkpoint_path,
@@ -288,7 +292,8 @@ def setup_guidance_worker(args, model_name, delay=0.0):
     return None
 
 
-def run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str) -> JobResult:
+def run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str,
+                 model_wrapper, device) -> JobResult:
     """
     Wrapper around the actual _run_guidance function, to redirect logs and generate a JobResult.
     Args:
@@ -297,28 +302,30 @@ def run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str) 
 
     Returns:
     """
-    global device
+    #global device
     os.makedirs(os.path.dirname(args.log_path), exist_ok=True)
 
     # need to finish spawning separate logs for each worker
-    logger.add(
+    handle = logger.add(
         args.log_path, level="INFO", filter=lambda rec: rec["extra"].get("special", False) is True
     )
     started_at = datetime.now()
     try:
         with logger.contextualize(special=True):
-            _run_guidance(args, guidance_type)
+            _run_guidance(args, guidance_type, model_wrapper, device)
         logger.info("Guidance run successfully!")
         return get_job_result(args, device, started_at, datetime.now(), 0, "success")
     except Exception as e:
         logger.error(f"Error running guidance: {e}")
         logger.error(traceback.format_exc())
         return get_job_result(args, device, started_at, datetime.now(), 1, "failed")
-
+    finally:
+        logger.remove(handle)
 
 # "guidance_type" is also called "scaler" in many places
-def _run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str):
-    global device, model_wrapper
+def _run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str,
+                  model_wrapper, device):
+    #global device, model_wrapper
 
     reward_function, structure = get_reward_function_and_structure(
         args.density,  # str/path to a map file.
@@ -333,7 +340,7 @@ def _run_guidance(args: GuidanceConfig | argparse.Namespace, guidance_type: str)
         logger.info("Initializing pure guidance")
         guidance = PureGuidance(model_wrapper=model_wrapper, reward_function=reward_function)
 
-        logger.info(f"Running pure guidance using model with hash {model_wrapper.__hash__()}")
+        logger.info(f"Running pure guidance using model with hash {model_wrapper.model.__hash__()}")
         refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
             structure,
             guidance_start=args.guidance_start,
@@ -414,3 +421,21 @@ def get_job_result(
     )
     return result
 
+
+def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
+    with open(job_queue_path, "rb") as fp:
+        job_queue: list[GuidanceConfig] = pickle.load(fp)
+    # new (old?)-fangled way to get the model wrapper that makes it easier to work with process pools.
+    device, model_wrapper = get_model_and_device(
+        "", job_queue[0].model_checkpoint, job_queue[0].model, job_queue[0].method
+    )
+    job_results = []
+    for i, job in enumerate(job_queue):
+        # The model wrapper can persist state across runs, so we need to re-initialize it each run.
+        device, model_wrapper = get_model_and_device(
+            device, job.model_checkpoint, job.model, job.method, model_wrapper.model
+        )
+
+        job_result = run_guidance(job, job.guidance_type, model_wrapper, device)
+
+    return job_results

@@ -46,6 +46,7 @@ class ProtenixWrapper:
         checkpoint_path: str | Path,
         args_str: str = "",
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        model: Protenix | None = None
     ):
         """
         Parameters
@@ -109,7 +110,10 @@ class ProtenixWrapper:
         if torch.cuda.is_available():
             torch.cuda.set_device(self.device)
 
-        self.model = Protenix(self.configs).to(self.device)
+        if model is None:
+            self.model = Protenix(self.configs).to(self.device)
+        else:
+            self.model = model.to(self.device)
 
         checkpoint_path_str = f"{self.configs.load_checkpoint_dir}/{self.configs.model_name}.pt"
         logger.info(f"Loading checkpoint from {checkpoint_path_str}")
