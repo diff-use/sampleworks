@@ -7,8 +7,6 @@ import time
 import traceback
 from datetime import datetime
 from typing import Any
-
-import numpy as np
 from atomworks import parse
 from loguru import logger
 from pathlib import Path
@@ -22,7 +20,6 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
-from sampleworks.models.model_wrapper_protocol import ModelWrapper
 from sampleworks.utils.checkpoint_utils import get_checkpoint
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 
@@ -101,10 +98,10 @@ def _save_fk_steering_trajectory(
             continue
         array_copy = atom_array.copy()
         array_copy = stack([array_copy] * ensemble_size)
-        # TODO: k.chripens can you add a comment here explaining why you take coords[0]?
-        #   are we only saving the first particle?
+        # we save only the first ensemble out of n_particles, since saving
+        # each particle at every step would clog trajectory saving
         array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
-        save_structure(output_dir / f"trajectory_{i}.cif", array_copy)
+        save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
 def save_losses(losses, output_dir):
@@ -148,7 +145,7 @@ def get_model_and_device(
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
-        print(f"Loading Boltz2 model from {model_checkpoint_path}")
+        logger.debug(f"Loading Boltz2 model from {model_checkpoint_path}")
         model_wrapper = Boltz2Wrapper(
             checkpoint_path=model_checkpoint_path,
             use_msa_server=True,
@@ -190,7 +187,7 @@ def get_reward_function_and_structure(
     n_selected = selection_mask.sum()
     logger.info(f"Selected {n_selected} atoms with occupancy > 0")
 
-    print("Creating reward function")
+    logger.info("Creating reward function")
     reward_function = RewardFunction(
         xmap,
         scattering_params,
@@ -213,7 +210,7 @@ def save_everything(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Saving results")
+    logger.info("Saving results")
     from biotite.structure.io.pdbx import CIFFile, set_structure
 
     final_structure = CIFFile()
@@ -243,11 +240,11 @@ def save_everything(
 
     valid_losses = [l for l in losses if l is not None]
     if valid_losses:
-        print(f"\nFinal loss: {valid_losses[-1]:.6f}")
-        print(f"Initial loss: {valid_losses[0]:.6f}")
-        print(f"Loss reduction: {valid_losses[0] - valid_losses[-1]:.6f}")
+        logger.info(f"\nFinal loss: {valid_losses[-1]:.6f}")
+        logger.info(f"Initial loss: {valid_losses[0]:.6f}")
+        logger.info(f"Loss reduction: {valid_losses[0] - valid_losses[-1]:.6f}")
 
-    print(f"\nResults saved to {output_dir}/")
+    logger.info(f"\nResults saved to {output_dir}/")
 
 
 #####################
@@ -425,12 +422,15 @@ def get_job_result(
 def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     with open(job_queue_path, "rb") as fp:
         job_queue: list[GuidanceConfig] = pickle.load(fp)
-    # new (old?)-fangled way to get the model wrapper that makes it easier to work with process pools.
+
+    template_job = job_queue[0]
+    logger.info(f"Running {len(job_queue)} jobs, using {template_job} as a setup template")
     device, model_wrapper = get_model_and_device(
-        "", job_queue[0].model_checkpoint, job_queue[0].model, job_queue[0].method
+        template_job.device, template_job.model_checkpoint, template_job.model, template_job.method
     )
     job_results = []
     for i, job in enumerate(job_queue):
+        logger.info(f"Running job {i+1}/{len(job_queue)}: {job}")
         # The model wrapper can persist state across runs, so we need to re-initialize it each run.
         device, model_wrapper = get_model_and_device(
             device, job.model_checkpoint, job.model, job.method, model_wrapper.model
