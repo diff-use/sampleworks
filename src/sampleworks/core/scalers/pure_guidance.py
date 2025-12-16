@@ -250,8 +250,6 @@ class PureGuidance:
                 eps=eps,
             )["atom_coords_denoised"]
 
-            trajectory_denoised.append(denoised.clone().cpu())
-
             align_transform = None
             denoised_working_frame = denoised
             if align_to_input:
@@ -263,6 +261,8 @@ class PureGuidance:
                     return_transforms=True,
                     allow_gradients=allow_alignment_gradients,
                 )
+
+            trajectory_denoised.append(denoised_working_frame.clone().cpu())
 
             guidance_direction = None
             if apply_guidance:
