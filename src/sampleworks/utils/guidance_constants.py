@@ -5,6 +5,7 @@ FK_STEERING = "fk_steering"
 PURE_GUIDANCE = "pure_guidance"
 BOLTZ_2 = "boltz2"
 PROTENIX = "protenix"
+RF3 = "rf3"
 BOLTZ_1 = "boltz1"
 
 # Methods for Boltz2, see

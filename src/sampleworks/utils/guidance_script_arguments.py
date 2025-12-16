@@ -11,6 +11,7 @@ from sampleworks.utils.guidance_constants import (
     FK_STEERING,
     PROTENIX,
     PURE_GUIDANCE,
+    RF3,
 )
 
 
@@ -60,6 +61,8 @@ class GuidanceConfig:
             add_boltz2_specific_args(self)
         elif self.model == PROTENIX:
             add_protenix_specific_args(self)
+        elif self.model == RF3:
+            add_rf3_specific_args(self)
         else:
             raise ValueError(f"Unknown model type: {self.model}")
 
@@ -216,6 +219,33 @@ def add_boltz1_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     )
 
 
+def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    parser.add_argument(
+        "--model-checkpoint",
+        type=str,
+        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt",
+        help="Path to RF3 checkpoint",
+    )
+    parser.add_argument(
+        "--num-steps",
+        type=int,
+        default=200,
+        help="Number of diffusion steps for RF3",
+    )
+    parser.add_argument(
+        "--n-recycles",
+        type=int,
+        default=10,
+        help="Number of recycling iterations for RF3 trunk",
+    )
+    parser.add_argument(
+        "--msa-path",
+        type=str,
+        default=None,
+        help="Path to MSA file (dict, JSON, or .a3m format)",
+    )
+
+
 ##############
 #  Use these methods to parse arguments in scripts which load the model themselves.
 ##############
@@ -278,6 +308,26 @@ def parse_boltz1_fk_steering_args():
     )
     add_boltz1_specific_args(parser)
     add_generic_args(parser)
+    add_fk_steering_args(parser)
+    return parser.parse_args()
+
+
+def parse_rf3_pure_guidance_args():
+    parser = argparse.ArgumentParser(
+        description="Pure guidance refinement with RF3 and real-space density"
+    )
+    add_generic_args(parser)
+    add_rf3_specific_args(parser)
+    add_pure_guidance_args(parser)
+    return parser.parse_args()
+
+
+def parse_rf3_fk_steering_args():
+    parser = argparse.ArgumentParser(
+        description="FK steering refinement with RF3 and real-space density"
+    )
+    add_generic_args(parser)
+    add_rf3_specific_args(parser)
     add_fk_steering_args(parser)
     return parser.parse_args()
 
