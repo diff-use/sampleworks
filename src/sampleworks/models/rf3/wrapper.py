@@ -72,10 +72,14 @@ class RF3Wrapper:
             RF3TrainerWithConfidence, self.inference_engine.trainer
         )
         self.model = self.inference_engine.trainer.state["model"]
-        self.device = self.inference_engine.trainer.fabric.device
+        self._device = self.inference_engine.trainer.fabric.device
 
         self.cached_representations: dict[str, Any] = {}
         self.noise_schedule = self._compute_noise_schedule(num_steps)
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
 
     @property
     def _inner_model(self) -> RF3WithConfidence:
