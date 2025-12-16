@@ -22,11 +22,11 @@ class TestCreateBoltzInputFromStructure:
         yaml_path = create_boltz_input_from_structure(structure_6b8x, temp_output_dir)
         assert yaml_path.exists()
         assert yaml_path.suffix == ".yaml"
-        assert yaml_path.name == "boltz_input.yaml"
+        assert (
+            yaml_path.name == f"{structure_6b8x.get('metadata', {}).get('id', 'boltz_input')}.yaml"
+        )
 
-    def test_yaml_contains_sequences_key(
-        self, structure_6b8x: dict, temp_output_dir: Path
-    ):
+    def test_yaml_contains_sequences_key(self, structure_6b8x: dict, temp_output_dir: Path):
         yaml_path = create_boltz_input_from_structure(structure_6b8x, temp_output_dir)
         content = yaml_path.read_text()
         assert "sequences:" in content
@@ -332,31 +332,22 @@ class TestBoltz1WrapperInitializeFromNoise:
     def test_initialize_from_noise_returns_tensor(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
     ):
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         assert torch.is_tensor(noisy_coords)
 
     def test_initialize_from_noise_correct_shape(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
     ):
         coords = structure_6b8x["asym_unit"].coord
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
-        assert (
-            noisy_coords.shape
-            == coords[:, structure_6b8x["asym_unit"].occupancy > 0].shape
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
+        assert noisy_coords.shape == coords[:, structure_6b8x["asym_unit"].occupancy > 0].shape
         assert noisy_coords.shape[-1] == 3
 
     def test_initialize_from_noise_adds_noise(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
     ):
         coords = structure_6b8x["asym_unit"].coord
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=5
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
         assert not torch.allclose(
             noisy_coords,
             torch.tensor(
@@ -375,9 +366,7 @@ class TestBoltz1WrapperInitializeFromNoise:
             assert torch.is_tensor(noisy_coords)
             assert noisy_coords.shape[-1] == 3
 
-    def test_initialize_from_noise_raises_without_asym_unit(
-        self, boltz1_wrapper: Boltz1Wrapper
-    ):
+    def test_initialize_from_noise_raises_without_asym_unit(self, boltz1_wrapper: Boltz1Wrapper):
         bad_structure = {"metadata": {}}
         with pytest.raises(ValueError, match="asym_unit"):
             boltz1_wrapper.initialize_from_noise(bad_structure, noise_level=0)
@@ -390,31 +379,22 @@ class TestBoltz2WrapperInitializeFromNoise:
     def test_initialize_from_noise_returns_tensor(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
     ):
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         assert torch.is_tensor(noisy_coords)
 
     def test_initialize_from_noise_correct_shape(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
     ):
         coords = structure_6b8x["asym_unit"].coord
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
-        assert (
-            noisy_coords.shape
-            == coords[:, structure_6b8x["asym_unit"].occupancy > 0].shape
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
+        assert noisy_coords.shape == coords[:, structure_6b8x["asym_unit"].occupancy > 0].shape
         assert noisy_coords.shape[-1] == 3
 
     def test_initialize_from_noise_adds_noise(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
     ):
         coords = structure_6b8x["asym_unit"].coord
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=5
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
         assert not torch.allclose(
             noisy_coords,
             torch.tensor(
@@ -433,9 +413,7 @@ class TestBoltz2WrapperInitializeFromNoise:
             assert torch.is_tensor(noisy_coords)
             assert noisy_coords.shape[-1] == 3
 
-    def test_initialize_from_noise_raises_without_asym_unit(
-        self, boltz2_wrapper: Boltz2Wrapper
-    ):
+    def test_initialize_from_noise_raises_without_asym_unit(self, boltz2_wrapper: Boltz2Wrapper):
         bad_structure = {"metadata": {}}
         with pytest.raises(ValueError, match="asym_unit"):
             boltz2_wrapper.initialize_from_noise(bad_structure, noise_level=0)
@@ -449,9 +427,7 @@ class TestBoltz1WrapperDenoiseStep:
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz1_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -466,9 +442,7 @@ class TestBoltz1WrapperDenoiseStep:
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz1_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -483,9 +457,7 @@ class TestBoltz1WrapperDenoiseStep:
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz1_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -498,9 +470,7 @@ class TestBoltz1WrapperDenoiseStep:
     def test_denoise_step_raises_on_missing_features(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
     ):
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         bad_features = {"s": None}
         with pytest.raises(KeyError, match="token_pad_mask"):
             boltz1_wrapper.denoise_step(
@@ -533,9 +503,7 @@ class TestBoltz1WrapperDenoiseStep:
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz1_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -556,9 +524,7 @@ class TestBoltz2WrapperDenoiseStep:
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz2_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -573,9 +539,7 @@ class TestBoltz2WrapperDenoiseStep:
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz2_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -590,9 +554,7 @@ class TestBoltz2WrapperDenoiseStep:
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz2_wrapper.denoise_step(
             features,
             noisy_coords,
@@ -605,9 +567,7 @@ class TestBoltz2WrapperDenoiseStep:
     def test_denoise_step_raises_on_missing_features(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
     ):
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         bad_features = {"s": None}
 
         with pytest.raises(KeyError, match="token_pad_mask"):
@@ -641,9 +601,7 @@ class TestBoltz2WrapperDenoiseStep:
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
         features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(
-            structure_6b8x, noise_level=0
-        )
+        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
         output = boltz2_wrapper.denoise_step(
             features,
             noisy_coords,
