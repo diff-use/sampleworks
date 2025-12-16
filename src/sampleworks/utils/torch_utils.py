@@ -2,7 +2,13 @@
 Utility functions for working with PyTorch tensors and devices.
 """
 
+from typing import Any
+
+import numpy as np
 import torch
+
+from sampleworks import should_check_nans
+from sampleworks.utils import do_nothing
 
 
 DeviceLikeType = str | torch.device | int
@@ -14,7 +20,7 @@ def try_gpu():
     Returns
     -------
     torch.device
-        GPU with most available memory, or the CPU if no GPUs are available.
+        GPU with the most available memory, or the CPU if no GPUs are available.
     """
     import os
     import subprocess
@@ -31,9 +37,7 @@ def try_gpu():
             StringIO(gpu_stats_str), names=["memory.used", "memory.free"], skiprows=1
         )
         print(f"GPU usage:\n{gpu_df}")
-        gpu_df["memory.free"] = gpu_df["memory.free"].map(
-            lambda x: int(x.rstrip(" [MiB]"))
-        )
+        gpu_df["memory.free"] = gpu_df["memory.free"].map(lambda x: int(x.rstrip(" [MiB]")))
         if gpu_df.empty:
             print("No GPUs found.")
             return torch.device("cpu")
@@ -64,9 +68,7 @@ def try_gpu():
         return torch.device("cpu")
 
 
-def send_tensors_in_dict_to_device(
-    d: dict, device: DeviceLikeType, inplace: bool = True
-) -> dict:
+def send_tensors_in_dict_to_device(d: dict, device: DeviceLikeType, inplace: bool = True) -> dict:
     """Recursively sends all torch.Tensors in a dictionary to a specified device.
 
     Parameters
@@ -90,9 +92,7 @@ def send_tensors_in_dict_to_device(
         if isinstance(value, torch.Tensor):
             result[key] = value.to(device)
         elif isinstance(value, dict):
-            result[key] = send_tensors_in_dict_to_device(
-                value, device=device, inplace=inplace
-            )
+            result[key] = send_tensors_in_dict_to_device(value, device=device, inplace=inplace)
         elif isinstance(value, list | tuple):
             result[key] = type(value)(
                 send_tensors_in_dict_to_device(item, device=device, inplace=inplace)
@@ -105,3 +105,47 @@ def send_tensors_in_dict_to_device(
         else:
             result[key] = value
     return result
+
+
+def _assert_no_nans(x: Any, *, msg: str = "", fail_if_not_tensor: bool = False) -> None:
+    """Recursively checks for NaN values in tensor-like objects.
+
+    Args:
+        - x (Any): Input to check for NaNs. Can be a tensor, dict, list, tuple, or other type.
+        - msg (str): Prefix for error messages.
+        - fail_if_not_tensor (bool): If True, raises error for non-tensor types.
+    """
+    if isinstance(x, torch.Tensor):
+        torch._assert(
+            not torch.isnan(x).any(),
+            ": ".join(filter(bool, [msg, "Tensor contains NaNs!"])),
+        )
+    elif isinstance(x, np.ndarray):
+        torch._assert(
+            not np.isnan(x).any(),
+            ": ".join(filter(bool, [msg, "Numpy array contains NaNs!"])),
+        )
+    elif isinstance(x, float):
+        torch._assert(
+            not np.isnan(x),
+            ": ".join(filter(bool, [msg, "float is NaN!"])),
+        )
+    elif isinstance(x, dict):
+        for k, v in x.items():
+            _assert_no_nans(
+                v,
+                msg=".".join(filter(bool, [msg, k])),
+                fail_if_not_tensor=fail_if_not_tensor,
+            )
+    elif isinstance(x, (list, tuple)):
+        for idx, v in enumerate(x):
+            _assert_no_nans(
+                v,
+                msg=".".join(filter(bool, [msg, str(idx)])),
+                fail_if_not_tensor=fail_if_not_tensor,
+            )
+    elif fail_if_not_tensor:
+        raise ValueError(f"Unsupported type: {type(x)}")
+
+
+assert_no_nans = _assert_no_nans if should_check_nans else do_nothing
