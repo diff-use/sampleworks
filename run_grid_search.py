@@ -89,9 +89,7 @@ def get_job_status(job: JobConfig) -> str:
             log_content = f.read()
 
         has_error = (
-            "Traceback" in log_content
-            or "AssertionError" in log_content
-            or "Error:" in log_content
+            "Traceback" in log_content or "AssertionError" in log_content or "Error:" in log_content
         )
         if has_error:
             return "failed"
@@ -127,6 +125,8 @@ def get_pixi_env(model: str) -> str:
         return "boltz"
     elif model == "protenix":
         return "protenix"
+    elif model == "rf3":
+        return "rf3"
     else:
         raise ValueError(f"Unknown model: {model}")
 
@@ -138,6 +138,8 @@ def get_checkpoint(model: str, args: argparse.Namespace) -> str | None:
         return args.boltz2_checkpoint
     elif model == "protenix":
         return args.protenix_checkpoint
+    elif model == "rf3":
+        return args.rf3_checkpoint
     return None
 
 
@@ -389,8 +391,7 @@ def run_grid_search(
                         else:
                             failed += 1
                             log.info(
-                                f"FAILED (GPU {gpu}, exit={result.exit_code}): "
-                                f"{result.log_path}"
+                                f"FAILED (GPU {gpu}, exit={result.exit_code}): {result.log_path}"
                             )
                     except Exception as e:
                         failed += 1
@@ -477,9 +478,7 @@ def parse_args() -> argparse.Namespace:
         help="CSV file with columns: structure,density,resolution,name",
     )
 
-    parser.add_argument(
-        "--models", default="boltz2 protenix", help="Space-separated models"
-    )
+    parser.add_argument("--models", default="boltz2 protenix", help="Space-separated models")
     parser.add_argument(
         "--scalers", default="pure_guidance fk_steering", help="Space-separated scalers"
     )
@@ -496,9 +495,7 @@ def parse_args() -> argparse.Namespace:
         default="20",
         help="Space-separated GD steps (FK steering only)",
     )
-    parser.add_argument(
-        "--output-dir", default="./grid_search_results", help="Output directory"
-    )
+    parser.add_argument("--output-dir", default="./grid_search_results", help="Output directory")
 
     parser.add_argument(
         "--boltz1-checkpoint",
@@ -510,8 +507,11 @@ def parse_args() -> argparse.Namespace:
         default=os.path.expanduser("~/.boltz/boltz2_conf.ckpt"),
         help="Boltz2 checkpoint path",
     )
+    parser.add_argument("--protenix-checkpoint", default="", help="Protenix checkpoint path")
     parser.add_argument(
-        "--protenix-checkpoint", default="", help="Protenix checkpoint path"
+        "--rf3-checkpoint",
+        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt",
+        help="RF3 checkpoint path",
     )
     parser.add_argument(
         "--methods",
@@ -519,12 +519,8 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated methods for Boltz2",
     )
 
-    parser.add_argument(
-        "--num-particles", type=int, default=3, help="FK steering: num particles"
-    )
-    parser.add_argument(
-        "--fk-lambda", type=float, default=0.5, help="FK steering: lambda"
-    )
+    parser.add_argument("--num-particles", type=int, default=3, help="FK steering: num particles")
+    parser.add_argument("--fk-lambda", type=float, default=0.5, help="FK steering: lambda")
     parser.add_argument(
         "--fk-resampling-interval",
         type=int,
@@ -535,32 +531,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--partial-diffusion-step", type=int, default=0, help="Partial diffusion step"
     )
-    parser.add_argument(
-        "--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss"
-    )
-    parser.add_argument(
-        "--use-tweedie", action="store_true", help="Use Tweedie (pure guidance)"
-    )
+    parser.add_argument("--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss")
+    parser.add_argument("--use-tweedie", action="store_true", help="Use Tweedie (pure guidance)")
     parser.add_argument(
         "--gradient-normalization",
         action="store_true",
         help="Enable gradient normalization",
     )
-    parser.add_argument(
-        "--augmentation", action="store_true", help="Enable augmentation"
-    )
-    parser.add_argument(
-        "--align-to-input", action="store_true", help="Align to input structure"
-    )
+    parser.add_argument("--augmentation", action="store_true", help="Enable augmentation")
+    parser.add_argument("--align-to-input", action="store_true", help="Align to input structure")
 
     parser.add_argument(
         "--max-parallel",
         default="auto",
         help="Max parallel jobs (default: auto = number of GPUs)",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print commands without executing"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Print commands without executing")
 
     parser.add_argument(
         "--force-all",
@@ -615,8 +601,7 @@ def main():
     not_run_count = sum(1 for s in job_statuses.values() if s == "not_run")
 
     log.info(
-        f"Status: {successful_count} successful, {failed_count} failed, "
-        f"{not_run_count} not run"
+        f"Status: {successful_count} successful, {failed_count} failed, {not_run_count} not run"
     )
 
     if args.force_all:
@@ -627,13 +612,9 @@ def main():
         log.info(f"Running only failed jobs (--only-failed): {len(filtered_jobs)} jobs")
     elif args.only_missing:
         filtered_jobs = [job for job in jobs if job_statuses[id(job)] == "not_run"]
-        log.info(
-            f"Running only un-run jobs (--only-missing): {len(filtered_jobs)} jobs"
-        )
+        log.info(f"Running only un-run jobs (--only-missing): {len(filtered_jobs)} jobs")
     else:
-        filtered_jobs = [
-            job for job in jobs if job_statuses[id(job)] in ("failed", "not_run")
-        ]
+        filtered_jobs = [job for job in jobs if job_statuses[id(job)] in ("failed", "not_run")]
         log.info(f"Running failed and un-run jobs (default): {len(filtered_jobs)} jobs")
 
     if len(filtered_jobs) == 0:

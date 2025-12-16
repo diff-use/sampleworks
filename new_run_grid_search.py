@@ -87,6 +87,8 @@ def get_pixi_env(model: str) -> str:
         return "boltz"
     elif model == "protenix":
         return "protenix"
+    elif model == "rf3":
+        return "rf3"
     else:
         raise ValueError(f"Unknown model: {model}")
 
@@ -469,6 +471,11 @@ def parse_args() -> argparse.Namespace:
         help="Boltz2 checkpoint path",
     )
     parser.add_argument("--protenix-checkpoint", default="", help="Protenix checkpoint path")
+    parser.add_argument(
+        "--rf3-checkpoint",
+        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt",
+        help="RF3 checkpoint path",
+    )
     parser.add_argument(
         "--methods",
         default="MD,X-RAY DIFFRACTION",
