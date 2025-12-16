@@ -7,22 +7,19 @@ import concurrent
 import csv
 import json
 import multiprocessing
-
 import os
 import pickle
 import shutil
 import subprocess
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor  # pyright: ignore
 from dataclasses import asdict, dataclass
-from datetime import datetime
-from loguru import logger as log
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from loguru import logger as log
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
-from sampleworks.utils.checkpoint_utils import get_checkpoint
 
 
 @dataclass
@@ -54,9 +51,7 @@ def get_job_status(job: JobConfig) -> str:
             log_content = f.read()
 
         has_error = (
-            "Traceback" in log_content
-            or "AssertionError" in log_content
-            or "Error:" in log_content
+            "Traceback" in log_content or "AssertionError" in log_content or "Error:" in log_content
         )
         if has_error:
             return "failed"
@@ -97,12 +92,15 @@ def get_pixi_env(model: str) -> str:
 
 
 def build_args_for_process_pool(
-        job: JobConfig, args: argparse.Namespace, device_num: int | None = None
+    job: JobConfig, args: argparse.Namespace, device_num: int | None = None
 ) -> GuidanceConfig:
     guidance_config = GuidanceConfig(
         protein=job.protein,
         structure=job.structure_path,
         density=job.density_path,
+        model=job.model,
+        guidance_type=job.scaler,
+        log_path=job.log_path,
         output_dir=job.output_dir,
         loss_order=args.loss_order,
         partial_diffusion_step=args.partial_diffusion_step,
@@ -111,9 +109,6 @@ def build_args_for_process_pool(
         gradient_normalization=args.gradient_normalization,
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
-        model=job.model,
-        guidance_type=job.scaler,
-        log_path=job.log_path,
     )
     # given model_type and guidance_type, the GuidanceConfig class will set itself up
     # with defaults for remaining required args, but we want to set them further here.
@@ -148,9 +143,10 @@ def run_grid_search(
     log.info(f"Running {len(jobs)} jobs with {max_workers} parallel workers")
 
     # Divide the job among the workers:
-    worker_job_queues = [[build_args_for_process_pool(j, args, i)
-                          for j in jobs[i::max_workers]]
-                              for i in range(max_workers)]
+    worker_job_queues = [
+        [build_args_for_process_pool(j, args, i) for j in jobs[i::max_workers]]
+        for i in range(max_workers)
+    ]
     # we'll pickle each job queue separately and then execute each job queue in a separate process
     # in principle we could just pass the job queue directly to the worker_wrapper function, but
     # this keeps a record of what we did, which may be useful for debugging.
@@ -188,12 +184,11 @@ def run_grid_search(
         for worker_num, job_queue_path in enumerate(job_queue_paths):
             model = worker_job_queues[worker_num][0].model
             future = executor.submit(
-                run_guidance_queue_script,
-                (job_queue_path, max_workers, model, worker_num)
+                run_guidance_queue_script, (job_queue_path, max_workers, model, worker_num)
             )
             futures[future] = job_queue_path
 
-        for completed in concurrent.futures.as_completed(futures):
+        for completed in concurrent.futures.as_completed(futures):  # pyright: ignore
             try:
                 with open(futures[completed].replace(".pkl", ".results.pkl"), "rb") as f:
                     result = pickle.load(f)
@@ -225,11 +220,7 @@ def run_guidance_queue_script(args: tuple[str, int, str, int]):
     cmd = f"pixi run -e {pixi_env} python {script_path} --job-queue-path {job_queue_path}"
     cmd = cmd.split()
     log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
-    #env = os.environ.copy()
-
-    # FIXME This intermittently fails with torch claiming the device isn't specified correctly
-    #env["CUDA_VISIBLE_DEVICES"] = f"{worker_num % max_workers}"
-    #log.debug(f"Env for hypothetical device {worker_num % max_workers}: {env}")
+    # env = os.environ.copy()
 
     with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
         result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT)
@@ -306,7 +297,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
         protein_name = protein["name"].strip()
 
         for model in models:
-            model_methods = methods if model == "boltz2" else []
+            model_methods = methods if model == "boltz2" else [None]
 
             for method in model_methods:
                 method_suffix = f"_{method.replace(' ', '_')}" if method else ""
@@ -448,9 +439,7 @@ def parse_args() -> argparse.Namespace:
         help="CSV file with columns: structure,density,resolution,name",
     )
 
-    parser.add_argument(
-        "--models", default="boltz2 protenix", help="Space-separated models"
-    )
+    parser.add_argument("--models", default="boltz2 protenix", help="Space-separated models")
     parser.add_argument(
         "--scalers", default="pure_guidance fk_steering", help="Space-separated scalers"
     )
@@ -467,9 +456,7 @@ def parse_args() -> argparse.Namespace:
         default="20",
         help="Space-separated GD steps (FK steering only)",
     )
-    parser.add_argument(
-        "--output-dir", default="./grid_search_results", help="Output directory"
-    )
+    parser.add_argument("--output-dir", default="./grid_search_results", help="Output directory")
 
     parser.add_argument(
         "--boltz1-checkpoint",
@@ -481,21 +468,15 @@ def parse_args() -> argparse.Namespace:
         default=os.path.expanduser("~/.boltz/boltz2_conf.ckpt"),
         help="Boltz2 checkpoint path",
     )
-    parser.add_argument(
-        "--protenix-checkpoint", default="", help="Protenix checkpoint path"
-    )
+    parser.add_argument("--protenix-checkpoint", default="", help="Protenix checkpoint path")
     parser.add_argument(
         "--methods",
         default="MD,X-RAY DIFFRACTION",
         help="Comma-separated methods for Boltz2",
     )
 
-    parser.add_argument(
-        "--num-particles", type=int, default=3, help="FK steering: num particles"
-    )
-    parser.add_argument(
-        "--fk-lambda", type=float, default=0.5, help="FK steering: lambda"
-    )
+    parser.add_argument("--num-particles", type=int, default=3, help="FK steering: num particles")
+    parser.add_argument("--fk-lambda", type=float, default=0.5, help="FK steering: lambda")
     parser.add_argument(
         "--fk-resampling-interval",
         type=int,
@@ -506,32 +487,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--partial-diffusion-step", type=int, default=0, help="Partial diffusion step"
     )
-    parser.add_argument(
-        "--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss"
-    )
-    parser.add_argument(
-        "--use-tweedie", action="store_true", help="Use Tweedie (pure guidance)"
-    )
+    parser.add_argument("--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss")
+    parser.add_argument("--use-tweedie", action="store_true", help="Use Tweedie (pure guidance)")
     parser.add_argument(
         "--gradient-normalization",
         action="store_true",
         help="Enable gradient normalization",
     )
-    parser.add_argument(
-        "--augmentation", action="store_true", help="Enable augmentation"
-    )
-    parser.add_argument(
-        "--align-to-input", action="store_true", help="Align to input structure"
-    )
+    parser.add_argument("--augmentation", action="store_true", help="Enable augmentation")
+    parser.add_argument("--align-to-input", action="store_true", help="Align to input structure")
 
     parser.add_argument(
         "--max-parallel",
         default="auto",
         help="Max parallel jobs (default: auto = number of GPUs)",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print commands without executing"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Print commands without executing")
 
     parser.add_argument(
         "--force-all",
@@ -584,8 +555,7 @@ def generate_and_filter_jobs(args: argparse.Namespace) -> tuple[list[JobConfig],
     not_run_count = sum(1 for s in job_statuses.values() if s == "not_run")
 
     log.info(
-        f"Status: {successful_count} successful, {failed_count} failed, "
-        f"{not_run_count} not run"
+        f"Status: {successful_count} successful, {failed_count} failed, {not_run_count} not run"
     )
 
     if args.force_all:
@@ -596,13 +566,9 @@ def generate_and_filter_jobs(args: argparse.Namespace) -> tuple[list[JobConfig],
         log.info(f"Running only failed jobs (--only-failed): {len(filtered_jobs)} jobs")
     elif args.only_missing:
         filtered_jobs = [job for job in jobs if job_statuses[id(job)] == "not_run"]
-        log.info(
-            f"Running only un-run jobs (--only-missing): {len(filtered_jobs)} jobs"
-        )
+        log.info(f"Running only un-run jobs (--only-missing): {len(filtered_jobs)} jobs")
     else:
-        filtered_jobs = [
-            job for job in jobs if job_statuses[id(job)] in ("failed", "not_run")
-        ]
+        filtered_jobs = [job for job in jobs if job_statuses[id(job)] in ("failed", "not_run")]
         log.info(f"Running failed and un-run jobs (default): {len(filtered_jobs)} jobs")
     return filtered_jobs, job_statuses
 

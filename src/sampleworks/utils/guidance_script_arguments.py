@@ -4,10 +4,14 @@ import argparse
 from dataclasses import dataclass
 from typing import Any
 
-from sampleworks.utils.guidance_constants import (
-    PURE_GUIDANCE, FK_STEERING, BOLTZ_2, PROTENIX, BOLTZ_1
-)
 from sampleworks.utils.checkpoint_utils import get_checkpoint
+from sampleworks.utils.guidance_constants import (
+    BOLTZ_1,
+    BOLTZ_2,
+    FK_STEERING,
+    PROTENIX,
+    PURE_GUIDANCE,
+)
 
 
 @dataclass
@@ -17,31 +21,32 @@ class GuidanceConfig:
     Class to hold guidance config arguments, compatible with argparse, but which
     also can do some basic validation.
     """
+
     # add basic arguments by default.
     protein: str
     structure: str  # actually a path to a structure file
     density: str
+    model: str
+    guidance_type: str
+    log_path: str
     output_dir: str = "output"
     partial_diffusion_step: int = 0
     loss_order: int = 2
-    resolution: float = None
-    device: str = None
+    resolution: float | None = None
+    device: str = ""
     gradient_normalization: bool = False
     em: bool = False
     guidance_start: int = -1
     augmentation: bool = False
     align_to_input: bool = False
-    model: str = None
-    guidance_type: str = None
-    log_path: str = None
 
     # DO NOT remove the **kwargs, it is for compatibility with argparse.
     def add_argument(self, name: str, default: Any = None, **kwargs):
-        """ Add an argument to the guidance config, in a form compatible with argparse """
+        """Add an argument to the guidance config, in a form compatible with argparse"""
         setattr(self, name.lstrip("-").replace("-", "_"), default)
 
     def __post_init__(self):
-        """ Set up guidance config for a given model and guidance type """
+        """Set up guidance config for a given model and guidance type"""
         if self.guidance_type == PURE_GUIDANCE:
             add_pure_guidance_args(self)
         elif self.guidance_type == FK_STEERING:
@@ -76,32 +81,24 @@ class GuidanceConfig:
             self.ensemble_size = job.ensemble_size
 
 
-
-
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--structure", type=str, required=True, help="Input structure")
     parser.add_argument("--density", type=str, required=True, help="Input density map")
-    parser.add_argument(
-        "--output-dir", type=str, default="output", help="Output directory"
-    )
+    parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
     parser.add_argument(
         "--partial-diffusion-step",
         type=int,
         default=0,
         help="Diffusion step to start from",
     )
-    parser.add_argument(
-        "--loss-order", type=int, default=2, choices=[1, 2], help="L1 or L2 loss"
-    )
+    parser.add_argument("--loss-order", type=int, default=2, choices=[1, 2], help="L1 or L2 loss")
     parser.add_argument(
         "--resolution",
         type=float,
         required=True,
         help="Map resolution in Angstroms (required for CCP4/MRC/MAP)",
     )
-    parser.add_argument(
-        "--device", type=str, default=None, help="Device (cuda/cpu, auto-detect)"
-    )
+    parser.add_argument("--device", type=str, default=None, help="Device (cuda/cpu, auto-detect)")
     parser.add_argument(
         "--gradient-normalization",
         action="store_true",
@@ -124,6 +121,12 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
         action="store_true",
         help="Enable alignment to input",
     )
+    parser.add_argument(
+        "--ensemble-size",
+        type=int,
+        default=4,
+        help="Ensemble size to generate (per particle for FK-steering)",
+    )
 
 
 ######################
@@ -134,14 +137,7 @@ def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--use-tweedie",
         action="store_true",
-        help="Use Tweedie's formula for gradient computation "
-             "(enables augmentation/alignment)",
-    )
-    parser.add_argument(
-        "--ensemble-size",
-        type=int,
-        default=1,
-        help="Number of ensemble members to generate",
+        help="Use Tweedie's formula for gradient computation (enables augmentation/alignment)",
     )
 
 
@@ -151,14 +147,6 @@ def add_fk_steering_args(parser: argparse.ArgumentParser | GuidanceConfig):
         type=int,
         default=3,
         help="Number of particles for FK steering",
-    )
-    # TODO: k.chrispens, is --ensemble-size actually the same as for pure guidance?,
-    #  should we move it to generic args?
-    parser.add_argument(
-        "--ensemble-size",
-        type=int,
-        default=4,
-        help="Ensemble size per particle",
     )
     parser.add_argument(
         "--fk-resampling-interval",

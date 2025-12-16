@@ -2,16 +2,16 @@
 Run pure guidance with real-space density reward on the Boltz2 model.
 """
 
-from sampleworks.utils.guidance_constants import PURE_GUIDANCE, BOLTZ_2
-from sampleworks.utils.guidance_script_utils import run_guidance, get_model_and_device
+from sampleworks.utils.guidance_constants import BOLTZ_2, PURE_GUIDANCE
 from sampleworks.utils.guidance_script_arguments import parse_boltz2_pure_guidance_args
+from sampleworks.utils.guidance_script_utils import get_model_and_device, run_guidance
 
 
 def main(args):
-
-    # new (old?)-fangled way to get the model wrapper that makes it easier to work with process pools.
-    device, model_wrapper = get_model_and_device("", args.model_checkpoint, BOLTZ_2, method=args.method)
-    run_guidance(args, PURE_GUIDANCE, device, model_wrapper)
+    device, model_wrapper = get_model_and_device(
+        "", args.model_checkpoint, BOLTZ_2, method=args.method
+    )
+    run_guidance(args, PURE_GUIDANCE, model_wrapper, device)
 
 
 if __name__ == "__main__":
