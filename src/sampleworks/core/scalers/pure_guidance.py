@@ -147,7 +147,7 @@ class PureGuidance:
             ),
         )
 
-         # TODO: this is not generalizable currently, figure this out
+        # TODO: this is not generalizable currently, figure this out
         if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
             atom_array = features["true_atom_array"]
         else:
@@ -368,6 +368,6 @@ class PureGuidance:
     def __del__(self):
         logger.debug("Resetting model wrapper cached representations before deleting scaler.")
         if hasattr(self.model_wrapper, "cached_representations"):
-            self.model_wrapper.cached_representations = {}  # see boltz.wrapper L201
+            self.model_wrapper.cached_representations = {}  # pyright: ignore[reportAttributeAccessIssue] # see boltz.wrapper L201
         # if there are other reset tasks, they can be added here
         logger.debug("PureGuidance scaler deleted.")
