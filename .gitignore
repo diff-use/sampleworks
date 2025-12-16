@@ -222,3 +222,4 @@ release_data/
 
 # Large results from runs
 grid_search_results/
+outputs/
