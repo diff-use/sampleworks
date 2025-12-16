@@ -1,5 +1,7 @@
 """Utility functions and helpers for sampleworks."""
 
+from typing import Any
+
 from sampleworks.utils.imports import (
     BOLTZ_AVAILABLE,
     check_any_model_available,
