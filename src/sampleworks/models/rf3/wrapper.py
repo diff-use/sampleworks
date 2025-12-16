@@ -147,6 +147,11 @@ class RF3Wrapper:
         dict[str, Any]
             RF3 input features.
         """
+
+        # If featurize is called again, we should clear cached representations
+        # to avoid using stale data
+        self.cached_representations.clear()
+
         if "asym_unit" not in structure:
             raise ValueError("structure must contain 'asym_unit' key")
 
@@ -201,7 +206,8 @@ class RF3Wrapper:
             InferenceInput, input_batch[0]
         )  # since we're not batching, the loader returns a list of length 1
 
-        pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # type: ignore (Hydra instantiation of pipeline means it is going to be hard to type check here)
+        # (Hydra instantiation of pipeline means it is going to be hard to type check here)
+        pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # type: ignore
         pipeline_output = trainer.fabric.to_device(pipeline_output)
 
         example = pipeline_output[0] if not isinstance(pipeline_output, dict) else pipeline_output
@@ -313,11 +319,11 @@ class RF3Wrapper:
         outputs = self.cached_representations
 
         if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
+            noisy_coords = torch.tensor(noisy_coords, device=self.device)
 
         with (
             torch.set_grad_enabled(grad_needed),
-            torch.autocast("cuda", dtype=torch.bfloat16),
+            torch.autocast("cuda", dtype=torch.float32),
         ):  # TODO: this will require new GPUs and new CUDA for now, may want to fix?
             if "t_hat" in kwargs and "eps" in kwargs:
                 t_hat = kwargs["t_hat"]
@@ -332,11 +338,9 @@ class RF3Wrapper:
             noisy_coords_eps = noisy_coords + eps
 
             batch_size = noisy_coords_eps.shape[0]
-            t_tensor = torch.full(
-                (batch_size,), t_hat, device=self.device, dtype=noisy_coords.dtype
-            )
+            t_tensor = torch.full((batch_size,), t_hat, device=self.device)
 
-            atom_coords_denoised = self._inner_model.diffusion_module(
+            atom_coords_denoised: torch.Tensor = self._inner_model.diffusion_module(
                 X_noisy_L=noisy_coords_eps,
                 t=t_tensor,
                 f=outputs["features"],
@@ -345,7 +349,7 @@ class RF3Wrapper:
                 Z_trunk_II=outputs["z_trunk"],
             )
 
-        return {"atom_coords_denoised": atom_coords_denoised}
+        return {"atom_coords_denoised": atom_coords_denoised.float()}
 
     def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
         """Return the full noise schedule with semantic keys.
