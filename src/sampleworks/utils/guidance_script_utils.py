@@ -18,7 +18,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
-from sampleworks.utils.guidance_constants import BOLTZ_1, BOLTZ_2
+from sampleworks.utils.guidance_constants import BOLTZ_1, BOLTZ_2, FK_STEERING, PURE_GUIDANCE
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 
 
@@ -32,7 +32,11 @@ try:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
 except ImportError:
     logger.warning("Failed to import Protenix, hopefully you're running a different model")
-from sampleworks.utils.guidance_constants import FK_STEERING, PURE_GUIDANCE
+try:
+    from sampleworks.models.rf3.wrapper import RF3Wrapper
+except ImportError:
+    RF3Wrapper = None
+    logger.warning("Failed to import RF3, hopefully you're running a different model")
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -154,8 +158,17 @@ def get_model_and_device(
             method=method.upper(),
             model=model,
         )
+    elif model_type == "rf3":
+        if RF3Wrapper is None:
+            raise ImportError("RF3 dependencies not installed")
+        model_wrapper = RF3Wrapper(
+            checkpoint_path=model_checkpoint_path,
+        )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
+
+    # RF3 currently manages its own device; prefer that when available.
+    device = getattr(model_wrapper, "device", device)
 
     # (pyright doesn't think Boltz1Wrapper etc are "Any")
     return (device, model_wrapper)  # pyright: ignore
@@ -309,6 +322,7 @@ def _run_guidance(
         logger.info(f"Running pure guidance using model with hash {model_wrapper.model.__hash__()}")
         refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
             structure,
+            msa_path=getattr(args, "msa_path", None),
             guidance_start=args.guidance_start,
             step_size=args.step_size,
             gradient_normalization=args.gradient_normalization,
@@ -328,6 +342,7 @@ def _run_guidance(
         logger.info("Running FK steering")
         refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
             structure,
+            msa_path=getattr(args, "msa_path", None),
             num_particles=args.num_particles,
             ensemble_size=args.ensemble_size,
             fk_resampling_interval=args.fk_resampling_interval,
