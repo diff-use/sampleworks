@@ -12,4 +12,6 @@ def get_checkpoint(model: str, args: argparse.Namespace) -> str | None:
         return args.boltz2_checkpoint
     elif model == "protenix":
         return args.protenix_checkpoint
+    elif model == "rf3":
+        return args.rf3_checkpoint
     return None
