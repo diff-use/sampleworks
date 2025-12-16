@@ -10,11 +10,6 @@ import torch
 from sampleworks import should_check_nans
 
 
-def do_nothing(*args: Any, **kwargs: Any) -> None:
-    """Does nothing, just returns None"""
-    pass
-
-
 DeviceLikeType = str | torch.device | int
 
 
