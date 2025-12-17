@@ -50,15 +50,11 @@ def structure_6b8x(resources_dir: Path) -> dict:
     return parse(resources_dir / "6b8x" / "6b8x_final.pdb", ccd_mirror_path=None)
 
 
-@pytest.fixture(
-    scope="session", params=["1vme_final.cif", "6b8x_final.pdb"], ids=["cif", "pdb"]
-)
+@pytest.fixture(scope="session", params=["1vme_final.cif", "6b8x_final.pdb"], ids=["cif", "pdb"])
 def test_structure(request, resources_dir: Path) -> dict:
     # this requires the 1st 4 characters of the filename to match the folder name,
     # so PDB IDs need to be matching case
-    return parse(
-        resources_dir / request.param[:4] / request.param, ccd_mirror_path=None
-    )
+    return parse(resources_dir / request.param[:4] / request.param, ccd_mirror_path=None)
 
 
 @pytest.fixture(scope="session")
@@ -90,9 +86,7 @@ def boltz2_checkpoint_path() -> Path:
 def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
     if not BOLTZ_AVAILABLE:
         pytest.skip("Boltz dependencies not installed in this environment")
-    predict_args = PredictArgs(
-        recycling_steps=1, sampling_steps=10, diffusion_samples=1
-    )
+    predict_args = PredictArgs(recycling_steps=1, sampling_steps=10, diffusion_samples=1)
     return Boltz1Wrapper(
         checkpoint_path=boltz1_checkpoint_path,
         use_msa_server=True,
@@ -105,9 +99,7 @@ def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
 def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device):
     if not BOLTZ_AVAILABLE:
         pytest.skip("Boltz dependencies not installed in this environment")
-    predict_args = PredictArgs(
-        recycling_steps=1, sampling_steps=10, diffusion_samples=1
-    )
+    predict_args = PredictArgs(recycling_steps=1, sampling_steps=10, diffusion_samples=1)
     return Boltz2Wrapper(
         checkpoint_path=boltz2_checkpoint_path,
         use_msa_server=True,
@@ -120,10 +112,7 @@ def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device):
 def protenix_checkpoint_path() -> Path:
     if not PROTENIX_AVAILABLE:
         pytest.skip("Protenix dependencies not installed in this environment")
-    path = (
-        Path(getsitepackages()[0])
-        / "release_data/checkpoint/protenix_base_default_v0.5.0.pt"
-    )
+    path = Path(getsitepackages()[0]) / "release_data/checkpoint/protenix_base_default_v0.5.0.pt"
     if not path.exists():
         pytest.skip(f"Protenix checkpoint not found at {path}")
     return path
@@ -143,23 +132,18 @@ def protenix_wrapper(protenix_checkpoint_path: Path, device: torch.device):
 def rf3_checkpoint_path() -> Path:
     if not RF3_AVAILABLE:
         pytest.skip("RF3 dependencies not installed in this environment")
-    path = Path(
-        "~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt"
-    ).expanduser()
+    path = Path("~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt").expanduser()
     if not path.exists():
         pytest.skip(f"RF3 checkpoint not found at {path}")
     return path
 
 
 @pytest.fixture(scope="session")
-def rf3_wrapper(rf3_checkpoint_path: Path, device: torch.device):
+def rf3_wrapper(rf3_checkpoint_path: Path):  # will run on Fabric device
     if not RF3_AVAILABLE:
         pytest.skip("RF3 dependencies not installed in this environment")
     return RF3Wrapper(
         checkpoint_path=rf3_checkpoint_path,
-        device=device,
-        num_steps=10,
-        n_recycles=1,
     )
 
 
@@ -176,9 +160,7 @@ def density_map_1vme(resources_dir: Path):
         XMap,
     )
 
-    map_path = (
-        resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4"
-    )
+    map_path = resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4"
     if not map_path.exists():
         pytest.skip(f"Density map not found at {map_path}")
     return XMap.fromfile(str(map_path), resolution=1.8)
@@ -193,9 +175,7 @@ def structure_1vme_density(resources_dir: Path):
 
 
 @pytest.fixture(scope="session")
-def reward_function_1vme(
-    density_map_1vme, structure_1vme_density, device: torch.device
-):
+def reward_function_1vme(density_map_1vme, structure_1vme_density, device: torch.device):
     from sampleworks.core.rewards.real_space_density import (
         RewardFunction,
         setup_scattering_params,
