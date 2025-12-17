@@ -227,18 +227,6 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
         help="Path to RF3 checkpoint",
     )
     parser.add_argument(
-        "--num-steps",
-        type=int,
-        default=200,
-        help="Number of diffusion steps for RF3",
-    )
-    parser.add_argument(
-        "--n-recycles",
-        type=int,
-        default=10,
-        help="Number of recycling iterations for RF3 trunk",
-    )
-    parser.add_argument(
         "--msa-path",
         type=str,
         default=None,

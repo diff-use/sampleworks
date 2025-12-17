@@ -2,13 +2,8 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING, TypeVar
+from typing import Any, TypeVar
 
-
-if TYPE_CHECKING:
-    from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
-    from sampleworks.models.protenix.wrapper import ProtenixWrapper
-    from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 BOLTZ_AVAILABLE = False
 PROTENIX_AVAILABLE = False
@@ -64,9 +59,7 @@ def require_boltz(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
-    default_message = (
-        "Boltz model wrapper is not available. Install with: pixi install -e boltz"
-    )
+    default_message = "Boltz model wrapper is not available. Install with: pixi install -e boltz"
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -110,8 +103,7 @@ def require_protenix(message: str | None = None) -> Callable[[F], F]:
     ...     pass
     """
     default_message = (
-        "Protenix model wrapper is not available. "
-        "Install with: pixi install -e protenix"
+        "Protenix model wrapper is not available. Install with: pixi install -e protenix"
     )
 
     def decorator(func: F) -> F:
@@ -155,9 +147,7 @@ def require_rf3(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
-    default_message = (
-        "RF3 model wrapper is not available. Install with: pixi install -e rf3"
-    )
+    default_message = "RF3 model wrapper is not available. Install with: pixi install -e rf3"
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -259,8 +249,7 @@ def check_protenix_available(message: str | None = None) -> None:
     """
     if not PROTENIX_AVAILABLE:
         default_message = (
-            "Protenix model wrapper is not available. "
-            "Install with: pixi install -e protenix"
+            "Protenix model wrapper is not available. Install with: pixi install -e protenix"
         )
         raise ImportError(message or default_message)
 
@@ -279,9 +268,7 @@ def check_rf3_available(message: str | None = None) -> None:
         If RF3 model wrapper is not available.
     """
     if not RF3_AVAILABLE:
-        default_message = (
-            "RF3 model wrapper is not available. Install with: pixi install -e rf3"
-        )
+        default_message = "RF3 model wrapper is not available. Install with: pixi install -e rf3"
         raise ImportError(message or default_message)
 
 
