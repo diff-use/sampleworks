@@ -36,18 +36,12 @@ class RF3Wrapper:
     def __init__(
         self,
         checkpoint_path: str | Path,
-        num_steps: int = 200,
-        n_recycles: int = 10,
     ):
         """
         Parameters
         ----------
         checkpoint_path: str | Path
             Filesystem path to the checkpoint containing trained weights.
-        num_steps: int, optional
-            Number of diffusion sampling steps (default 50).
-        n_recycles: int, optional
-            Number of recycling iterations (default 10).
         """
         logger: Logger = getLogger(__name__)
         logger.info("Loading RF3 Inference Engine")
@@ -57,14 +51,16 @@ class RF3Wrapper:
             if isinstance(checkpoint_path, str)
             else checkpoint_path.expanduser().resolve()
         )
-        self.num_steps = num_steps
-        self.n_recycles = n_recycles
+
+        # TODO: expose num_steps, num_recycles to user
+        self.num_steps = 200  # RF3 default number of diffusion steps
+        self.num_recycles = 10  # RF3 default number of recycles
 
         self.inference_engine = RF3InferenceEngine(
             ckpt_path=str(self.checkpoint_path),
-            n_recycles=n_recycles,
+            n_recycles=self.num_recycles,
             diffusion_batch_size=1,
-            num_steps=num_steps,
+            num_steps=self.num_steps,
         )
         self.inference_engine.initialize()
 
@@ -75,7 +71,7 @@ class RF3Wrapper:
         self._device = self.inference_engine.trainer.fabric.device
 
         self.cached_representations: dict[str, Any] = {}
-        self.noise_schedule = self._compute_noise_schedule(num_steps)
+        self.noise_schedule = self._compute_noise_schedule(self.num_steps)
 
     @property
     def device(self) -> torch.device:
@@ -129,7 +125,7 @@ class RF3Wrapper:
         }
 
     def featurize(
-        self, structure: dict, msa_path: str | Path | dict | None, **kwargs: dict
+        self, structure: dict, msa_path: str | Path | dict | None = None, **kwargs: dict
     ) -> dict[str, Any]:
         """From an Atomworks structure, calculate RF3 input features.
 
@@ -248,7 +244,7 @@ class RF3Wrapper:
             RF3 model outputs including trunk representations (s_inputs, s_trunk,
             z_trunk).
         """
-        recycling_steps = kwargs.get("recycling_steps", self.n_recycles)
+        recycling_steps = kwargs.get("recycling_steps", self.num_recycles)
 
         with (
             torch.set_grad_enabled(grad_needed),
@@ -317,7 +313,7 @@ class RF3Wrapper:
             self.cached_representations = self.step(
                 features,
                 grad_needed=False,
-                recycling_steps=kwargs.get("recycling_steps", self.n_recycles),
+                recycling_steps=kwargs.get("recycling_steps", self.num_recycles),
             )
 
         outputs = self.cached_representations
