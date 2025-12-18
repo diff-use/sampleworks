@@ -332,8 +332,12 @@ def main(args: argparse.Namespace):
             ref_coords[protein_key] = protein_ref_coords
 
     # Calculate RSCC for all experiments
+<<<<<<< HEAD
     # (BIG) TODO: implement a sliding-window version (global can be achieved with
     # different selections.
+=======
+    # (BIG) TODO: implement a sliding-window version (global can be achieved with diff't selections.
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
     logger.info("Calculating RSCC values for all experiments...")
     logger.warning(
         "Note: RSCC is computed on the region around altloc residues (defined by selection)"
@@ -356,8 +360,13 @@ def main(args: argparse.Namespace):
         if _exp.protein not in ref_coords:
             logger.warning(
                 f"Skipping {_exp.protein_dir_name}: no reference structure available "
+<<<<<<< HEAD
                 f"for {_exp.protein}, this may be due to a selection with zero atoms "
                 f"or NaN/Inf coordinates. Check logs above."
+=======
+                f"for {_exp.protein}, this may be due to a selection with zero atoms or "
+                f"NaN/Inf coordinates. Check logs above."
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
             )
             continue
 
@@ -371,8 +380,13 @@ def main(args: argparse.Namespace):
 
         try:
             # TODO: we will reload these maps A LOT. Fix that by caching them somewhere?
+<<<<<<< HEAD
             # Load base map for canonical unit cell, don't extract selection as we'll use
             # the full map later too.
+=======
+            # Load base map for canonical unit cell,
+            # don't extract selection as we'll use the full map later too.
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
             if (_exp.protein, _exp.occ_a) not in base_map_cache:
                 _base_xmap = protein_config.load_map(_base_map_path)
                 if _base_xmap is None:
@@ -387,8 +401,13 @@ def main(args: argparse.Namespace):
                 )
                 base_map_cache[(_exp.protein, _exp.occ_a)] = (_base_xmap, _extracted_base)
             else:
+<<<<<<< HEAD
                 _base_map_cached, _extracted_base = base_map_cache[(_exp.protein, _exp.occ_a)]
                 _base_xmap = _base_map_cached
+=======
+                _base_xmap, _extracted_base = base_map_cache[(_exp.protein, _exp.occ_a)]
+
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
 
             # Validate extraction
             if _extracted_base is None or _extracted_base.array.size == 0:
@@ -419,7 +438,11 @@ def main(args: argparse.Namespace):
         except Exception as _e:
             logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")
             logger.error(f"  Traceback: {traceback.format_exc()}")
+<<<<<<< HEAD
             _exp.error = _e
+=======
+            _exp.error = str(_e)  # pyright: ignore[reportGeneralTypeIssues]
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
             _exp.rscc = np.nan  # this is the default, but better to be explicit.
             _exp.base_map_path = _base_map_path
 
@@ -502,11 +525,16 @@ def main(args: argparse.Namespace):
 
                     logger.info(f"  Processing occ_A={_occ_a}: {_base_map_path.name}")
 
+<<<<<<< HEAD
                     # Load the base map for this occupancy, and do the selection--
+=======
+                    # Load the base map for this occupancy, and do the selection
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
                     # default padding is zero.
                     _extracted_base = protein_config.load_map(
                         _base_map_path, selection_coords=_selection_coords
                     )
+<<<<<<< HEAD
 
                     if (
                         _extracted_base is None
@@ -514,6 +542,8 @@ def main(args: argparse.Namespace):
                         or _extracted_pure_B is None
                     ):
                         raise ValueError("One of the extracted maps is empty")
+=======
+>>>>>>> 37f4189 ([WIP] adding various lDDT metrics: for selections and residue level)
 
                     # Calculate correlations
                     _corr_base_vs_pureA = rscc(_extracted_base.array, _extracted_pure_A.array)

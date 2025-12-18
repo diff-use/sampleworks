@@ -1,5 +1,6 @@
 """
 This file originated in RosettaCommons/foundry/models/rf3 and is licensed under BSD-3-Clause.
+marcus.collins@astera.org has made additions and modifications.
 """
 
 from itertools import combinations
