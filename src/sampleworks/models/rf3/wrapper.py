@@ -18,8 +18,6 @@ from rf3.utils.inference import InferenceInput, InferenceInputDataset
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
-
 
 # TODO: This should go in some sort of atomworks utils module
 def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) -> dict:
@@ -249,8 +247,6 @@ class RF3Wrapper:
             msg=f"network_input for example_id: {pipeline_output['example_id']}",
         )
 
-        features = send_tensors_in_dict_to_device(features, self.device)
-
         return features
 
     def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
@@ -279,7 +275,7 @@ class RF3Wrapper:
         with (
             torch.set_grad_enabled(grad_needed),
             torch.autocast("cuda", dtype=torch.bfloat16),
-        ):  # TODO: this will require new GPUs and new CUDA for now, may want to fix?
+        ):  # TODO: bfloat16 will require newer GPU generations and new CUDA
             recycling_output_generator = self._inner_model.trunk_forward_with_recycling(
                 features["f"], n_recycles=recycling_steps
             )
@@ -354,7 +350,7 @@ class RF3Wrapper:
         with (
             torch.set_grad_enabled(grad_needed),
             torch.autocast("cuda", dtype=torch.float32),
-        ):  # TODO: this will require new GPUs and new CUDA for now, may want to fix?
+        ):  # TODO: bfloat16 will require newer GPU generations and new CUDA
             if "t_hat" in kwargs and "eps" in kwargs:
                 t_hat = kwargs["t_hat"]
                 eps = cast(Tensor, kwargs["eps"])
@@ -459,12 +455,11 @@ class RF3Wrapper:
 
         if coord_array.ndim == 3:
             nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
-            valid_mask = occupancy_mask & nan_mask
-            coords = asym_unit.coord[:, valid_mask]
         else:
             nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
-            valid_mask = occupancy_mask & nan_mask
-            coords = asym_unit.coord[valid_mask]
+
+        valid_mask = occupancy_mask & nan_mask
+        coords = asym_unit.coord[:, valid_mask]
 
         if isinstance(coords, np.ndarray):
             coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
