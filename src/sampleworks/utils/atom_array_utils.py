@@ -143,11 +143,15 @@ def save_structure_to_cif(
     return output_path
 
 
-def select_altloc(atom_array: AtomArray, altloc_id: str, return_full_array: bool = False) -> AtomArray:
+def select_altloc(
+        atom_array: AtomArray | AtomArrayStack,
+        altloc_id: str,
+        return_full_array: bool = False
+) -> AtomArray | AtomArrayStack:
     """Select atoms with a specific alternate location indicator (altloc).
 
     Parameters:
-        atom_array (AtomArray): The input atom array.
+        atom_array (AtomArray | AtomArrayStack): The input atom array.
         altloc_id (str): The alternate location indicator to filter by.
         return_full_array (bool, optional):
             If True, return the full atom array with, selecting atoms with either the
@@ -155,6 +159,11 @@ def select_altloc(atom_array: AtomArray, altloc_id: str, return_full_array: bool
 
     Returns:
         AtomArray: A new atom array containing only atoms with the specified altloc.
+        if return_full_array is False, AtomArrayStack:
+            A new atom array stack containing only atoms with the specified altloc.
+        if return_full_array is True, AtomArrayStack:
+            A new atom array stack containing atoms with either the specified altloc or
+            an empty/default altloc.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -281,7 +290,7 @@ def filter_to_common_atoms(
 
     Raises:
         TypeError: If inputs are not AtomArray or AtomArrayStack.
-        ValueError: If no common atoms are found between the two structures.
+        RuntimeError: If no common atoms are found between the two structures.
 
     Examples:
         >>> array1 = AtomArray(...)  # 100 atoms
