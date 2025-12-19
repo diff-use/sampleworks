@@ -1,3 +1,4 @@
+"""Tests for atom_array_utils module."""
 import numpy as np
 import pytest
 from biotite.structure import AtomArray, AtomArrayStack, stack
