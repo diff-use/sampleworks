@@ -242,13 +242,11 @@ class RF3Wrapper:
         pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # type: ignore
         pipeline_output = trainer.fabric.to_device(pipeline_output)
 
-        example = pipeline_output[0] if not isinstance(pipeline_output, dict) else pipeline_output
-
-        features = trainer._assemble_network_inputs(example)
+        features = trainer._assemble_network_inputs(pipeline_output)
 
         assert_no_nans(
             features,
-            msg=f"network_input for example_id: {example['example_id']}",
+            msg=f"network_input for example_id: {pipeline_output['example_id']}",
         )
 
         features = send_tensors_in_dict_to_device(features, self.device)
