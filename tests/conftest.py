@@ -9,6 +9,10 @@ import pytest
 import torch
 from atomworks.io.parser import parse
 from sampleworks.utils.imports import BOLTZ_AVAILABLE, PROTENIX_AVAILABLE, RF3_AVAILABLE
+from atomworks.io.utils.io_utils import load_any
+from biotite.structure import AtomArray
+from biotite.structure.celllist import AtomArrayStack
+
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -50,7 +54,16 @@ def structure_6b8x(resources_dir: Path) -> dict:
     return parse(resources_dir / "6b8x" / "6b8x_final.pdb", ccd_mirror_path=None)
 
 
-@pytest.fixture(scope="session", params=["1vme_final.cif", "6b8x_final.pdb"], ids=["cif", "pdb"])
+@pytest.fixture(scope="session")
+def structure_6b8x_with_altlocs(resources_dir: Path) -> AtomArrayStack:
+    return load_any(
+        resources_dir / "6b8x" / "6b8x_final.pdb", altloc='all', extra_fields=["occupancy"]
+    )
+
+
+@pytest.fixture(
+    scope="session", params=["1vme_final.cif", "6b8x_final.pdb"], ids=["cif", "pdb"]
+)
 def test_structure(request, resources_dir: Path) -> dict:
     # this requires the 1st 4 characters of the filename to match the folder name,
     # so PDB IDs need to be matching case
