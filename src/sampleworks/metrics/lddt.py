@@ -8,7 +8,8 @@ from typing import Any
 import numpy as np
 import torch
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
-from atomworks.ml.transforms.atom_array import AddGlobalTokenIdAnnotation
+from atomworks.ml.transforms.atom_array import AddGlobalTokenIdAnnotation, \
+    add_global_token_id_annotation
 from atomworks.ml.transforms.atomize import AtomizeByCCDName
 from atomworks.ml.transforms.base import Compose
 from atomworks.ml.utils.token import get_token_starts
@@ -17,10 +18,13 @@ from jaxtyping import Bool, Float, Int
 from loguru import logger
 
 from sampleworks.metrics.metric import Metric
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 
 
 # This method is copied from RosettaCommons/foundry/models/rf3/metrics/lddt.py, but
 # modified to return residue-level LDDT scores as well.
+# TODO: break this up into easily testable pieces.
+# TODO? borrow tests from RosettaCommons/foundry?
 def _calc_lddt(
     X_L: Float[torch.Tensor, "D L 3"],
     X_gt_L: Float[torch.Tensor, "D L 3"],
@@ -29,6 +33,7 @@ def _calc_lddt(
     pairs_to_score: Bool[torch.Tensor, "L L"] | None = None,
     distance_cutoff: float = 15.0,
     eps: float = 1e-6,
+    selected_token_ids: np.ndarray | None = None
 ) -> Float[torch.Tensor, "D"]:  # noqa F821
     """Calculates LDDT scores for each model in the batch.
 
@@ -61,6 +66,7 @@ def _calc_lddt(
     # Compute LDDT score for each model in the batch
     lddt_scores = []
     residue_level_lddt_scores = []
+    # TODO: can this be further vectorized?
     for d in range(D):
         # Calculate pairwise distances in ground truth structure
         ground_truth_distances = torch.linalg.norm(
@@ -119,10 +125,14 @@ def _calc_lddt(
             lddt_score = 0.25 * (torch.sum(result < 0.5) + torch.sum(result < 1.0) +
                                  torch.sum(result < 2.0) + torch.sum(result < 4.0)) / len(result)
 
-            return lddt_score
+            return lddt_score.item()
 
-        residue_lddt_dict = {tk.item(): get_lddt_distances_for_token(tk.item())
-                             for tk in tok_idx.unique()}
+        if selected_token_ids is not None:
+            residue_lddt_dict = {tk.item(): get_lddt_distances_for_token(tk.item())
+                                 for tk in selected_token_ids}
+        else:
+            residue_lddt_dict = {tk.item(): get_lddt_distances_for_token(tk.item())
+                                 for tk in tok_idx.unique()}
         residue_level_lddt_scores.append(residue_lddt_dict)
 
         # TODO: is the *pair_mask_valid necessary? I think that mask is all 1 by construction.
@@ -142,7 +152,9 @@ def _calc_lddt(
 
         lddt_scores.append(lddt_score)
 
-
+    # Map all the residue_level_lddt_scores from a list of dictionaries to a dictionary of lists
+    residue_level_lddt_scores = {k: [d[k] for d in residue_level_lddt_scores]
+                                 for k in residue_level_lddt_scores[0]}
 
     # return the token indices of the first axis of the distance diff matrix so that we
     # can use them to compute per-token DDT later.
@@ -241,6 +253,7 @@ def extract_lddt_features_from_atom_arrays(
     }
 
 
+# Modified from original to optionally return residue-level lDDT for selected atoms
 class AllAtomLDDT(Metric):
     """Computes all-atom LDDT scores from AtomArrays."""
 
@@ -253,18 +266,26 @@ class AllAtomLDDT(Metric):
         return {
             "predicted_atom_array_stack": "predicted_atom_array_stack",
             "ground_truth_atom_array_stack": "ground_truth_atom_array_stack",
+            "selection": "selection",
         }
+
+    @property
+    def optional_kwargs(self) -> frozenset[str]:
+        return frozenset({"selection"})
 
     def compute(
         self,
         predicted_atom_array_stack: AtomArrayStack | AtomArray,
         ground_truth_atom_array_stack: AtomArrayStack | AtomArray,
+        selection: str | None = None
     ) -> dict[str, Any]:
         """Calculates all-atom LDDT between all pairs of atoms.
 
         Args:
             predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
             ground_truth_atom_array_stack: Ground truth coordinates as AtomArray(Stack)
+            selection: Optional string to select which per-residue LDDT scores to report,
+                using the AtomArray.mask() syntax.
 
         Returns:
             A dictionary with all-atom LDDT scores:
@@ -272,23 +293,59 @@ class AllAtomLDDT(Metric):
             - best_of_1_lddt: LDDT score for the first model
             - best_of_{N}_lddt: Best LDDT score across all N models
         """
-        lddt_features = extract_lddt_features_from_atom_arrays(
+
+        # Set token ids to something useful for residue-level LDDT (chain ID + residue number)
+        predicted_atom_array_stack = add_global_token_id_annotation(predicted_atom_array_stack)
+        ground_truth_atom_array_stack = add_global_token_id_annotation(ground_truth_atom_array_stack)
+
+        # restrict to atoms that are present in both structures
+        predicted_aa_stack, ground_truth_aa_stack = filter_to_common_atoms(
             predicted_atom_array_stack, ground_truth_atom_array_stack
         )
+        if ((predicted_aa_stack.array_length() != predicted_atom_array_stack.array_length()) or
+            (ground_truth_aa_stack.array_length() != ground_truth_atom_array_stack.array_length())):
+            logger.warning(f"Chains did not exactly match between input AtomArrays.")
+
+        if predicted_aa_stack.array_length() == 0:
+            raise RuntimeError("No atoms in common between the two structures.")
+
+        lddt_features = extract_lddt_features_from_atom_arrays(
+            predicted_aa_stack, ground_truth_aa_stack
+        )
+
         tok_idx = torch.tensor(lddt_features["tok_idx"]).to(lddt_features["X_L"].device)
 
-        all_atom_lddt = _calc_lddt(
+        selected_token_ids = None
+        if selection is not None:
+            mask = predicted_aa_stack.mask(selection)
+            if isinstance(predicted_aa_stack, AtomArrayStack):
+                selected_token_ids = predicted_aa_stack[0, mask].token_id
+            else:
+                selected_token_ids = predicted_aa_stack[mask].token_id
+            selected_token_ids = np.unique(selected_token_ids)
+
+        all_atom_lddt, residue_level_lddt_scores = _calc_lddt(
             X_L=lddt_features["X_L"],
             X_gt_L=lddt_features["X_gt_L"],
             crd_mask_L=lddt_features["crd_mask_L"],
             tok_idx=tok_idx,
             pairs_to_score=None,  # By default, score all pairs, except those within the same token
             distance_cutoff=15.0,
+            selected_token_ids=selected_token_ids
         )
+
+        unique_id = ground_truth_aa_stack.chain_id + ground_truth_aa_stack.res_id.astype(str)
+        token_to_residue_id_map = {
+            k: v for k, v in zip(ground_truth_aa_stack.token_id, unique_id)
+        }
+        residue_level_lddt_scores = {
+            str(token_to_residue_id_map[k]): v for k, v in residue_level_lddt_scores.items()
+        }
 
         result = {
             "best_of_1_lddt": all_atom_lddt[0].item(),
             f"best_of_{len(all_atom_lddt)}_lddt": all_atom_lddt.max().item(),
+            "residue_lddt_scores": residue_level_lddt_scores,
         }
 
         if self.log_lddt_for_every_batch:
@@ -585,18 +642,13 @@ class selectedLDDT(Metric):
             "selections": ("extra_info", "selections"),
         }
 
-    @property
-    def optional_kwargs(self) -> frozenset[str]:
-        """Mark selection as optional."""
-        return frozenset({"selections"})
-
     def compute(
         self,
         predicted_atom_array_stack: AtomArrayStack | AtomArray,
         ground_truth_atom_array_stack: AtomArrayStack | AtomArray,
         selections: Iterable[str] = (),
 
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Calculates LDDT scores by type for both chains and interfaces.
 
         Args:
@@ -615,8 +667,8 @@ class selectedLDDT(Metric):
             filtered_ground_truth = ground_truth_atom_array_stack[:, ground_truth_atom_array_stack.mask(selection)]
 
             # set the token ids, to avoid any possible confusion later on
-            filtered_predicted.set_annotation("token_id", filtered_predicted.res_id)
-            filtered_ground_truth.set_annotation("token_id", filtered_ground_truth.res_id)
+            filtered_predicted = add_global_token_id_annotation(filtered_predicted)
+            filtered_ground_truth = add_global_token_id_annotation(filtered_ground_truth)
 
             lddt_features = extract_lddt_features_from_atom_arrays(
                 filtered_predicted, filtered_ground_truth
@@ -632,6 +684,15 @@ class selectedLDDT(Metric):
                 pairs_to_score=None,  # By default, score all pairs, except those within the same token
                 distance_cutoff=15.0,
             )
+
+            # map the token ids back to the original selection, i.e. residue id and chain.
+            unique_id = filtered_predicted.chain_id + filtered_predicted.res_id.astype(str)
+            token_to_residue_id_map = {
+                k: v for k, v in zip(filtered_predicted.token_id, unique_id)
+            }
+            residue_level_lddt_scores = {
+                str(token_to_residue_id_map[k]): v for k, v in residue_level_lddt_scores.items()
+            }
 
             results[selection] = (all_atom_lddt, residue_level_lddt_scores)
         return results
