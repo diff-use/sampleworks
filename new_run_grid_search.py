@@ -19,6 +19,7 @@ from threading import Lock
 from typing import Any
 
 from loguru import logger as log
+from sampleworks.utils import guidance_constants as constants
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
 
 
@@ -83,14 +84,16 @@ def detect_gpus() -> list[str]:
 
 
 def get_pixi_env(model: str) -> str:
-    if model in ("boltz1", "boltz2"):
-        return "boltz"
-    elif model == "protenix":
-        return "protenix"
-    elif model == "rf3":
-        return "rf3"
-    else:
-        raise ValueError(f"Unknown model: {model}")
+    match model:
+        case constants.BOLTZ_1 | constants.BOLTZ_2:
+            return "boltz"
+        case constants.PROTENIX | constants.RF3:
+            return model
+        case _:
+            raise ValueError(
+                f"Unknown model: {model}. Valid options are: {constants.BOLTZ_1}, "
+                f"{constants.BOLTZ_2}, {constants.PROTENIX}, {constants.RF3}"
+            )
 
 
 def build_args_for_process_pool(
