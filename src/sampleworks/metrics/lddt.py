@@ -378,8 +378,10 @@ class SelectedLDDT(Metric):
         selections: Iterable[str] = (),
 
     ) -> dict[str, dict[str, float | dict[str, list[float]]]]:
-        """Calculates LDDT scores between a reference structure and predicted structure,
+        """
+        Calculates LDDT scores between a reference structure and predicted structure,
         calculated only using residues that match the given selection strings.
+
 
         Args:
             predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
@@ -428,5 +430,5 @@ class SelectedLDDT(Metric):
                 "overall_lddt": all_atom_lddt.item(),
                 "residue_lddt_scores": residue_level_lddt_scores
             }
-        return results
 
+        return results
