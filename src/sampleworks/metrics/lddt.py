@@ -34,7 +34,7 @@ def _calc_lddt(
     distance_cutoff: float = 15.0,
     eps: float = 1e-6,
     selected_token_ids: np.ndarray | None = None
-) -> Float[torch.Tensor, "D"]:  # noqa F821
+) -> tuple[Float[torch.Tensor, "D"], dict[str, list[float]]]:  # noqa F821
     """Calculates LDDT scores for each model in the batch.
 
     Args:
@@ -47,7 +47,7 @@ def _calc_lddt(
         eps: Small epsilon to prevent division by zero.
 
     Returns:
-        LDDT scores for each model (D,).
+        LDDT scores for each model (D,), and a dictionary of residue-level LDDT scores
     """
     D, L = X_L.shape[:2]
 
@@ -203,7 +203,7 @@ def extract_lddt_features_from_atom_arrays(
     ground_truth_atom_array = ground_truth_atom_array_stack[0]  # pyright: ignore
 
     # Create the coordinate mask using occupancy if available, fallback to coordinate validity
-    # Note (marcus.collins@astera.org) added is not None check, hopefully this does not
+    # Note (marcus.collins@astera.org) added `is not None` check, hopefully this does not
     # change the behavior of the code
     if (
         "occupancy" in ground_truth_atom_array.get_annotation_categories()
@@ -373,19 +373,20 @@ class SelectedLDDT(Metric):
 
     def compute(
         self,
-        predicted_atom_array_stack: AtomArrayStack | AtomArray,
-        ground_truth_atom_array_stack: AtomArrayStack | AtomArray,
+        predicted_atom_array_stack: AtomArrayStack,
+        ground_truth_atom_array_stack: AtomArrayStack,
         selections: Iterable[str] = (),
 
     ) -> dict[str, dict[str, float | dict[str, list[float]]]]:
-        """Calculates LDDT scores by type for both chains and interfaces.
+        """Calculates LDDT scores between a reference structure and predicted structure,
+        calculated only using residues that match the given selection strings.
 
         Args:
             predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
             ground_truth_atom_array_stack: Ground truth coordinates as AtomArray(Stack)
             selections: iterable of selection strings to pass to AtomArrayStack.mask
         Returns:
-            Combined list of interface and chain LDDT results.
+            Dictionary containing overall and residue-level lddt scores for each selection.
         """
 
         # Compute interface LDDT scores for each selection
@@ -428,3 +429,4 @@ class SelectedLDDT(Metric):
                 "residue_lddt_scores": residue_level_lddt_scores
             }
         return results
+

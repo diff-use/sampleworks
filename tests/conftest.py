@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 import torch
 from atomworks.io.parser import parse
+
 from sampleworks.utils.imports import BOLTZ_AVAILABLE, PROTENIX_AVAILABLE, RF3_AVAILABLE
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray
