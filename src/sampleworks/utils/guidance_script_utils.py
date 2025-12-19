@@ -18,7 +18,14 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
-from sampleworks.utils.guidance_constants import BOLTZ_1, BOLTZ_2, FK_STEERING, PURE_GUIDANCE
+from sampleworks.utils.guidance_constants import (
+    BOLTZ_1,
+    BOLTZ_2,
+    FK_STEERING,
+    PROTENIX,
+    PURE_GUIDANCE,
+    RF3,
+)
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 
 
@@ -135,12 +142,12 @@ def get_model_and_device(
 ) -> tuple[torch.device, Any]:
     device = torch.device(device_str) if device_str else try_gpu()
     logger.debug(f"Using device: {device}")
-    if model_type == "protenix":
+    if model_type == PROTENIX:
         logger.debug(f"Loading Protenix model from {model_checkpoint_path}")
         model_wrapper = ProtenixWrapper(  # pyright: ignore
             checkpoint_path=model_checkpoint_path, device=device, model=model
         )
-    elif model_type == "boltz1":
+    elif model_type == BOLTZ_1:
         logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
         model_wrapper = Boltz1Wrapper(  # pyright: ignore
             checkpoint_path=model_checkpoint_path,
@@ -148,7 +155,7 @@ def get_model_and_device(
             device=device,
             model=model,
         )
-    elif model_type == "boltz2":
+    elif model_type == BOLTZ_2:
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
@@ -160,7 +167,7 @@ def get_model_and_device(
             method=method.upper(),
             model=model,
         )
-    elif model_type == "rf3":
+    elif model_type == RF3:
         if RF3Wrapper is None:
             raise ImportError("RF3 dependencies not installed")
         model_wrapper = RF3Wrapper(
