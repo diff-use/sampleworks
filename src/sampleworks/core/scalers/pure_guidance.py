@@ -158,8 +158,7 @@ class PureGuidance:
 
         # TODO: jank way to get atomic numbers, fix this in real space density
         elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower())
-            for e in atom_array.element[reward_param_mask]
+            ATOMIC_NUM_TO_ELEMENT.index(e.title()) for e in atom_array.element[reward_param_mask]
         ]
         elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
         b_factors = einx.rearrange(
@@ -262,6 +261,8 @@ class PureGuidance:
                     allow_gradients=allow_alignment_gradients,
                 )
 
+            # To align with FK steering, store denoised in working frame (aligned with the
+            # input coords if align_to_input is True)
             trajectory_denoised.append(denoised_working_frame.clone().cpu())
 
             guidance_direction = None

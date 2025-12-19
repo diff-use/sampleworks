@@ -184,8 +184,7 @@ class FKSteering:
 
         # TODO: jank way to get atomic numbers, fix this in real space density
         elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower())
-            for e in atom_array.element[reward_param_mask]
+            ATOMIC_NUM_TO_ELEMENT.index(e.title()) for e in atom_array.element[reward_param_mask]
         ]
         elements = cast(
             torch.Tensor,
