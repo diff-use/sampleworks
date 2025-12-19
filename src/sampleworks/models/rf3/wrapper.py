@@ -1,7 +1,6 @@
 import json
 from collections import deque
 from collections.abc import Mapping
-from logging import getLogger, Logger
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +10,7 @@ from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
+from loguru import logger as log
 from rf3.inference_engines import RF3InferenceEngine
 from rf3.model.RF3 import RF3WithConfidence
 from rf3.trainers.rf3 import assert_no_nans, RF3TrainerWithConfidence
@@ -21,9 +21,56 @@ from torch.utils.data import DataLoader
 from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
 
 
+# TODO: This should go in some sort of atomworks utils module
+def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) -> dict:
+    """Add MSA paths to chain_info dictionary.
+
+    Parameters
+    ----------
+    chain_info: dict
+        Original chain_info dictionary.
+    msa_path: dict | str | Path | None
+        MSA specification. Can be:
+        - dict: chain_id -> MSA file path mapping
+        - str/Path to .json: JSON file with chain_id -> MSA path mapping
+        - str/Path to .a3m: Single MSA file applied to all protein chains
+        - None: No MSA information is used
+
+    Returns
+    -------
+    dict
+        Updated chain_info dictionary with MSA paths.
+    """
+    updated_chain_info = chain_info.copy()
+
+    if msa_path is None:
+        return updated_chain_info
+
+        # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
+    if isinstance(msa_path, (str, Path)):
+        msa_path_obj = Path(msa_path)
+        if msa_path_obj.suffix == ".json" and msa_path_obj.exists():
+            with open(msa_path_obj) as f:
+                msa_path = json.load(f)
+
+    # InferenceInput expects msa_path in chain_info
+    for chain_id in updated_chain_info:
+        if updated_chain_info[chain_id]["chain_type"] == ChainType.POLYPEPTIDE_L:
+            if isinstance(msa_path, dict):
+                chain_msa_path = msa_path.get(chain_id, None)
+            else:
+                chain_msa_path = msa_path
+
+            if chain_msa_path is not None:
+                updated_chain_info[chain_id]["msa_path"] = chain_msa_path
+
+    return updated_chain_info
+
+
 class RF3Wrapper:
     """Wrapper for RosettaFold 3 (Baker Lab AlphaFold 3 replication)."""
 
+    # Parameters from AF3: see Algorithm 18 and Supplement section 3.7.1
     SIGMA_DATA = 16.0
     S_MIN = 4e-4
     S_MAX = 160.0
@@ -43,14 +90,9 @@ class RF3Wrapper:
         checkpoint_path: str | Path
             Filesystem path to the checkpoint containing trained weights.
         """
-        logger: Logger = getLogger(__name__)
-        logger.info("Loading RF3 Inference Engine")
+        log.info("Loading RF3 Inference Engine")
 
-        self.checkpoint_path = (
-            Path(checkpoint_path).expanduser().resolve()
-            if isinstance(checkpoint_path, str)
-            else checkpoint_path.expanduser().resolve()
-        )
+        self.checkpoint_path = Path(checkpoint_path).expanduser().resolve()
 
         # TODO: expose num_steps, num_recycles to user
         self.num_steps = 200  # RF3 default number of diffusion steps
@@ -82,6 +124,10 @@ class RF3Wrapper:
         """Access the unwrapped RF3WithConfidence model through EMA wrappers."""
         model = self.model
         if hasattr(model, "shadow"):
+            # The model is wrapped with an ExponentialMovingAverage (EMA) wrapper
+            # To access the EMA weights that we want to use for inference, we need
+            # to access the `shadow` attribute (see AF3 Supplement section 5.6, RF3 preprint
+            # supplement A.4.2)
             model = model.shadow
         return cast(RF3WithConfidence, model)
 
@@ -90,6 +136,10 @@ class RF3Wrapper:
 
         Uses RF3's EDM-style schedule formula:
         t_hat = sigma_data * (s_max^(1/p) + t*(s_min^(1/p) - s_max^(1/p)))^p
+
+        See Karras, T. et al. Elucidating the Design Space of Diffusion-Based Generative Models.
+        https://doi.org/10.48550/arXiv.2206.00364
+
 
         Parameters
         ----------
@@ -157,24 +207,6 @@ class RF3Wrapper:
 
         atom_array = structure["asym_unit"]
         chain_info = structure.get("chain_info", {})
-
-        # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
-        if isinstance(msa_path, (str, Path)):
-            msa_path_obj = Path(msa_path)
-            if msa_path_obj.suffix == ".json" and msa_path_obj.exists():
-                with open(msa_path_obj) as f:
-                    msa_path = json.load(f)
-
-        # InferenceInput expects msa_path in chain_info
-        for chain_id in chain_info:
-            if chain_info[chain_id]["chain_type"] == ChainType.POLYPEPTIDE_L:
-                if isinstance(msa_path, dict):
-                    chain_msa_path = msa_path.get(chain_id, None)
-                else:
-                    chain_msa_path = msa_path
-
-                if chain_msa_path is not None:
-                    chain_info[chain_id]["msa_path"] = chain_msa_path
 
         inference_input = InferenceInput.from_atom_array(atom_array, chain_info=chain_info)
 
