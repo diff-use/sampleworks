@@ -382,7 +382,6 @@ class SelectedLDDT(Metric):
         Calculates LDDT scores between a reference structure and predicted structure,
         calculated only using residues that match the given selection strings.
 
-
         Args:
             predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
             ground_truth_atom_array_stack: Ground truth coordinates as AtomArray(Stack)
