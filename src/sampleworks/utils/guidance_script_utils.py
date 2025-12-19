@@ -27,10 +27,12 @@ from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResul
 try:
     from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
 except ImportError:
+    Boltz1Wrapper = None
     logger.warning("Failed to import Boltz, hopefully you're running a different model")
 try:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
 except ImportError:
+    ProtenixWrapper = None
     logger.warning("Failed to import Protenix, hopefully you're running a different model")
 try:
     from sampleworks.models.rf3.wrapper import RF3Wrapper
