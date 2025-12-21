@@ -48,7 +48,10 @@ class PredictArgs:
     write_full_pde: bool = False
 
 
-def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> Path:
+# TODO move this so that it can be imported without requiring a Boltz installation
+def create_boltz_input_from_structure(
+    structure: dict, out_dir: str | Path, msa_manager: MSAManager, msa_pairing_strategy: str
+) -> Path:
     """Creates Boltz YAML file from an Atomworks parsed structure file.
 
     Parameters
@@ -97,6 +100,14 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
             ligand_info[chain]["entity_type"] = "ligand"
             ligand_info[chain]["ccd"] = chain_info[chain]["res_name"][0]
 
+    # get all the MSA paths, fetching MSAs as needed.
+    msa_paths = msa_manager.get_msa(
+        {chain_id: info["sequence"] for chain_id, info in polymer_info.items()},
+        msa_pairing_strategy,
+    )
+
+    logger.debug(f"Should use msa_paths {msa_paths}")
+
     boltz_input_path = out_dir / f"{structure.get('metadata', {}).get('id', 'boltz_input')}.yaml"
     boltz_input_path.parent.mkdir(parents=True, exist_ok=True)
     with open(boltz_input_path, "w") as f:
@@ -105,6 +116,10 @@ def create_boltz_input_from_structure(structure: dict, out_dir: str | Path) -> P
             f.write(f"    - {info['entity_type']}:\n")
             f.write(f"        id: {chain_id}\n")
             f.write(f"        sequence: {info['sequence']}\n")
+            if msa_paths and all(c in msa_paths for c in chains):
+                f.write(f"        msa: {str(msa_paths[chain_id])}\n")
+            elif msa_paths:
+                logger.warning(f"Missing MSA for chain {chain_id}, skipping.")
             if info.get("cyclic", False):
                 f.write("        cyclic: true\n")
         if ligand_info:
@@ -130,7 +145,7 @@ class Boltz2Wrapper:
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         method: str = "MD",
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        model: Boltz2 | None = None
+        model: Boltz2 | None = None,
     ):
         """
         Parameters
@@ -302,6 +317,8 @@ class Boltz2Wrapper:
         input_path = create_boltz_input_from_structure(
             structure,
             kwargs.get("out_dir", structure.get("metadata", {}).get("id", "boltz2_output")),
+            msa_manager=self.msa_manager,
+            msa_pairing_strategy=self.msa_pairing_strategy,
         )
 
         # Side effect: creates files in the processed directory of out_dir
@@ -699,7 +716,7 @@ class Boltz1Wrapper:
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        model: Boltz1 | None = None
+        model: Boltz1 | None = None,
     ):
         """
         Parameters
@@ -863,6 +880,8 @@ class Boltz1Wrapper:
         input_path = create_boltz_input_from_structure(
             structure,
             kwargs.get("out_dir", structure.get("metadata", {}).get("id", "boltz1_output")),
+            msa_manager=self.msa_manager,
+            msa_pairing_strategy=self.msa_pairing_strategy,
         )
 
         # Side effect: creates files in the processed directory of out_dir
