@@ -30,7 +30,6 @@ from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
-from loguru import logger
 from torch import Tensor
 
 
@@ -130,7 +129,7 @@ class Boltz2Wrapper:
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         method: str = "MD",
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        model: Boltz2 | None = None
+        model: Boltz2 | None = None,
     ):
         """
         Parameters
@@ -699,7 +698,7 @@ class Boltz1Wrapper:
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        model: Boltz1 | None = None
+        model: Boltz1 | None = None,
     ):
         """
         Parameters

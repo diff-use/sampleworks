@@ -27,9 +27,7 @@ def setup_scattering_params(structure: dict, em: bool = False) -> torch.Tensor:
             ]
         )
     )
-    atomic_num_dict = {
-        elem: ATOMIC_NUM_TO_ELEMENT.index(elem) for elem in unique_elements
-    }
+    atomic_num_dict = {elem: ATOMIC_NUM_TO_ELEMENT.index(elem) for elem in unique_elements}
 
     if em:
         structure_factors = ELECTRON_SCATTERING_FACTORS
@@ -126,14 +124,10 @@ class RewardFunction:
         elements_flat = elements.reshape(-1)
         b_factors_flat = b_factors.reshape(-1)
         combined = torch.stack([elements_flat, b_factors_flat], dim=1)
-        unique_combinations, inverse_indices = torch.unique(
-            combined, dim=0, return_inverse=True
-        )
+        unique_combinations, inverse_indices = torch.unique(combined, dim=0, return_inverse=True)
         return unique_combinations.to(device), inverse_indices.to(device)
 
-    def structure_to_reward_input(
-        self, structure: dict
-    ) -> dict[str, Float[torch.Tensor, "..."]]:
+    def structure_to_reward_input(self, structure: dict) -> dict[str, Float[torch.Tensor, "..."]]:
         atom_array = structure["asym_unit"]
         atom_array = atom_array[:, atom_array.occupancy > 0]
         elements = [
@@ -145,9 +139,7 @@ class RewardFunction:
 
         elements = torch.tensor(elements, device=self.device).unsqueeze(0)
         b_factors = torch.from_numpy(atom_array.b_factor).to(self.device).unsqueeze(0)
-        occupancies = (
-            torch.from_numpy(atom_array.occupancy).to(self.device).unsqueeze(0)
-        )
+        occupancies = torch.from_numpy(atom_array.occupancy).to(self.device).unsqueeze(0)
 
         coordinates = torch.from_numpy(atom_array.coord).to(self.device)
 

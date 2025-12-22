@@ -1,10 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
 
 import numpy as np
 from loguru import logger
-
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.eval.occupancy_utils import occupancy_to_str
 
@@ -23,8 +21,8 @@ class Experiment:
     refined_cif_path: Path
     protein_dir_name: str
     rscc: float = np.nan  # these last three are placeholders for RSCC calculations.
-    base_map_path: Union[Path, None] = None
-    error: Union[Exception, None] = None
+    base_map_path: Path | None = None
+    error: Exception | None = None
 
 
 class ExperimentList(list[Experiment]):
@@ -36,7 +34,11 @@ class ExperimentList(list[Experiment]):
 
 @dataclass
 class ProteinConfig:
-    """Configuration metadata for a set of protein maps and structures associated with some PDB id."""
+    """
+    Configuration metadata for a set of protein maps and structures
+    associated with some PDB id.
+    """
+
     protein: str
     base_map_dir: Path
     selection: str
@@ -48,7 +50,7 @@ class ProteinConfig:
         # TODO validate structure patterns? Anything else we should check to avoid later errors?
         self.base_map_dir = Path(self.base_map_dir)  # just in case someone passes a string
 
-    def get_base_map_path_for_occupancy(self, occupancy_a: float) -> Union[Path, None]:
+    def get_base_map_path_for_occupancy(self, occupancy_a: float) -> Path | None:
         occ_str = occupancy_to_str(occupancy_a, use_6b8x_format=self.protein == "6b8x")
         map_path = self.base_map_dir / self.map_pattern.format(occ_str=occ_str)
         if map_path.exists():
@@ -68,9 +70,8 @@ class ProteinConfig:
         return None
 
     def load_map(
-            self, map_path: Path, canonical_unit_cell=True, selection_coords=None, padding=0.0
-    ) -> Union[XMap, None]:
-
+        self, map_path: Path, canonical_unit_cell=True, selection_coords=None, padding=0.0
+    ) -> XMap | None:
         xmap = XMap.fromfile(str(map_path), resolution=self.resolution)
         if canonical_unit_cell:
             xmap = xmap.canonical_unit_cell()
@@ -79,7 +80,7 @@ class ProteinConfig:
 
         return xmap
 
-    def get_reference_structure_path(self, occupancy_a: float) -> Union[Path, None]:
+    def get_reference_structure_path(self, occupancy_a: float) -> Path | None:
         if not self.structure_pattern:
             return None
 
@@ -90,13 +91,13 @@ class ProteinConfig:
 
         # Try shifted version for 6b8x
         if self.protein == "6b8x":
-            shifted_path = self.base_map_dir / self.structure_pattern.format(occ_str=occ_str).replace(
-                ".cif", "_shifted.cif"
-            )
+            _pattern = self.structure_pattern.format(occ_str=occ_str)
+            shifted_path = self.base_map_dir / _pattern.replace(".cif", "_shifted.cif")
             if shifted_path.exists():
                 return shifted_path
 
         logger.warning(
-            f"Reference structure for {self.protein} with occ {occupancy_a} not found: {structure_path}"
+            f"Reference structure for {self.protein} with occ {occupancy_a} "
+            f"not found: {structure_path}"
         )
         return None

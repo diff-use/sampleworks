@@ -1,6 +1,5 @@
-import marimo
+import marimo  # type: ignore
 
-from sampleworks.eval.rscc_grid_search_script import get_method_and_name_from_model_dir
 
 __generated_with = "0.18.1"
 app = marimo.App()
@@ -11,7 +10,9 @@ def _(mo):
     mo.md(r"""
     # RSCC Analysis for Grid Search Results
 
-    This notebook calculates the Real Space Correlation Coefficient (RSCC) between computed maps from refined structures and reference (ground truth) maps for all experiments in the grid search results.
+    This notebook calculates the Real Space Correlation Coefficient (RSCC) between computed maps
+    from refined structures and reference (ground truth) maps for all experiments in the grid
+    search results.
 
     ## Workflow:
     1. Scan the `grid_search_results` directory for completed experiments
@@ -24,22 +25,23 @@ def _(mo):
 
 @app.cell
 def _():
-    import marimo as mo
+    import marimo as mo  # type: ignore
+
     return (mo,)
 
 
 @app.cell
 def _():
-    import json
     import re
     import warnings
     from pathlib import Path
 
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # type: ignore
     import numpy as np
     import pandas as pd
-    import seaborn as sns
+    import seaborn as sns  # type: ignore
     import torch
+
     return Path, np, pd, plt, re, sns, torch, warnings
 
 
@@ -51,10 +53,11 @@ def _():
         XMap,
     )
     from sampleworks.core.rewards.real_space_density import (
-        RewardFunction,
         setup_scattering_params,
     )
-    return XMap, parse, setup_scattering_params
+    from sampleworks.eval.rscc_grid_search_script import get_method_and_model_name
+
+    return XMap, parse, setup_scattering_params, get_method_and_model_name
 
 
 @app.cell
@@ -92,6 +95,7 @@ def _(np, warnings):
         except Exception as e:
             warnings.warn(f"Correlation calculation failed: {e}")
             return np.nan
+
     return (rscc,)
 
 
@@ -205,6 +209,7 @@ def _(re):
         else:
             occ_b = round(1.0 - occ_a, 2)
             return f"{occ_a}occAconf_{occ_b}occBconf"
+
     return (
         extract_protein_and_occupancy,
         occupancy_to_str,
@@ -213,7 +218,7 @@ def _(re):
 
 
 @app.cell
-def _(GRID_SEARCH_DIR, extract_protein_and_occupancy, re):
+def _(GRID_SEARCH_DIR, extract_protein_and_occupancy, re, get_method_and_model_name):
     def parse_experiment_dir(exp_dir):
         """Parse experiment directory name to extract parameters.
 
@@ -261,7 +266,7 @@ def _(GRID_SEARCH_DIR, extract_protein_and_occupancy, re):
                 if not model_dir.is_dir():
                     continue
 
-                method, model = get_method_and_name_from_model_dir(model_dir)
+                method, model = get_method_and_model_name(model_dir)
 
                 # Iterate through scaler directories (pure_guidance, fk_steering)
                 for scaler_dir in model_dir.iterdir():
@@ -593,12 +598,8 @@ def _(np, setup_scattering_params, torch):
         ]
         elements = torch.tensor(elements, device=device).unsqueeze(0)
         coordinates = torch.from_numpy(atom_array.coord).float().to(device).unsqueeze(0)
-        b_factors = (
-            torch.from_numpy(atom_array.b_factor).float().to(device).unsqueeze(0)
-        )
-        occupancies = (
-            torch.from_numpy(atom_array.occupancy).float().to(device).unsqueeze(0)
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).float().to(device).unsqueeze(0)
+        occupancies = torch.from_numpy(atom_array.occupancy).float().to(device).unsqueeze(0)
 
         # Compute density
         with torch.no_grad():
@@ -610,6 +611,7 @@ def _(np, setup_scattering_params, torch):
             )
 
         return density.cpu().numpy().squeeze()
+
     return (compute_density_from_structure,)
 
 
@@ -629,9 +631,7 @@ def _(
 ):
     # Calculate RSCC for all experiments
     print("Calculating RSCC values for all experiments...")
-    print(
-        "Note: RSCC is computed on the region around altloc residues (defined by selection)"
-    )
+    print("Note: RSCC is computed on the region around altloc residues (defined by selection)")
 
     _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {_device}")
@@ -649,7 +649,8 @@ def _(
                 _coords = extract_selection_coordinates(_ref_struct, _selection)
                 _ref_coords[_protein_key] = _coords
                 print(
-                    f"  Loaded reference structure for {_protein_key}: {len(_coords)} atoms in selection '{_selection}'"
+                    f"  Loaded reference structure for {_protein_key}: "
+                    f"{len(_coords)} atoms in selection '{_selection}'"
                 )
             except Exception as _e:
                 import traceback
@@ -679,9 +680,7 @@ def _(
 
         # Check if we have reference coordinates for region extraction
         if _protein not in _ref_coords:
-            print(
-                f"Skipping {_exp['protein_dir_name']}: no reference structure available"
-            )
+            print(f"Skipping {_exp['protein_dir_name']}: no reference structure available")
             continue
 
         _selection_coords = _ref_coords[_protein]
@@ -715,9 +714,7 @@ def _(
             _structure = parse(str(_exp["refined_cif_path"]), ccd_mirror_path=None)
 
             # Compute density from refined structure
-            _computed_density = compute_density_from_structure(
-                _structure, _base_xmap, _device
-            )
+            _computed_density = compute_density_from_structure(_structure, _base_xmap, _device)
 
             # Create an XMap from the computed density by copying the base xmap
             # and replacing its array with the computed density
@@ -824,15 +821,11 @@ def _(
 
             structure_pattern = _config.get("structure_pattern", "")
             if structure_pattern:
-                structure_path = _config["base_map_dir"] / structure_pattern.format(
-                    occ_str=occ_str
-                )
+                structure_path = _config["base_map_dir"] / structure_pattern.format(occ_str=occ_str)
                 if not structure_path.exists() and _protein_key == "6b8x":
                     # Try shifted version
                     structure_path = _config["base_map_dir"] / (
-                        structure_pattern.format(occ_str=occ_str).replace(
-                            ".cif", "_shifted.cif"
-                        )
+                        structure_pattern.format(occ_str=occ_str).replace(".cif", "_shifted.cif")
                     )
 
                 if structure_path.exists():
@@ -849,10 +842,7 @@ def _(
                         f"{len(_ref_coords_for_corr[_protein_key])} atoms"
                     )
         except Exception as _e:
-            print(
-                f"  Warning: Failed to load reference structure for "
-                f"{_protein_key}: {_e}"
-            )
+            print(f"  Warning: Failed to load reference structure for {_protein_key}: {_e}")
 
     base_pure_correlations = []
 
@@ -903,19 +893,13 @@ def _(
                     print(f"  Processing occ_A={_occ_a}: {_base_map_path.name}")
 
                     # Load base map for this occupancy
-                    _base_xmap = XMap.fromfile(
-                        str(_base_map_path), resolution=_resolution
-                    )
+                    _base_xmap = XMap.fromfile(str(_base_map_path), resolution=_resolution)
                     _base_xmap = _base_xmap.canonical_unit_cell()
                     _extracted_base = _base_xmap.extract(_selection_coords, padding=0.0)
 
                     # Calculate correlations
-                    _corr_base_vs_pureA = rscc(
-                        _extracted_base.array, _extracted_pure_A.array
-                    )
-                    _corr_base_vs_pureB = rscc(
-                        _extracted_base.array, _extracted_pure_B.array
-                    )
+                    _corr_base_vs_pureA = rscc(_extracted_base.array, _extracted_pure_A.array)
+                    _corr_base_vs_pureB = rscc(_extracted_base.array, _extracted_pure_B.array)
 
                     base_pure_correlations.append(
                         {
@@ -944,9 +928,9 @@ def _(
     if not df_base_vs_pure.empty:
         print("\nSummary by protein:")
         for _protein in df_base_vs_pure["protein"].unique():
-            _protein_data = df_base_vs_pure[
-                df_base_vs_pure["protein"] == _protein
-            ].sort_values("occ_a")
+            _protein_data = df_base_vs_pure[df_base_vs_pure["protein"] == _protein].sort_values(
+                "occ_a"
+            )
             print(f"\n{_protein}:")
             for _, _row in _protein_data.iterrows():
                 print(
@@ -1052,9 +1036,7 @@ def _(df, plt):
             _proteins = sorted(_plot_df["protein"].unique())
             _n_proteins = len(_proteins)
 
-            _fig, _axes = plt.subplots(
-                1, _n_proteins, figsize=(5 * _n_proteins, 5), squeeze=False
-            )
+            _fig, _axes = plt.subplots(1, _n_proteins, figsize=(5 * _n_proteins, 5), squeeze=False)
             _axes = _axes.flatten()
 
             for _idx, _protein in enumerate(_proteins):
@@ -1063,11 +1045,7 @@ def _(df, plt):
 
                 for _scaler in _protein_df["scaler"].unique():
                     _scaler_df = _protein_df[_protein_df["scaler"] == _scaler]
-                    _agg = (
-                        _scaler_df.groupby("occ_a")["rscc"]
-                        .agg(["mean", "std"])
-                        .reset_index()
-                    )
+                    _agg = _scaler_df.groupby("occ_a")["rscc"].agg(["mean", "std"]).reset_index()
 
                     _ax.errorbar(
                         _agg["occ_a"],
@@ -1114,14 +1092,10 @@ def _(df, np, plt, sns):
                 )
 
                 _x_pos = np.arange(len(_agg))
-                _labels = [
-                    f"{_row['model']}\n{_row['scaler']}" for _, _row in _agg.iterrows()
-                ]
+                _labels = [f"{_row['model']}\n{_row['scaler']}" for _, _row in _agg.iterrows()]
 
                 _colors = sns.color_palette("husl", len(_agg))
-                _bars = _ax.bar(
-                    _x_pos, _agg["mean"], yerr=_agg["std"], capsize=5, color=_colors
-                )
+                _bars = _ax.bar(_x_pos, _agg["mean"], yerr=_agg["std"], capsize=5, color=_colors)
 
                 _ax.set_xticks(_x_pos)
                 _ax.set_xticklabels(_labels, rotation=45, ha="right")
@@ -1192,9 +1166,9 @@ def _(df, df_base_vs_pure, plt, sns):
                 _fig, _ax = plt.subplots(figsize=(10, 6))
 
                 # Plot guidance RSCC
-                _protein_guidance = _agg_guidance[
-                    _agg_guidance["protein"] == _protein
-                ].sort_values("occ_a")
+                _protein_guidance = _agg_guidance[_agg_guidance["protein"] == _protein].sort_values(
+                    "occ_a"
+                )
 
                 if len(_protein_guidance) > 0:
                     _ax.plot(
@@ -1225,9 +1199,9 @@ def _(df, df_base_vs_pure, plt, sns):
                         )
 
                 # Plot pure conformer correlations
-                _protein_pure = df_base_vs_pure[
-                    df_base_vs_pure["protein"] == _protein
-                ].sort_values("occ_a")
+                _protein_pure = df_base_vs_pure[df_base_vs_pure["protein"] == _protein].sort_values(
+                    "occ_a"
+                )
 
                 if len(_protein_pure) > 0:
                     _ax.plot(
@@ -1284,10 +1258,7 @@ def _(df, df_base_vs_pure, plt, sns):
                 plt.tight_layout()
                 plt.show()
 
-            print(
-                f"Plotted guidance vs pure conformer comparisons for "
-                f"{len(_proteins)} proteins"
-            )
+            print(f"Plotted guidance vs pure conformer comparisons for {len(_proteins)} proteins")
     return
 
 

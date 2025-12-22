@@ -29,9 +29,7 @@ class ModelWrapper(Protocol):
         """
         ...
 
-    def step(
-        self, features: dict[str, Any], grad_needed: bool = False, **kwargs
-    ) -> dict[str, Any]:
+    def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
         """
         Perform a single pass through the model to obtain output, which can then be
         passed into a scaler for optimizing fit with observables.
