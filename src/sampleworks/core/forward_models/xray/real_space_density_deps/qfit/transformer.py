@@ -14,9 +14,7 @@ from .unitcell import UnitCell
 
 
 class SFTransformer:
-    def __init__(
-        self, hkl: np.ndarray, f: np.ndarray, phi: np.ndarray, unit_cell: UnitCell
-    ):
+    def __init__(self, hkl: np.ndarray, f: np.ndarray, phi: np.ndarray, unit_cell: UnitCell):
         self.hkl = hkl
         self.f = f
         self.phi = phi

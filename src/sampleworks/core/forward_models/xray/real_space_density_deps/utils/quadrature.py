@@ -5,9 +5,7 @@ import torch
 
 
 # Global cache for quadrature roots and weights to avoid redundant computations
-_QUADRATURE_CACHE: dict[
-    tuple[int, str, torch.dtype], tuple[torch.Tensor, torch.Tensor]
-] = {}
+_QUADRATURE_CACHE: dict[tuple[int, str, torch.dtype], tuple[torch.Tensor, torch.Tensor]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
@@ -158,9 +156,7 @@ class GaussLegendreQuadrature(torch.nn.Module):
 
             tridiag = torch.diag(diagonal)
             if num_points > 1:
-                tridiag = (
-                    tridiag + torch.diag(off_diagonal, 1) + torch.diag(off_diagonal, -1)
-                )
+                tridiag = tridiag + torch.diag(off_diagonal, 1) + torch.diag(off_diagonal, -1)
 
             # Force immediate computation by detaching from any computation graph
             tridiag = tridiag.detach()

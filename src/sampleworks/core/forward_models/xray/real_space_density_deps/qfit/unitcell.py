@@ -16,9 +16,7 @@ class UnitCell:
     The constructor expects alpha, beta, and gamma to be in degrees.
     """
 
-    def __init__(
-        self, a=1.0, b=1.0, c=1.0, alpha=90.0, beta=90.0, gamma=90.0, space_group="P1"
-    ):
+    def __init__(self, a=1.0, b=1.0, c=1.0, alpha=90.0, beta=90.0, gamma=90.0, space_group="P1"):
         self.a = a
         self.b = b
         self.c = c
@@ -110,14 +108,10 @@ class UnitCell:
         f12 = self.b * self._cos_gamma
         f13 = self.c * self._cos_beta
         f22 = self.b * self._sin_gamma
-        f23 = (self.c * (self._cos_alpha - self._cos_beta * self._cos_gamma)) / (
-            self._sin_gamma
-        )
+        f23 = (self.c * (self._cos_alpha - self._cos_beta * self._cos_gamma)) / (self._sin_gamma)
         f33 = (self.c * v) / self._sin_gamma
 
-        orth_to_frac = np.array(
-            [[f11, f12, f13], [0.0, f22, f23], [0.0, 0.0, f33]], float
-        )
+        orth_to_frac = np.array([[f11, f12, f13], [0.0, f22, f23], [0.0, 0.0, f33]], float)
 
         return orth_to_frac
 
@@ -128,18 +122,12 @@ class UnitCell:
 
         o11 = 1.0 / self.a
         o12 = -self._cos_gamma / (self.a * self._sin_gamma)
-        o13 = (self._cos_gamma * self._cos_alpha - self._cos_beta) / (
-            self.a * v * self._sin_gamma
-        )
+        o13 = (self._cos_gamma * self._cos_alpha - self._cos_beta) / (self.a * v * self._sin_gamma)
         o22 = 1.0 / (self.b * self._sin_gamma)
-        o23 = (self._cos_gamma * self._cos_beta - self._cos_alpha) / (
-            self.b * v * self._sin_gamma
-        )
+        o23 = (self._cos_gamma * self._cos_beta - self._cos_alpha) / (self.b * v * self._sin_gamma)
         o33 = self._sin_gamma / (self.c * v)
 
-        frac_to_orth = np.array(
-            [[o11, o12, o13], [0.0, o22, o23], [0.0, 0.0, o33]], float
-        )
+        frac_to_orth = np.array([[o11, o12, o13], [0.0, o22, o23], [0.0, 0.0, o33]], float)
 
         return frac_to_orth
 

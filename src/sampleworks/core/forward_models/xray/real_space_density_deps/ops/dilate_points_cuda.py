@@ -244,9 +244,7 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
 
         if in_dims[1] == 0:  # atom_occupancies is vmapped
             # Shape: [vmap_B, batch_B, N_atoms]
-            occs_merged = atom_occupancies.reshape(
-                vmap_B * batch_B, N_atoms
-            ).contiguous()
+            occs_merged = atom_occupancies.reshape(vmap_B * batch_B, N_atoms).contiguous()
         else:
             # Shape: [batch_B, N_atoms], need to expand for vmap
             occs_merged = atom_occupancies.repeat_interleave(vmap_B, dim=0).contiguous()
@@ -259,9 +257,7 @@ class DilateAtomCentricCUDA(torch.autograd.Function):
             ).contiguous()
         else:
             # Shape: [batch_B, N_atoms, N_radial], need to expand for vmap
-            profiles_merged = radial_profiles.repeat_interleave(
-                vmap_B, dim=0
-            ).contiguous()
+            profiles_merged = radial_profiles.repeat_interleave(vmap_B, dim=0).contiguous()
 
         if in_dims[3] == 0:  # radial_profiles_derivatives is vmapped
             # Shape: [vmap_B, batch_B, N_atoms, N_radial]
@@ -308,25 +304,16 @@ def dilate_atom_centric(
     device = atom_coords_grid.device
     dtype = atom_coords_grid.dtype
 
-    atom_coords_grid = (
-        atom_coords_grid.clone().to(device=device, dtype=dtype).contiguous()
-    )
-    atom_occupancies = (
-        atom_occupancies.clone().to(device=device, dtype=dtype).contiguous()
-    )
-    radial_profiles = (
-        radial_profiles.clone().to(device=device, dtype=dtype).contiguous()
-    )
+    atom_coords_grid = atom_coords_grid.clone().to(device=device, dtype=dtype).contiguous()
+    atom_occupancies = atom_occupancies.clone().to(device=device, dtype=dtype).contiguous()
+    radial_profiles = radial_profiles.clone().to(device=device, dtype=dtype).contiguous()
     radial_profiles_derivatives = (
         radial_profiles_derivatives.clone().to(device=device, dtype=dtype).contiguous()
     )
 
     if isinstance(lmax_grid_units, torch.Tensor):
         lmax_grid_units = (
-            torch.ceil(lmax_grid_units)
-            .clone()
-            .to(dtype=torch.int32, device=device)
-            .contiguous()
+            torch.ceil(lmax_grid_units).clone().to(dtype=torch.int32, device=device).contiguous()
         )
     else:
         lmax_grid_units = torch.ceil(
@@ -336,9 +323,7 @@ def dilate_atom_centric(
     if isinstance(grid_dims, torch.Tensor):
         grid_dims = grid_dims.clone().to(dtype=torch.int32, device=device).contiguous()
     else:
-        grid_dims = torch.tensor(
-            grid_dims, dtype=torch.int32, device=device
-        ).contiguous()
+        grid_dims = torch.tensor(grid_dims, dtype=torch.int32, device=device).contiguous()
 
     grid_to_cartesian_matrix = (
         grid_to_cartesian_matrix.clone().to(device=device, dtype=dtype).contiguous()
