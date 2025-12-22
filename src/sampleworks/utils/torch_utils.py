@@ -9,6 +9,12 @@ import torch
 
 from sampleworks import should_check_nans
 
+
+def do_nothing(*args: Any, **kwargs: Any) -> None:
+    """Does nothing, just returns None"""
+    pass
+
+
 DeviceLikeType = str | torch.device | int
 
 
@@ -51,6 +57,11 @@ def try_gpu():
                     {available_gpus[0]}."
                 )
                 return torch.device("cuda:0")
+
+            # Adjust idx to match the actual GPU index, which gets remapped by CUDA_VISIBLE_DEVICES
+            # e.g. if CUDA_VISIBLE_DEVICES=2,3 and idx=3 (the 3rd GPU according to nvidia-smi),
+            # we need to return cuda:1 (the 2nd GPU in the visible list)
+            idx = idx - min(available_gpus)  # type: ignore[reportArgumentType] idx is int, pyright doesn't track that
 
         print(
             "Returning GPU{} with {} free MiB".format(
@@ -152,3 +163,4 @@ def do_nothing(*args: Any, **kwargs: Any) -> None:
 
 
 assert_no_nans = _assert_no_nans if should_check_nans else do_nothing
+

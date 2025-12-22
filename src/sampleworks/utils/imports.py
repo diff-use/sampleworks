@@ -195,15 +195,15 @@ def require_any_model(message: str | None = None) -> Callable[[F], F]:
     ...     pass
     """
     default_message = (
-        "Neither Boltz nor Protenix wrappers are available. "
+        "No model wrappers are available. "
         "Please install at least one model wrapper with the appropriate feature group: "
-        "'pixi install -e boltz' or 'pixi install -e protenix'"
+        "'pixi install -e boltz', 'pixi install -e protenix', or 'pixi install -e rf3'"
     )
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE:
+            if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE and not RF3_AVAILABLE:
                 error_msg = message or default_message
                 try:
                     import pytest
