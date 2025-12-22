@@ -34,9 +34,7 @@ def trilinear_interpolation_torch(
     - For points on a grid line, torch.floor determines the lower indexed voxel.
     - The device and dtype of the output will match `density_map`.
     """
-    if not isinstance(density_map, torch.Tensor) or not isinstance(
-        points_zyx, torch.Tensor
-    ):
+    if not isinstance(density_map, torch.Tensor) or not isinstance(points_zyx, torch.Tensor):
         raise TypeError("Inputs 'density_map' and 'points_zyx' must be torch.Tensors.")
     if density_map.ndim != 3:
         raise ValueError(
@@ -55,9 +53,7 @@ def trilinear_interpolation_torch(
 
     # Store original shape for reshaping the output
     original_shape = points_zyx.shape
-    num_points_total = original_shape[
-        :-1
-    ].numel()  # Product of all dimensions except the last one
+    num_points_total = original_shape[:-1].numel()  # Product of all dimensions except the last one
 
     # Reshape points_zyx to [N_total_points, 3] for processing
     points_zyx_flat = points_zyx.reshape(num_points_total, 3)
@@ -140,9 +136,7 @@ def tricubic_interpolation_torch(
         A tensor of shape [..., N_points] containing the interpolated values,
         matching the leading dimensions of `points_zyx`.
     """
-    if not isinstance(density_map, torch.Tensor) or not isinstance(
-        points_zyx, torch.Tensor
-    ):
+    if not isinstance(density_map, torch.Tensor) or not isinstance(points_zyx, torch.Tensor):
         raise TypeError("Inputs must be torch.Tensors.")
     if density_map.ndim != 3:
         raise ValueError(f"Density map must be 3D, got shape {density_map.shape}.")
