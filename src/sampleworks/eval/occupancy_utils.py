@@ -60,7 +60,8 @@ def _occupancy_to_str(occ_a):
         return f"{occ_a}occA_{occ_b}occB"
 
 
-# TODO: @karson.chrispens can you fix your file paths so this isn't needed? Or generalize if this is a common case?
+# TODO: @karson.chrispens can you fix your file paths so this isn't needed?
+# Or generalize if this is a common case?
 def _occupancy_to_str_6b8x(occ_a):
     """Convert occupancy float to 6b8x-style string format.
 

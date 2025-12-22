@@ -31,9 +31,7 @@ class TestRewardFunctionBasics:
         assert reward_function_1vme is not None
         assert isinstance(reward_function_1vme, RewardFunction)
 
-    def test_reward_function_call_shapes(
-        self, reward_function_1vme, test_coordinates_1vme, device
-    ):
+    def test_reward_function_call_shapes(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test output shapes are correct for various input shapes."""
         coords, atom_array = test_coordinates_1vme
 
@@ -47,12 +45,8 @@ class TestRewardFunctionBasics:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         # Test single structure [N_atoms, 3]
         loss = reward_function_1vme(
@@ -91,12 +85,8 @@ class TestRewardFunctionBasics:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         loss = reward_function_1vme(
             coordinates=coords.unsqueeze(0),
@@ -125,12 +115,8 @@ class TestRewardFunctionBasics:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         loss1 = reward_function_1vme(
             coordinates=coords.unsqueeze(0),
@@ -169,12 +155,8 @@ class TestDensityCorrelation:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         loss = reward_function_1vme(
             coordinates=coords.unsqueeze(0),
@@ -201,12 +183,8 @@ class TestDensityCorrelation:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         loss_true = reward_function_1vme(
             coordinates=coords.unsqueeze(0),
@@ -244,12 +222,8 @@ class TestDensityCorrelation:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         loss_true = reward_function_1vme(
             coordinates=coords.unsqueeze(0),
@@ -286,19 +260,15 @@ class TestDensityCorrelation:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         torch.manual_seed(42)
         perturbation_direction = torch.randn_like(coords)
         perturbation_direction = perturbation_direction / perturbation_direction.norm()
 
         losses = []
-        for magnitude in [0.0, 0.1, 0.2, 0.5, 1.0]:
+        for magnitude in [0.0, 0.2, 0.5, 1.0, 2.0]:
             coords_pert = coords + perturbation_direction * magnitude
             loss = reward_function_1vme(
                 coordinates=coords_pert.unsqueeze(0),
@@ -332,33 +302,21 @@ class TestVmapCompatibility:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         num_particles = 3
         ensemble_size = 3
 
-        coords_batch = einx.rearrange(
-            "n c -> p e n c", coords, p=num_particles, e=ensemble_size
-        )
-        elements_batch = einx.rearrange(
-            "n -> p e n", elements, p=num_particles, e=ensemble_size
-        )
-        b_factors_batch = einx.rearrange(
-            "n -> p e n", b_factors, p=num_particles, e=ensemble_size
-        )
+        coords_batch = einx.rearrange("n c -> p e n c", coords, p=num_particles, e=ensemble_size)
+        elements_batch = einx.rearrange("n -> p e n", elements, p=num_particles, e=ensemble_size)
+        b_factors_batch = einx.rearrange("n -> p e n", b_factors, p=num_particles, e=ensemble_size)
         occupancies_batch = einx.rearrange(
             "n -> p e n", occupancies, p=num_particles, e=ensemble_size
         )
 
-        unique_combinations, inverse_indices = (
-            reward_function_1vme.precompute_unique_combinations(
-                elements_batch[0], b_factors_batch[0]
-            )
+        unique_combinations, inverse_indices = reward_function_1vme.precompute_unique_combinations(
+            elements_batch[0], b_factors_batch[0]
         )
 
         rf_partial = partial(
@@ -398,15 +356,11 @@ class TestVmapCompatibility:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
-        unique_combinations, inverse_indices = (
-            reward_function_1vme.precompute_unique_combinations(elements, b_factors)
+        unique_combinations, inverse_indices = reward_function_1vme.precompute_unique_combinations(
+            elements, b_factors
         )
 
         loss_with_precompute = reward_function_1vme(
@@ -427,9 +381,7 @@ class TestVmapCompatibility:
 
         torch.testing.assert_close(loss_with_precompute, loss_without_precompute)
 
-    def test_vmap_output_shape(
-        self, reward_function_1vme, test_coordinates_1vme, device
-    ):
+    def test_vmap_output_shape(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test vmap returns correct shape (num_particles,)."""
         coords, atom_array = test_coordinates_1vme
 
@@ -443,26 +395,14 @@ class TestVmapCompatibility:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         for num_particles in [1, 3, 5]:
-            coords_batch = einx.rearrange(
-                "n c -> p e n c", coords, p=num_particles, e=1
-            )
-            elements_batch = einx.rearrange(
-                "n -> p e n", elements, p=num_particles, e=1
-            )
-            b_factors_batch = einx.rearrange(
-                "n -> p e n", b_factors, p=num_particles, e=1
-            )
-            occupancies_batch = einx.rearrange(
-                "n -> p e n", occupancies, p=num_particles, e=1
-            )
+            coords_batch = einx.rearrange("n c -> p e n c", coords, p=num_particles, e=1)
+            elements_batch = einx.rearrange("n -> p e n", elements, p=num_particles, e=1)
+            b_factors_batch = einx.rearrange("n -> p e n", b_factors, p=num_particles, e=1)
+            occupancies_batch = einx.rearrange("n -> p e n", occupancies, p=num_particles, e=1)
 
             unique_combinations, inverse_indices = (
                 reward_function_1vme.precompute_unique_combinations(
@@ -487,9 +427,7 @@ class TestVmapCompatibility:
 
             assert result.shape == torch.Size([num_particles])
 
-    def test_vmap_consistency(
-        self, reward_function_1vme, test_coordinates_1vme, device
-    ):
+    def test_vmap_consistency(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test vmap results match sequential calls."""
         coords, atom_array = test_coordinates_1vme
 
@@ -503,25 +441,17 @@ class TestVmapCompatibility:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         num_particles = 3
         coords_batch = einx.rearrange("n c -> p e n c", coords, p=num_particles, e=1)
         elements_batch = einx.rearrange("n -> p e n", elements, p=num_particles, e=1)
         b_factors_batch = einx.rearrange("n -> p e n", b_factors, p=num_particles, e=1)
-        occupancies_batch = einx.rearrange(
-            "n -> p e n", occupancies, p=num_particles, e=1
-        )
+        occupancies_batch = einx.rearrange("n -> p e n", occupancies, p=num_particles, e=1)
 
-        unique_combinations, inverse_indices = (
-            reward_function_1vme.precompute_unique_combinations(
-                elements_batch[0, 0], b_factors_batch[0, 0]
-            )
+        unique_combinations, inverse_indices = reward_function_1vme.precompute_unique_combinations(
+            elements_batch[0, 0], b_factors_batch[0, 0]
         )
 
         rf_partial = partial(
@@ -558,9 +488,7 @@ class TestVmapCompatibility:
 class TestGradientFlow:
     """Test gradient computation for coordinate optimization."""
 
-    def test_gradients_wrt_coordinates(
-        self, reward_function_1vme, test_coordinates_1vme, device
-    ):
+    def test_gradients_wrt_coordinates(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test gradients flow through coordinates."""
         coords, atom_array = test_coordinates_1vme
 
@@ -574,12 +502,8 @@ class TestGradientFlow:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         coords_opt = coords.clone().unsqueeze(0).requires_grad_(True)
 
@@ -596,9 +520,7 @@ class TestGradientFlow:
         assert torch.all(torch.isfinite(coords_opt.grad))
         assert torch.any(coords_opt.grad != 0)
 
-    def test_gradients_wrt_occupancies(
-        self, reward_function_1vme, test_coordinates_1vme, device
-    ):
+    def test_gradients_wrt_occupancies(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test gradients flow through occupancies when not using pre-computed."""
         coords, atom_array = test_coordinates_1vme
 
@@ -612,12 +534,8 @@ class TestGradientFlow:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         occupancies_opt = occupancies.clone().unsqueeze(0).requires_grad_(True)
 
@@ -649,12 +567,8 @@ class TestGradientFlow:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         torch.manual_seed(42)
         perturbation = torch.randn_like(coords) * 0.5
@@ -705,12 +619,8 @@ class TestGradientFlow:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         coords_opt = coords.clone().unsqueeze(0).requires_grad_(True)
 
@@ -743,9 +653,7 @@ class TestGradientFlow:
 class TestBatchHandling:
     """Test handling of various batch shapes."""
 
-    def test_batch_shape(
-        self, reward_function_1vme, test_coordinates_1vme, device, shape
-    ):
+    def test_batch_shape(self, reward_function_1vme, test_coordinates_1vme, device, shape):
         """Test various batch shapes produce valid outputs."""
         coords, atom_array = test_coordinates_1vme
         batch_size = shape[0]
@@ -760,12 +668,8 @@ class TestBatchHandling:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         coords_batch = coords.unsqueeze(0).expand(batch_size, -1, -1)
         elements_batch = elements.unsqueeze(0).expand(batch_size, -1)
@@ -821,12 +725,8 @@ class TestEdgeCases:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         batch_size = 20
         coords_batch = coords.unsqueeze(0).expand(batch_size, -1, -1)
@@ -843,9 +743,7 @@ class TestEdgeCases:
 
         assert torch.isfinite(loss)
 
-    def test_numerical_stability(
-        self, reward_function_1vme, test_coordinates_1vme, device
-    ):
+    def test_numerical_stability(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test with extreme coordinate values."""
         coords, atom_array = test_coordinates_1vme
 
@@ -859,12 +757,8 @@ class TestEdgeCases:
             device=device,
             dtype=torch.float32,
         )
-        b_factors = torch.from_numpy(atom_array.b_factor).to(
-            device=device, dtype=torch.float32
-        )
-        occupancies = torch.from_numpy(atom_array.occupancy).to(
-            device=device, dtype=torch.float32
-        )
+        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
 
         coords_far = coords + torch.randn_like(coords) * 1e9
 
@@ -877,9 +771,7 @@ class TestEdgeCases:
 
         assert torch.isfinite(loss)
 
-    def test_structure_to_reward_input(
-        self, reward_function_1vme, structure_1vme_density
-    ):
+    def test_structure_to_reward_input(self, reward_function_1vme, structure_1vme_density):
         """Test structure_to_reward_input function."""
         inputs = reward_function_1vme.structure_to_reward_input(structure_1vme_density)
 

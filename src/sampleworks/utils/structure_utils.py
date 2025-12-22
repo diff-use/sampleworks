@@ -119,17 +119,14 @@ def save_structure_to_cif(
                     stacklevel=2,
                 )
                 clean_mask = ~nan_mask.any(axis=0)
-                structure_to_save = cast(
-                    AtomArrayStack, structure_to_save[:, clean_mask]
-                )
+                structure_to_save = cast(AtomArrayStack, structure_to_save[:, clean_mask])
         else:
             coords: Any = structure_to_save.coord
             nan_mask = np.isnan(coords).any(axis=-1)
             if nan_mask.any():
                 n_nan = int(nan_mask.sum())
                 warnings.warn(
-                    f"Found {n_nan} atoms with NaN coordinates. "
-                    "Filtering them out before saving.",
+                    f"Found {n_nan} atoms with NaN coordinates. Filtering them out before saving.",
                     UserWarning,
                     stacklevel=2,
                 )

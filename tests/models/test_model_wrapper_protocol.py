@@ -42,9 +42,7 @@ class TestModelWrapperProtocol:
         assert len(features) > 0, f"{wrapper_fixture}.featurize returned empty dict"
 
     @pytest.mark.slow
-    def test_step_runs(
-        self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
-    ):
+    def test_step_runs(self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request):
         """Test that step executes without exceptions."""
         wrapper = request.getfixturevalue(wrapper_fixture)
         features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
@@ -72,21 +70,16 @@ class TestDiffusionModelWrapperProtocol:
         """Test that get_noise_schedule executes without exceptions."""
         wrapper = request.getfixturevalue(wrapper_fixture)
         schedule = wrapper.get_noise_schedule()
-        assert schedule is not None, (
-            f"{wrapper_fixture}.get_noise_schedule returned None"
-        )
+        assert schedule is not None, f"{wrapper_fixture}.get_noise_schedule returned None"
 
     def test_get_noise_schedule_return_type(self, wrapper_fixture: str, request):
         """Test that get_noise_schedule returns Mapping with float arrays."""
         wrapper = request.getfixturevalue(wrapper_fixture)
         schedule = wrapper.get_noise_schedule()
         assert isinstance(schedule, Mapping), (
-            f"{wrapper_fixture}.get_noise_schedule must return Mapping, got"
-            f"{type(schedule)}"
+            f"{wrapper_fixture}.get_noise_schedule must return Mapping, got{type(schedule)}"
         )
-        assert len(schedule) > 0, (
-            f"{wrapper_fixture}.get_noise_schedule returned empty mapping"
-        )
+        assert len(schedule) > 0, f"{wrapper_fixture}.get_noise_schedule returned empty mapping"
 
         for key, value in schedule.items():
             assert isinstance(key, str), (
@@ -117,20 +110,14 @@ class TestDiffusionModelWrapperProtocol:
         """Test that get_timestep_scaling executes without exceptions."""
         wrapper = request.getfixturevalue(wrapper_fixture)
         scaling = wrapper.get_timestep_scaling(0)
-        assert scaling is not None, (
-            f"{wrapper_fixture}.get_timestep_scaling returned None"
-        )
+        assert scaling is not None, f"{wrapper_fixture}.get_timestep_scaling returned None"
 
     @pytest.mark.slow
-    def test_initialize_from_noise_runs(
-        self, wrapper_fixture: str, structure_6b8x: dict, request
-    ):
+    def test_initialize_from_noise_runs(self, wrapper_fixture: str, structure_6b8x: dict, request):
         """Test that initialize_from_noise executes without exceptions."""
         wrapper = request.getfixturevalue(wrapper_fixture)
         noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        assert noisy_coords is not None, (
-            f"{wrapper_fixture}.initialize_from_noise returned None"
-        )
+        assert noisy_coords is not None, f"{wrapper_fixture}.initialize_from_noise returned None"
 
     @pytest.mark.slow
     def test_denoise_step_runs(
