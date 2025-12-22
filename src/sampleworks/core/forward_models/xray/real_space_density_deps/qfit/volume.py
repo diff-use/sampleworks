@@ -58,9 +58,7 @@ def extend_to_p1(grid, offset, R_matrix, t_vector, grid_shape_out, out):
     # Apply symmetry operation: R @ coords + t
     # Note: R_matrix operates on (x, y, z) coordinates, so we need to reorder
     coords_xyz = coords_flat[:, [2, 1, 0]]  # Convert to (x, y, z) order
-    transformed_xyz = (R_matrix @ coords_xyz.T).T + t_vector * np.array(
-        [nx_out, ny_out, nz_out]
-    )
+    transformed_xyz = (R_matrix @ coords_xyz.T).T + t_vector * np.array([nx_out, ny_out, nz_out])
     transformed_zyx = transformed_xyz[:, [2, 1, 0]]  # Convert back to (z, y, x) order
 
     # Convert to integer grid coordinates and apply modulo wrapping
@@ -249,8 +247,7 @@ class XMap(_BaseVolume):
             spacegroup = parser.spacegroup
             if spacegroup == 0:
                 raise RuntimeError(
-                    f"File {fname} is 2D image or image stack. Please convert to a "
-                    "3D map."
+                    f"File {fname} is 2D image or image stack. Please convert to a 3D map."
                 )
             unit_cell = UnitCell(a, b, c, alpha, beta, gamma, spacegroup)
             offset = parser.offset
@@ -276,9 +273,7 @@ class XMap(_BaseVolume):
                 crystal = mtz["HKL_base"]
             except KeyError:
                 crystal = mtz.crystals[0]
-            uc_par = [
-                getattr(crystal, attr) for attr in "a b c alpha beta gamma".split()
-            ]
+            uc_par = [getattr(crystal, attr) for attr in "a b c alpha beta gamma".split()]
             unit_cell = UnitCell(*uc_par)
             space_group = GetSpaceGroup(mtz.ispg)
             # symops = [SymOpFromString(string) for string in mtz.symops]
@@ -341,16 +336,14 @@ class XMap(_BaseVolume):
 
     @property
     def unit_cell_shape(self):
-        shape = np.round(self.unit_cell.abc / self.grid_parameters.voxelspacing).astype(
-            int
-        )
+        shape = np.round(self.unit_cell.abc / self.grid_parameters.voxelspacing).astype(int)
         return shape
 
     def canonical_unit_cell(self):
         # Calculate the canonical unit cell shape (grid points along each axis)
-        shape = np.round(self.unit_cell.abc / self.grid_parameters.voxelspacing).astype(
-            int
-        )[::-1]  # Reverse to get (nz, ny, nx) ordering
+        shape = np.round(self.unit_cell.abc / self.grid_parameters.voxelspacing).astype(int)[
+            ::-1
+        ]  # Reverse to get (nz, ny, nx) ordering
 
         # Create output array and XMap
         array = np.zeros(shape, np.float64)
@@ -383,9 +376,7 @@ class XMap(_BaseVolume):
         return out
 
     def is_canonical_unit_cell(self):
-        return np.allclose(self.shape, self.unit_cell_shape[::-1]) and np.allclose(
-            self.offset, 0
-        )
+        return np.allclose(self.shape, self.unit_cell_shape[::-1]) and np.allclose(self.offset, 0)
 
     def extract(self, orth_coor, padding=3.0):
         """Create a copy of the map around the atomic coordinates provided.
@@ -444,9 +435,7 @@ class XMap(_BaseVolume):
         x_indices = np.arange(lb[2], ru[2]) % self.shape[2]  # x dimension
 
         # Use numpy's advanced indexing with proper broadcasting
-        z_grid, y_grid, x_grid = np.meshgrid(
-            z_indices, y_indices, x_indices, indexing="ij"
-        )
+        z_grid, y_grid, x_grid = np.meshgrid(z_indices, y_indices, x_indices, indexing="ij")
         density_map = self.array[z_grid, y_grid, x_grid]
 
         return XMap(
@@ -478,9 +467,7 @@ class XMap(_BaseVolume):
 class ASU:
     """Assymetric Unit Cell"""
 
-    def __init__(
-        self, array, grid_parameters=None, unit_cell=None, resolution=None, hkl=None
-    ):
+    def __init__(self, array, grid_parameters=None, unit_cell=None, resolution=None, hkl=None):
         raise NotImplementedError
         super().__init__(array, grid_parameters, unit_cell, resolution, hkl)
 
@@ -563,16 +550,12 @@ class CCP4Parser:
         elif m_stamp == "0x11":
             endian = ">"
         else:
-            raise ValueError(
-                "Endiannes is not properly set in file. Check the file format."
-            )
+            raise ValueError("Endiannes is not properly set in file. Check the file format.")
         self._endian = endian
         self.fhandle.seek(0)
 
     def _get_header(self):
-        header = _unpack(
-            self._endian + self.HEADER_TYPE, self.fhandle.read(self.HEADER_SIZE)
-        )
+        header = _unpack(self._endian + self.HEADER_TYPE, self.fhandle.read(self.HEADER_SIZE))
         self.header = {}
         index = 0
         for field, nchunks in zip(self.HEADER_FIELDS, self.HEADER_CHUNKS):
@@ -608,9 +591,7 @@ class CCP4Parser:
 
         # Read the density
         storage_shape = tuple(self.header[key] for key in ("ns", "nr", "nc"))
-        self.density = np.fromfile(self.fhandle, dtype=self._endian + dtype).reshape(
-            storage_shape
-        )
+        self.density = np.fromfile(self.fhandle, dtype=self._endian + dtype).reshape(storage_shape)
 
         # Reorder axis so that nx is fastest changing.
         maps, mapr, mapc = (self.header[key] for key in ("maps", "mapr", "mapc"))
@@ -664,9 +645,7 @@ def to_mrc(fid, volume, labels=[], fmt=None):
     elif fmt in ("mrc", "map"):
         nxstart, nystart, nzstart = [0, 0, 0]
         origin = volume.origin
-        xl, yl, zl = (
-            vs * n for vs, n in zip(volume.voxelspacing, reversed(volume.shape))
-        )
+        xl, yl, zl = (vs * n for vs, n in zip(volume.voxelspacing, reversed(volume.shape)))
         alpha = beta = gamma = 90
         ispg = 1
         ns, nr, nc = volume.shape
