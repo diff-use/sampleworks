@@ -147,7 +147,7 @@ def build_command(job: JobConfig, args: argparse.Namespace) -> list[str]:
     env = get_pixi_env(job.model)
     script_dir = Path(__file__).parent
     script_name = f"{job.model}_{job.scaler}.py"
-    script_path = script_dir / "examples" / script_name
+    script_path = script_dir / "scripts" / script_name
 
     cmd = ["pixi", "run", "-e", env, "python", str(script_path)]
 
