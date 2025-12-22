@@ -6,10 +6,13 @@ from sampleworks.utils.imports import (
     check_any_model_available,
     check_boltz_available,
     check_protenix_available,
+    check_rf3_available,
     PROTENIX_AVAILABLE,
     require_any_model,
     require_boltz,
     require_protenix,
+    require_rf3,
+    RF3_AVAILABLE,
 )
 
 
@@ -24,9 +27,13 @@ class TestAvailabilityFlags:
         """PROTENIX_AVAILABLE should be a boolean."""
         assert isinstance(PROTENIX_AVAILABLE, bool)
 
+    def test_rf3_available_is_bool(self):
+        """RF3_AVAILABLE should be a boolean."""
+        assert isinstance(RF3_AVAILABLE, bool)
+
     def test_at_least_one_available(self):
         """At least one model should be available in test environment."""
-        assert BOLTZ_AVAILABLE or PROTENIX_AVAILABLE
+        assert BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE
 
 
 class TestCheckFunctions:
@@ -34,7 +41,7 @@ class TestCheckFunctions:
 
     def test_check_any_model_available_no_error(self):
         """check_any_model_available should not raise if any model available."""
-        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE:
+        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE:
             check_any_model_available()
 
     def test_check_boltz_available(self):
@@ -53,6 +60,14 @@ class TestCheckFunctions:
             with pytest.raises(ImportError, match="Protenix model wrapper"):
                 check_protenix_available()
 
+    def test_check_rf3_available(self):
+        """check_rf3_available should match RF3_AVAILABLE flag."""
+        if RF3_AVAILABLE:
+            check_rf3_available()
+        else:
+            with pytest.raises(ImportError, match="RF3 model wrapper"):
+                check_rf3_available()
+
     def test_check_functions_custom_message(self):
         """Check functions should support custom error messages."""
         custom_msg = "Custom error message for testing"
@@ -65,7 +80,11 @@ class TestCheckFunctions:
             with pytest.raises(ImportError, match=custom_msg):
                 check_protenix_available(custom_msg)
 
-        if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE:
+        if not RF3_AVAILABLE:
+            with pytest.raises(ImportError, match=custom_msg):
+                check_rf3_available(custom_msg)
+
+        if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE and not RF3_AVAILABLE:
             with pytest.raises(ImportError, match=custom_msg):
                 check_any_model_available(custom_msg)
 
@@ -99,6 +118,19 @@ class TestRequireDecorators:
             with pytest.raises(pytest.skip.Exception):
                 protenix_function()
 
+    def test_require_rf3_decorator(self):
+        """@require_rf3 should skip if RF3 unavailable."""
+
+        @require_rf3()
+        def rf3_function():
+            return "executed"
+
+        if RF3_AVAILABLE:
+            assert rf3_function() == "executed"
+        else:
+            with pytest.raises(pytest.skip.Exception):
+                rf3_function()
+
     def test_require_any_model_decorator(self):
         """@require_any_model should skip if no models available."""
 
@@ -106,7 +138,7 @@ class TestRequireDecorators:
         def any_model_function():
             return "executed"
 
-        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE:
+        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE:
             assert any_model_function() == "executed"
         else:
             with pytest.raises(pytest.skip.Exception):
@@ -130,7 +162,7 @@ class TestRequireDecorators:
         def function_with_args(x: int, y: int) -> int:
             return x + y
 
-        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE:
+        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE:
             assert function_with_args(2, 3) == 5
 
     def test_decorator_custom_message(self):
@@ -145,6 +177,30 @@ class TestRequireDecorators:
             with pytest.raises(pytest.skip.Exception, match=custom_msg):
                 custom_boltz_function()
 
+        @require_protenix(custom_msg)
+        def custom_protenix_function():
+            return "executed"
+
+        if not PROTENIX_AVAILABLE:
+            with pytest.raises(pytest.skip.Exception, match=custom_msg):
+                custom_protenix_function()
+
+        @require_rf3(custom_msg)
+        def custom_rf3_function():
+            return "executed"
+
+        if not RF3_AVAILABLE:
+            with pytest.raises(pytest.skip.Exception, match=custom_msg):
+                custom_rf3_function()
+
+        @require_any_model(custom_msg)
+        def custom_any_model_function():
+            return "executed"
+
+        if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE and not RF3_AVAILABLE:
+            with pytest.raises(pytest.skip.Exception, match=custom_msg):
+                custom_any_model_function()
+
 
 class TestReexports:
     """Test that re-exports from utils.__init__ work."""
@@ -156,20 +212,26 @@ class TestReexports:
             check_any_model_available as check_any_reexport,
             check_boltz_available as check_boltz_reexport,
             check_protenix_available as check_protenix_reexport,
+            check_rf3_available as check_rf3_reexport,
             PROTENIX_AVAILABLE as PROTENIX_REEXPORT,
             require_any_model as require_any_reexport,
             require_boltz as require_boltz_reexport,
             require_protenix as require_protenix_reexport,
+            require_rf3 as require_rf3_reexport,
+            RF3_AVAILABLE as RF3_REEXPORT,
         )
 
         assert BOLTZ_REEXPORT == BOLTZ_AVAILABLE
         assert PROTENIX_REEXPORT == PROTENIX_AVAILABLE
+        assert RF3_REEXPORT == RF3_AVAILABLE
         assert check_any_reexport is check_any_model_available
         assert check_boltz_reexport is check_boltz_available
         assert check_protenix_reexport is check_protenix_available
+        assert check_rf3_reexport is check_rf3_available
         assert require_any_reexport is require_any_model
         assert require_boltz_reexport is require_boltz
         assert require_protenix_reexport is require_protenix
+        assert require_rf3_reexport is require_rf3
 
 
 class TestDecoratorIntegrationWithPytest:
@@ -185,7 +247,12 @@ class TestDecoratorIntegrationWithPytest:
         """This test should be skipped if Protenix is not available."""
         assert PROTENIX_AVAILABLE
 
+    @require_rf3()
+    def test_rf3_specific_feature(self):
+        """This test should be skipped if RF3 is not available."""
+        assert RF3_AVAILABLE
+
     @require_any_model()
     def test_any_model_feature(self):
         """This test should be skipped if no models are available."""
-        assert BOLTZ_AVAILABLE or PROTENIX_AVAILABLE
+        assert BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE
