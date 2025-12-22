@@ -405,9 +405,7 @@ def weighted_rigid_align_differentiable(
         rotation = backend.matmul(U, Vh)
 
         det = backend.det(rotation)
-        diag = backend.ones(
-            batch_size, dim, device=rotation.device, dtype=backend.float32
-        )
+        diag = backend.ones(batch_size, dim, device=rotation.device, dtype=backend.float32)
         diag[:, -1] = det
 
         rotation = backend.matmul(U * diag.unsqueeze(1), Vh)
@@ -416,8 +414,7 @@ def weighted_rigid_align_differentiable(
 
         # true @ rot.T
         aligned_coords = (
-            einx.dot("b n i, b j i -> b n j", true_coords_centered, rotation)
-            + pred_centroid
+            einx.dot("b n i, b j i -> b n j", true_coords_centered, rotation) + pred_centroid
         )
 
         if not allow_gradients:
@@ -480,8 +477,7 @@ def weighted_rigid_align_differentiable(
 
         # Note: Same einsum pattern as Boltz - true @ rot.T
         aligned_coords = (
-            einx.dot("b n i, b j i -> b n j", true_coords_centered, rotation)
-            + pred_centroid
+            einx.dot("b n i, b j i -> b n j", true_coords_centered, rotation) + pred_centroid
         )
 
         if not allow_gradients:

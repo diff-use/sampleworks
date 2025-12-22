@@ -4,7 +4,8 @@
 # provided by karson.chrispens@ucsf.edu
 
 This script calculates the Real Space Correlation Coefficient (RSCC) between computed maps
-from refined structures and reference (ground truth) maps for all experiments in the grid search results.
+from refined structures and reference (ground truth) maps for all experiments in the grid
+search results.
 
 ## Workflow:
 1. Scan the `grid_search_results` directory for completed experiments
@@ -12,12 +13,11 @@ from refined structures and reference (ground truth) maps for all experiments in
 3. Compare against the corresponding base map and calculate RSCC
 4. Aggregate and visualize results by ensemble size, guidance weight, and scaler type
 """
+
 import argparse
 import copy
 import re
 import traceback
-
-from loguru import logger
 from pathlib import Path
 
 import numpy as np
@@ -26,15 +26,17 @@ import torch
 
 # Import local modules for density calculation
 from atomworks.io.parser import parse
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
-from sampleworks.core.rewards.real_space_density import setup_scattering_params
+from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density import (
     DifferentiableTransformer,
     XMap_torch,
 )
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import ATOMIC_NUM_TO_ELEMENT
-
-from sampleworks.eval.constants import OCCUPANCY_LEVELS, DEFAULT_SELECTION_PADDING
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
+    ATOMIC_NUM_TO_ELEMENT,
+)
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
+from sampleworks.core.rewards.real_space_density import setup_scattering_params
+from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING, OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList, ProteinConfig
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
@@ -75,10 +77,10 @@ def parse_experiment_dir(exp_dir: Path) -> dict[str, int | float | None]:
 # TODO: this method is now more flexible about how it scans the grid search results directory,
 #  but that means we should be more strict about the output "API" directory structure.
 def scan_grid_search_results(
-        current_directory: Path,
-        current_depth: int = 0,
-        target_depth: int = 4,
-        target_filename: str = "refined.cif",
+    current_directory: Path,
+    current_depth: int = 0,
+    target_depth: int = 4,
+    target_filename: str = "refined.cif",
 ) -> ExperimentList:
     """
     Recursively scan the grid_search_results directory for all experiments with refined.cif files.
@@ -96,7 +98,9 @@ def scan_grid_search_results(
 
     if not current_directory.exists():
         if current_depth == 0:
-            logger.error(f"Grid search directory not found: {current_directory} at depth {current_depth}")
+            logger.error(
+                f"Grid search directory not found: {current_directory} at depth {current_depth}"
+            )
         return experiments
 
     # Check if we found a refined.cif file in the current directory
@@ -114,6 +118,18 @@ def scan_grid_search_results(
 
         params = parse_experiment_dir(exp_dir)
 
+        # Validate parameters to satisfy pyright
+        if (
+            protein is None
+            or occ_a is None
+            or method is None
+            or params["ensemble_size"] is None
+            or params["guidance_weight"] is None
+            or params["gd_steps"] is None
+        ):
+            logger.warning(f"Skipping experiment in {exp_dir} due to missing metadata")
+            return experiments
+
         experiments.append(
             Experiment(
                 protein=protein,
@@ -121,9 +137,9 @@ def scan_grid_search_results(
                 model=model,
                 method=method,
                 scaler=scaler_dir.name,
-                ensemble_size=params["ensemble_size"],
-                guidance_weight=params["guidance_weight"],
-                gd_steps=params["gd_steps"],
+                ensemble_size=int(params["ensemble_size"]),
+                guidance_weight=float(params["guidance_weight"]),
+                gd_steps=int(params["gd_steps"]),
                 exp_dir=exp_dir,
                 refined_cif_path=refined_cif,
                 protein_dir_name=protein_dir.name,
@@ -132,17 +148,15 @@ def scan_grid_search_results(
 
         return experiments
 
-    # Stop recursion if max depth reached, this should not happen, but it will prevent any accidental
-    # infinite recursion if the directory structure changes in the future.
+    # Stop recursion if max depth reached, this should not happen, but it will prevent any
+    # accidental infinite recursion if the directory structure changes in the future.
     if current_depth >= target_depth:
         return experiments
 
     # Recurse into subdirectories
     for item in current_directory.iterdir():
         if item.is_dir() and not item.name.endswith(".json"):
-            experiments.extend(
-                scan_grid_search_results(item, current_depth + 1, target_depth)
-            )
+            experiments.extend(scan_grid_search_results(item, current_depth + 1, target_depth))
 
     return experiments
 
@@ -165,7 +179,7 @@ def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor
     if tensor.ndim < 2:
         tensor = tensor.unsqueeze(0)
     # expand the first dimension to the ensemble size, all others remain the same
-    return tensor.repeat(ensemble_size, *[1]*(tensor.ndim - 1))
+    return tensor.repeat(ensemble_size, *[1] * (tensor.ndim - 1))
 
 
 def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> np.ndarray:
@@ -211,9 +225,10 @@ def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> 
 
     # Prepare input tensors
     # borrowed from another of @k.chrispens' scripts, not sure this actually works for AtomArray
-    elements = torch.tensor(
-        [ATOMIC_NUM_TO_ELEMENT.index(elem.title()) for elem in atom_array.element], device=device
-    )
+    if atom_array.element is None:
+        raise ValueError("AtomArray has no element information")
+    elements_list = [ATOMIC_NUM_TO_ELEMENT.index(elem.title()) for elem in atom_array.element]
+    elements = torch.tensor(elements_list, device=device)
     coordinates = torch.from_numpy(atom_array.coord).float().to(device)
     b_factors = torch.from_numpy(atom_array.b_factor).float().to(device)
 
@@ -288,7 +303,7 @@ def main(args: argparse.Namespace):
             resolution=1.74,
             map_pattern="6b8x_{occ_str}_1.74A.ccp4",
             structure_pattern="6b8x_synthetic_{occ_str}.cif",
-        )
+        ),
     }
 
     logger.info(f"Grid search directory: {grid_search_dir}")
@@ -301,7 +316,6 @@ def main(args: argparse.Namespace):
             _path = config.get_base_map_path_for_occupancy(_occ)  # will warn if not found
             if _path:
                 logger.debug(f"  {config.protein} occ={_occ}: {_path}")
-
 
     # Scan for experiments (look for refined.cif files)
     all_experiments = scan_grid_search_results(grid_search_dir)
@@ -318,16 +332,20 @@ def main(args: argparse.Namespace):
             ref_coords[protein_key] = protein_ref_coords
 
     # Calculate RSCC for all experiments
-    # (BIG) TODO: implement a sliding-window version (global can be achieved with different selections.
+    # (BIG) TODO: implement a sliding-window version (global can be achieved with
+    # different selections.
     logger.info("Calculating RSCC values for all experiments...")
-    logger.warning("Note: RSCC is computed on the region around altloc residues (defined by selection)")
+    logger.warning(
+        "Note: RSCC is computed on the region around altloc residues (defined by selection)"
+    )
 
     _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {_device}")
 
     results = []
     base_map_cache: dict[tuple[str, float], tuple[XMap, XMap]] = {}
-    for _i, _exp in enumerate(all_experiments):  # TODO parallelize this loop? It uses GPU, so be careful.
+    # TODO parallelize this loop? It uses GPU, so be careful.
+    for _i, _exp in enumerate(all_experiments):
         if _exp.protein not in protein_configs:
             logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
             continue
@@ -337,33 +355,43 @@ def main(args: argparse.Namespace):
         # Check if we have reference coordinates for region extraction
         if _exp.protein not in ref_coords:
             logger.warning(
-                f"Skipping {_exp.protein_dir_name}: no reference structure available for {_exp.protein}, "
-                f"this may be due to a selection with zero atoms or NaN/Inf coordinates. Check logs above."
+                f"Skipping {_exp.protein_dir_name}: no reference structure available "
+                f"for {_exp.protein}, this may be due to a selection with zero atoms "
+                f"or NaN/Inf coordinates. Check logs above."
             )
             continue
 
         _selection_coords = ref_coords[_exp.protein]
         _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
         if _base_map_path is None:
-            logger.warning(f"Skipping {_exp.protein_dir_name}: base map for occupancy {_exp.occ_a} not found")
+            logger.warning(
+                f"Skipping {_exp.protein_dir_name}: base map for occupancy {_exp.occ_a} not found"
+            )
             continue
 
         try:
             # TODO: we will reload these maps A LOT. Fix that by caching them somewhere?
-            # Load base map for canonical unit cell, don't extract selection as we'll use the full map later too.
+            # Load base map for canonical unit cell, don't extract selection as we'll use
+            # the full map later too.
             if (_exp.protein, _exp.occ_a) not in base_map_cache:
                 _base_xmap = protein_config.load_map(_base_map_path)
+                if _base_xmap is None:
+                    raise ValueError(f"Failed to load base map from {_base_map_path}")
 
                 # Extract the region around altloc residues from the base map
-                _extracted_base = _base_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
-                logger.info(f"Caching base and subselected maps for {_exp.protein} occ_a={_exp.occ_a}")
+                _extracted_base = _base_xmap.extract(
+                    _selection_coords, padding=DEFAULT_SELECTION_PADDING
+                )
+                logger.info(
+                    f"Caching base and subselected maps for {_exp.protein} occ_a={_exp.occ_a}"
+                )
                 base_map_cache[(_exp.protein, _exp.occ_a)] = (_base_xmap, _extracted_base)
             else:
-                _base_map, _extracted_base = base_map_cache[(_exp.protein, _exp.occ_a)]
-
+                _base_map_cached, _extracted_base = base_map_cache[(_exp.protein, _exp.occ_a)]
+                _base_xmap = _base_map_cached
 
             # Validate extraction
-            if _extracted_base.array.size == 0:
+            if _extracted_base is None or _extracted_base.array.size == 0:
                 raise ValueError(f"Extracted base map from {_base_map_path} is empty")
 
             # Load refined structure
@@ -374,12 +402,14 @@ def main(args: argparse.Namespace):
 
             # Create an XMap from the computed density by copying the base xmap
             # and replacing its array with the computed density
-            _computed_xmap = copy.deepcopy(_base_xmap)  
+            _computed_xmap = copy.deepcopy(_base_xmap)
             _computed_xmap.array = _computed_density
-            _extracted_computed = _computed_xmap.extract(_selection_coords, padding=DEFAULT_SELECTION_PADDING)
+            _extracted_computed = _computed_xmap.extract(
+                _selection_coords, padding=DEFAULT_SELECTION_PADDING
+            )
 
             # Validate extraction
-            if _extracted_computed.array.size == 0:
+            if _extracted_computed is None or _extracted_computed.array.size == 0:
                 raise ValueError("Extracted computed map is empty")
 
             # Calculate RSCC on extracted regions
@@ -389,7 +419,7 @@ def main(args: argparse.Namespace):
         except Exception as _e:
             logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")
             logger.error(f"  Traceback: {traceback.format_exc()}")
-            _exp.error = str(_e)
+            _exp.error = _e
             _exp.rscc = np.nan  # this is the default, but better to be explicit.
             _exp.base_map_path = _base_map_path
 
@@ -410,7 +440,11 @@ def main(args: argparse.Namespace):
     if not df.empty:
         # Remove error column for display if present
         drop_cols = [
-            "exp_dir", "refined_cif_path", "base_map_path", "error", "protein_dir_name",
+            "exp_dir",
+            "refined_cif_path",
+            "base_map_path",
+            "error",
+            "protein_dir_name",
         ]
 
         logger.info("Results Summary:")
@@ -435,7 +469,8 @@ def main(args: argparse.Namespace):
             print(f"Skipping {protein_key}: no reference coordinates available")
             continue
 
-        # We re-use the selection coordinates from the reference structure computed at 0.5 occupancy above.
+        # We re-use the selection coordinates from the reference structure computed
+        # at 0.5 occupancy above.
         _selection_coords = ref_coords[protein_key]
 
         logger.info(f"\nProcessing {protein_key} single conformer explanatory power:")
@@ -445,11 +480,18 @@ def main(args: argparse.Namespace):
             logger.warning(f"Skipping {protein_key}: pure conformer maps not found")
             continue
         try:
-            # Load pure conformer maps--returns canonical unit cell by default, extract selection with padding 0.0
-            _extracted_pure_A = protein_config.load_map(map_path_1occA, selection_coords=_selection_coords)
-            _extracted_pure_B = protein_config.load_map(map_path_1occB, selection_coords=_selection_coords)
+            # Load pure conformer maps--returns canonical unit cell by default,
+            # extract selection with padding 0.0
+            _extracted_pure_A = protein_config.load_map(
+                map_path_1occA, selection_coords=_selection_coords
+            )
+            _extracted_pure_B = protein_config.load_map(
+                map_path_1occB, selection_coords=_selection_coords
+            )
 
-            logger.info(f"  Pure A reference: {map_path_1occA}\n  Pure B reference: {map_path_1occB}")
+            logger.info(
+                f"  Pure A reference: {map_path_1occA}\n  Pure B reference: {map_path_1occB}"
+            )
 
             # Calculate correlations for each occupancy
             for _occ_a in OCCUPANCY_LEVELS:  # TODO make configurable
@@ -460,8 +502,18 @@ def main(args: argparse.Namespace):
 
                     logger.info(f"  Processing occ_A={_occ_a}: {_base_map_path.name}")
 
-                    # Load the base map for this occupancy, and do the selection--default padding is zero.
-                    _extracted_base = protein_config.load_map(_base_map_path, selection_coords=_selection_coords)
+                    # Load the base map for this occupancy, and do the selection--
+                    # default padding is zero.
+                    _extracted_base = protein_config.load_map(
+                        _base_map_path, selection_coords=_selection_coords
+                    )
+
+                    if (
+                        _extracted_base is None
+                        or _extracted_pure_A is None
+                        or _extracted_pure_B is None
+                    ):
+                        raise ValueError("One of the extracted maps is empty")
 
                     # Calculate correlations
                     _corr_base_vs_pureA = rscc(_extracted_base.array, _extracted_pure_A.array)

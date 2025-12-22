@@ -30,7 +30,6 @@ from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
-from loguru import logger
 from torch import Tensor
 
 from sampleworks.utils.msa import MSAManager

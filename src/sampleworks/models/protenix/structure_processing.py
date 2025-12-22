@@ -101,9 +101,7 @@ def get_valid_residue_positions(atom_array: AtomArray) -> dict[str, set[int]]:
     return dict(valid_positions)
 
 
-def reconcile_atom_arrays(
-    atomworks_array: AtomArray, protenix_array: AtomArray
-) -> AtomArray:
+def reconcile_atom_arrays(atomworks_array: AtomArray, protenix_array: AtomArray) -> AtomArray:
     """Add atoms from protenix_array missing in atomworks_array with inferred positions.
 
     Matches atoms by (chain_index, relative_position, atom_name) to handle
@@ -355,9 +353,7 @@ def get_sequences(atom_array, chain_info, valid_positions=None):
                 if chain_atom[0].label_entity_id == label_entity_id:
                     chain_type = info["chain_type"]
                     if chain_type.is_polymer():
-                        canonical_seq = info.get(
-                            "processed_entity_canonical_sequence", ""
-                        )
+                        canonical_seq = info.get("processed_entity_canonical_sequence", "")
                         if valid_positions is not None and chain_id in valid_positions:
                             chain_valid = valid_positions[chain_id]
                             n_valid = len(chain_valid)
@@ -419,16 +415,10 @@ def get_poly_res_names(atom_array, chain_info, valid_positions=None):
                         chain_array = filter_altloc(chain_atom)
                         if len(chain_array) == 0:
                             break
-                        starts = get_residue_starts(
-                            chain_array, add_exclusive_stop=True
-                        )
-                        res_names = cast(np.ndarray, chain_array.res_name)[
-                            starts[:-1]
-                        ].tolist()
+                        starts = get_residue_starts(chain_array, add_exclusive_stop=True)
+                        res_names = cast(np.ndarray, chain_array.res_name)[starts[:-1]].tolist()
                         if hasattr(chain_array, "res_id"):
-                            res_ids = cast(np.ndarray, chain_array.res_id)[
-                                starts[:-1]
-                            ].tolist()
+                            res_ids = cast(np.ndarray, chain_array.res_id)[starts[:-1]].tolist()
                             min_res_id = min(res_ids) if res_ids else 1
                             positions = [r - min_res_id + 1 for r in res_ids]
                         else:
@@ -438,13 +428,9 @@ def get_poly_res_names(atom_array, chain_info, valid_positions=None):
                         if valid_positions is not None and chain_id in valid_positions:
                             chain_valid = valid_positions[chain_id]
                             min_valid = min(chain_valid) if chain_valid else 1
-                            valid_seq_positions = {
-                                r - min_valid + 1 for r in chain_valid
-                            }
+                            valid_seq_positions = {r - min_valid + 1 for r in chain_valid}
                             pos_res_pairs = [
-                                (p, r)
-                                for p, r in pos_res_pairs
-                                if p in valid_seq_positions
+                                (p, r) for p, r in pos_res_pairs if p in valid_seq_positions
                             ]
                         poly_res_names[label_entity_id] = pos_res_pairs
                     break
@@ -579,10 +565,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             chain_to_entity[chain_id] = entity_id
 
         label_entity_ids = np.array(
-            [
-                chain_to_entity.get(cid, cid)
-                for cid in cast(np.ndarray, atom_array.chain_id)
-            ]
+            [chain_to_entity.get(cid, cid) for cid in cast(np.ndarray, atom_array.chain_id)]
         )
         atom_array.set_annotation("label_entity_id", label_entity_ids)
 
@@ -607,9 +590,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
         if entity_chain_type and not entity_chain_type.is_polymer():
             current_lig_chain_ids = np.unique(
-                cast(np.ndarray, atom_array.chain_id)[
-                    atom_array.label_entity_id == label_entity_id
-                ]
+                cast(np.ndarray, atom_array.chain_id)[atom_array.label_entity_id == label_entity_id]
             ).tolist()
             lig_chain_ids += current_lig_chain_ids
 
@@ -620,9 +601,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 label_entity_id_to_sequences[label_entity_id] = seq
                 break
 
-    entity_id_to_mod_list = detect_modifications(
-        atom_array, chain_info, valid_positions
-    )
+    entity_id_to_mod_list = detect_modifications(atom_array, chain_info, valid_positions)
 
     json_dict = {"sequences": []}
 
@@ -634,18 +613,13 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     for label_entity_id in unique_label_entity_id:
         entity_dict = {}
         entity_mask = atom_array.label_entity_id == label_entity_id
-        unique_chain_ids_for_entity = np.unique(
-            cast(np.ndarray, atom_array.chain_id)[entity_mask]
-        )
+        unique_chain_ids_for_entity = np.unique(cast(np.ndarray, atom_array.chain_id)[entity_mask])
         n_chains_for_entity = len(unique_chain_ids_for_entity)
 
         entity_chain_type: ChainType | None = None
         for chain_id, info in chain_info.items():
             chain_atom = atom_array[atom_array.chain_id == chain_id]
-            if (
-                isinstance(chain_atom, AtomArray | AtomArrayStack)
-                and len(chain_atom) > 0
-            ):
+            if isinstance(chain_atom, AtomArray | AtomArrayStack) and len(chain_atom) > 0:
                 if chain_atom[0].label_entity_id == label_entity_id:
                     entity_chain_type = info["chain_type"]
                     break
@@ -672,9 +646,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 entity_dict["msa"] = {}
         else:
             entity_type = "ligand"
-            lig_ccd = "_".join(
-                label_entity_id_to_sequences.get(label_entity_id, ["UNK"])
-            )
+            lig_ccd = "_".join(label_entity_id_to_sequences.get(label_entity_id, ["UNK"]))
             entity_dict["ligand"] = f"CCD_{lig_ccd}"
 
         entity_dict["count"] = n_chains_for_entity
@@ -760,18 +732,14 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
         if has_ligand_bonds:
             ligand_bonds = np.vstack((lig_polymer_bonds, lig_lig_bonds))
-            lig_indices = np.where(
-                np.isin(cast(np.ndarray, atom_array.chain_id), lig_chain_ids)
-            )[0]
+            lig_indices = np.where(np.isin(cast(np.ndarray, atom_array.chain_id), lig_chain_ids))[0]
             lig_bond_mask = np.any(np.isin(ligand_bonds[:, :2], lig_indices), axis=1)
             ligand_bonds = ligand_bonds[lig_bond_mask]
             if ligand_bonds.size > 0:
                 token_bonds_list.append(ligand_bonds)
 
         if has_modifications:
-            polymer_polymer_bond = get_polymer_polymer_bond(
-                atom_array, entity_poly_type
-            )
+            polymer_polymer_bond = get_polymer_polymer_bond(atom_array, entity_poly_type)
             if polymer_polymer_bond.size > 0:
                 token_bonds_list.append(polymer_polymer_bond)
 
@@ -788,18 +756,12 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                         ]
                     )
                     bond_dict[f"position{i + 1}"] = int(position)
-                    bond_dict[f"atom{i + 1}"] = cast(np.ndarray, atom_array.atom_name)[
-                        atoms[i]
-                    ]
-                    bond_dict[f"copy{i + 1}"] = int(
-                        atom_array.get_annotation("copy_id")[atoms[i]]
-                    )
+                    bond_dict[f"atom{i + 1}"] = cast(np.ndarray, atom_array.atom_name)[atoms[i]]
+                    bond_dict[f"copy{i + 1}"] = int(atom_array.get_annotation("copy_id")[atoms[i]])
 
                 covalent_bonds.append(bond_dict)
 
-            merged_covalent_bonds = merge_covalent_bonds(
-                covalent_bonds, all_entity_counts
-            )
+            merged_covalent_bonds = merge_covalent_bonds(covalent_bonds, all_entity_counts)
             json_dict["covalent_bonds"] = merged_covalent_bonds
 
     json_dict["name"] = structure.get("metadata", {}).get("name", "sample")
@@ -807,9 +769,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     return json_dict
 
 
-def create_protenix_input_from_structure(
-    structure: dict, out_dir: str | Path
-) -> tuple[Path, dict]:
+def create_protenix_input_from_structure(structure: dict, out_dir: str | Path) -> tuple[Path, dict]:
     """Create Protenix input JSON from Atomworks structure.
 
     Parameters

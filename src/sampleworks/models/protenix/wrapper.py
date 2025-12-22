@@ -49,7 +49,7 @@ class ProtenixWrapper:
         checkpoint_path: str | Path,
         args_str: str = "",
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        model: Protenix | None = None
+        model: Protenix | None = None,
     ):
         """
         Parameters

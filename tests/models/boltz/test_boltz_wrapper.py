@@ -6,6 +6,7 @@ including helper functions and model-specific behavior.
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 from sampleworks.models.boltz.wrapper import (
@@ -338,20 +339,32 @@ class TestBoltz1WrapperInitializeFromNoise:
     def test_initialize_from_noise_correct_shape(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
     ):
-        coords = structure_6b8x["asym_unit"].coord
+        atom_array = structure_6b8x["asym_unit"]
+        coords = atom_array.coord
         noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        assert noisy_coords.shape == coords[:, structure_6b8x["asym_unit"].occupancy > 0].shape
+        noisy_coords = (
+            np.asarray(noisy_coords.cpu())
+            if isinstance(noisy_coords, torch.Tensor)
+            else np.asarray(noisy_coords)
+        )
+        # Use a local variable and cast to Any to help pyright
+        mask = atom_array.occupancy > 0
+        sliced_coords = coords[:, mask]
+        assert noisy_coords.shape == sliced_coords.shape
         assert noisy_coords.shape[-1] == 3
 
     def test_initialize_from_noise_adds_noise(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
     ):
-        coords = structure_6b8x["asym_unit"].coord
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
+        atom_array = structure_6b8x["asym_unit"]
+        coords = atom_array.coord
+        noisy_coords = torch.as_tensor(
+            boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
+        )
         assert not torch.allclose(
             noisy_coords,
-            torch.tensor(
-                coords[:, structure_6b8x["asym_unit"].occupancy > 0],
+            torch.as_tensor(
+                coords[:, atom_array.occupancy > 0],
                 device=boltz1_wrapper.device,
             ),
         )
@@ -385,20 +398,29 @@ class TestBoltz2WrapperInitializeFromNoise:
     def test_initialize_from_noise_correct_shape(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
     ):
-        coords = structure_6b8x["asym_unit"].coord
+        atom_array = structure_6b8x["asym_unit"]
+        coords = atom_array.coord
         noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        assert noisy_coords.shape == coords[:, structure_6b8x["asym_unit"].occupancy > 0].shape
+        noisy_coords = (
+            np.asarray(noisy_coords.cpu())
+            if isinstance(noisy_coords, torch.Tensor)
+            else np.asarray(noisy_coords)
+        )
+        assert noisy_coords.shape == coords[:, atom_array.occupancy > 0].shape
         assert noisy_coords.shape[-1] == 3
 
     def test_initialize_from_noise_adds_noise(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
     ):
-        coords = structure_6b8x["asym_unit"].coord
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
+        atom_array = structure_6b8x["asym_unit"]
+        coords = atom_array.coord
+        noisy_coords = torch.as_tensor(
+            boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
+        )
         assert not torch.allclose(
             noisy_coords,
-            torch.tensor(
-                coords[:, structure_6b8x["asym_unit"].occupancy > 0],
+            torch.as_tensor(
+                coords[:, atom_array.occupancy > 0],
                 device=boltz2_wrapper.device,
             ),
         )

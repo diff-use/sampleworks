@@ -112,9 +112,7 @@ class TestFrameTransforms:
         # by inverse transform with rotation_only = True and modification of the
         # translation
         augmented = apply_forward_transform(coords, transform, rotation_only=False)
-        recovered_no_translation = apply_inverse_transform(
-            augmented, transform, rotation_only=True
-        )
+        recovered_no_translation = apply_inverse_transform(augmented, transform, rotation_only=True)
         # R.T @ t
         translation = einx.dot(
             "... j i, ... j -> ... i", transform["rotation"], transform["translation"]
@@ -170,9 +168,7 @@ class TestFrameTransforms:
         # by inverse transform with rotation_only = True and modification of the
         # translation
         augmented = apply_forward_transform(coords, transform, rotation_only=False)
-        recovered_no_translation = apply_inverse_transform(
-            augmented, transform, rotation_only=True
-        )
+        recovered_no_translation = apply_inverse_transform(augmented, transform, rotation_only=True)
         # R.T @ t
         translation = einx.dot(
             "... j i, ... j -> ... i", transform["rotation"], transform["translation"]
@@ -242,9 +238,7 @@ class TestFrameTransforms:
         centroid = coords.mean(dim=-2)
         expected_t = -centroid
 
-        torch.testing.assert_close(
-            transform["translation"], expected_t, rtol=1e-5, atol=1e-5
-        )
+        torch.testing.assert_close(transform["translation"], expected_t, rtol=1e-5, atol=1e-5)
 
     def test_create_random_transform_with_centering_jax(self, shape: tuple[int, ...]):
         """Test that center_before_rotation=True creates centered transform."""
@@ -263,9 +257,7 @@ class TestFrameTransforms:
             atol=1e-5,
         )
 
-    def test_create_random_transform_without_centering_torch(
-        self, shape: tuple[int, ...]
-    ):
+    def test_create_random_transform_without_centering_torch(self, shape: tuple[int, ...]):
         """Test that center_before_rotation=False creates random translation."""
         coords = torch.randn(shape)
         transform = create_random_transform(coords, center_before_rotation=False)
@@ -285,9 +277,7 @@ class TestFrameTransforms:
 
     def test_undo_transform_far_from_origin_jax(self, shape: tuple[int, ...]):
         """Test that transform and its inverse work far from the origin."""
-        coords = jax.random.normal(jax.random.PRNGKey(0), shape) + jax.numpy.array(
-            [1e6, -1e6, 1e6]
-        )
+        coords = jax.random.normal(jax.random.PRNGKey(0), shape) + jax.numpy.array([1e6, -1e6, 1e6])
         transform = create_random_transform(coords)
 
         augmented = apply_forward_transform(coords, transform)
@@ -295,9 +285,7 @@ class TestFrameTransforms:
 
         assert jax.numpy.allclose(coords, recovered, rtol=1e-5, atol=1e-5)
 
-    def test_create_random_transform_without_centering_jax(
-        self, shape: tuple[int, ...]
-    ):
+    def test_create_random_transform_without_centering_jax(self, shape: tuple[int, ...]):
         """Test that center_before_rotation=False creates random translation."""
         coords = jax.random.normal(jax.random.PRNGKey(0), shape)
         transform = create_random_transform(coords, center_before_rotation=False)
@@ -331,9 +319,7 @@ class TestWeightedRigidAlign:
 
         # Create a line of points along x-axis
         t = torch.linspace(0, 1, num_points, dtype=torch.float32)
-        original_line = torch.stack(
-            [t, torch.zeros_like(t), torch.zeros_like(t)], dim=-1
-        )
+        original_line = torch.stack([t, torch.zeros_like(t), torch.zeros_like(t)], dim=-1)
         # Add batch dimension
         original_line = original_line.unsqueeze(0).expand(batch_size, -1, -1)
 
@@ -369,14 +355,10 @@ class TestWeightedRigidAlign:
         )
         # Add batch dimension
         original_line = jax.numpy.expand_dims(original_line, 0)
-        original_line = jax.numpy.broadcast_to(
-            original_line, (batch_size, num_points, 3)
-        )
+        original_line = jax.numpy.broadcast_to(original_line, (batch_size, num_points, 3))
 
         # Create a randomly rotated and translated version
-        transform = create_random_transform(
-            original_line, center_before_rotation=False, key=1
-        )
+        transform = create_random_transform(original_line, center_before_rotation=False, key=1)
         rotated_line = apply_forward_transform(original_line, transform)
 
         # All points have equal weight
@@ -402,9 +384,7 @@ class TestWeightedRigidAlign:
 
         # Create a line of points
         t = torch.linspace(0, 1, num_points, dtype=torch.float32)
-        original_line = torch.stack(
-            [t, torch.zeros_like(t), torch.zeros_like(t)], dim=-1
-        )
+        original_line = torch.stack([t, torch.zeros_like(t), torch.zeros_like(t)], dim=-1)
         original_line = original_line.unsqueeze(0).expand(batch_size, -1, -1)
 
         # Rotate and translate
@@ -444,14 +424,10 @@ class TestWeightedRigidAlign:
             [t, jax.numpy.zeros_like(t), jax.numpy.zeros_like(t)], axis=-1
         )
         original_line = jax.numpy.expand_dims(original_line, 0)
-        original_line = jax.numpy.broadcast_to(
-            original_line, (batch_size, num_points, 3)
-        )
+        original_line = jax.numpy.broadcast_to(original_line, (batch_size, num_points, 3))
 
         # Rotate and translate
-        transform = create_random_transform(
-            original_line, center_before_rotation=False, key=1
-        )
+        transform = create_random_transform(original_line, center_before_rotation=False, key=1)
         rotated_line = apply_forward_transform(original_line, transform)
 
         weights = jax.numpy.ones((batch_size, num_points), dtype=jax.numpy.float32)
@@ -483,9 +459,7 @@ class TestWeightedRigidAlign:
 
         # Create a line of points
         t = torch.linspace(0, 1, num_points, dtype=torch.float32)
-        original_line = torch.stack(
-            [t, torch.zeros_like(t), torch.zeros_like(t)], dim=-1
-        )
+        original_line = torch.stack([t, torch.zeros_like(t), torch.zeros_like(t)], dim=-1)
         original_line = original_line.unsqueeze(0).expand(batch_size, -1, -1)
 
         # Apply a known transform
@@ -520,14 +494,10 @@ class TestWeightedRigidAlign:
             [t, jax.numpy.zeros_like(t), jax.numpy.zeros_like(t)], axis=-1
         )
         original_line = jax.numpy.expand_dims(original_line, 0)
-        original_line = jax.numpy.broadcast_to(
-            original_line, (batch_size, num_points, 3)
-        )
+        original_line = jax.numpy.broadcast_to(original_line, (batch_size, num_points, 3))
 
         # Apply a known transform
-        transform = create_random_transform(
-            original_line, center_before_rotation=False, key=1
-        )
+        transform = create_random_transform(original_line, center_before_rotation=False, key=1)
         rotated_line = apply_forward_transform(original_line, transform)
 
         weights = jax.numpy.ones((batch_size, num_points), dtype=jax.numpy.float32)
