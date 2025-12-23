@@ -19,7 +19,6 @@ TQDM_BAR_FORMAT = "{l_bar}{bar}| {n_fmt}/{total_fmt} [elapsed: {elapsed} remaini
 # TODO this needs a better backoff strategy.
 # TODO lots of duplicated code here w.r.t. retries that obscures what's going on.
 
-
 def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
     x: str | list[str],
     prefix: str = "tmp",
@@ -263,21 +262,25 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
         with tarfile.open(tar_gz_file) as tar_gz:
             tar_gz.extractall(path)
 
+    # TODO: goodness this next part is weird. All it achieves is to split the files on
+    #   \x00 (end-of-file, null) and return the content as a list of strings.
     # gather a3m lines
     a3m_lines = {}
     for a3m_file in a3m_files:
         update_M, M = True, None
         for line in open(a3m_file, "r"):  # explicit is better than implicit
             if len(line) > 0:
-                if "\x00" in line:
+                if "\x00" in line:  # it appears paired alignments have an internal EOF?
                     line = line.replace("\x00", "")
                     update_M = True
                 if line.startswith(">") and update_M:
+                    # just the FASTA identifier for the sequence, plus some statistics
                     M = int(line[1:].rstrip())
                     update_M = False
                     if M not in a3m_lines:
                         a3m_lines[M] = []
                 a3m_lines[M].append(line)
 
+    # we run all the sequences together in one string, so this is really just a list of file dumps
     a3m_lines = ["".join(a3m_lines[n]) for n in Ms]
     return a3m_lines
