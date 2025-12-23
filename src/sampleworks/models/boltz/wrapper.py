@@ -33,6 +33,8 @@ from jaxtyping import ArrayLike, Float
 from loguru import logger
 from torch import Tensor
 
+from sampleworks.utils.msa import MSAManager
+
 
 @dataclass
 class PredictArgs:
@@ -101,10 +103,15 @@ def create_boltz_input_from_structure(
             ligand_info[chain]["ccd"] = chain_info[chain]["res_name"][0]
 
     # get all the MSA paths, fetching MSAs as needed.
-    msa_paths = msa_manager.get_msa(
-        {chain_id: info["sequence"] for chain_id, info in polymer_info.items()},
-        msa_pairing_strategy,
-    )
+    if msa_manager:
+        msa_paths = msa_manager.get_msa(
+            {chain_id: info["sequence"] for chain_id, info in polymer_info.items()},
+            msa_pairing_strategy,
+        )
+    else:
+        msa_paths = None
+
+    chains = {chain_id for chain_id, _ in polymer_info.items()}
 
     logger.debug(f"Should use msa_paths {msa_paths}")
 
@@ -116,6 +123,7 @@ def create_boltz_input_from_structure(
             f.write(f"    - {info['entity_type']}:\n")
             f.write(f"        id: {chain_id}\n")
             f.write(f"        sequence: {info['sequence']}\n")
+            # If we have MSAs for all chains, then send paths to them.
             if msa_paths and all(c in msa_paths for c in chains):
                 f.write(f"        msa: {str(msa_paths[chain_id])}\n")
             elif msa_paths:
@@ -187,6 +195,8 @@ class Boltz2Wrapper:
             num_subsampled_msa=1024,  # Default from boltz repo
             use_paired_feature=True,  # Required for Boltz2
         )
+        self.msa_manager = MSAManager() if use_msa_server else None
+        self.msa_pairing_strategy = "greedy"
 
         if not model:
             self.model = (
@@ -253,8 +263,8 @@ class Boltz2Wrapper:
             ccd_path=ccd_path,
             mol_dir=mol_dir,
             use_msa_server=self.use_msa_server,
-            msa_server_url="https://api.colabfold.com",
-            msa_pairing_strategy="greedy",
+            msa_server_url=self.msa_manager.msa_server_url,
+            msa_pairing_strategy=self.msa_pairing_strategy,
             boltz2=True,
             preprocessing_threads=1,
         )
@@ -754,6 +764,8 @@ class Boltz1Wrapper:
             num_subsampled_msa=1024,
             use_paired_feature=False,
         )
+        self.msa_manager = MSAManager() if self.use_msa_server else None
+        self.msa_pairing_strategy = "greedy"
 
         if not model:
             self.model = (
@@ -821,8 +833,8 @@ class Boltz1Wrapper:
             ccd_path=ccd_path,
             mol_dir=mol_dir,
             use_msa_server=self.use_msa_server,
-            msa_server_url="https://api.colabfold.com",
-            msa_pairing_strategy="greedy",
+            msa_server_url=self.msa_manager.msa_server_url,
+            msa_pairing_strategy=self.msa_pairing_strategy,
             boltz2=False,
             preprocessing_threads=1,
         )

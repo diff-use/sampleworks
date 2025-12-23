@@ -20,7 +20,7 @@ TODO: detailed project description, installation instructions, usage examples, a
 5. You may need to download the boltz checkpoints, e.g.,
    ```bash
    cd ~/boltz
-   pixi run -e boltz-dev python -c "from boltz.main import download_boltz2; import pathlib; download_boltz2(pathlib.Path('~/boltz/'))"
+   pixi run -e boltz-dev python -c "from boltz.main import download_boltz2; import pathlib; download_boltz2(pathlib.Path('/data/users/marcus/boltz/'))"
    ```
 6Run the example script for Boltz sampling:
    ```bash

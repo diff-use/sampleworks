@@ -18,6 +18,8 @@ from rf3.utils.inference import InferenceInput, InferenceInputDataset
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from sampleworks.utils.msa import MSAManager
+
 
 # TODO: This should go in some sort of atomworks utils module
 def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) -> dict:
@@ -81,6 +83,7 @@ class RF3Wrapper:
     def __init__(
         self,
         checkpoint_path: str | Path,
+        msa_manager: MSAManager | None = None,
     ):
         """
         Parameters
@@ -91,6 +94,8 @@ class RF3Wrapper:
         log.info("Loading RF3 Inference Engine")
 
         self.checkpoint_path = Path(checkpoint_path).expanduser().resolve()
+        self.msa_manager = msa_manager
+        self.msa_pairing_strategy = "greedy"
 
         # TODO: expose num_steps, num_recycles to user
         self.num_steps = 200  # RF3 default number of diffusion steps
@@ -198,6 +203,8 @@ class RF3Wrapper:
 
         # If featurize is called again, we should clear cached representations
         # to avoid using stale data
+        # TODO: add unit tests for all wrappers to check that this is called here.
+        #  https://github.com/k-chrispens/sampleworks/issues/43
         self.cached_representations.clear()
 
         if "asym_unit" not in structure:
@@ -205,6 +212,28 @@ class RF3Wrapper:
 
         atom_array = structure["asym_unit"]
         chain_info = structure.get("chain_info", {})
+
+        # if we have an MSAManager, then use it to get msa_paths unless they've been overridden
+        # TODO? I'm using one of two possible sequences, which I think has
+        #  non-canonicals filtered out. Should we do this differently?
+        if self.msa_manager is not None and msa_path is None and chain_info:
+
+            polypeptides = {
+                chain_id: item["processed_entity_canonical_sequence"]
+                for chain_id, item in chain_info.items()
+                if item["chain_type"] == ChainType.POLYPEPTIDE_L
+            }
+            msa_path = self.msa_manager.get_msa(
+                polypeptides, self.msa_pairing_strategy, return_a3m=True,
+            )
+
+            # These are debugging assertions.
+            assert all(isinstance(pp, str) for pp in polypeptides.values())
+
+        log.info(f"Using MSA paths: {msa_path}")
+
+
+        chain_info = add_msa_to_chain_info(chain_info, msa_path)
 
         inference_input = InferenceInput.from_atom_array(atom_array, chain_info=chain_info)
 

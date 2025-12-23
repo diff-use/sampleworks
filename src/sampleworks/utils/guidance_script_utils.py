@@ -27,7 +27,7 @@ from sampleworks.utils.guidance_constants import (
     RF3,
 )
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
-
+from sampleworks.utils.msa import MSAManager
 
 # The following imports aren't compatible with each other and are supported in separate
 # hatch/pixi envs
@@ -172,6 +172,7 @@ def get_model_and_device(
             raise ImportError("RF3 dependencies not installed")
         model_wrapper = RF3Wrapper(
             checkpoint_path=model_checkpoint_path,
+            msa_manager=MSAManager()
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -180,7 +181,7 @@ def get_model_and_device(
     device = getattr(model_wrapper, "device", device)
 
     # (pyright doesn't think Boltz1Wrapper etc are "Any")
-    return (device, model_wrapper)  # pyright: ignore
+    return device, model_wrapper  # pyright: ignore
 
 
 # TODO: further atomize for easier testing.
@@ -274,13 +275,11 @@ def save_everything(
 #####################
 # Methods for running model guidance in separate processes, avoiding reloading of the model.
 #####################
-# TODO: these args are ultimately defined in run_grid_search.py, which is a terrible place
-#  for that. Need to refactor this.
 def run_guidance(
     args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
 ) -> JobResult:
     """
-    Wrapper around the actual _run_guidance function, to redirect logs and generate a JobResult.
+    Wrapper around the actual _run_guidance function to redirect logs and generate a JobResult.
     Args:
         args:
         guidance_type:
@@ -290,7 +289,7 @@ def run_guidance(
 
     os.makedirs(os.path.dirname(args.log_path), exist_ok=True)
 
-    # need to finish spawning separate logs for each worker
+    # separate logs for each guidance run
     handle = logger.add(
         args.log_path, level="INFO", filter=lambda rec: rec["extra"].get("special", False) is True
     )
@@ -301,7 +300,7 @@ def run_guidance(
         logger.info("Guidance run successfully!")
         return get_job_result(args, device, started_at, datetime.now(), 0, "success")
     except Exception as e:
-        logger.error(f"Error running guidance: {e}")
+        logger.error(f"Error running guidance: {e} consult logs ({args.log_path}) for real errors.")
         logger.error(traceback.format_exc())
         return get_job_result(args, device, started_at, datetime.now(), 1, "failed")
     finally:
@@ -393,7 +392,7 @@ def get_job_result(
     result = JobResult(
         protein=args.protein,
         model=args.model,
-        method=args.method,
+        method=args.method if hasattr(args, "method") else "None",
         scaler=args.guidance_type,
         ensemble_size=args.ensemble_size,
         gradient_weight=args.guidance_weight if hasattr(args, "guidance_weight") else -1.0,
@@ -422,21 +421,30 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         str(template_job.device),
         template_job.model_checkpoint,
         template_job.model,
-        template_job.method,
+        method=template_job.method if hasattr(template_job, "method") else None,
     )
     job_results = []
     for i, job in enumerate(job_queue):
         logger.info(f"Running job {i + 1}/{len(job_queue)}: {job}")
+        # TODO: I think it is safe now to re-use the wrapper, it might save us some time.
         # The model wrapper can persist state across runs, so we need to re-initialize it each run.
-        if job.model_checkpoint is None:
-            raise ValueError(
-                "Running guidance requires that you specify a model checkpoint, not None"
-            )
-        device, model_wrapper = get_model_and_device(
-            str(device), job.model_checkpoint, job.model, job.method, model_wrapper.model
-        )
+        # if job.model_checkpoint is None:
+        #     raise ValueError(
+        #         "Running guidance requires that you specify a model checkpoint, not None"
+        #     )
+        # device, model_wrapper = get_model_and_device(
+        #     str(device), job.model_checkpoint, job.model, job.method, model_wrapper.model
+        # )
 
         job_result = run_guidance(job, job.guidance_type, model_wrapper, device)
         job_results.append(job_result)
+        torch.cuda.empty_cache()  # just in case
+
+    if hasattr(model_wrapper, "msa_manager") and model_wrapper.msa_manager is not None:
+        # reports the number of API calls and cache hits
+        model_wrapper.msa_manager.report_on_usage()
+    else:
+        logger.warning("No MSA manager found, cannot report on MSA usage. "
+                       "(why aren't you using an MSAManager?)")
 
     return job_results
