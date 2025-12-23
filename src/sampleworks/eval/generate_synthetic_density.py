@@ -89,11 +89,11 @@ def detect_altlocs(atom_array: AtomArray) -> AltlocInfo:
 
 
 def assign_occupancies(
-    atom_array: AtomArray,
+    atom_array: AtomArray | AtomArrayStack,
     altloc_info: AltlocInfo,
     mode: str,
     occ_values: list[float] | None = None,
-) -> AtomArray:
+) -> AtomArray | AtomArrayStack:
     if mode == "default":
         return atom_array
 
@@ -114,9 +114,11 @@ def assign_occupancies(
         if occ_values is None:
             raise ValueError("occ_values required for custom mode")
         if len(occ_values) != len(altloc_info.altloc_ids):
-            raise ValueError(
-                f"Expected {len(altloc_info.altloc_ids)} occupancy values, got {len(occ_values)}"
+            logger.warning(
+                f"Expected {len(altloc_info.altloc_ids)} occupancy values, got {len(occ_values)}. "
+                "The missing values are automatically set to 0."
             )
+            occ_values = occ_values + [0.0] * (len(altloc_info.altloc_ids) - len(occ_values))
         for altloc, occ in zip(sorted(altloc_info.altloc_ids), occ_values):
             occupancy[altloc_info.atom_masks[altloc]] = occ
 
@@ -130,7 +132,7 @@ def normalize_element(elem: str) -> str:
 
 
 def setup_scattering_params(
-    atom_array: AtomArray, em_mode: bool, device: torch.device
+    atom_array: AtomArray | AtomArrayStack, em_mode: bool, device: torch.device
 ) -> torch.Tensor:
     elements = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.element)
     unique_elements = sorted(set(normalize_element(e) for e in elements))
@@ -156,8 +158,13 @@ def setup_scattering_params(
     return scattering_tensor
 
 
-def create_synthetic_grid(atom_array: AtomArray, resolution: float, padding: float = 5.0) -> XMap:
+def create_synthetic_grid(
+    atom_array: AtomArray | AtomArrayStack, resolution: float, padding: float = 5.0
+) -> XMap:
     coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
+    if coords.ndim == 3:
+        coords = coords.reshape(-1, 3)
+
     valid_mask = np.isfinite(coords).all(axis=1)
     coords = coords[valid_mask]
 
@@ -193,7 +200,7 @@ def create_synthetic_grid(atom_array: AtomArray, resolution: float, padding: flo
 
 
 def extract_density_inputs(
-    atom_array: AtomArray, device: torch.device
+    atom_array: AtomArray | AtomArrayStack, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
     occupancy = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.occupancy)
@@ -219,7 +226,7 @@ def extract_density_inputs(
 
     # batch dimension: (1, n_atoms, ...)
     return (
-        coords_tensor.unsqueeze(0),
+        coords_tensor.unsqueeze(0) if coords_tensor.ndim == 2 else coords_tensor,
         elements_tensor.unsqueeze(0),
         b_factors_tensor.unsqueeze(0),
         occupancies_tensor.unsqueeze(0),
@@ -227,7 +234,7 @@ def extract_density_inputs(
 
 
 def compute_density(
-    atom_array: AtomArray,
+    atom_array: AtomArray | AtomArrayStack,
     resolution: float,
     em_mode: bool,
     device: torch.device,
