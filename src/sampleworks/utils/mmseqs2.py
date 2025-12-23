@@ -270,10 +270,11 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
         update_M, M = True, None
         for line in open(a3m_file, "r"):  # explicit is better than implicit
             if len(line) > 0:
-                if "\x00" in line:
+                if "\x00" in line:  # it appears paired alignments have an internal EOF?
                     line = line.replace("\x00", "")
                     update_M = True
                 if line.startswith(">") and update_M:
+                    # just the FASTA identifier for the sequence, plus some statistics
                     M = int(line[1:].rstrip())
                     update_M = False
                     if M not in a3m_lines:
