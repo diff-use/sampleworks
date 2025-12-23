@@ -11,12 +11,16 @@ MAX_MSA_SEQS = 16384
 
 
 # From https://github.com/jwohlwend/boltz/blob/main/src/boltz/main.py#L415
-def compute_msa(
+# FIXME: this function is a big, long mess. We should clean it up.
+#   For the love of decent code, don't copy this and use it somewhere else and respect the
+#   leading underscore!
+def _compute_msa(
     data: dict[str, str],
     target_id: str,
     msa_dir: Path,
     msa_server_url: str,
     msa_pairing_strategy: str,
+    return_a3m: bool = False,
     msa_server_username: str | None = None,
     msa_server_password: str | None = None,
     api_key_header: str | None = None,
@@ -96,6 +100,10 @@ def compute_msa(
         auth_headers=auth_headers,
     )
 
+    # FIXME: this code relies on the fact that run_mmseqs2 returns sequence alignments in the same
+    #  order as they are in `data`, and furthermore just returns a list of strings, the content
+    #  of each string being a single sequence alignment. It's some weird file parsing that we
+    #  should clean up so users don't break it or have to worry about it.
     outputs = {}
     for idx, name in enumerate(data):
         # Get paired sequences
@@ -124,6 +132,14 @@ def compute_msa(
         msa_path = msa_dir / f"{target_id}_{idx}.csv"
         with msa_path.open("w") as f:
             f.write("\n".join(csv_str))
+
+        # I'm going to make a bet for now that RF3 and others don't actually care about
+        # the sequence identifiers and alignment stats, so we'll dump the contents of seqs
+        # in a FASTA/a3m format:
+        with msa_path.with_suffix(".a3m").open("w") as f:
+            for seq_idx, seq in enumerate(seqs):
+                f.write(f">{target_id}_{idx}_{seq_idx}\n{seq}\n")
+
         outputs[name] = msa_path
 
     return outputs
@@ -131,23 +147,18 @@ def compute_msa(
 
 class MSAManager:
     """
-    Manages operations related to MSA (Multiple Sequence Alignment).
+    Manages multiple sequence alignment (MSA) operations, including caching,
+    API requests, and file management.
 
-    Facilitates handling and organization of MSA data within a specified
-    directory to reduce calls to servers or other external resources.
-
-    Ultimately, this class uses the above method compute_msa to generate MSA data.
-    We store a cache of MSAs by computing a hash of all the input arguments for that method.
-    When we get a call to compute_msa for a particular set of inputs, we check if we have
-    results for that hash in our cache. If so, we use those results. Otherwise, we compute.
-
-    Attributes:
-        msa_dir (Path): Path to the directory where MSA data is stored.
+    This class facilitates interacting with an external MSA server for sequence
+    alignments while leveraging local caching for efficiency. It computes MSA
+    results based on input data and pairing strategy, while transparently
+    retrieving cached results when available.
     """
 
     def __init__(
         self,
-        msa_cache_dir: Path | str | None = None,
+        msa_cache_dir: Path | str | None = None, # if None, use default
         msa_server_url: str = "https://api.colabfold.com",
         msa_server_username: str | None = None,
         msa_server_password: str | None = None,
@@ -166,6 +177,9 @@ class MSAManager:
         self.api_key_header = api_key_header
         self.api_key_value = api_key_value
 
+        self._api_calls = 0
+        self._cache_hits = 0
+
     def _hash_arguments(
         self,
         data: dict[str, str],
@@ -175,23 +189,56 @@ class MSAManager:
         hexdigest = sha3_256(encoded_sequence_tuple).hexdigest()
         return f"{msa_pairing_strategy}_{hexdigest}"
 
-    def get_msa(self, data: dict[str, str], msa_pairing_strategy: str) -> dict[str, Path]:
+    def get_msa(
+            self,
+            data: dict[str, str],
+            msa_pairing_strategy: str,
+            return_a3m: bool = False
+    ) -> dict[str, Path]:
+        """
+        Fetches existing MSA files from disk or computes new ones if necessary.
+        data: dict[str, str]
+            A dictionary mapping target names to protein sequences.
+        msa_pairing_strategy: str
+            The MSA pairing strategy to use (usually "greedy").
+        return_a3m: bool
+            If True, returns the MSA in a3m format instead of csv.
+
+        Returns: dict[str, Path]
+            A dictionary mapping target names to MSA file paths.
+        """
         hash_key = self._hash_arguments(data, msa_pairing_strategy)
+        suffix = "a3m" if return_a3m else "csv"
         msa_path_dict = {
-            key: self.msa_dir / f"{hash_key}_{idx}.csv" for idx, key in enumerate(data)
+            key: self.msa_dir / f"{hash_key}_{idx}.{suffix}" for idx, key in enumerate(data)
         }
 
         if not all([m.exists() for m in msa_path_dict.values()]):
-            msa_path_dict = compute_msa(
+            msa_path_dict = _compute_msa(
                 data,
                 hash_key,  # this is the "target_id" argument to compute_msa
                 self.msa_dir,
                 self.msa_server_url,
                 msa_pairing_strategy,
-                self.msa_server_username,
-                self.msa_server_password,
-                self.api_key_header,
-                self.api_key_value,
+                msa_server_username=self.msa_server_username,
+                msa_server_password=self.msa_server_password,
+                api_key_header=self.api_key_header,
+                api_key_value=self.api_key_value,
             )
+            self._api_calls += 1
+        else:
+            self._cache_hits += 1
+
+        if return_a3m:
+            msa_path_dict = {
+                key: str(msa_path.with_suffix(".a3m")) for key, msa_path in msa_path_dict.items()}
 
         return msa_path_dict
+
+    def report_on_usage(self):
+        """
+        Report on the usage of the MSA manager, including API calls and cache hits.
+        """
+        logger.info(
+            f"MSA Manager Usage Report: API Calls={self._api_calls}, Cache Hits={self._cache_hits}"
+        )
