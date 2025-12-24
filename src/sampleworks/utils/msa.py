@@ -20,7 +20,6 @@ def _compute_msa(
     msa_dir: Path,
     msa_server_url: str,
     msa_pairing_strategy: str,
-    return_a3m: bool = False,
     msa_server_username: str | None = None,
     msa_server_password: str | None = None,
     api_key_header: str | None = None,
@@ -133,14 +132,45 @@ def _compute_msa(
         with msa_path.open("w") as f:
             f.write("\n".join(csv_str))
 
-        # I'm going to make a bet for now that RF3 and others don't actually care about
-        # the sequence identifiers and alignment stats, so we'll dump the contents of seqs
-        # in a FASTA/a3m format:
+
+        """ Write out a3m format for RF3 """
+        # in addition to CSV write a3m (FASTA) formats--but omit the alignment stats
         with msa_path.with_suffix(".a3m").open("w") as f:
             for seq_idx, seq in enumerate(seqs):
                 f.write(f">{target_id}_{idx}_{seq_idx}\n{seq}\n")
 
         outputs[name] = msa_path
+
+        """
+        a3m files for Protenix.
+        In case we weren't having enough fun, we need to write it all out in yet a third
+        # format, for use by Protenix. Protenix expects a JSON blob like so:
+        [
+          {
+            "sequences": [
+              {"proteinChain": {"sequence": "ACDE...", "msa": "/path/to/msa_directory"},...}
+            ]
+          }, ...
+        ]
+        
+        It expects /path/to/msa_directory to look like this:
+        0:  # index corresponds to position in the list "sequences"
+            non_pairing.a3m
+            pairing.a3m  # only present if pairing was used. 
+        1: 
+            non_pairing.a3m
+            pairing.a3m
+        etc...
+        """
+
+        msa_idx_idr = msa_dir / f"{idx}"
+        msa_idx_idr.mkdir(exist_ok=True, parents=True)
+        logger.info(
+            f"Writing MSA for target {target_id} sequence {idx} to {msa_idx_idr.resolve()}"
+        )
+        msa_idx_idr.joinpath("non_pairing.a3m").write_text(unpaired_msa[idx])
+        if paired:
+            msa_idx_idr.joinpath("pairing.a3m").write_text(paired_msas[idx])
 
     return outputs
 
