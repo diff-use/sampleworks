@@ -1,7 +1,5 @@
 """Utility functions and helpers for sampleworks."""
 
-from typing import Any
-
 from sampleworks.utils.imports import (
     BOLTZ_AVAILABLE,
     check_any_model_available,
@@ -12,12 +10,6 @@ from sampleworks.utils.imports import (
     require_boltz,
     require_protenix,
 )
-
-
-def do_nothing(*args: Any, **kwargs: Any) -> None:
-    """Does nothing, just returns None"""
-    pass
-
 
 __all__ = [
     "BOLTZ_AVAILABLE",
