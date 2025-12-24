@@ -8,8 +8,6 @@ import numpy as np
 import torch
 
 from sampleworks import should_check_nans
-from sampleworks.utils import do_nothing
-
 
 DeviceLikeType = str | torch.device | int
 
@@ -146,6 +144,11 @@ def _assert_no_nans(x: Any, *, msg: str = "", fail_if_not_tensor: bool = False) 
             )
     elif fail_if_not_tensor:
         raise ValueError(f"Unsupported type: {type(x)}")
+
+
+def do_nothing(*args: Any, **kwargs: Any) -> None:
+    """Does nothing, just returns None"""
+    pass
 
 
 assert_no_nans = _assert_no_nans if should_check_nans else do_nothing
