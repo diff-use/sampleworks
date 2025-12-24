@@ -21,6 +21,7 @@ from protenix.model.protenix import (
     update_input_feature_dict,
 )
 from protenix.utils.torch_utils import autocasting_disable_decorator, dict_to_tensor
+# "runner" is actually part of protenix, but for some reason is a separate package
 from runner.inference import download_infercence_cache as download_inference_cache
 from runner.msa_search import update_infer_json
 from torch import Tensor
@@ -34,6 +35,7 @@ from .structure_processing import (
     filter_zero_occupancy,
     reconcile_atom_arrays,
 )
+from ...utils.msa import MSAManager
 
 
 class ProtenixWrapper:
@@ -61,6 +63,16 @@ class ProtenixWrapper:
         logger: Logger = getLogger(__name__)
         self.checkpoint_path = checkpoint_path
         self.device = torch.device(device)
+
+        # TODO? need to decide if we want to use the protenix server or not. For now we are not.
+        # see /main/protenix/web_service/colab_request_parser.py#L248
+        # and /main/protenix/web_service/colab_request_utils.py#L44
+        # at https://github.com/bytedance/Protenix/blob
+        # By default protenix uses use_env: True, use_filter=True,
+        # use_pairing=False, use_templates=False (not sure what "use_templates" is exactly.
+        # it doesn't seem to do anything.)
+        self.msa_manager = MSAManager()  #  msa_server_url="https://protenix-server.com/api/msa")
+        self.msa_pairing_strategy = "complete"
 
         self.cache_path = (
             (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
@@ -197,10 +209,23 @@ class ProtenixWrapper:
 
         use_msa = kwargs.get("use_msa", True)
         if use_msa:
+            # first try the MSAManager
+
+
             import json
 
             updated_json_path = json_path.with_name(f"{json_path.stem}-add-msa.json")
             if not updated_json_path.exists():
+                # This iterates through the JSON we've just written, and add a directory
+                # containing the MSA files to it at [*]["sequences"][*]["proteinChain"]["msa"]
+                # the value at that path is {"msa": "/path/to/msa_dirs/", "pairing_db": "uniref100"}
+                # see https://github.com/bytedance/Protenix/blob/main/runner/msa_search.py#L57
+                # "update_seq_msa" in Protenix/runner/msa_search.py
+                # it expects /path/to/msa_dirs to be a directory that contains a subdirectory named
+                # '0' for the first protein, '1' for the second, etc..., and in each of those
+                # there should be files "non_pairing.a3m" and "pairing.a3m" (the latter only if
+                # pairing is used, which by default it is not.
+
                 updated_json_path = update_infer_json(
                     json_file=str(json_path),
                     out_dir=str(out_dir),

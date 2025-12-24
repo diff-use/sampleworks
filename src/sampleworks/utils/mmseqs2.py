@@ -250,6 +250,11 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
             download(ID, tar_gz_file)  # pyright: ignore [reportPossiblyUnboundVariable]
 
     # prep list of a3m files
+    # TODO: if calling protenix server, the expected files appear to be:
+    #  0.a3m, pdb70_220313_db.m8, and uniref_tax.m8, and its version of run_mmseqs2
+    #  just ends after extracting those files from the tarball. Then another method
+    #  is called to massage the a3m file and m8 file (a TaxaID file it appears) into a final a3m
+    # it expects the files to be organized inside some directory (whose path we put in the config)
     if use_pairing:
         a3m_files = [f"{path}/pair.a3m"]
     else:
