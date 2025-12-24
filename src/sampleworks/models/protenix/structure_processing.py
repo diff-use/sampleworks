@@ -49,6 +49,7 @@ def ensure_atom_array(atom_array: AtomArray | AtomArrayStack) -> AtomArray:
 
 
 # TODO: Fix this so that we can handle multiple altlocs properly
+#  http://github.com/k-chrispens/sampleworks/issues/46
 def filter_altloc(atom_array: AtomArray) -> AtomArray:
     """Filter atom array to single conformation per residue.
 
