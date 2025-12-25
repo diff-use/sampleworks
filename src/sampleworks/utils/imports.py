@@ -4,7 +4,6 @@ import functools
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-
 BOLTZ_AVAILABLE = False
 PROTENIX_AVAILABLE = False
 RF3_AVAILABLE = False
@@ -18,10 +17,15 @@ except (ImportError, ModuleNotFoundError):
     pass
 
 try:
-    from sampleworks.models.protenix.wrapper import ProtenixWrapper
+    # we were testing whether we could load our own modules, but
+    # that increases the likelihood of a circular import, and this
+    # try/except construction makes those hard to debug, so just test
+    # that the actual requirements are available.
+    from protenix.model.protenix import Protenix
+    from runner.msa_search import msa_search
 
     PROTENIX_AVAILABLE = True
-    del ProtenixWrapper
+    del Protenix, msa_search
 except (ImportError, ModuleNotFoundError):
     pass
 

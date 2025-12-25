@@ -413,8 +413,8 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         job_queue: list[GuidanceConfig] = pickle.load(fp)
 
     template_job = job_queue[0]
-    if template_job.model_checkpoint is None:
-        raise ValueError("Running guidance requires that you specify a model checkpoint, not None")
+    if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
+        raise ValueError("Running guidance requires that you specify a model checkpoint")
 
     logger.info(f"Running {len(job_queue)} jobs, using {template_job} as a setup template")
     device, model_wrapper = get_model_and_device(

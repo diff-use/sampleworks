@@ -3,8 +3,15 @@ from pathlib import Path
 
 from loguru import logger
 
+from sampleworks.utils.imports import PROTENIX_AVAILABLE
+from sampleworks.utils.guidance_constants import BOLTZ_2, BOLTZ_1, PROTENIX, RF3
 from sampleworks.utils.mmseqs2 import run_mmseqs2
 
+if PROTENIX_AVAILABLE:
+    from runner.msa_search import msa_search as protenix_msa_search
+    logger.debug("Protenix MSA tools are available at top of msa.py")
+else:
+    logger.error("Protenix is not installed, cannot use Protenix MSA tools.")
 
 MAX_PAIRED_SEQS = 8192
 MAX_MSA_SEQS = 16384
@@ -148,7 +155,17 @@ def _compute_msa(
         [
           {
             "sequences": [
-              {"proteinChain": {"sequence": "ACDE...", "msa": "/path/to/msa_directory"},...}
+              {"proteinChain": 
+                {
+                  "sequence": "ACDE...", 
+                  "msa": 
+                    {
+                      "precomputed_msa_dir:": "/path/to/msa_directory"
+                      "pairing_db": "uniref100"
+                    },
+                  ... other fields
+                }
+              }, ...
             ]
           }, ...
         ]
@@ -210,25 +227,22 @@ class MSAManager:
         self._api_calls = 0
         self._cache_hits = 0
 
-    def _hash_arguments(
-        self,
-        data: dict[str, str],
-        msa_pairing_strategy: str,
-    ):
-        encoded_sequence_tuple = str.encode(str(tuple(data.values())))
+    @staticmethod
+    def _hash_arguments(data: dict[str, str], msa_pairing_strategy: str) -> str:
+        encoded_sequence_tuple = str.encode(str(tuple(data.values())) + msa_pairing_strategy)
         hexdigest = sha3_256(encoded_sequence_tuple).hexdigest()
-        return f"{msa_pairing_strategy}_{hexdigest}"
+        return hexdigest
 
     def get_msa(
             self,
             data: dict[str, str],
             msa_pairing_strategy: str,
-            return_a3m: bool = False
+            structure_predictor: str = BOLTZ_2
     ) -> dict[str, Path]:
         """
         Fetches existing MSA files from disk or computes new ones if necessary.
         data: dict[str, str]
-            A dictionary mapping target names to protein sequences.
+            A dictionary mapping target (usu. chain or index) names to protein sequences.
         msa_pairing_strategy: str
             The MSA pairing strategy to use (usually "greedy").
         return_a3m: bool
@@ -238,31 +252,68 @@ class MSAManager:
             A dictionary mapping target names to MSA file paths.
         """
         hash_key = self._hash_arguments(data, msa_pairing_strategy)
-        suffix = "a3m" if return_a3m else "csv"
-        msa_path_dict = {
-            key: self.msa_dir / f"{hash_key}_{idx}.{suffix}" for idx, key in enumerate(data)
-        }
 
-        if not all([m.exists() for m in msa_path_dict.values()]):
-            msa_path_dict = _compute_msa(
-                data,
-                hash_key,  # this is the "target_id" argument to compute_msa
-                self.msa_dir,
-                self.msa_server_url,
-                msa_pairing_strategy,
-                msa_server_username=self.msa_server_username,
-                msa_server_password=self.msa_server_password,
-                api_key_header=self.api_key_header,
-                api_key_value=self.api_key_value,
-            )
-            self._api_calls += 1
-        else:
-            self._cache_hits += 1
-
-        if return_a3m:
+        if structure_predictor in [BOLTZ_1, BOLTZ_2]:
+            # get standard MSAs
+            suffix = "a3m" if structure_predictor == RF3 else "csv"
             msa_path_dict = {
-                key: str(msa_path.with_suffix(".a3m")) for key, msa_path in msa_path_dict.items()}
+                key: self.msa_dir / f"{hash_key}_{idx}.{suffix}" for idx, key in enumerate(data)
+            }
 
+            if not all([m.exists() for m in msa_path_dict.values()]):
+                msa_path_dict = _compute_msa(
+                    data,
+                    hash_key,  # this is the "target_id" argument to compute_msa
+                    self.msa_dir,
+                    self.msa_server_url,
+                    msa_pairing_strategy,
+                    msa_server_username=self.msa_server_username,
+                    msa_server_password=self.msa_server_password,
+                    api_key_header=self.api_key_header,
+                    api_key_value=self.api_key_value,
+                )
+                self._api_calls += 1
+            else:
+                self._cache_hits += 1
+
+            if structure_predictor in [RF3, ]:  # leave open to others that use plain a3m in the future
+                msa_path_dict = {
+                    key: str(msa_path.with_suffix(".a3m")) for key, msa_path in msa_path_dict.items()}
+
+        # Protenix needs special MSAs
+        # This is a kind of hacky way to handle Protenix, but I'm not sure what to do easily but
+        # use their pipeline, and just have it put everything in our cache directory.
+        elif structure_predictor == PROTENIX:
+            if not PROTENIX_AVAILABLE:
+                raise RuntimeError("Protenix is not installed, cannot use Protenix MSA tools.")
+            logger.info("Running Protenix MSA tools.")
+            # Make sure we have a protenix subdirectory
+            protenix_dir = self.msa_dir / "protenix"
+            protenix_dir.mkdir(parents=True, exist_ok=True)
+            # Protenix adds extra information, easiest just to use their pipeline.
+            # make sure sort order stays the same:
+            data_keys = sorted(data.keys())
+            sequences = [data[key] for key in data_keys]
+            out_dir = self.msa_dir / "protenix" / hash_key
+
+            msa_directories = [out_dir / str(idx) for idx in data_keys]
+            reqd_files = ["non_pairing.a3m", "pairing.a3m"]
+            need_msas = not all((out_dir / str(idx) / fn).exists()
+                                for idx in data_keys for fn in reqd_files)
+            if need_msas:
+                msa_directories = protenix_msa_search(sequences, out_dir, mode="protenix")
+                self._api_calls += 1
+                logger.debug(
+                    f"Protenix MSA search completed. {msa_directories} MSA directories created."
+                )
+            else:
+                logger.debug(f"Used cached protenix MSA")
+                self._cache_hits += 1
+
+            msa_path_dict = {key: path for key, path in zip(data_keys, msa_directories)}
+
+        else:
+            raise ValueError(f"Unknown structure predictor: {structure_predictor}")
         return msa_path_dict
 
     def report_on_usage(self):

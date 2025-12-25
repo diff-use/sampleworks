@@ -28,14 +28,15 @@ from torch import Tensor
 
 from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
 
-from .structure_processing import (
+from sampleworks.models.protenix.structure_processing import (
     add_terminal_oxt_atoms,
     create_protenix_input_from_structure,
     ensure_atom_array,
     filter_zero_occupancy,
     reconcile_atom_arrays,
 )
-from ...utils.msa import MSAManager
+from sampleworks.utils.guidance_constants import PROTENIX
+from sampleworks.utils.msa import MSAManager
 
 
 class ProtenixWrapper:
@@ -64,21 +65,12 @@ class ProtenixWrapper:
         self.checkpoint_path = checkpoint_path
         self.device = torch.device(device)
 
-        # TODO? need to decide if we want to use the protenix server or not. For now we are not.
-        # see /main/protenix/web_service/colab_request_parser.py#L248
-        # and /main/protenix/web_service/colab_request_utils.py#L44
-        # at https://github.com/bytedance/Protenix/blob
-        # By default protenix uses use_env: True, use_filter=True,
-        # use_pairing=False, use_templates=False (not sure what "use_templates" is exactly.
-        # it doesn't seem to do anything.)
-        self.msa_manager = MSAManager()  #  msa_server_url="https://protenix-server.com/api/msa")
-        self.msa_pairing_strategy = "complete"
+        # Protenix puts extra required information in the .a3m files about species/taxonomy,
+        # easiest to just use their server for now, but I'm not a fan.
+        self.msa_manager = MSAManager(msa_server_url="https://protenix-server.com/api/msa")
 
-        self.cache_path = (
-            (Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path)
-            .parent.expanduser()
-            .resolve()
-        )
+        self.cache_path = Path(checkpoint_path).parent.expanduser().resolve()
+
         self.cache_path.mkdir(parents=True, exist_ok=True)
         self.cached_representations: dict[str, Any] = {}
 
@@ -94,6 +86,7 @@ class ProtenixWrapper:
             arg_str=verified_arg_str,
             fill_required_with_null=True,
         )
+
 
         # Protenix inference logging
         self.configs.model_name = str(self.checkpoint_path).split("/")[-1].replace(".pt", "")
@@ -216,21 +209,36 @@ class ProtenixWrapper:
 
             updated_json_path = json_path.with_name(f"{json_path.stem}-add-msa.json")
             if not updated_json_path.exists():
-                # This iterates through the JSON we've just written, and add a directory
-                # containing the MSA files to it at [*]["sequences"][*]["proteinChain"]["msa"]
-                # the value at that path is {"msa": "/path/to/msa_dirs/", "pairing_db": "uniref100"}
-                # see https://github.com/bytedance/Protenix/blob/main/runner/msa_search.py#L57
-                # "update_seq_msa" in Protenix/runner/msa_search.py
-                # it expects /path/to/msa_dirs to be a directory that contains a subdirectory named
-                # '0' for the first protein, '1' for the second, etc..., and in each of those
-                # there should be files "non_pairing.a3m" and "pairing.a3m" (the latter only if
-                # pairing is used, which by default it is not.
-
-                updated_json_path = update_infer_json(
-                    json_file=str(json_path),
-                    out_dir=str(out_dir),
-                    use_msa=True,
+                # get all the required sequences from the json_dict
+                sequence_data = {
+                    n: seq_data["proteinChain"]["sequence"]
+                    for n, seq_data in enumerate(json_dict["sequences"])
+                    if "proteinChain" in seq_data
+                }
+                msa_paths = self.msa_manager.get_msa(
+                    sequence_data,
+                    msa_pairing_strategy="complete",  # not actually passed through for Protenix
+                    structure_predictor=PROTENIX,
                 )
+
+                for idx in sequence_data:
+                    # see https://github.com/bytedance/Protenix/blob/main/runner/msa_search.py#L57
+                    json_dict["sequences"][idx]["proteinChain"]["msa"] = {
+                        "precomputed_msa_dir": str(msa_paths[idx]),
+                        "pairing_db": "uniref100"
+                    }
+
+                # old method does this by reading from the existing JSON file,
+                # then writing a new one -- we'll at least write the file for completeness
+                # TODO: do we need this file?
+                #updated_json_path = update_infer_json(
+                #    json_file=str(json_path),
+                #    out_dir=str(out_dir),
+                #    use_msa=True,
+                #)
+                with open (updated_json_path, "w") as f:
+                    json.dump([json_dict, ], f)
+
             with open(updated_json_path) as f:
                 json_data = json.load(f)
                 json_dict = json_data[0]
