@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-
+# TODO: group these into enums https://github.com/k-chrispens/sampleworks/issues/49
 FK_STEERING = "fk_steering"
 PURE_GUIDANCE = "pure_guidance"
+
 BOLTZ_2 = "boltz2"
 PROTENIX = "protenix"
 RF3 = "rf3"

@@ -225,6 +225,7 @@ def run_guidance_queue_script(args: tuple[str, int, str, int]):
     cmd = f"pixi run -e {pixi_env} python {script_path} --job-queue-path {job_queue_path}"
     cmd = cmd.split()
     log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
+    log.info(f"To re-run the job use: {" ".join(cmd)}")
     # env = os.environ.copy()
 
     with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
