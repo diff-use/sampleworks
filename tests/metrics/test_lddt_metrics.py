@@ -70,13 +70,15 @@ def test_all_atom_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
 
 
 def test_selected_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
+    import numpy as np
+
     selection_string = 'res_id > 179 and res_id < 185'
     lddt = SelectedLDDT()
     results = lddt.compute(altlocA_backbone, altlocB_backbone, (selection_string, ))
 
     expected_results = {
         selection_string: {
-            "overall_lddt": 0.8281,
+            "overall_lddt": np.array([0.8281]),
             "residue_lddt_scores": {
                 'A180': [0.796],
                 'A181': [0.8594],
@@ -94,8 +96,9 @@ def test_selected_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
 
     results = results[selection_string]
     expected_results = expected_results[selection_string]
-    # Check overall value
-    assert results["overall_lddt"] == pytest.approx(expected_results["overall_lddt"], abs=0.001)
+    # Check overall value - now returns numpy array
+    assert isinstance(results["overall_lddt"], np.ndarray), "overall_lddt should be a numpy array"
+    np.testing.assert_allclose(results["overall_lddt"], expected_results["overall_lddt"], atol=0.001)
 
     # Check that all expected keys are present in residue_lddt_scores
     assert (set(results['residue_lddt_scores'].keys()) ==

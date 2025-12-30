@@ -24,6 +24,7 @@ from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 # This method is copied from RosettaCommons/foundry/models/rf3/metrics/lddt.py, but
 # modified to return residue-level LDDT scores as well.
 # TODO: break this up into easily testable pieces.
+#  https://github.com/k-chrispens/sampleworks/issues/50
 # TODO? borrow tests from RosettaCommons/foundry?
 def _calc_lddt(
     X_L: Float[torch.Tensor, "D L 3"],
@@ -66,7 +67,7 @@ def _calc_lddt(
     # Compute LDDT score for each model in the batch
     lddt_scores = []
     residue_level_lddt_scores = []
-    # TODO: can this be further vectorized?
+    # TODO: can this be further vectorized? https://github.com/k-chrispens/sampleworks/issues/50
     for d in range(D):
         # Calculate pairwise distances in ground truth structure
         ground_truth_distances = torch.linalg.norm(
@@ -302,8 +303,10 @@ class AllAtomLDDT(Metric):
         predicted_aa_stack, ground_truth_aa_stack = filter_to_common_atoms(
             predicted_atom_array_stack, ground_truth_atom_array_stack
         )
-        if ((predicted_aa_stack.array_length() != predicted_atom_array_stack.array_length()) or
-            (ground_truth_aa_stack.array_length() != ground_truth_atom_array_stack.array_length())):
+        if (
+            predicted_aa_stack.array_length() != predicted_atom_array_stack.array_length()
+            or ground_truth_aa_stack.array_length() != ground_truth_atom_array_stack.array_length()
+        ):
             logger.warning(f"Chains did not exactly match between input AtomArrays.")
 
         if predicted_aa_stack.array_length() == 0:
@@ -358,7 +361,10 @@ class AllAtomLDDT(Metric):
 
 
 class SelectedLDDT(Metric):
-    """Calculates LDDT scores by type for both chains and interfaces."""
+    """
+    Calculates LDDT scores for a subset of atoms in the structure, defined by
+    a selection string passed internally to AtomArrayStack.mask().
+    """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -373,8 +379,8 @@ class SelectedLDDT(Metric):
 
     def compute(
         self,
-        predicted_atom_array_stack: AtomArrayStack,
-        ground_truth_atom_array_stack: AtomArrayStack,
+        predicted_atom_array_stack: AtomArray | AtomArrayStack,
+        ground_truth_atom_array_stack: AtomArray | AtomArrayStack,
         selections: Iterable[str] = (),
 
     ) -> dict[str, dict[str, float | dict[str, list[float]]]]:
@@ -393,9 +399,15 @@ class SelectedLDDT(Metric):
         # Compute interface LDDT scores for each selection
         results = {}
         # first filter each atom_array_stack:
+        predicted_atom_array_stack = ensure_atom_array_stack(predicted_atom_array_stack)
+        ground_truth_atom_array_stack = ensure_atom_array_stack(ground_truth_atom_array_stack)
+
         for selection in selections:
-            filtered_predicted = predicted_atom_array_stack[:, predicted_atom_array_stack.mask(selection)]
-            filtered_ground_truth = ground_truth_atom_array_stack[:, ground_truth_atom_array_stack.mask(selection)]
+            mask_predicted = predicted_atom_array_stack.mask(selection)
+            filtered_predicted = predicted_atom_array_stack[:, mask_predicted]
+
+            mask_ground_truth = ground_truth_atom_array_stack.mask(selection)
+            filtered_ground_truth = ground_truth_atom_array_stack[:, mask_ground_truth]
 
             # set the token ids, to avoid any possible confusion later on
             filtered_predicted = add_global_token_id_annotation(filtered_predicted)
@@ -426,7 +438,7 @@ class SelectedLDDT(Metric):
             }
 
             results[selection] = {
-                "overall_lddt": all_atom_lddt.item(),
+                "overall_lddt": all_atom_lddt.detach().cpu().numpy(),
                 "residue_lddt_scores": residue_level_lddt_scores
             }
 
