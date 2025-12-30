@@ -7,7 +7,6 @@ from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io.pdbx import CIFFile, set_structure
 
 
-
 def save_structure_to_cif(
     atom_array: AtomArray | AtomArrayStack,
     output_path: str | Path,
@@ -120,17 +119,14 @@ def save_structure_to_cif(
                     stacklevel=2,
                 )
                 clean_mask = ~nan_mask.any(axis=0)
-                structure_to_save = cast(
-                    AtomArrayStack, structure_to_save[:, clean_mask]
-                )
+                structure_to_save = cast(AtomArrayStack, structure_to_save[:, clean_mask])
         else:
             coords: Any = structure_to_save.coord
             nan_mask = np.isnan(coords).any(axis=-1)
             if nan_mask.any():
                 n_nan = int(nan_mask.sum())
                 warnings.warn(
-                    f"Found {n_nan} atoms with NaN coordinates. "
-                    "Filtering them out before saving.",
+                    f"Found {n_nan} atoms with NaN coordinates. Filtering them out before saving.",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -144,9 +140,7 @@ def save_structure_to_cif(
 
 
 def select_altloc(
-        atom_array: AtomArray | AtomArrayStack,
-        altloc_id: str,
-        return_full_array: bool = False
+    atom_array: AtomArray | AtomArrayStack, altloc_id: str, return_full_array: bool = False
 ) -> AtomArray | AtomArrayStack:
     """Select atoms with a specific alternate location indicator (altloc).
 
@@ -179,9 +173,9 @@ def select_altloc(
         mask = atom_array.altloc_id == altloc_id
 
     if isinstance(atom_array, AtomArrayStack):
-        return atom_array[:, mask]
+        return cast(AtomArrayStack, atom_array[:, mask])
     else:
-        return atom_array[mask]
+        return cast(AtomArray, atom_array[mask])
 
 
 def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -205,12 +199,15 @@ def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Ato
             f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
         )
 
-    mask = ~atom_array.hetero
+    hetero = atom_array.hetero
+    if hetero is None:
+        raise AttributeError("atom_array must have 'hetero' annotation")
+    mask = ~hetero
 
     if isinstance(atom_array, AtomArrayStack):
-        return atom_array[:, mask]
+        return cast(AtomArrayStack, atom_array[:, mask])
     else:
-        return atom_array[mask]
+        return cast(AtomArray, atom_array[mask])
 
 
 def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -232,12 +229,15 @@ def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Atom
             f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
         )
 
-    mask = atom_array.element != "H"
+    element = atom_array.element
+    if element is None:
+        raise AttributeError("atom_array must have 'element' annotation")
+    mask = element != "H"
 
     if isinstance(atom_array, AtomArrayStack):
-        return atom_array[:, mask]
+        return cast(AtomArrayStack, atom_array[:, mask])
     else:
-        return atom_array[mask]
+        return cast(AtomArray, atom_array[mask])
 
 
 def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -261,20 +261,25 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
         )
 
     backbone_atoms = np.array(["C", "CA", "N", "O"])
-    mask = np.isin(atom_array.atom_name, backbone_atoms)
+    atom_name = atom_array.atom_name
+    if atom_name is None:
+        raise AttributeError("atom_array must have 'atom_name' annotation")
+    mask = np.isin(atom_name, backbone_atoms)
 
     if isinstance(atom_array, AtomArrayStack):
-        return atom_array[:, mask]
+        return cast(AtomArrayStack, atom_array[:, mask])
     else:
-        return atom_array[mask]
+        return cast(AtomArray, atom_array[mask])
 
 
 def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
     """Create a unique identifier for each atom."""
-    return np.array([
-        f"{chain}_{res}_{atom}"
-        for chain, res, atom in zip(arr.chain_id, arr.res_id, arr.atom_name)
-    ])
+    chain_id = cast(np.ndarray, arr.chain_id)
+    res_id = cast(np.ndarray, arr.res_id)
+    atom_name = cast(np.ndarray, arr.atom_name)
+    return np.array(
+        [f"{chain}_{res}_{atom}" for chain, res, atom in zip(chain_id, res_id, atom_name)]
+    )
 
 
 def filter_to_common_atoms(
@@ -331,28 +336,30 @@ def filter_to_common_atoms(
     mask2 = np.isin(ids2, common_ids)
 
     # Filter arrays
+    filtered_array1: AtomArray | AtomArrayStack
+    filtered_array2: AtomArray | AtomArrayStack
     if isinstance(array1, AtomArrayStack):
-        filtered_array1 = array1[:, mask1]
+        filtered_array1 = cast(AtomArrayStack, array1[:, mask1])
     else:
-        filtered_array1 = array1[mask1]
+        filtered_array1 = cast(AtomArray, array1[mask1])
 
     if isinstance(array2, AtomArrayStack):
-        filtered_array2 = array2[:, mask2]
+        filtered_array2 = cast(AtomArrayStack, array2[:, mask2])
     else:
-        filtered_array2 = array2[mask2]
+        filtered_array2 = cast(AtomArray, array2[mask2])
 
     # Sort by atom ID to ensure matching order
     sort_idx1 = np.argsort(make_atom_id(filtered_array1))
     sort_idx2 = np.argsort(make_atom_id(filtered_array2))
 
     if isinstance(filtered_array1, AtomArrayStack):
-        filtered_array1 = filtered_array1[:, sort_idx1]
+        filtered_array1 = cast(AtomArrayStack, filtered_array1[:, sort_idx1])
     else:
-        filtered_array1 = filtered_array1[sort_idx1]
+        filtered_array1 = cast(AtomArray, filtered_array1[sort_idx1])
 
     if isinstance(filtered_array2, AtomArrayStack):
-        filtered_array2 = filtered_array2[:, sort_idx2]
+        filtered_array2 = cast(AtomArrayStack, filtered_array2[:, sort_idx2])
     else:
-        filtered_array2 = filtered_array2[sort_idx2]
+        filtered_array2 = cast(AtomArray, filtered_array2[sort_idx2])
 
     return filtered_array1, filtered_array2
