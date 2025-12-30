@@ -20,6 +20,7 @@ from typing import Any
 
 from loguru import logger as log
 from sampleworks.utils import guidance_constants as constants
+from sampleworks.utils.guidance_constants import BOLTZ_2
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
 
 
@@ -225,7 +226,7 @@ def run_guidance_queue_script(args: tuple[str, int, str, int]):
     cmd = f"pixi run -e {pixi_env} python {script_path} --job-queue-path {job_queue_path}"
     cmd = cmd.split()
     log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
-    log.info(f"To re-run the job use: {" ".join(cmd)}")
+    log.info(f"To re-run the job use: {' '.join(cmd)}")
     # env = os.environ.copy()
 
     with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
@@ -249,7 +250,7 @@ def main(args: argparse.Namespace):
     if len(args.models.split()) > 1:
         # this is designed to run one type of model per script, # TODO to allow multiple models
         raise ValueError("Multiple --models selected, this is not compatible with the new script!")
-    if len(args.methods.split(",")) > 1:
+    if (len(args.methods.split(",")) > 1) and (args.models == BOLTZ_2):
         # this is designed to run one type of model per script, # TODO to allow multiple models
         raise ValueError("Multiple --methods selected, this is not compatible with the new script!")
 
