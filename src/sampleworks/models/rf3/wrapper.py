@@ -18,6 +18,7 @@ from rf3.utils.inference import InferenceInput, InferenceInputDataset
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from sampleworks.utils.guidance_constants import RF3
 from sampleworks.utils.msa import MSAManager
 
 
@@ -217,21 +218,19 @@ class RF3Wrapper:
         # TODO? I'm using one of two possible sequences, which I think has
         #  non-canonicals filtered out. Should we do this differently?
         if self.msa_manager is not None and msa_path is None and chain_info:
-
             polypeptides = {
                 chain_id: item["processed_entity_canonical_sequence"]
                 for chain_id, item in chain_info.items()
                 if item["chain_type"] == ChainType.POLYPEPTIDE_L
             }
             msa_path = self.msa_manager.get_msa(
-                polypeptides, self.msa_pairing_strategy, return_a3m=True,
+                polypeptides, self.msa_pairing_strategy, structure_predictor=RF3
             )
 
             # These are debugging assertions.
             assert all(isinstance(pp, str) for pp in polypeptides.values())
 
         log.info(f"Using MSA paths: {msa_path}")
-
 
         chain_info = add_msa_to_chain_info(chain_info, msa_path)
 

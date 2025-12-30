@@ -3,15 +3,18 @@ from pathlib import Path
 
 from loguru import logger
 
+from sampleworks.utils.guidance_constants import BOLTZ_1, BOLTZ_2, PROTENIX, RF3
 from sampleworks.utils.imports import PROTENIX_AVAILABLE
-from sampleworks.utils.guidance_constants import BOLTZ_2, BOLTZ_1, PROTENIX, RF3
 from sampleworks.utils.mmseqs2 import run_mmseqs2
 
+
 if PROTENIX_AVAILABLE:
-    from runner.msa_search import msa_search as protenix_msa_search
+    from runner.msa_search import msa_search as protenix_msa_search  # pyright:ignore [reportMissingImports] # noqa: I001
+
     logger.debug("Protenix MSA tools are available at top of msa.py")
 else:
     logger.error("Protenix is not installed, cannot use Protenix MSA tools.")
+
 
 MAX_PAIRED_SEQS = 8192
 MAX_MSA_SEQS = 16384
@@ -139,7 +142,6 @@ def _compute_msa(
         with msa_path.open("w") as f:
             f.write("\n".join(csv_str))
 
-
         """ Write out a3m format for RF3 """
         # in addition to CSV write a3m (FASTA) formats--but omit the alignment stats
         with msa_path.with_suffix(".a3m").open("w") as f:
@@ -155,10 +157,10 @@ def _compute_msa(
         [
           {
             "sequences": [
-              {"proteinChain": 
+              {"proteinChain":
                 {
-                  "sequence": "ACDE...", 
-                  "msa": 
+                  "sequence": "ACDE...",
+                  "msa":
                     {
                       "precomputed_msa_dir:": "/path/to/msa_directory"
                       "pairing_db": "uniref100"
@@ -169,12 +171,12 @@ def _compute_msa(
             ]
           }, ...
         ]
-        
+
         It expects /path/to/msa_directory to look like this:
         0:  # index corresponds to position in the list "sequences"
             non_pairing.a3m
-            pairing.a3m  # only present if pairing was used. 
-        1: 
+            pairing.a3m  # only present if pairing was used.
+        1:
             non_pairing.a3m
             pairing.a3m
         etc...
@@ -182,9 +184,7 @@ def _compute_msa(
 
         msa_idx_idr = msa_dir / f"{idx}"
         msa_idx_idr.mkdir(exist_ok=True, parents=True)
-        logger.info(
-            f"Writing MSA for target {target_id} sequence {idx} to {msa_idx_idr.resolve()}"
-        )
+        logger.info(f"Writing MSA for target {target_id} sequence {idx} to {msa_idx_idr.resolve()}")
         msa_idx_idr.joinpath("non_pairing.a3m").write_text(unpaired_msa[idx])
         if paired:
             msa_idx_idr.joinpath("pairing.a3m").write_text(paired_msas[idx])
@@ -205,7 +205,7 @@ class MSAManager:
 
     def __init__(
         self,
-        msa_cache_dir: Path | str | None = None, # if None, use default
+        msa_cache_dir: Path | str | None = None,  # if None, use default
         msa_server_url: str = "https://api.colabfold.com",
         msa_server_username: str | None = None,
         msa_server_password: str | None = None,
@@ -234,10 +234,7 @@ class MSAManager:
         return hexdigest
 
     def get_msa(
-            self,
-            data: dict[str, str],
-            msa_pairing_strategy: str,
-            structure_predictor: str = BOLTZ_2
+        self, data: dict[str, str], msa_pairing_strategy: str, structure_predictor: str = BOLTZ_2
     ) -> dict[str, Path]:
         """
         Fetches existing MSA files from disk or computes new ones if necessary.
@@ -253,7 +250,7 @@ class MSAManager:
         """
         hash_key = self._hash_arguments(data, msa_pairing_strategy)
 
-        if structure_predictor in [BOLTZ_1, BOLTZ_2]:
+        if structure_predictor in [BOLTZ_1, BOLTZ_2, RF3]:
             # get standard MSAs
             suffix = "a3m" if structure_predictor == RF3 else "csv"
             msa_path_dict = {
@@ -261,6 +258,7 @@ class MSAManager:
             }
 
             if not all([m.exists() for m in msa_path_dict.values()]):
+                # this will generate both a3m and csv files for us.
                 msa_path_dict = _compute_msa(
                     data,
                     hash_key,  # this is the "target_id" argument to compute_msa
@@ -276,16 +274,13 @@ class MSAManager:
             else:
                 self._cache_hits += 1
 
-            if structure_predictor in [RF3, ]:  # leave open to others that use plain a3m in the future
-                msa_path_dict = {
-                    key: str(msa_path.with_suffix(".a3m")) for key, msa_path in msa_path_dict.items()}
-
         # Protenix needs special MSAs
-        # This is a kind of hacky way to handle Protenix, but I'm not sure what to do easily but
+        # This is a kind of hacky way to handle Protenix; I'm not sure what to do easily but
         # use their pipeline, and just have it put everything in our cache directory.
         elif structure_predictor == PROTENIX:
             if not PROTENIX_AVAILABLE:
                 raise RuntimeError("Protenix is not installed, cannot use Protenix MSA tools.")
+
             logger.info("Running Protenix MSA tools.")
             # Make sure we have a protenix subdirectory
             protenix_dir = self.msa_dir / "protenix"
@@ -298,16 +293,15 @@ class MSAManager:
 
             msa_directories = [out_dir / str(idx) for idx in data_keys]
             reqd_files = ["non_pairing.a3m", "pairing.a3m"]
-            need_msas = not all((out_dir / str(idx) / fn).exists()
-                                for idx in data_keys for fn in reqd_files)
+            need_msas = not all(
+                (out_dir / str(idx) / fn).exists() for idx in data_keys for fn in reqd_files
+            )
             if need_msas:
-                msa_directories = protenix_msa_search(sequences, out_dir, mode="protenix")
-                self._api_calls += 1
-                logger.debug(
-                    f"Protenix MSA search completed. {msa_directories} MSA directories created."
+                msa_directories = protenix_msa_search(  # pyright:ignore [reportPossiblyUnboundVariable]
+                    sequences, out_dir, mode="protenix"
                 )
+                self._api_calls += 1
             else:
-                logger.debug(f"Used cached protenix MSA")
                 self._cache_hits += 1
 
             msa_path_dict = {key: path for key, path in zip(data_keys, msa_directories)}
