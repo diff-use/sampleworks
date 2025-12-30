@@ -269,6 +269,14 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
         return atom_array[mask]
 
 
+def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
+    """Create a unique identifier for each atom."""
+    return np.array([
+        f"{chain}_{res}_{atom}"
+        for chain, res, atom in zip(arr.chain_id, arr.res_id, arr.atom_name)
+    ])
+
+
 def filter_to_common_atoms(
     array1: AtomArray | AtomArrayStack,
     array2: AtomArray | AtomArrayStack,
@@ -299,19 +307,14 @@ def filter_to_common_atoms(
         >>> len(filtered1)  # 90
         >>> len(filtered2)  # 90
     """
-    if not (isinstance(array1, (AtomArray, AtomArrayStack))
-        and isinstance(array2, (AtomArray, AtomArrayStack))):
+    if not (
+        isinstance(array1, (AtomArray, AtomArrayStack))
+        and isinstance(array2, (AtomArray, AtomArrayStack))
+    ):
         raise TypeError(
             f"array1 and array2 must be AtomArray or AtomArrayStack, "
             f"got {type(array1)} and {type(array2)}"
         )
-
-    def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
-        """Create a unique identifier for each atom."""
-        return np.array([
-            f"{chain}_{res}_{atom}"
-            for chain, res, atom in zip(arr.chain_id, arr.res_id, arr.atom_name)
-        ])
 
     # Get atom identifiers for both structures
     ids1 = make_atom_id(array1)
