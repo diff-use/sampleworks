@@ -158,4 +158,3 @@ def do_nothing(*args: Any, **kwargs: Any) -> None:
 
 
 assert_no_nans = _assert_no_nans if should_check_nans else do_nothing
-
