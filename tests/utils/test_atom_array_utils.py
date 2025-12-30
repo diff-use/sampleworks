@@ -1,24 +1,29 @@
 """Tests for atom_array_utils module."""
+
+from typing import cast
+
 import numpy as np
 import pytest
 from biotite.structure import AtomArray, AtomArrayStack, stack
-
-from sampleworks.utils.atom_array_utils import select_altloc, filter_to_common_atoms
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms, select_altloc
 
 
 # Fixtures for creating test data
+
 
 @pytest.fixture(scope="module")
 def basic_atom_array() -> AtomArray:
     """AtomArray with mixed altloc_ids."""
     atom_array = AtomArray(5)
-    coord = np.array([
-        [1.0, 2.0, 3.0],
-        [4.0, 5.0, 6.0],
-        [7.0, 8.0, 9.0],
-        [10.0, 11.0, 12.0],
-        [13.0, 14.0, 15.0],
-    ])
+    coord = np.array(
+        [
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+            [10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0],
+        ]
+    )
     atom_array.coord = coord
     atom_array.set_annotation("chain_id", np.array(["A", "A", "A", "A", "A"]))
     atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
@@ -34,7 +39,7 @@ def basic_atom_array() -> AtomArray:
 def atom_array_with_full_occupancy():
     """AtomArray with some atoms having full occupancy."""
     atom_array = AtomArray(7)
-    atom_array.coord =np.random.rand(7, 3)
+    atom_array.coord = np.random.rand(7, 3)
     atom_array.set_annotation("chain_id", np.array(["A"] * 7))
     atom_array.set_annotation("res_id", np.arange(1, 8))
     atom_array.set_annotation("res_name", np.array(["ALA"] * 7))
@@ -86,6 +91,7 @@ def atom_array_missing_occupancy():
 
 # Tests
 
+
 class TestSelectAltlocBasic:
     """Basic functionality tests for select_altloc."""
 
@@ -95,7 +101,7 @@ class TestSelectAltlocBasic:
 
         assert len(result) == 2
         assert all(result.altloc_id == "A")
-        assert list(result.res_name) == ["ALA", "VAL"]
+        assert list(cast(np.ndarray, result.res_name)) == ["ALA", "VAL"]
 
     def test_select_different_altloc(self, basic_atom_array):
         """Test selecting different altloc_id values."""
@@ -116,17 +122,19 @@ class TestSelectAltlocBasic:
     def test_preserves_coordinates(self, basic_atom_array):
         """Test that selected atoms preserve their original coordinates."""
         result = select_altloc(basic_atom_array, "A", return_full_array=False)
+        result_coord = cast(np.ndarray, result.coord)
+        basic_coord = cast(np.ndarray, basic_atom_array.coord)
 
-        np.testing.assert_array_equal(result.coord[0], basic_atom_array.coord[0])
-        np.testing.assert_array_equal(result.coord[1], basic_atom_array.coord[2])
+        np.testing.assert_array_equal(result_coord[0], basic_coord[0])
+        np.testing.assert_array_equal(result_coord[1], basic_coord[2])
 
     def test_preserves_annotations(self, basic_atom_array):
         """Test that other annotations are preserved."""
         result = select_altloc(basic_atom_array, "A", return_full_array=False)
 
-        assert list(result.chain_id) == ["A", "A"]
-        assert list(result.res_id) == [1, 3]
-        assert list(result.atom_name) == ["CA", "CA"]
+        assert list(cast(np.ndarray, result.chain_id)) == ["A", "A"]
+        assert list(cast(np.ndarray, result.res_id)) == [1, 3]
+        assert list(cast(np.ndarray, result.atom_name)) == ["CA", "CA"]
 
 
 class TestSelectAltlocWithFullArray:
@@ -177,20 +185,23 @@ class TestSelectAltlocWithStack:
     def test_select_from_stack_with_full_array(self, atom_array_stack):
         """Test selecting from stack with return_full_array=True."""
         result = select_altloc(atom_array_stack, "A", return_full_array=True)
+        result_stack = cast(AtomArrayStack, result)
 
         # Should include: 2 "A" atoms + 1 atom with occupancy=1.0
-        assert result.stack_depth() == 3
-        assert result.array_length() == 3
+        assert result_stack.stack_depth() == 3
+        assert result_stack.array_length() == 3
 
     def test_stack_preserves_all_models(self, atom_array_stack):
         """Test that all models in stack are preserved after filtering."""
         result = select_altloc(atom_array_stack, "B", return_full_array=False)
+        result_stack = cast(AtomArrayStack, result)
 
-        assert result.stack_depth() == atom_array_stack.stack_depth()
+        assert result_stack.stack_depth() == atom_array_stack.stack_depth()
         # Each model should have 2 "B" atoms
-        for i in range(result.stack_depth()):
-            assert len(result[i]) == 2
-            assert all(result[i].altloc_id == "B")
+        for i in range(result_stack.stack_depth()):
+            model = cast(AtomArray, result_stack[i])
+            assert len(model) == 2
+            assert all(model.altloc_id == "B")
 
 
 class TestSelectAltlocErrors:
@@ -198,12 +209,16 @@ class TestSelectAltlocErrors:
 
     def test_missing_altloc_id_raises_error(self, atom_array_missing_altloc_id):
         """Test that missing altloc_id annotation raises AttributeError."""
-        with pytest.raises(AttributeError, match="must have `altloc_id` and `occupancy` annotations"):
+        with pytest.raises(
+            AttributeError, match="must have `altloc_id` and `occupancy` annotations"
+        ):
             select_altloc(atom_array_missing_altloc_id, "A")
 
     def test_missing_occupancy_raises_error(self, atom_array_missing_occupancy):
         """Test that missing occupancy annotation raises AttributeError."""
-        with pytest.raises(AttributeError, match="must have `altloc_id` and `occupancy` annotations"):
+        with pytest.raises(
+            AttributeError, match="must have `altloc_id` and `occupancy` annotations"
+        ):
             select_altloc(atom_array_missing_occupancy, "A")
 
     def test_missing_both_attributes_raises_error(self):
@@ -211,7 +226,9 @@ class TestSelectAltlocErrors:
         atom_array = AtomArray(5)
         atom_array.coord = np.random.rand(5, 3)
 
-        with pytest.raises(AttributeError, match="must have `altloc_id` and `occupancy` annotations"):
+        with pytest.raises(
+            AttributeError, match="must have `altloc_id` and `occupancy` annotations"
+        ):
             select_altloc(atom_array, "A")
 
     def test_invalid_type_raises_error(self):
@@ -219,12 +236,12 @@ class TestSelectAltlocErrors:
         invalid_input = "not an atom array"
 
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            select_altloc(invalid_input, "A")
+            select_altloc(invalid_input, "A")  # pyright: ignore[reportArgumentType]
 
     def test_none_input_raises_error(self):
         """Test that None input raises TypeError."""
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            select_altloc(None, "A")
+            select_altloc(None, "A")  # pyright: ignore[reportArgumentType]
 
 
 class TestSelectAltlocEdgeCases:
@@ -253,6 +270,7 @@ class TestSelectAltlocEdgeCases:
 
 
 # Fixtures for filter_to_common_atoms tests
+
 
 @pytest.fixture(scope="module")
 def atom_array_partial_overlap():
@@ -312,6 +330,7 @@ def atom_array_stacks_partial_overlap():
 
 # Tests for filter_to_common_atoms
 
+
 class TestFilterToCommonAtoms:
     """Tests for filter_to_common_atoms function."""
 
@@ -324,8 +343,8 @@ class TestFilterToCommonAtoms:
         # Should have 3 common atoms (residues 3, 4, 5)
         assert len(filtered1) == 3
         assert len(filtered2) == 3
-        assert list(filtered1.res_id) == [3, 4, 5]
-        assert list(filtered2.res_id) == [3, 4, 5]
+        assert list(cast(np.ndarray, filtered1.res_id)) == [3, 4, 5]
+        assert list(cast(np.ndarray, filtered2.res_id)) == [3, 4, 5]
 
     def test_atoms_in_matching_order(self, atom_array_partial_overlap):
         """Test that returned atoms are in matching order."""
@@ -334,9 +353,15 @@ class TestFilterToCommonAtoms:
         filtered1, filtered2 = filter_to_common_atoms(array1, array2)
 
         # Check that atom identifiers match
-        assert np.array_equal(filtered1.chain_id, filtered2.chain_id)
-        assert np.array_equal(filtered1.res_id, filtered2.res_id)
-        assert np.array_equal(filtered1.atom_name, filtered2.atom_name)
+        assert np.array_equal(
+            cast(np.ndarray, filtered1.chain_id), cast(np.ndarray, filtered2.chain_id)
+        )
+        assert np.array_equal(
+            cast(np.ndarray, filtered1.res_id), cast(np.ndarray, filtered2.res_id)
+        )
+        assert np.array_equal(
+            cast(np.ndarray, filtered1.atom_name), cast(np.ndarray, filtered2.atom_name)
+        )
 
     def test_with_identical_arrays(self, basic_atom_array):
         """Test with two identical arrays."""
@@ -427,7 +452,7 @@ class TestFilterToCommonAtoms:
         array.coord = np.random.rand(3, 3)
 
         with pytest.raises(TypeError, match="must be AtomArray or AtomArrayStack"):
-            filter_to_common_atoms("not an array", array)
+            filter_to_common_atoms("not an array", array)  # pyright: ignore[reportArgumentType]
 
     def test_invalid_type_second_arg(self):
         """Test that invalid second argument raises TypeError."""
@@ -435,7 +460,7 @@ class TestFilterToCommonAtoms:
         array.coord = np.random.rand(3, 3)
 
         with pytest.raises(TypeError, match="must be AtomArray or AtomArrayStack"):
-            filter_to_common_atoms(array, None)
+            filter_to_common_atoms(array, None)  # pyright: ignore[reportArgumentType]
 
     def test_preserves_coordinates(self, atom_array_partial_overlap):
         """Test that coordinates are preserved for common atoms."""
@@ -447,5 +472,5 @@ class TestFilterToCommonAtoms:
 
         # Filtered arrays should have coordinates from residues 3, 4, 5
         # which are indices 2, 3, 4 in array1 and 0, 1, 2 in array2
-        np.testing.assert_array_equal(filtered1.coord[0], original_coords1[2])
-        np.testing.assert_array_equal(filtered2.coord[0], original_coords2[0])
+        np.testing.assert_array_equal(cast(np.ndarray, filtered1.coord)[0], original_coords1[2])
+        np.testing.assert_array_equal(cast(np.ndarray, filtered2.coord)[0], original_coords2[0])
