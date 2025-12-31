@@ -159,3 +159,33 @@ class TestDiffusionModelWrapperProtocol:
         assert "atom_coords_denoised" in output, (
             f"{wrapper_fixture}.denoise_step must return 'atom_coords_denoised' key"
         )
+
+
+@pytest.mark.parametrize("wrapper_fixture", WRAPPER_FIXTURES)
+class TestFeaturizeClearsCache:
+    """Test that featurize() clears cached representations.
+
+    This is critical for wrapper reuse - without clearing, stale
+    representations from previous proteins could cause dimension
+    mismatches or incorrect results.
+    """
+
+    def test_featurize_clears_cached_representations(
+        self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
+    ):
+        """Test that calling featurize() clears any cached representations."""
+        wrapper = request.getfixturevalue(wrapper_fixture)
+
+        # only test wrappers that actually have cached_representations
+        if not hasattr(wrapper, "cached_representations"):
+            pytest.skip(f"{wrapper_fixture} does not have cached_representations attribute")
+
+        # dummy data to simulate previous run
+        wrapper.cached_representations = {"cached": "representations"}
+
+        wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
+
+        assert len(wrapper.cached_representations) == 0, (
+            f"{wrapper_fixture}.featurize must clear cached_representations, "
+            f"but cache still contains: {list(wrapper.cached_representations.keys())}"
+        )
