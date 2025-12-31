@@ -3,7 +3,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from sampleworks.utils.guidance_constants import BOLTZ_1, BOLTZ_2, PROTENIX, RF3
+from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.imports import PROTENIX_AVAILABLE
 from sampleworks.utils.mmseqs2 import run_mmseqs2
 
@@ -237,7 +237,7 @@ class MSAManager:
         self,
         data: dict[str | int, str],
         msa_pairing_strategy: str,
-        structure_predictor: str = BOLTZ_2,
+        structure_predictor: str = StructurePredictor.BOLTZ_2,
     ) -> dict[str | int, Path]:
         """
         Fetches existing MSA files from disk or computes new ones if necessary.
@@ -253,9 +253,13 @@ class MSAManager:
         """
         hash_key = self._hash_arguments(data, msa_pairing_strategy)
 
-        if structure_predictor in [BOLTZ_1, BOLTZ_2, RF3]:
+        if structure_predictor in [
+            StructurePredictor.BOLTZ_1,
+            StructurePredictor.BOLTZ_2,
+            StructurePredictor.RF3,
+        ]:
             # get standard MSAs
-            suffix = "a3m" if structure_predictor == RF3 else "csv"
+            suffix = "a3m" if structure_predictor == StructurePredictor.RF3 else "csv"
             msa_path_dict = {
                 key: self.msa_dir / f"{hash_key}_{idx}.{suffix}" for idx, key in enumerate(data)
             }
@@ -280,7 +284,7 @@ class MSAManager:
         # Protenix needs special MSAs
         # This is a kind of hacky way to handle Protenix; I'm not sure what to do easily but
         # use their pipeline, and just have it put everything in our cache directory.
-        elif structure_predictor == PROTENIX:
+        elif structure_predictor == StructurePredictor.PROTENIX:
             if not PROTENIX_AVAILABLE:
                 raise RuntimeError("Protenix is not installed, cannot use Protenix MSA tools.")
 

@@ -18,7 +18,7 @@ from rf3.utils.inference import InferenceInput, InferenceInputDataset
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from sampleworks.utils.guidance_constants import RF3
+from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 
 
@@ -224,7 +224,7 @@ class RF3Wrapper:
                 if item["chain_type"] == ChainType.POLYPEPTIDE_L
             }
             msa_path = self.msa_manager.get_msa(
-                polypeptides, self.msa_pairing_strategy, structure_predictor=RF3
+                polypeptides, self.msa_pairing_strategy, structure_predictor=StructurePredictor.RF3
             )
 
             # These are debugging assertions.

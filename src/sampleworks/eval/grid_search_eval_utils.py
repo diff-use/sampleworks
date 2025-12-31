@@ -11,7 +11,7 @@ from pathlib import Path
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
-from sampleworks.utils.guidance_constants import BOLTZ_2
+from sampleworks.utils.guidance_constants import StructurePredictor
 
 
 # TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
@@ -95,7 +95,7 @@ def scan_grid_search_results(
         if (
             protein is None
             or occ_a is None
-            or (model == BOLTZ_2 and method is None)
+            or (model == StructurePredictor.BOLTZ_2 and method is None)
             or params["ensemble_size"] is None
             or (guidance_weight is None and gd_steps is None)
         ):

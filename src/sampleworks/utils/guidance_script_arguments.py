@@ -6,12 +6,8 @@ from typing import Any
 
 from sampleworks.utils.checkpoint_utils import get_checkpoint
 from sampleworks.utils.guidance_constants import (
-    BOLTZ_1,
-    BOLTZ_2,
-    FK_STEERING,
-    PROTENIX,
-    PURE_GUIDANCE,
-    RF3,
+    GuidanceType,
+    StructurePredictor,
 )
 
 
@@ -48,30 +44,30 @@ class GuidanceConfig:
 
     def __post_init__(self):
         """Set up guidance config for a given model and guidance type"""
-        if self.guidance_type == PURE_GUIDANCE:
+        if self.guidance_type == GuidanceType.PURE_GUIDANCE:
             add_pure_guidance_args(self)
-        elif self.guidance_type == FK_STEERING:
+        elif self.guidance_type == GuidanceType.FK_STEERING:
             add_fk_steering_args(self)
         else:
             raise ValueError(f"Unknown guidance type: {self.guidance_type}")
 
-        if self.model == BOLTZ_1:
+        if self.model == StructurePredictor.BOLTZ_1:
             add_boltz1_specific_args(self)
-        elif self.model == BOLTZ_2:
+        elif self.model == StructurePredictor.BOLTZ_2:
             add_boltz2_specific_args(self)
-        elif self.model == PROTENIX:
+        elif self.model == StructurePredictor.PROTENIX:
             add_protenix_specific_args(self)
-        elif self.model == RF3:
+        elif self.model == StructurePredictor.RF3:
             add_rf3_specific_args(self)
         else:
             raise ValueError(f"Unknown model type: {self.model}")
 
     def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
         self.model_checkpoint = get_checkpoint(self.model, args)
-        if job.model == BOLTZ_2 and job.method:
+        if job.model == StructurePredictor.BOLTZ_2 and job.method:
             self.method = job.method
 
-        if job.scaler == FK_STEERING:
+        if job.scaler == GuidanceType.FK_STEERING:
             self.guidance_weight = job.gradient_weight
             self.num_gd_steps = job.gd_steps
             self.num_particles = args.num_particles
