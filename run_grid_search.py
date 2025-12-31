@@ -19,7 +19,7 @@ from threading import Lock
 from typing import Any
 
 from loguru import logger as log
-from sampleworks.utils import guidance_constants as constants
+from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
 
 
@@ -84,16 +84,15 @@ def detect_gpus() -> list[str]:
 
 
 def get_pixi_env(model: str) -> str:
-    match model:
-        case constants.BOLTZ_1 | constants.BOLTZ_2:
-            return "boltz"
-        case constants.PROTENIX | constants.RF3:
-            return model
-        case _:
-            raise ValueError(
-                f"Unknown model: {model}. Valid options are: {constants.BOLTZ_1}, "
-                f"{constants.BOLTZ_2}, {constants.PROTENIX}, {constants.RF3}"
-            )
+    if model in (StructurePredictor.BOLTZ_1, StructurePredictor.BOLTZ_2):
+        return "boltz"
+    elif model == StructurePredictor.PROTENIX:
+        return "protenix"
+    elif model == StructurePredictor.RF3:
+        return "rf3"
+    else:
+        valid_options = [m.value for m in StructurePredictor]
+        raise ValueError(f"Unknown model: {model}. Valid options are: {valid_options}")
 
 
 def build_args_for_process_pool(
@@ -221,7 +220,7 @@ def run_grid_search(
 def run_guidance_queue_script(args: tuple[str, int, str, int]):
     job_queue_path, max_workers, model, worker_num = args
     pixi_env = get_pixi_env(model)
-    script_path = Path(__file__).parent / "examples" / "run_guidance_pipeline.py"
+    script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
     cmd = f"pixi run -e {pixi_env} python {script_path} --job-queue-path {job_queue_path}"
     cmd = cmd.split()
     log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
@@ -302,13 +301,13 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
         protein_name = protein["name"].strip()
 
         for model in models:
-            model_methods = methods if model == "boltz2" else [None]
+            model_methods = methods if model == StructurePredictor.BOLTZ_2 else [None]
 
             for method in model_methods:
                 method_suffix = f"_{method.replace(' ', '_')}" if method else ""
 
                 for scaler in scalers:
-                    if scaler == "fk_steering":
+                    if scaler == GuidanceType.FK_STEERING:
                         for ens in ensemble_sizes:
                             for gw in gradient_weights:
                                 for gd in gd_steps_list:

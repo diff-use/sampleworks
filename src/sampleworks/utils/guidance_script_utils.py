@@ -19,12 +19,8 @@ from sampleworks.core.rewards.real_space_density import RewardFunction, setup_sc
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.utils.guidance_constants import (
-    BOLTZ_1,
-    BOLTZ_2,
-    FK_STEERING,
-    PROTENIX,
-    PURE_GUIDANCE,
-    RF3,
+    GuidanceType,
+    StructurePredictor,
 )
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 from sampleworks.utils.msa import MSAManager
@@ -59,11 +55,11 @@ def save_trajectory(
     subdir_name,
     save_every=10,
 ):
-    if scaler_type == "pure_guidance":
+    if scaler_type == GuidanceType.PURE_GUIDANCE:
         _save_trajectory(
             trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
         )
-    elif scaler_type == "fk_steering":
+    elif scaler_type == GuidanceType.FK_STEERING:
         _save_fk_steering_trajectory(
             trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
         )
@@ -143,12 +139,12 @@ def get_model_and_device(
 ) -> tuple[torch.device, Any]:
     device = torch.device(device_str) if device_str else try_gpu()
     logger.debug(f"Using device: {device}")
-    if model_type == PROTENIX:
+    if model_type == StructurePredictor.PROTENIX:
         logger.debug(f"Loading Protenix model from {model_checkpoint_path}")
         model_wrapper = ProtenixWrapper(  # pyright: ignore
             checkpoint_path=model_checkpoint_path, device=device, model=model
         )
-    elif model_type == BOLTZ_1:
+    elif model_type == StructurePredictor.BOLTZ_1:
         logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
         model_wrapper = Boltz1Wrapper(  # pyright: ignore
             checkpoint_path=model_checkpoint_path,
@@ -156,7 +152,7 @@ def get_model_and_device(
             device=device,
             model=model,
         )
-    elif model_type == BOLTZ_2:
+    elif model_type == StructurePredictor.BOLTZ_2:
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
@@ -168,7 +164,7 @@ def get_model_and_device(
             method=method.upper(),
             model=model,
         )
-    elif model_type == RF3:
+    elif model_type == StructurePredictor.RF3:
         if RF3Wrapper is None:
             raise ImportError("RF3 dependencies not installed")
         model_wrapper = RF3Wrapper(checkpoint_path=model_checkpoint_path, msa_manager=MSAManager())
@@ -321,9 +317,12 @@ def _run_guidance(
     )
 
     # Boltz was trained with this, others might not have been.
-    use_alignment_for_reverse_diffusion = args.model in (BOLTZ_1, BOLTZ_2)
+    use_alignment_for_reverse_diffusion = args.model in (
+        StructurePredictor.BOLTZ_1,
+        StructurePredictor.BOLTZ_2,
+    )
 
-    if guidance_type == PURE_GUIDANCE:
+    if guidance_type == GuidanceType.PURE_GUIDANCE:
         logger.info("Initializing pure guidance")
         guidance = PureGuidance(model_wrapper=model_wrapper, reward_function=reward_function)
 
@@ -343,7 +342,7 @@ def _run_guidance(
             ensemble_size=args.ensemble_size,
         )
 
-    elif guidance_type == FK_STEERING:
+    elif guidance_type == GuidanceType.FK_STEERING:
         logger.info("Initializing Feynman-Kac steering")
         guidance = FKSteering(model_wrapper=model_wrapper, reward_function=reward_function)
 

@@ -33,7 +33,7 @@ from sampleworks.models.protenix.structure_processing import (
     filter_zero_occupancy,
     reconcile_atom_arrays,
 )
-from sampleworks.utils.guidance_constants import PROTENIX
+from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
 
@@ -215,7 +215,7 @@ class ProtenixWrapper:
                 msa_paths = self.msa_manager.get_msa(
                     sequence_data,  # pyright: ignore
                     msa_pairing_strategy="complete",  # not actually passed through for Protenix
-                    structure_predictor=PROTENIX,
+                    structure_predictor=StructurePredictor.PROTENIX,
                 )
 
                 for idx in sequence_data:

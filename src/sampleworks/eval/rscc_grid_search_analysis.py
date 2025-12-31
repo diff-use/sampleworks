@@ -56,8 +56,9 @@ def _():
         setup_scattering_params,
     )
     from sampleworks.eval.grid_search_eval_utils import get_method_and_model_name
+    from sampleworks.utils.guidance_constants import GuidanceType
 
-    return XMap, parse, setup_scattering_params, get_method_and_model_name
+    return XMap, parse, setup_scattering_params, get_method_and_model_name, GuidanceType
 
 
 @app.cell
@@ -942,7 +943,7 @@ def _(
 
 
 @app.cell
-def _(df, plt, sns):
+def _(df, plt, sns, GuidanceType):
     # Visualization: RSCC by ensemble size and guidance weight
     if df.empty or df["rscc"].isna().all():
         print("No valid RSCC values to plot")
@@ -958,7 +959,7 @@ def _(df, plt, sns):
             # Plot 1: RSCC vs ensemble size, faceted by scaler
             _fig1, _axes1 = plt.subplots(1, 2, figsize=(14, 5))
 
-            for _idx, _scaler in enumerate(["pure_guidance", "fk_steering"]):
+            for _idx, _scaler in enumerate([GuidanceType.PURE_GUIDANCE, GuidanceType.FK_STEERING]):
                 _ax = _axes1[_idx]
                 _scaler_df = _plot_df[_plot_df["scaler"] == _scaler]
 
@@ -981,7 +982,7 @@ def _(df, plt, sns):
 
                 _ax.set_xlabel("Ensemble Size", fontsize=12)
                 _ax.set_ylabel("RSCC", fontsize=12)
-                _ax.set_title(f"{_scaler.replace('_', ' ').title()}", fontsize=14)
+                _ax.set_title(f"{_scaler.value.replace('_', ' ').title()}", fontsize=14)
                 _ax.legend()
                 _ax.set_xticks([1, 2, 4, 8])
 
@@ -991,7 +992,7 @@ def _(df, plt, sns):
             # Plot 2: Heatmap of RSCC by ensemble size and guidance weight for each scaler
             _fig2, _axes2 = plt.subplots(1, 2, figsize=(14, 5))
 
-            for _idx, _scaler in enumerate(["pure_guidance", "fk_steering"]):
+            for _idx, _scaler in enumerate([GuidanceType.PURE_GUIDANCE, GuidanceType.FK_STEERING]):
                 _ax = _axes2[_idx]
                 _scaler_df = _plot_df[_plot_df["scaler"] == _scaler]
 
@@ -1012,7 +1013,7 @@ def _(df, plt, sns):
                         vmax=1,
                         ax=_ax,
                     )
-                    _ax.set_title(f"{_scaler.replace('_', ' ').title()}", fontsize=14)
+                    _ax.set_title(f"{_scaler.value.replace('_', ' ').title()}", fontsize=14)
                     _ax.set_xlabel("Guidance Weight", fontsize=12)
                     _ax.set_ylabel("Ensemble Size", fontsize=12)
 
