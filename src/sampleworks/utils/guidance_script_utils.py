@@ -274,6 +274,7 @@ def save_everything(
 #####################
 # Methods for running model guidance in separate processes, avoiding reloading of the model.
 #####################
+# These args are passed from run_grid_search.py via GuidanceConfig.
 def run_guidance(
     args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
 ) -> JobResult:
