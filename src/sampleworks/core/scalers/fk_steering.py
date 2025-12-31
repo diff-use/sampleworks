@@ -246,17 +246,7 @@ class FKSteering:
         trajectory_next_step = []
         losses = []
 
-        # TODO: this is not generalizable currently, figure this out
-        if hasattr(self.model_wrapper, "predict_args"):
-            n_steps = self.model_wrapper.predict_args.sampling_steps  # type: ignore
-        elif hasattr(self.model_wrapper, "configs"):
-            n_steps = cast(dict, self.model_wrapper.configs.sample_diffusion)["N_step"]  # type: ignore
-        elif hasattr(self.model_wrapper, "num_steps"):
-            n_steps = self.model_wrapper.num_steps  # type: ignore
-        else:
-            raise AttributeError(
-                "Model wrapper must have predict_args, configs, or num_steps attribute"
-            )
+        n_steps = len(cast(torch.Tensor, self.model_wrapper.get_noise_schedule()["sigma_t"]))
 
         pbar = tqdm(range(partial_diffusion_step, n_steps))
         for i in pbar:
