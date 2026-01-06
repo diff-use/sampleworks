@@ -1,3 +1,4 @@
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -101,3 +102,114 @@ class ProteinConfig:
             f"not found: {structure_path}"
         )
         return None
+
+    @classmethod
+    def from_csv(cls, workspace_root: Path, csv_path: Path) -> dict[str, "ProteinConfig"]:
+        """Load protein configurations from a CSV file.
+
+        Parameters
+        ----------
+        workspace_root : Path
+            Root directory for resolving relative paths in base_map_dir.
+        csv_path : Path
+            Path to the CSV file containing protein configurations.
+
+        Returns
+        -------
+        dict[str, ProteinConfig]
+            Dictionary mapping protein names to ProteinConfig objects.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the CSV file does not exist.
+        ValueError
+            If the CSV file is missing required columns or has invalid data.
+
+        Notes
+        -----
+        Expected CSV format:
+        - Required columns: protein, base_map_dir, selection, resolution, map_pattern
+        - Optional columns: structure_pattern (defaults to empty string)
+        - The base_map_dir should be relative to workspace_root or absolute.
+        """
+        csv_path = Path(csv_path)
+        workspace_root = Path(workspace_root)
+
+        if not csv_path.exists():
+            raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
+        if not workspace_root.exists():
+            raise FileNotFoundError(f"Workspace root not found: {workspace_root}")
+
+        protein_configs = {}
+        required_columns = {"protein", "base_map_dir", "selection", "resolution", "map_pattern"}
+
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+
+            # Validate CSV headers
+            if reader.fieldnames is None:
+                raise ValueError(f"CSV file {csv_path} appears to be empty")
+
+            missing_columns = required_columns - set(reader.fieldnames)
+            if missing_columns:
+                raise ValueError(
+                    f"CSV file missing required columns: {missing_columns}. "
+                    f"Found columns: {reader.fieldnames}"
+                )
+
+            for row_num, row in enumerate(reader, start=2):  # start=2 because row 1 is header
+                try:
+                    # Validate required fields are not empty
+                    for col in required_columns:
+                        if not row[col] or not row[col].strip():
+                            raise ValueError(f"Row {row_num}: Required field '{col}' is empty")
+
+                    protein = row["protein"].strip()
+
+                    # Resolve base_map_dir relative to workspace_root
+                    base_map_dir = Path(row["base_map_dir"].strip())
+                    if not base_map_dir.is_absolute():
+                        base_map_dir = workspace_root / base_map_dir
+
+                    # Parse resolution as float
+                    try:
+                        resolution = float(row["resolution"])
+                        if resolution <= 0:
+                            raise ValueError("Resolution must be positive")
+                    except ValueError as e:
+                        raise ValueError(
+                            f"Row {row_num}: Invalid resolution value '{row['resolution']}': {e}"
+                        )
+
+                    # Structure pattern is optional
+                    structure_pattern = row.get("structure_pattern", "").strip()
+
+                    # Create ProteinConfig object
+                    config = cls(
+                        protein=protein,
+                        base_map_dir=base_map_dir,
+                        selection=row["selection"].strip(),
+                        resolution=resolution,
+                        map_pattern=row["map_pattern"].strip(),
+                        structure_pattern=structure_pattern,
+                    )
+
+                    # Check for duplicate protein names
+                    if protein in protein_configs:
+                        logger.warning(
+                            f"Row {row_num}: Duplicate protein name '{protein}'. "
+                            "Overwriting previous entry."
+                        )
+
+                    protein_configs[protein] = config
+
+                except Exception as e:
+                    raise ValueError(f"Error processing row {row_num} in {csv_path}: {e}") from e
+
+        if not protein_configs:
+            raise ValueError(f"No valid protein configurations found in {csv_path}")
+
+        logger.info(f"Loaded {len(protein_configs)} protein configurations from {csv_path}")
+        return protein_configs

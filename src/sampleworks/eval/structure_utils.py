@@ -131,6 +131,8 @@ def get_asym_unit_from_structure(
 # TODO: this assumes a single preconfigured selection of the structure--to generalize the
 #  selection, we'll need to pull that out, or I guess modify it in the ProteinConfig instance
 #  and then fetch the coordinates again?
+# TODO: add option to override the selection string?
+# TODO: rename--this really returns the coordinates, not a complete structure object.
 def get_reference_structure(
     protein_config: ProteinConfig, protein_key: str, occ_list: tuple[float, ...] = (0.0, 1.0)
 ) -> np.ndarray | None:
