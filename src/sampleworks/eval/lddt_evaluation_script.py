@@ -6,7 +6,8 @@ from loguru import logger
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results, parse_args
-from sampleworks.eval.structure_utils import get_reference_structure
+from sampleworks.eval.structure_utils import get_reference_structure_coords, \
+    get_reference_atomarraystack
 
 
 def main(args: argparse.Namespace):
@@ -32,9 +33,10 @@ def main(args: argparse.Namespace):
     for protein_key, protein_config in protein_configs.items():
         # TODO: need to rework get_reference_structure so it returns coordinates separately
         #  for each occupancy, since we'll use them directly here.
-        protein_ref_coords = get_reference_structure(protein_config, protein_key)
-        if protein_ref_coords is not None:
-            ref_coords[protein_key] = protein_ref_coords
+        for occ in OCCUPANCY_LEVELS:
+            protein_ref_coords = get_reference_atomarraystack(protein_config, occ)
+            if protein_ref_coords is not None:
+                ref_coords[(protein_key, occ)] = protein_ref_coords
 
 
 if __name__ == "__main__":

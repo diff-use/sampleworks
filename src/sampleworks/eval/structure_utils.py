@@ -1,5 +1,6 @@
 import re
 import traceback
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -128,20 +129,31 @@ def get_asym_unit_from_structure(
     return atom_array
 
 
-# TODO: this assumes a single preconfigured selection of the structure--to generalize the
-#  selection, we'll need to pull that out, or I guess modify it in the ProteinConfig instance
-#  and then fetch the coordinates again?
-# TODO: add option to override the selection string?
-# TODO: rename--this really returns the coordinates, not a complete structure object.
-def get_reference_structure(
+def get_reference_atomarraystack(
+        protein_config, occupancy_a: float = 0.5
+) -> tuple[Path | str | None, AtomArrayStack | None]:
+    ref_path = protein_config.get_reference_structure_path(occupancy_a)  # will warn if not found
+    if ref_path is None:
+        return None, None
+    ref_struct = load_any(ref_path, altloc="all", extra_fields=["occupancy"])
+    if isinstance(ref_struct, AtomArray):
+        ref_struct = AtomArrayStack.from_template(ref_struct, ref_struct.coord[None, :, :])
+    return ref_path, ref_struct
+
+
+def get_reference_structure_coords(
     protein_config: ProteinConfig, protein_key: str, occ_list: tuple[float, ...] = (0.0, 1.0)
 ) -> np.ndarray | None:
+    """
+    This has a slightly odd function, which is to output an array of all possible coordinates
+    of a structure, with altlocs mixed in. It returns NO information about which atom is which
+    or whether there are duplicates. It's used for masking density maps.
+    """
     protein_ref_coords_list = []
     for occ in occ_list:
-        ref_path = protein_config.get_reference_structure_path(occ)  # will warn if not found
+        ref_path, ref_struct = get_reference_atomarraystack(protein_config, occ)
         if ref_path:  # if not None, it is already a validated Path object
             try:
-                ref_struct = load_any(ref_path, altloc="all")
                 # TODO: enumerate actual exceptions this can raise.
                 coords = extract_selection_coordinates(ref_struct, protein_config.selection)
                 if not len(coords):

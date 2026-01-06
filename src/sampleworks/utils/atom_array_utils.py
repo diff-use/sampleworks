@@ -157,7 +157,8 @@ def select_altloc(
             A new atom array stack containing only atoms with the specified altloc.
         if return_full_array is True, AtomArrayStack:
             A new atom array stack containing atoms with either the specified altloc or
-            an empty/default altloc.
+            an empty/default altloc (period, space, ?, or empty string). It is possible that
+            an alternate altloc may be, e.g.,  disordered and therefore missing from the structure.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -168,7 +169,8 @@ def select_altloc(
         raise AttributeError("atom_array must have `altloc_id` and `occupancy` annotations")
 
     if return_full_array:
-        mask = (atom_array.altloc_id == altloc_id) | (atom_array.occupancy == 1.0)
+        mask = np.isin(atom_array.altloc_id, (altloc_id, ".", "", " ", "?"))
+        mask |= atom_array.occupancy == 1.0
     else:
         mask = atom_array.altloc_id == altloc_id
 
