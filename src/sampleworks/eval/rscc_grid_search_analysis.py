@@ -55,7 +55,7 @@ def _():
     from sampleworks.core.rewards.real_space_density import (
         setup_scattering_params,
     )
-    from sampleworks.eval.rscc_grid_search_script import get_method_and_model_name
+    from sampleworks.eval.grid_search_eval_utils import get_method_and_model_name
 
     return XMap, parse, setup_scattering_params, get_method_and_model_name
 

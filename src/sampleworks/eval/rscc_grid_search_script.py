@@ -16,7 +16,6 @@ search results.
 
 import argparse
 import copy
-import re
 import traceback
 from pathlib import Path
 
@@ -37,141 +36,10 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.core.rewards.real_space_density import setup_scattering_params
 from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING, OCCUPANCY_LEVELS
-from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList, ProteinConfig
+from sampleworks.eval.eval_dataclasses import ProteinConfig
+from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results, parse_args
 from sampleworks.eval.metrics import rscc
-from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.eval.structure_utils import get_asym_unit_from_structure, get_reference_structure
-
-
-# TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
-#  for how the folder names are generated.
-def parse_experiment_dir(exp_dir: Path) -> dict[str, int | float | None]:
-    """Parse experiment directory name to extract parameters.
-
-    Handles both:
-    - fk_steering format: ens{N}_gw{W}_gd{D}
-    - pure_guidance format: ens{N}_gw{W}
-    """
-    dir_name = exp_dir.name
-    logger.debug(f"Parsing experiment directory: {dir_name}")
-
-    # Extract ensemble size
-    ens_match = re.search(r"ens(\d+)", dir_name)
-    ensemble_size = int(ens_match.group(1)) if ens_match else None
-
-    # Extract guidance weight
-    gw_match = re.search(r"gw([\d.]+)", dir_name)
-    guidance_weight = float(gw_match.group(1)) if gw_match else None
-
-    # Extract gradient descent steps (for fk_steering)
-    gd_match = re.search(r"gd(\d+)", dir_name)
-    gd_steps = int(gd_match.group(1)) if gd_match else None
-
-    return {
-        "ensemble_size": ensemble_size,
-        "guidance_weight": guidance_weight,
-        "gd_steps": gd_steps,
-    }
-
-
-# TODO: this method is now more flexible about how it scans the grid search results directory,
-#  but that means we should be more strict about the output "API" directory structure.
-def scan_grid_search_results(
-    current_directory: Path,
-    current_depth: int = 0,
-    target_depth: int = 4,
-    target_filename: str = "refined.cif",
-) -> ExperimentList:
-    """
-    Recursively scan the grid_search_results directory for all experiments with refined.cif files.
-
-    Parameters:
-    - current_directory: (Path) Path to the current directory being scanned.
-    - current_depth: (int) Current depth of the recursion, default 0
-    - target_depth: (int) Depth where we expect to find experiment output files.
-    - target_filename: (str) Name of the target file to look for, default "refined.cif"
-
-    Returns:
-    - List of dictionaries containing experiment metadata.
-    """
-    experiments = ExperimentList()
-
-    if not current_directory.exists():
-        if current_depth == 0:
-            logger.error(
-                f"Grid search directory not found: {current_directory} at depth {current_depth}"
-            )
-        return experiments
-
-    # Check if we found a refined.cif file in the current directory
-    refined_cif = current_directory / target_filename
-    if current_depth == target_depth and refined_cif.exists():
-        # Reconstruct metadata from path structure
-        # Expected structure: .../protein_dir/model_dir/scaler_dir/exp_dir/refined.cif
-        exp_dir = current_directory
-        scaler_dir = exp_dir.parent
-        model_dir = scaler_dir.parent
-        protein_dir = model_dir.parent
-
-        protein, occ_a = extract_protein_and_occupancy(protein_dir.name)
-        method, model = get_method_and_model_name(model_dir.name)
-
-        params = parse_experiment_dir(exp_dir)
-
-        # Validate parameters to satisfy pyright
-        if (
-            protein is None
-            or occ_a is None
-            or method is None
-            or params["ensemble_size"] is None
-            or params["guidance_weight"] is None
-            or params["gd_steps"] is None
-        ):
-            logger.warning(f"Skipping experiment in {exp_dir} due to missing metadata")
-            return experiments
-
-        experiments.append(
-            Experiment(
-                protein=protein,
-                occ_a=occ_a,
-                model=model,
-                method=method,
-                scaler=scaler_dir.name,
-                ensemble_size=int(params["ensemble_size"]),
-                guidance_weight=float(params["guidance_weight"]),
-                gd_steps=int(params["gd_steps"]),
-                exp_dir=exp_dir,
-                refined_cif_path=refined_cif,
-                protein_dir_name=protein_dir.name,
-            )
-        )
-
-        return experiments
-
-    # Stop recursion if max depth reached, this should not happen, but it will prevent any
-    # accidental infinite recursion if the directory structure changes in the future.
-    if current_depth >= target_depth:
-        return experiments
-
-    # Recurse into subdirectories
-    for item in current_directory.iterdir():
-        if item.is_dir() and not item.name.endswith(".json"):
-            experiments.extend(scan_grid_search_results(item, current_depth + 1, target_depth))
-
-    return experiments
-
-
-def get_method_and_model_name(model_name: str) -> tuple[str | None, str]:
-    if "MD" in model_name:
-        method = "MD"
-        model = model_name.replace("_MD", "")
-    elif "X-RAY" in model_name:
-        method = "X-RAY"
-        model = model_name.replace("_X-RAY_DIFFRACTION", "")
-    else:
-        method = None
-        model = model_name
-    return method, model
 
 
 def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor:
@@ -254,57 +122,13 @@ def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> 
     return density.cpu().numpy().squeeze()
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate RSCC on grid search results.")
-    parser.add_argument(
-        "--workspace-root",
-        type=Path,
-        required=True,
-        help="Path to the grid search results directory, like /home/kchrispens/sampleworks",
-    )
-    return parser.parse_args()
-
-
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
     grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
 
-    # TODO: need to put these in a config file.
     # Protein configurations: base map paths, structure selections, and resolutions
-    protein_configs = {
-        "1vme": ProteinConfig(
-            protein="1vme",
-            base_map_dir=workspace_root / "1vme_final_carved_edited",
-            selection="chain A and resi 326-339",
-            resolution=1.8,
-            map_pattern="1vme_final_carved_edited_{occ_str}_1.80A.ccp4",
-            structure_pattern="1vme_final_carved_edited_{occ_str}.cif",
-        ),
-        "4ole": ProteinConfig(
-            protein="4ole",
-            base_map_dir=workspace_root / "4ole_final_carved",
-            selection="chain B and resi 60-67",
-            resolution=2.52,
-            map_pattern="4ole_final_carved_{occ_str}_2.52A.ccp4",
-            structure_pattern="4ole_final_carved_{occ_str}.cif",
-        ),
-        "5sop": ProteinConfig(
-            protein="5sop",
-            base_map_dir=workspace_root / "5sop",
-            selection="chain A and resi 129-135",
-            resolution=1.05,
-            map_pattern="5sop_{occ_str}_1.05A.ccp4",
-            structure_pattern="5sop_{occ_str}.cif",
-        ),
-        "6b8x": ProteinConfig(
-            protein="6b8x",
-            base_map_dir=workspace_root / "6b8x",
-            selection="chain A and resi 180-184",
-            resolution=1.74,
-            map_pattern="6b8x_{occ_str}_1.74A.ccp4",
-            structure_pattern="6b8x_synthetic_{occ_str}.cif",
-        ),
-    }
+    protein_inputs_dir = args.grid_search_inputs_path or workspace_root
+    protein_configs = ProteinConfig.from_csv(protein_inputs_dir, args.protein_configs_csv)
 
     logger.info(f"Grid search directory: {grid_search_dir}")
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
@@ -327,6 +151,11 @@ def main(args: argparse.Namespace):
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     ref_coords = {}
     for protein_key, protein_config in protein_configs.items():
+        # NOTE THAT THIS will be by default _two_ structures, one computed for occupancy 0 and
+        # one for occupancy 1 of altloc A. Historically this is because these coordinates are
+        # used here only as a mask for map comparisons.
+        # TODO: change that method to return the coordinates for occupancy 0 and 1 separately,
+        #  and then we can merge them here.
         protein_ref_coords = get_reference_structure(protein_config, protein_key)
         if protein_ref_coords is not None:
             ref_coords[protein_key] = protein_ref_coords
@@ -369,7 +198,6 @@ def main(args: argparse.Namespace):
             continue
 
         try:
-            # TODO: we will reload these maps A LOT. Fix that by caching them somewhere?
             # Load base map for canonical unit cell,
             # don't extract selection as we'll use the full map later too.
             if (_exp.protein, _exp.occ_a) not in base_map_cache:
@@ -546,5 +374,5 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    args = parse_args("Evaluate RSCC on grid search results.")
     main(args)
