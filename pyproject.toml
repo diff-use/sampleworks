@@ -3,7 +3,17 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [dependency-groups]
-analysis = ["polars", "mdtraj", "marimo", "matplotlib", "seaborn", "pandas", "pyzmq", "ipython"]
+analysis = [
+    "polars",
+    "mdtraj",
+    "marimo",
+    "matplotlib",
+    "seaborn",
+    "pandas",
+    "pyzmq",
+    "ipython",
+    "scikit-learn"
+]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
