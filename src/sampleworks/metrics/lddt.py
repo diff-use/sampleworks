@@ -324,6 +324,9 @@ class AllAtomLDDT(Metric):
         )
         predicted_aa_stack = ensure_atom_array_stack(_predicted_aa)
         ground_truth_aa_stack = ensure_atom_array_stack(_ground_truth_aa)
+        # FIXME: the next few lines are Claude-generated, and I think they're trivially true,
+        #  I think this should test that ground_truth_aa_stack and predicted_aa_stack have the
+        #  same number of atoms...
         if (
             predicted_aa_stack.array_length() != predicted_atom_array_stack.array_length()
             or ground_truth_aa_stack.array_length() != ground_truth_atom_array_stack.array_length()
