@@ -39,7 +39,7 @@ from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING, OCCUPANCY_LEVE
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results, parse_args
 from sampleworks.eval.metrics import rscc
-from sampleworks.eval.structure_utils import get_asym_unit_from_structure, get_reference_structure
+from sampleworks.eval.structure_utils import get_asym_unit_from_structure, get_reference_structure_coords
 
 
 def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor:
@@ -156,7 +156,7 @@ def main(args: argparse.Namespace):
         # used here only as a mask for map comparisons.
         # TODO: change that method to return the coordinates for occupancy 0 and 1 separately,
         #  and then we can merge them here.
-        protein_ref_coords = get_reference_structure(protein_config, protein_key)
+        protein_ref_coords = get_reference_structure_coords(protein_config, protein_key)
         if protein_ref_coords is not None:
             ref_coords[protein_key] = protein_ref_coords
 
