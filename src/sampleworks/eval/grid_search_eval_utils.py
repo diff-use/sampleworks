@@ -2,15 +2,16 @@
 Utilities for evaluating grid search results.
 All eval scripts should use these methods to avoid and deviations.
 """
+
 import argparse
 import re
 from importlib.resources import files
 from pathlib import Path
 
 from loguru import logger
-
-from sampleworks.eval.eval_dataclasses import ExperimentList, Experiment
+from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
+from sampleworks.utils.guidance_constants import BOLTZ_2
 
 
 # TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
@@ -87,15 +88,16 @@ def scan_grid_search_results(
         method, model = get_method_and_model_name(model_dir.name)
 
         params = parse_experiment_dir(exp_dir)
+        guidance_weight = float(params["guidance_weight"]) if params["guidance_weight"] else None
+        gd_steps = int(params["gd_steps"]) if params["gd_steps"] else None
 
         # Validate parameters to satisfy pyright
         if (
             protein is None
             or occ_a is None
-            or method is None
+            or (model == BOLTZ_2 and method is None)
             or params["ensemble_size"] is None
-            or params["guidance_weight"] is None
-            or params["gd_steps"] is None
+            or (guidance_weight is None and gd_steps is None)
         ):
             logger.warning(f"Skipping experiment in {exp_dir} due to missing metadata")
             return experiments
@@ -108,8 +110,8 @@ def scan_grid_search_results(
                 method=method,
                 scaler=scaler_dir.name,
                 ensemble_size=int(params["ensemble_size"]),
-                guidance_weight=float(params["guidance_weight"]),
-                gd_steps=int(params["gd_steps"]),
+                guidance_weight=guidance_weight,
+                gd_steps=gd_steps,
                 exp_dir=exp_dir,
                 refined_cif_path=refined_cif,
                 protein_dir_name=protein_dir.name,
@@ -156,21 +158,21 @@ def parse_args(description: str | None = None):
         "--workspace-root",
         type=Path,
         required=True,
-        help="Path to the grid search results directory, like $HOME/grid_search_results",
+        help="Path containing the grid search results directory, e.g. if results are "
+        "at $HOME/grid_search_results, $HOME should be what you pass",
     )
     parser.add_argument(
         "--grid-search-inputs-path",
         type=Path,
-        required=False,
-        help="Path to the directory containing the grid search inputs, if it is different than the workspace root.",
+        help="Path to the directory containing the grid search inputs, if it is different "
+        "than the workspace root.",
         default=None,
     )
     parser.add_argument(
         "--protein-configs-csv",
         type=Path,
-        required=True,
         help="Path to the CSV file containing protein configurations, like ${HOME}/configs.csv "
-             "Defaults to sampleworks/data/protein_configs.csv",
+        "Defaults to sampleworks/data/protein_configs.csv",
         default=files("sampleworks.data") / "protein_configs.csv",
     )
     return parser.parse_args()

@@ -3,8 +3,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io.pdbx import CIFFile, set_structure
+
+
+BACKBONE_ATOM_TYPES = ["C", "CA", "N", "O"]
+BLANK_ALTLOC_IDS = {"", ".", " ", "?"}
 
 
 def save_structure_to_cif(
@@ -139,6 +144,56 @@ def save_structure_to_cif(
     return output_path
 
 
+def find_all_altloc_ids(atom_array: AtomArray | AtomArrayStack) -> set[str]:
+    """
+    Find all unique alternate location indicator (altloc) IDs in an AtomArray or AtomArrayStack.
+    """
+    if hasattr(atom_array, "altloc_id"):
+        altloc_ids = np.unique(atom_array.altloc_id)  # pyright: ignore (reportArgumentType)
+    else:
+        raise AttributeError("atom_array must have `altloc_id` annotation")
+
+    return set(altloc_ids.tolist()) - BLANK_ALTLOC_IDS
+
+
+def map_altlocs_to_stack(
+    atom_array: AtomArray | AtomArrayStack,
+) -> tuple[AtomArrayStack, np.ndarray, np.ndarray]:
+    """
+    Map alternate location indicators (altloc) to separate structures in a new AtomArrayStack.
+
+    Note: this will take _only_ the first structure if you pass an AtomArrayStack. It will raise
+    an error if there is more than one structure in the input AtomArrayStack.
+
+    Returns:
+        Tuple containing:
+            - AtomArrayStack: The new stack with separate structures for each altloc.
+            - np.ndarray: Array of altloc IDs, corresponding to the order
+                 of the structures in the stack.
+            - np.ndarray: Array of occupancies for each atom in each stack,
+                 corresponding to the order of structures in the stack
+    """
+    if isinstance(atom_array, AtomArrayStack):
+        if len(atom_array) > 1:
+            raise ValueError("Cannot map altlocs with multiple structures each containing altlocs")
+        atom_array = atom_array[0]  # pyright: ignore (reportAssignmentType)
+    altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
+    altloc_list = [
+        select_altloc(atom_array, altloc_id, return_full_array=True) for altloc_id in altloc_ids
+    ]
+    # ensure that each structure has the same number of atoms
+    atom_arrays = filter_to_common_atoms(*altloc_list)
+    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])  # pyright: ignore
+    occupancies = np.vstack([r.occupancy for r in atom_arrays])  # pyright: ignore
+
+    # remove those annotations or we cannot stack arrays.
+    for array in atom_arrays:
+        array.del_annotation("occupancy")
+        array.del_annotation("altloc_id")
+
+    return stack(atom_arrays), altloc_ids, occupancies
+
+
 def select_altloc(
     atom_array: AtomArray | AtomArrayStack, altloc_id: str, return_full_array: bool = False
 ) -> AtomArray | AtomArrayStack:
@@ -169,8 +224,15 @@ def select_altloc(
         raise AttributeError("atom_array must have `altloc_id` and `occupancy` annotations")
 
     if return_full_array:
-        mask = np.isin(atom_array.altloc_id, (altloc_id, ".", "", " ", "?"))
-        mask |= atom_array.occupancy == 1.0
+        mask = np.isin(
+            atom_array.altloc_id,  # pyright: ignore (reportArgumentType)
+            list(
+                {
+                    altloc_id,
+                }.union(BLANK_ALTLOC_IDS)
+            ),
+        )
+        mask |= atom_array.occupancy == 1.0  # in case something is an "altloc" but there're no alts
     else:
         mask = atom_array.altloc_id == altloc_id
 
@@ -262,7 +324,7 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
             f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
         )
 
-    backbone_atoms = np.array(["C", "CA", "N", "O"])
+    backbone_atoms = np.array(BACKBONE_ATOM_TYPES)
     atom_name = atom_array.atom_name
     if atom_name is None:
         raise AttributeError("atom_array must have 'atom_name' annotation")
@@ -285,83 +347,79 @@ def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
 
 
 def filter_to_common_atoms(
-    array1: AtomArray | AtomArrayStack,
-    array2: AtomArray | AtomArrayStack,
-) -> tuple[AtomArray | AtomArrayStack, AtomArray | AtomArrayStack]:
-    """Filter two AtomArrays/AtomArrayStacks to only include common atoms.
+    *arrays: AtomArray | AtomArrayStack,
+) -> tuple[AtomArrayStack, ...]:
+    """Filter multiple AtomArrays/AtomArrayStacks to only include common atoms.
 
     Creates unique identifiers for each atom based on chain_id, res_id, and
-    atom_name, then filters both structures to include only atoms present in both.
+    atom_name, then filters all structures to include only atoms present in all.
     The returned arrays are sorted to ensure atoms are in matching order.
 
     Parameters:
-        array1 (AtomArray | AtomArrayStack): First atom array or stack.
-        array2 (AtomArray | AtomArrayStack): Second atom array or stack.
+        *arrays (AtomArray | AtomArrayStack): Two or more atom arrays or stacks
+            to filter.
 
     Returns:
-        tuple[AtomArray | AtomArrayStack, AtomArray | AtomArrayStack]:
-            Filtered versions of array1 and array2 containing only common atoms
-            in matching order.
+        tuple[AtomArray | AtomArrayStack, ...]:
+            Filtered versions of all input arrays containing only common atoms
+            in matching order. The tuple length matches the number of inputs.
 
     Raises:
         TypeError: If inputs are not AtomArray or AtomArrayStack.
-        RuntimeError: If no common atoms are found between the two structures.
+        ValueError: If fewer than two arrays are provided.
+        RuntimeError: If no common atoms are found across all structures.
 
     Examples:
+        >>> # Two arrays (original behavior)
         >>> array1 = AtomArray(...)  # 100 atoms
         >>> array2 = AtomArray(...)  # 95 atoms, 90 overlap with array1
         >>> filtered1, filtered2 = filter_to_common_atoms(array1, array2)
         >>> len(filtered1)  # 90
         >>> len(filtered2)  # 90
+
+        >>> # Three or more arrays
+        >>> arr1 = AtomArray(...)  # 100 atoms
+        >>> arr2 = AtomArray(...)  # 95 atoms
+        >>> arr3 = AtomArray(...)  # 98 atoms
+        >>> f1, f2, f3 = filter_to_common_atoms(arr1, arr2, arr3)
+        >>> # All have the same atoms present in all three
     """
-    if not (
-        isinstance(array1, (AtomArray, AtomArrayStack))
-        and isinstance(array2, (AtomArray, AtomArrayStack))
-    ):
-        raise TypeError(
-            f"array1 and array2 must be AtomArray or AtomArrayStack, "
-            f"got {type(array1)} and {type(array2)}"
-        )
+    if len(arrays) < 2:
+        raise ValueError(f"At least two arrays must be provided, got {len(arrays)}")
 
-    # Get atom identifiers for both structures
-    ids1 = make_atom_id(array1)
-    ids2 = make_atom_id(array2)
+    # Validate all inputs are correct types
+    for i, array in enumerate(arrays):
+        if not isinstance(array, (AtomArray, AtomArrayStack)):
+            raise TypeError(
+                f"Array at position {i} must be AtomArray or AtomArrayStack, got {type(array)}"
+            )
 
-    # Find common atom IDs
-    common_ids = np.intersect1d(ids1, ids2)
+    # Get atom identifiers for all structures
+    all_ids = [make_atom_id(array) for array in arrays]
+
+    # Find common atom IDs across all structures
+    common_ids = all_ids[0]
+    for ids in all_ids[1:]:
+        common_ids = np.intersect1d(common_ids, ids)
 
     if len(common_ids) == 0:
-        raise RuntimeError("No common atoms found between the two structures")
+        raise RuntimeError(f"No common atoms found across all {len(arrays)} structures")
 
-    # Create masks for common atoms
-    mask1 = np.isin(ids1, common_ids)
-    mask2 = np.isin(ids2, common_ids)
+    # Filter and sort each array
+    filtered_arrays: list[AtomArrayStack] = []
 
-    # Filter arrays
-    filtered_array1: AtomArray | AtomArrayStack
-    filtered_array2: AtomArray | AtomArrayStack
-    if isinstance(array1, AtomArrayStack):
-        filtered_array1 = cast(AtomArrayStack, array1[:, mask1])
-    else:
-        filtered_array1 = cast(AtomArray, array1[mask1])
+    for array, ids in zip(arrays, all_ids):
+        # Create mask for common atoms
+        mask = np.isin(ids, common_ids)
+        array = ensure_atom_array_stack(array)
 
-    if isinstance(array2, AtomArrayStack):
-        filtered_array2 = cast(AtomArrayStack, array2[:, mask2])
-    else:
-        filtered_array2 = cast(AtomArray, array2[mask2])
+        # Filter array
+        filtered_array = array[:, mask]
 
-    # Sort by atom ID to ensure matching order
-    sort_idx1 = np.argsort(make_atom_id(filtered_array1))
-    sort_idx2 = np.argsort(make_atom_id(filtered_array2))
+        # Sort by atom ID to ensure matching order
+        sort_idx = np.argsort(make_atom_id(filtered_array))  # pyright: ignore (reportArgumentType)
+        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # pyright: ignore
 
-    if isinstance(filtered_array1, AtomArrayStack):
-        filtered_array1 = cast(AtomArrayStack, filtered_array1[:, sort_idx1])
-    else:
-        filtered_array1 = cast(AtomArray, filtered_array1[sort_idx1])
+        filtered_arrays.append(filtered_array)
 
-    if isinstance(filtered_array2, AtomArrayStack):
-        filtered_array2 = cast(AtomArrayStack, filtered_array2[:, sort_idx2])
-    else:
-        filtered_array2 = cast(AtomArray, filtered_array2[sort_idx2])
-
-    return filtered_array1, filtered_array2
+    return tuple(filtered_arrays)

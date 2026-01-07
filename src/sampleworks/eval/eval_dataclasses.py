@@ -13,11 +13,11 @@ class Experiment:
     protein: str
     occ_a: float
     model: str
-    method: str
+    method: str | None
     scaler: str
     ensemble_size: int
-    guidance_weight: float
-    gd_steps: int
+    guidance_weight: float | None
+    gd_steps: int | None
     exp_dir: Path
     refined_cif_path: Path
     protein_dir_name: str
@@ -145,7 +145,7 @@ class ProteinConfig:
         protein_configs = {}
         required_columns = {"protein", "base_map_dir", "selection", "resolution", "map_pattern"}
 
-        with open(csv_path, "r") as f:
+        with open(csv_path) as f:
             reader = csv.DictReader(f)
 
             # Validate CSV headers
