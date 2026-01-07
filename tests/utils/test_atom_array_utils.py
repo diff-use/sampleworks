@@ -341,8 +341,8 @@ class TestFilterToCommonAtoms:
         filtered1, filtered2 = filter_to_common_atoms(array1, array2)
 
         # Should have 3 common atoms (residues 3, 4, 5)
-        assert len(filtered1) == 3
-        assert len(filtered2) == 3
+        assert filtered1.array_length() == 3
+        assert filtered2.array_length() == 3
         assert list(cast(np.ndarray, filtered1.res_id)) == [3, 4, 5]
         assert list(cast(np.ndarray, filtered2.res_id)) == [3, 4, 5]
 
@@ -368,8 +368,8 @@ class TestFilterToCommonAtoms:
         filtered1, filtered2 = filter_to_common_atoms(basic_atom_array, basic_atom_array)
 
         # Should return all atoms
-        assert len(filtered1) == len(basic_atom_array)
-        assert len(filtered2) == len(basic_atom_array)
+        assert filtered1.array_length() == len(basic_atom_array)
+        assert filtered2.array_length() == len(basic_atom_array)
 
     def test_with_no_overlap(self):
         """Test with arrays that have no common atoms."""
@@ -385,7 +385,7 @@ class TestFilterToCommonAtoms:
         array2.set_annotation("res_id", np.array([4, 5, 6]))
         array2.set_annotation("atom_name", np.array(["CA", "CA", "CA"]))
 
-        with pytest.raises(RuntimeError, match="No common atoms found between the two structures"):
+        with pytest.raises(RuntimeError, match="No common atoms found across all 2 structures"):
             filter_to_common_atoms(array1, array2)
 
     def test_with_stacks(self, atom_array_stacks_partial_overlap):
@@ -407,9 +407,9 @@ class TestFilterToCommonAtoms:
         # Both have same res_ids 1-5
         filtered1, filtered2 = filter_to_common_atoms(basic_atom_array, atom_array_stack)
 
-        assert isinstance(filtered1, AtomArray)
+        assert isinstance(filtered1, AtomArrayStack)
         assert isinstance(filtered2, AtomArrayStack)
-        assert len(filtered1) == 5
+        assert filtered1.array_length() == 5
         assert filtered2.array_length() == 5
 
     def test_different_chains_no_overlap(self):
@@ -464,13 +464,17 @@ class TestFilterToCommonAtoms:
 
     def test_preserves_coordinates(self, atom_array_partial_overlap):
         """Test that coordinates are preserved for common atoms."""
+        # TODO filter_to_common_atoms now returns a tuple of AtomArrayStack
         array1, array2 = atom_array_partial_overlap
         original_coords1 = array1.coord.copy()
         original_coords2 = array2.coord.copy()
 
         filtered1, filtered2 = filter_to_common_atoms(array1, array2)
 
+        assert filtered1 is not None and filtered1.coord is not None
+        assert filtered2 is not None and filtered2.coord is not None
+
         # Filtered arrays should have coordinates from residues 3, 4, 5
         # which are indices 2, 3, 4 in array1 and 0, 1, 2 in array2
-        np.testing.assert_array_equal(cast(np.ndarray, filtered1.coord)[0], original_coords1[2])
-        np.testing.assert_array_equal(cast(np.ndarray, filtered2.coord)[0], original_coords2[0])
+        np.testing.assert_array_equal(filtered1.coord[0, 0], original_coords1[2])
+        np.testing.assert_array_equal(filtered2.coord[0, 0], original_coords2[0])

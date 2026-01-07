@@ -470,7 +470,7 @@ class SelectedLDDT(Metric):
             chain_id = cast(np.ndarray, filtered_predicted.chain_id)
             res_id = cast(np.ndarray, filtered_predicted.res_id)
             token_id = cast(np.ndarray, filtered_predicted.token_id)
-            unique_id = chain_id + res_id.astype(str)
+            unique_id = np.char.add(chain_id, res_id.astype(str))
             token_to_residue_id_map = {k: v for k, v in zip(token_id, unique_id)}
             residue_level_lddt_scores = {
                 str(token_to_residue_id_map[k]): v for k, v in residue_level_lddt_scores.items()
