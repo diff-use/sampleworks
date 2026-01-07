@@ -1,24 +1,28 @@
 import argparse
+import re
+import sys
+import traceback
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
+from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
-from sklearn.metrics import silhouette_samples
-
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig
-from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results, parse_args
-from sampleworks.eval.structure_utils import get_reference_structure_coords, \
-    get_reference_atomarraystack
+from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
+from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
-from sampleworks.utils.atom_array_utils import filter_to_common_atoms
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms, map_altlocs_to_stack
+from sklearn.metrics import silhouette_samples
 
 
 def compute_cross_lddts(
-        ref_atom_array_stack: AtomArrayStack,
-        pred_atom_array_stack: AtomArrayStack,
-        selection: str = "all"
+    ref_atom_array_stack: AtomArrayStack,
+    pred_atom_array_stack: AtomArrayStack,
+    selection: str = "all",
 ) -> np.ndarray:
     """
     Compute the LDDTs between each set of coordinates in ref_atom_array_stack and each
@@ -56,8 +60,8 @@ def compute_cross_lddts(
     for i in range(n_ref):
         for j in range(n_pred):
             # Extract individual AtomArrays for this pair
-            ref_single: AtomArray = ref_filtered[i]
-            pred_single: AtomArray = pred_filtered[j]
+            ref_single: AtomArray = ref_filtered[i]  # pyright: ignore [reportAssignmentType]
+            pred_single: AtomArray = pred_filtered[j]  # pyright: ignore [reportAssignmentType]
 
             # Compute LDDT using AllAtomLDDT
             # Pass selection parameter if not "all"
@@ -70,10 +74,10 @@ def compute_cross_lddts(
             residue_lddt_scores = result["residue_lddt_scores"]
 
             # Compute average over all residue-level LDDT scores
-            # Each residue has a list of scores (one per model, but we're computing on single models)
+            # Each residue has a list of scores (one per model, but we compute on single models)
             all_scores = []
             for residue_scores_list in residue_lddt_scores.values():
-                # residue_scores_list is a list, typically with one value for single model comparison
+                # residue_scores_list is a list, typ. with one value for single model comparison
                 all_scores.extend(residue_scores_list)
 
             # Calculate the mean LDDT score
@@ -87,9 +91,9 @@ def compute_cross_lddts(
 
 
 def nn_lddt_clustering(
-        ref_atom_array_stack: AtomArrayStack,
-        pred_atom_array_stack: AtomArrayStack,
-        selection: str = "all"
+    ref_atom_array_stack: AtomArrayStack,
+    pred_atom_array_stack: AtomArrayStack,
+    selection: str = "all",
 ):
     """
     ref_atom_array_stack: AtomArrayStack containing reference coordinates (probably an RCSB entry,
@@ -101,7 +105,9 @@ def nn_lddt_clustering(
     NOTE: this method DOES NOT select altlocs, you must do that yourself.
 
     This method assigns a mapping from each predicted structure to the closest reference structure,
-    based on the LDDT score. It then computes a silhouette score assuming that mapping as a clustering.
+    based on the LDDT score. It then computes a silhouette score assuming that mapping as a
+    clustering.
+
     It returns the average silhouette score for the clustering, a sort-of silhouette score assuming
     the cluster centers are the true (reference) structures, and a list of the occupancies of the
     clusters.
@@ -115,25 +121,29 @@ def nn_lddt_clustering(
 
     # Second, compute the cross-LDDT matrix between all structures in the predicted stack and
     # all structures in the reference stack
-    cross_lddt_matrix = compute_cross_lddts(pred_atom_array_stack, ref_atom_array_stack, selection)
+    cross_lddt_matrix = compute_cross_lddts(ref_atom_array_stack, pred_atom_array_stack, selection)
 
     # Assign each predicted structure to the closest reference structure based on LDDT score (i.e.,
     # the reference structure with the highest LDDT score is assigned to the predicted structure)
     closest_ref_indices = np.argmax(cross_lddt_matrix, axis=0)
 
     # Compute the silhouette score assuming the nearest-reference neighbor clustering.
-    ssamples = silhouette_samples(1 - self_lddt_matrix, closest_ref_indices, metric="precomputed")
-    sscore = float(np.mean(ssamples))
+    if len(np.unique(closest_ref_indices)) < 2:
+        sscore = np.nan  # All points are assigned to the same cluster, the score doesn't make sense
+    else:
+        lddt_distance = 1 - self_lddt_matrix
+        ssamples = silhouette_samples(lddt_distance, closest_ref_indices, metric="precomputed")
+        sscore = float(np.mean(ssamples))
 
     # Compute the occupancy of each cluster based on the number of structures in the cluster
-    cluster_sizes = np.bincount(closest_ref_indices)
+    cluster_sizes = np.bincount(closest_ref_indices, minlength=len(ref_atom_array_stack))
     occupancy_levels = cluster_sizes / cluster_sizes.sum()
 
     # compute something like a silhouette score, comparing each point's distance to it's assigned
     # cluster center (the reference structure) to it's next-nearest reference structure.
     #  First, partition the "lddt distance" matrix; this ensures the top two values are the
     #  smallest and second-smallest distances, respectively.
-    partitioned_distances = np.partition(1 - cross_lddt_matrix, 2, axis=0)
+    partitioned_distances = np.partition(1 - cross_lddt_matrix, 1, axis=0)
 
     # for each cluster, compute something like a silhouette score
     avg_silhouette_to_ref = np.mean(1 - partitioned_distances[0] / partitioned_distances[1])
@@ -144,8 +154,24 @@ def nn_lddt_clustering(
         "avg_silhouette_to_ref": avg_silhouette_to_ref,
         "self_lddt_matrix": self_lddt_matrix,
         "cross_lddt_matrix": cross_lddt_matrix,
-        "closest_ref_indices": closest_ref_indices
+        "closest_ref_indices": closest_ref_indices,
     }
+
+
+def translate_selection(selection: str) -> str:
+    # current selection strings are pymol like, and we want to convert to atomworks/pandas like
+    # this should be a temporary measure only until we switch to atomworks style in the RSCC script
+    DeprecationWarning(
+        "This function converts from some pymol-like selection strings to AtomWorks "
+        "selection strings, but is not guaranteed to be correct for all cases."
+    )
+    pattern = re.compile(r"chain ([A-Z]) and resi (\d+)-(\d+)")
+    match = pattern.search(selection)
+    if match is None:
+        raise RuntimeError(f"Failed to match selection string {selection}")
+    new_selection = f"chain_id == '{match.group(1)}' "
+    new_selection += f"and res_id >= {match.group(2)} and res_id <= {match.group(3)}"
+    return new_selection
 
 
 def main(args: argparse.Namespace):
@@ -165,15 +191,80 @@ def main(args: argparse.Namespace):
 
     if all_experiments:
         all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    else:
+        logger.error("No experiments found in grid search directory. Exiting with status 1.")
+        sys.exit(1)
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     reference_atom_arrays = {}
     for protein_key, protein_config in protein_configs.items():
         # TODO: should the reference occupancy should be specified in the config?
         for occ in OCCUPANCY_LEVELS:
-            reference_proteins = get_reference_atomarraystack(protein_config, occ)
-            if reference_proteins is not None:
-                reference_atom_arrays[(protein_key, occ)] = reference_proteins
+            ref_path, reference_proteins = get_reference_atomarraystack(protein_config, occ)
+            if reference_proteins is None:
+                logger.warning(
+                    f"Could not find ref structure for {protein_key} and occupancy {occ}"
+                )
+                continue
+            try:
+                logger.info(
+                    f"Loaded ref structure for {protein_key} and occupancy {occ}: {ref_path}"
+                )
+                # ignoring the altloc_id and occupancy arrays
+                reference_protein_stack, _, _ = map_altlocs_to_stack(reference_proteins)
+                if reference_proteins is not None:
+                    reference_atom_arrays[(protein_key, occ)] = reference_protein_stack
+            except Exception as e:
+                logger.error(
+                    f"Error loading ref structure for {protein_key} and occupancy {occ}: {e}"
+                )
+                logger.error(f"  Traceback: {traceback.format_exc()}")
+
+    all_results = []
+    for _i, _exp in enumerate(all_experiments):
+        result = _exp.__dict__.copy()
+        if _exp.protein not in protein_configs:
+            logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
+            continue
+
+        protein_config = protein_configs[_exp.protein]
+
+        atom_array_key = (_exp.protein, _exp.occ_a)
+        if atom_array_key not in reference_atom_arrays:
+            logger.warning(
+                f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
+                f"for {_exp.protein} and occupancy {_exp.occ_a}."
+            )
+            continue
+
+        try:
+            reference_atom_array_stack = reference_atom_arrays[atom_array_key]
+            # these shouldn't have altlocs, don't need altloc="all".
+            predicted_atom_array_stack = load_any(_exp.refined_cif_path)
+            clustering_results = nn_lddt_clustering(
+                reference_atom_array_stack,
+                ensure_atom_array_stack(predicted_atom_array_stack),
+                translate_selection(protein_config.selection),
+            )
+
+            result.update(
+                {
+                    k: clustering_results[k]
+                    for k in ("occupancies", "avg_silhouette", "avg_silhouette_to_ref")
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error processing experiment {_exp.exp_dir}: {e}")
+            logger.error(f"  Traceback: {traceback.format_exc()}")
+            result["error"] = str(e)
+            result["avg_silhouette"] = np.nan
+            result["avg_silhouette_to_ref"] = np.nan
+            result["occupancies"] = []
+
+        all_results.append(result)
+
+    df = pd.DataFrame(all_results)
+    df.to_csv(grid_search_dir / "lddt_results.csv", index=False)
 
 
 if __name__ == "__main__":

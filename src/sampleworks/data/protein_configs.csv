@@ -1,0 +1,5 @@
+protein,base_map_dir,selection,resolution,map_pattern,structure_pattern
+1vme,1vme_final_carved_edited,chain A and resi 326-339,1.8,1vme_final_carved_edited_{occ_str}_1.80A.ccp4,1vme_final_carved_edited_{occ_str}.cif
+4ole,4ole_final_carved,chain B and resi 60-67,2.52,4ole_final_carved_{occ_str}_2.52A.ccp4,4ole_final_carved_{occ_str}.cif
+5sop,5sop,chain A and resi 129-135,1.05,5sop_{occ_str}_1.05A.ccp4,5sop_{occ_str}.cif
+6b8x,6b8x,chain A and resi 180-184,1.74,6b8x_{occ_str}_1.74A.ccp4,6b8x_synthetic_{occ_str}.cif
