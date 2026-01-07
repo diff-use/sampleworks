@@ -191,7 +191,11 @@ def map_altlocs_to_stack(
         array.del_annotation("occupancy")
         array.del_annotation("altloc_id")
 
-    return stack(atom_arrays), altloc_ids, occupancies
+    # filter_to_common_atoms() returns a tuple of AtomArrayStack, so we need to take the first
+    # (there will only be one structure in each)
+    output_atom_array_stack = stack([a[0] for a in atom_arrays])
+
+    return output_atom_array_stack, altloc_ids, occupancies
 
 
 def select_altloc(
