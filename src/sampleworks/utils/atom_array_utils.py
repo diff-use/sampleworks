@@ -4,12 +4,35 @@ from typing import Any, cast
 
 import numpy as np
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
+from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io.pdbx import CIFFile, set_structure
 
 
 BACKBONE_ATOM_TYPES = ["C", "CA", "N", "O"]
 BLANK_ALTLOC_IDS = {"", ".", " ", "?"}
+
+
+def load_structure_with_altlocs(path: Path) -> AtomArray:
+    """Load a structure file with alternate conformations and occupancy data.
+
+    Takes the first model if multiple models are present.
+
+    Parameters
+    ----------
+    path
+        Path to the structure file (PDB, mmCIF, etc.)
+
+    Returns
+    -------
+    AtomArray
+        Loaded structure with occupancy and B-factor data
+    """
+    # Currently, we need to specify extra_fields=["occupancy"] to load altlocs properly
+    atom_array = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
+    if isinstance(atom_array, AtomArrayStack):
+        atom_array = cast(AtomArray, atom_array[0])
+    return cast(AtomArray, atom_array)
 
 
 def save_structure_to_cif(

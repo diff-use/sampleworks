@@ -10,26 +10,53 @@ from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 
 
-def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
-    """Parse a selection string like 'chain A and resi 326-339'.
+def load_structure_with_altlocs(path: Path) -> AtomArray:
+    """Load a structure file using Atomworks with alternate conformations and occupancy data.
+
+    Takes the first model if multiple models are present.
 
     Parameters
     ----------
-    selection : str Selection string
+    path
+        Path to the structure file (PDB, mmCIF, etc.)
 
     Returns
     -------
-    tuple (chain_id, resi_start, resi_end)
+    AtomArray
+        Loaded structure with occupancy and B-factor data
+    """
+    # Currently, we need to specify extra_fields=["occupancy"] to load altlocs properly
+    atom_array = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
+    if isinstance(atom_array, AtomArrayStack):
+        atom_array = cast(AtomArray, atom_array[0])
+    return cast(AtomArray, atom_array)
+
+
+def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
+    """Parse a selection string like 'chain A and resi 326-339'.
+
+    Supports both residue ranges ('resi 10-50') and single residues ('resi 10').
+    For single residues, resi_start and resi_end will be equal.
+
+    Parameters
+    ----------
+    selection : str
+        Selection string (e.g., 'chain A', 'resi 10', 'chain A and resi 10-50')
+
+    Returns
+    -------
+    tuple
+        (chain_id, resi_start, resi_end) - any component may be None if not specified
     """
     # Parse "chain X and resi N-M" format and generalizations of that.
     chain = re.search(r"chain\s+(\w+)", selection, re.IGNORECASE)
     if chain is not None:
         chain = chain.group(1).upper()
 
-    residues = re.search(r"resi\s+(\d+)-(\d+)", selection, re.IGNORECASE)
+    residues = re.search(r"resi\s+(\d+)(?:-(\d+))?", selection, re.IGNORECASE)
     if residues is not None:
         resi_start = int(residues.group(1))
-        resi_end = int(residues.group(2))
+        resi_end = int(residues.group(2)) if residues.group(2) else resi_start
     else:
         resi_start = resi_end = None
 
