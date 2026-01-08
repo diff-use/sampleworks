@@ -1,6 +1,6 @@
 """
 Utilities for evaluating grid search results.
-All eval scripts should use these methods to avoid and deviations.
+All eval scripts should use these methods to avoid any deviations.
 """
 
 import argparse

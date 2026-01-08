@@ -236,7 +236,6 @@ def select_altloc(
                 }.union(BLANK_ALTLOC_IDS)
             ),
         )
-        mask |= atom_array.occupancy == 1.0  # in case something is an "altloc" but there're no alts
     else:
         mask = atom_array.altloc_id == altloc_id
 
