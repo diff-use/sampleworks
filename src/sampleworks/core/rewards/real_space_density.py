@@ -1,5 +1,10 @@
+from typing import Any, cast
+
+import numpy as np
 import torch
+from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import ArrayLike, Float, Int
+from loguru import logger
 
 from sampleworks.core.forward_models.xray.real_space_density import (
     DifferentiableTransformer,
@@ -13,47 +18,125 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
 )
+from sampleworks.utils.elements import normalize_element
 from sampleworks.utils.torch_utils import try_gpu
 
 
-def setup_scattering_params(structure: dict, em: bool = False) -> torch.Tensor:
-    """Set up scattering parameters for density calculation."""
-    unique_elements = set(structure["asym_unit"].element)
-    unique_elements = sorted(
-        set(
-            [
-                (elem.upper() if len(elem) == 1 else elem[0].upper() + elem[1:].lower())
-                for elem in unique_elements
-            ]
-        )
-    )
+def setup_scattering_params(
+    atom_array: AtomArray | AtomArrayStack, em_mode: bool, device: torch.device
+) -> torch.Tensor:
+    """Set up atomic scattering parameters for density calculation.
+
+    Parameters
+    ----------
+    atom_array
+        Structure containing atoms with element information
+    em_mode
+        If True, use electron scattering factors (for cryo-EM).
+        If False, use X-ray scattering factors.
+    device
+        PyTorch device to place the scattering parameter tensor on
+
+    Returns
+    -------
+    torch.Tensor
+        Scattering parameter tensor of shape (max_atomic_num + 1, n_coeffs, 2)
+        containing scattering coefficients for each element type
+    """
+    elements = atom_array.element
+    unique_elements = sorted(set(normalize_element(e) for e in elements))  # pyright:ignore[reportOptionalIterable]
     atomic_num_dict = {elem: ATOMIC_NUM_TO_ELEMENT.index(elem) for elem in unique_elements}
 
-    if em:
-        structure_factors = ELECTRON_SCATTERING_FACTORS
-    else:
-        structure_factors = ATOM_STRUCTURE_FACTORS
+    structure_factors = ELECTRON_SCATTERING_FACTORS if em_mode else ATOM_STRUCTURE_FACTORS
 
     max_atomic_num = max(atomic_num_dict.values())
-    # Use the max atomic number found in the structure for tensor size
     n_coeffs = len(structure_factors["C"][0])
     dense_size = torch.Size([max_atomic_num + 1, n_coeffs, 2])
-    scattering_dense_tensor = torch.zeros(dense_size, dtype=torch.float32)
+    scattering_tensor = torch.zeros(dense_size, dtype=torch.float32, device=device)
 
     for elem in unique_elements:
         atomic_num = atomic_num_dict[elem]
-
         if elem in structure_factors:
             factor = structure_factors[elem]
         else:
-            print(f"Warning: Scattering factors for {elem} not found, using C instead")
+            logger.warning(f"Scattering factors for {elem} not found, using C")
             factor = structure_factors["C"]
+        factor_tensor = torch.tensor(factor, dtype=torch.float32, device=device).T
+        scattering_tensor[atomic_num, :, :] = factor_tensor
 
-        factor = torch.tensor(factor, dtype=torch.float32).T  # (2, range) -> (range, 2)
+    return scattering_tensor
 
-        scattering_dense_tensor[atomic_num, :, :] = factor
 
-    return scattering_dense_tensor
+def extract_density_inputs_from_atomarray(
+    atom_array: AtomArray | AtomArrayStack, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Extract and prepare atomic data for density calculation.
+
+    Filters out atoms with invalid coordinates or zero occupancy, converts
+    element names to atomic numbers, and handles NaN B-factors.
+
+    Parameters
+    ----------
+    atom_array
+        Structure to extract data from
+    device
+        PyTorch device to place tensors on
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+        Tuple of (coordinates, elements, b_factors, occupancies) as PyTorch tensors.
+        All tensors have shape (1, n_atoms) or (1, n_atoms, 3) for coordinates.
+    """
+    coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
+    occupancy = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.occupancy)
+    b_factor = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.b_factor)
+    elements = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.element)
+
+    n_total = len(coords)
+    invalid_coords_mask = ~np.isfinite(coords).all(axis=1)
+    zero_occ_mask = occupancy <= 0
+    valid_mask = ~invalid_coords_mask & ~zero_occ_mask
+
+    n_invalid_coords = int(invalid_coords_mask.sum())
+    n_zero_occ = int((zero_occ_mask & ~invalid_coords_mask).sum())
+    n_valid = int(valid_mask.sum())
+
+    if n_invalid_coords > 0 or n_zero_occ > 0:
+        logger.info(
+            f"Filtered {n_invalid_coords + n_zero_occ} atoms: "
+            f"{n_invalid_coords} with invalid coords, {n_zero_occ} with zero occupancy "
+            f"({n_valid}/{n_total} atoms remaining)"
+        )
+
+    coords_tensor = torch.from_numpy(coords[valid_mask]).to(device, dtype=torch.float32)
+    elements_tensor = torch.tensor(
+        [ATOMIC_NUM_TO_ELEMENT.index(normalize_element(e)) for e in elements[valid_mask]],
+        device=device,
+        dtype=torch.long,
+    )
+    b_factors_tensor = torch.from_numpy(b_factor[valid_mask]).to(device, dtype=torch.float32)
+
+    nan_b_factor_mask = torch.isnan(b_factors_tensor)
+    num_nan_b_factors = int(nan_b_factor_mask.sum().item())
+    if num_nan_b_factors > 0:
+        logger.warning(
+            f"{num_nan_b_factors} atoms have NaN B-factors; assigning default B-factor of 20.0"
+        )
+    b_factors_tensor = torch.where(
+        nan_b_factor_mask,
+        torch.tensor(20.0, device=device),
+        b_factors_tensor,
+    )
+    occupancies_tensor = torch.from_numpy(occupancy[valid_mask]).to(device, dtype=torch.float32)
+
+    # batch dimension: (1, n_atoms, ...)
+    return (
+        coords_tensor.unsqueeze(0) if coords_tensor.ndim == 2 else coords_tensor,
+        elements_tensor.unsqueeze(0),
+        b_factors_tensor.unsqueeze(0),
+        occupancies_tensor.unsqueeze(0),
+    )
 
 
 class RewardFunction:
@@ -131,10 +214,7 @@ class RewardFunction:
         atom_array = structure["asym_unit"]
         atom_array = atom_array[:, atom_array.occupancy > 0]
         elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(
-                elem.upper() if len(elem) == 1 else elem[0].upper() + elem[1:].lower()
-            )
-            for elem in atom_array.element
+            ATOMIC_NUM_TO_ELEMENT.index(normalize_element(elem)) for elem in atom_array.element
         ]
 
         elements = torch.tensor(elements, device=self.device).unsqueeze(0)
