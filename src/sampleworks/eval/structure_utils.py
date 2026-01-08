@@ -5,7 +5,7 @@ from typing import cast
 
 import numpy as np
 from atomworks.io.utils.io_utils import load_any
-from biotite.structure import AtomArray, AtomArrayStack
+from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 
@@ -130,14 +130,16 @@ def get_asym_unit_from_structure(
 
 
 def get_reference_atomarraystack(
-        protein_config, occupancy_a: float = 0.5
+    protein_config: ProteinConfig, occupancy_a: float = 0.5
 ) -> tuple[Path | str | None, AtomArrayStack | None]:
     ref_path = protein_config.get_reference_structure_path(occupancy_a)  # will warn if not found
     if ref_path is None:
         return None, None
     ref_struct = load_any(ref_path, altloc="all", extra_fields=["occupancy"])
+    if ref_struct.coord is None:
+        raise ValueError(f"Unable to load coordinates from {ref_path} Please check file")
     if isinstance(ref_struct, AtomArray):
-        ref_struct = AtomArrayStack.from_template(ref_struct, ref_struct.coord[None, :, :])
+        ref_struct = from_template(ref_struct, ref_struct.coord[None, :, :])
     return ref_path, ref_struct
 
 
@@ -152,7 +154,7 @@ def get_reference_structure_coords(
     protein_ref_coords_list = []
     for occ in occ_list:
         ref_path, ref_struct = get_reference_atomarraystack(protein_config, occ)
-        if ref_path:  # if not None, it is already a validated Path object
+        if ref_path and ref_struct:  # if not None, it is already a validated Path object
             try:
                 # TODO: enumerate actual exceptions this can raise.
                 coords = extract_selection_coordinates(ref_struct, protein_config.selection)

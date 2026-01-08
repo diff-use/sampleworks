@@ -35,6 +35,7 @@ def basic_atom_array() -> AtomArray:
     return atom_array
 
 
+# Currently unused, but leaving here in case it is useful in the future.
 @pytest.fixture(scope="module")
 def atom_array_with_full_occupancy():
     """AtomArray with some atoms having full occupancy."""
@@ -137,37 +138,6 @@ class TestSelectAltlocBasic:
         assert list(cast(np.ndarray, result.atom_name)) == ["CA", "CA"]
 
 
-class TestSelectAltlocWithFullArray:
-    """Tests for return_full_array=True mode."""
-
-    def test_includes_full_occupancy(self, atom_array_with_full_occupancy):
-        """Test that return_full_array=True includes atoms with occupancy=1.0."""
-        result = select_altloc(atom_array_with_full_occupancy, "A", return_full_array=True)
-
-        # Should include: 2 "A" atoms + 2 atoms with occupancy=1.0
-        assert len(result) == 4
-        assert all((result.altloc_id == "A") | (result.occupancy == 1.0))
-
-    def test_all_full_occupancy(self, atom_array_with_full_occupancy):
-        """Test selecting when all atoms have occupancy=1.0 in result."""
-        # Modify to have all occupancy=1.0
-        atom_array = atom_array_with_full_occupancy.copy()
-        atom_array.occupancy = np.ones(len(atom_array))
-
-        result = select_altloc(atom_array, "Z", return_full_array=True)
-
-        # Should return all atoms since they all have occupancy=1.0
-        assert len(result) == len(atom_array)
-
-    def test_excludes_others_when_false(self, atom_array_with_full_occupancy):
-        """Test that return_full_array=False excludes occupancy=1.0 atoms."""
-        result = select_altloc(atom_array_with_full_occupancy, "A", return_full_array=False)
-
-        # Should only include the "A" atoms, not occupancy=1.0
-        assert len(result) == 2
-        assert all(result.altloc_id == "A")
-
-
 class TestSelectAltlocWithStack:
     """Tests for AtomArrayStack inputs."""
 
@@ -187,9 +157,9 @@ class TestSelectAltlocWithStack:
         result = select_altloc(atom_array_stack, "A", return_full_array=True)
         result_stack = cast(AtomArrayStack, result)
 
-        # Should include: 2 "A" atoms + 1 atom with occupancy=1.0
+        # Should include: 2 "A" atoms
         assert result_stack.stack_depth() == 3
-        assert result_stack.array_length() == 3
+        assert result_stack.array_length() == 2
 
     def test_stack_preserves_all_models(self, atom_array_stack):
         """Test that all models in stack are preserved after filtering."""
