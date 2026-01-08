@@ -76,7 +76,7 @@ def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> 
     # atom_array = atom_array[atom_array.occupancy > 0]
 
     # Set up scattering parameters
-    scattering_params = setup_scattering_params(structure, em=False)
+    scattering_params = setup_scattering_params(atom_array, em_mode=False, device=device)
 
     # Create differentiable transformer
     xmap_torch = XMap_torch(xmap, device=device)

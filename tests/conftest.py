@@ -190,7 +190,9 @@ def reward_function_1vme(density_map_1vme, structure_1vme_density, device: torch
         setup_scattering_params,
     )
 
-    params = setup_scattering_params(structure_1vme_density)
+    params = setup_scattering_params(
+        structure_1vme_density["asym_unit"], em_mode=False, device=device
+    )
     rf = RewardFunction(density_map_1vme, params, torch.tensor([1], device=device))
     return rf
 
