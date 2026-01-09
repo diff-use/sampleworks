@@ -19,6 +19,7 @@ TQDM_BAR_FORMAT = "{l_bar}{bar}| {n_fmt}/{total_fmt} [elapsed: {elapsed} remaini
 # TODO this needs a better backoff strategy.
 # TODO lots of duplicated code here w.r.t. retries that obscures what's going on.
 
+
 def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
     x: str | list[str],
     prefix: str = "tmp",
@@ -238,7 +239,6 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
                     REDO = False
 
                 if out["status"] == "ERROR":
-                    REDO = False
                     msg = (
                         "MMseqs2 API is giving errors. Please confirm your "
                         " input is a valid protein sequence. If error persists, "

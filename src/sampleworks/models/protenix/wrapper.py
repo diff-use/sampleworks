@@ -21,12 +21,10 @@ from protenix.model.protenix import (
     update_input_feature_dict,
 )
 from protenix.utils.torch_utils import autocasting_disable_decorator, dict_to_tensor
+
 # "runner" is actually part of protenix, but for some reason is a separate package
 from runner.inference import download_infercence_cache as download_inference_cache
-from runner.msa_search import update_infer_json
 from torch import Tensor
-
-from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
 
 from sampleworks.models.protenix.structure_processing import (
     add_terminal_oxt_atoms,
@@ -37,6 +35,7 @@ from sampleworks.models.protenix.structure_processing import (
 )
 from sampleworks.utils.guidance_constants import PROTENIX
 from sampleworks.utils.msa import MSAManager
+from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
 
 
 class ProtenixWrapper:
@@ -86,7 +85,6 @@ class ProtenixWrapper:
             arg_str=verified_arg_str,
             fill_required_with_null=True,
         )
-
 
         # Protenix inference logging
         self.configs.model_name = str(self.checkpoint_path).split("/")[-1].replace(".pt", "")
@@ -204,7 +202,6 @@ class ProtenixWrapper:
         if use_msa:
             # first try the MSAManager
 
-
             import json
 
             updated_json_path = json_path.with_name(f"{json_path.stem}-add-msa.json")
@@ -216,7 +213,7 @@ class ProtenixWrapper:
                     if "proteinChain" in seq_data
                 }
                 msa_paths = self.msa_manager.get_msa(
-                    sequence_data,
+                    sequence_data,  # pyright: ignore
                     msa_pairing_strategy="complete",  # not actually passed through for Protenix
                     structure_predictor=PROTENIX,
                 )
@@ -225,19 +222,17 @@ class ProtenixWrapper:
                     # see https://github.com/bytedance/Protenix/blob/main/runner/msa_search.py#L57
                     json_dict["sequences"][idx]["proteinChain"]["msa"] = {
                         "precomputed_msa_dir": str(msa_paths[idx]),
-                        "pairing_db": "uniref100"
+                        "pairing_db": "uniref100",
                     }
 
-                # old method does this by reading from the existing JSON file,
-                # then writing a new one -- we'll at least write the file for completeness
-                # TODO: do we need this file?
-                #updated_json_path = update_infer_json(
-                #    json_file=str(json_path),
-                #    out_dir=str(out_dir),
-                #    use_msa=True,
-                #)
-                with open (updated_json_path, "w") as f:
-                    json.dump([json_dict, ], f)
+                # Dump the new config to a file--for consistency with Protenix, not really needed.
+                with open(updated_json_path, "w") as f:
+                    json.dump(
+                        [
+                            json_dict,
+                        ],
+                        f,
+                    )
 
             with open(updated_json_path) as f:
                 json_data = json.load(f)

@@ -215,8 +215,8 @@ class RF3Wrapper:
         chain_info = structure.get("chain_info", {})
 
         # if we have an MSAManager, then use it to get msa_paths unless they've been overridden
-        # TODO? I'm using one of two possible sequences, which I think has
-        #  non-canonicals filtered out. Should we do this differently?
+        # I'm using one of two possible sequences, which has
+        #  non-canonicals filtered out.
         if self.msa_manager is not None and msa_path is None and chain_info:
             polypeptides = {
                 chain_id: item["processed_entity_canonical_sequence"]
