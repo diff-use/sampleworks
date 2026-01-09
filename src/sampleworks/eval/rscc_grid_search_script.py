@@ -26,100 +26,16 @@ import torch
 # Import local modules for density calculation
 from atomworks.io.parser import parse
 from loguru import logger
-from sampleworks.core.forward_models.xray.real_space_density import (
-    DifferentiableTransformer,
-    XMap_torch,
-)
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
-    ATOMIC_NUM_TO_ELEMENT,
-)
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
-from sampleworks.core.rewards.real_space_density import setup_scattering_params
 from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING, OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig
-from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results, parse_args
+from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from sampleworks.eval.metrics import rscc
-from sampleworks.eval.structure_utils import get_asym_unit_from_structure, get_reference_structure_coords
-
-
-def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor:
-    """Resize a tensor to the specified ensemble size by repeating the first dimension."""
-    if tensor.ndim < 2:
-        tensor = tensor.unsqueeze(0)
-    # expand the first dimension to the ensemble size, all others remain the same
-    return tensor.repeat(ensemble_size, *[1] * (tensor.ndim - 1))
-
-
-def compute_density_from_structure(structure: dict, xmap: XMap, device=None) -> np.ndarray:
-    """
-    Compute electron density from a structure dictionary.
-
-    Parameters
-    ----------
-    structure : dict
-        Atomworks parsed structure dictionary
-    xmap : XMap
-        Reference XMap for grid parameters
-    device : torch.device, optional
-        Device to use for computation
-
-    Returns
-    -------
-    np.ndarray
-        Computed electron density array
-    """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Get atom array from the input structure and filter out positions with zero occupancy
-    atom_array = get_asym_unit_from_structure(structure)
-    # atom_array = atom_array[atom_array.occupancy > 0]
-
-    # Set up scattering parameters
-    scattering_params = setup_scattering_params(atom_array, em_mode=False, device=device)
-
-    # Create differentiable transformer
-    xmap_torch = XMap_torch(xmap, device=device)
-    transformer = DifferentiableTransformer(
-        xmap=xmap_torch,
-        scattering_params=scattering_params.to(device),
-        em=False,
-        device=device,
-        use_cuda_kernels=torch.cuda.is_available(),
-    )
-
-    # get the ensemble size to weight each structure.
-    ensemble_size = atom_array.shape[0] if len(atom_array.shape) < 3 else 1
-
-    # Prepare input tensors
-    # borrowed from another of @k.chrispens' scripts, not sure this actually works for AtomArray
-    if atom_array.element is None:
-        raise ValueError("AtomArray has no element information")
-    elements_list = [ATOMIC_NUM_TO_ELEMENT.index(elem.title()) for elem in atom_array.element]
-    elements = torch.tensor(elements_list, device=device)
-    coordinates = torch.from_numpy(atom_array.coord).float().to(device)
-    b_factors = torch.from_numpy(atom_array.b_factor).float().to(device)
-
-    # resize the tensors to the ensemble size
-    elements = resize_to_ensemble(elements, ensemble_size)
-    b_factors = resize_to_ensemble(b_factors, ensemble_size)
-    # TODO: I need to think or not to use the original occupancies--they should be one anyway
-    #  for a computed structure.
-    occupancies = torch.ones_like(b_factors).float().to(device) / ensemble_size
-
-    # Compute density--use the batch functionality to handle the ensemble.
-    with torch.no_grad():
-        density = transformer(
-            coordinates=coordinates,
-            elements=elements,
-            b_factors=b_factors,
-            occupancies=occupancies,
-        )
-
-    if density.ndim == 4:
-        density = density.sum(dim=0)
-
-    return density.cpu().numpy().squeeze()
+from sampleworks.eval.structure_utils import (
+    get_asym_unit_from_structure,
+    get_reference_structure_coords,
+)
+from sampleworks.utils.density_utils import compute_density_from_atomarray
 
 
 def main(args: argparse.Namespace):
@@ -224,12 +140,15 @@ def main(args: argparse.Namespace):
             _structure = parse(_exp.refined_cif_path, ccd_mirror_path=None)
 
             # Compute density from refined structure
-            _computed_density = compute_density_from_structure(_structure, _base_xmap, _device)
+            atom_array = get_asym_unit_from_structure(_structure)
+            _computed_density, _ = compute_density_from_atomarray(
+                atom_array, xmap=_base_xmap, em_mode=False, device=_device
+            )
 
             # Create an XMap from the computed density by copying the base xmap
             # and replacing its array with the computed density
             _computed_xmap = copy.deepcopy(_base_xmap)
-            _computed_xmap.array = _computed_density
+            _computed_xmap.array = _computed_density.cpu().numpy().squeeze()
             _extracted_computed = _computed_xmap.extract(
                 _selection_coords, padding=DEFAULT_SELECTION_PADDING
             )
