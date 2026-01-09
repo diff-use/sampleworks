@@ -5,79 +5,13 @@ from typing import cast
 import numpy as np
 import pytest
 import torch
-from biotite.structure import AtomArray, AtomArrayStack, stack
+from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.utils.density_utils import (
     compute_density_from_atomarray,
     create_synthetic_grid,
 )
-
-
-@pytest.fixture(scope="module")
-def simple_atom_array() -> AtomArray:
-    """Small AtomArray with valid coords, elements, occupancy, b_factor."""
-    atom_array = AtomArray(5)
-    coord = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
-        ]
-    )
-    atom_array.coord = coord
-    atom_array.set_annotation("chain_id", np.array(["A"] * 5))
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    atom_array.set_annotation("res_name", np.array(["ALA", "GLY", "VAL", "LEU", "SER"]))
-    atom_array.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
-    atom_array.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-    atom_array.set_annotation("b_factor", np.array([20.0, 20.0, 20.0, 20.0, 20.0]))
-    atom_array.set_annotation("occupancy", np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
-    return atom_array
-
-
-@pytest.fixture(scope="module")
-def atom_array_with_nan() -> AtomArray:
-    """AtomArray with some NaN coordinates."""
-    atom_array = AtomArray(5)
-    coord = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [np.nan, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, np.inf, 1.0],
-            [1.0, 1.0, 1.0],
-        ]
-    )
-    atom_array.coord = coord
-    atom_array.set_annotation("chain_id", np.array(["A"] * 5))
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    atom_array.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-    atom_array.set_annotation("b_factor", np.array([20.0, 20.0, 20.0, 20.0, 20.0]))
-    atom_array.set_annotation("occupancy", np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
-    return atom_array
-
-
-@pytest.fixture(scope="module")
-def simple_atom_array_stack() -> AtomArrayStack:
-    """AtomArrayStack with 2 models."""
-    arrays = []
-    for i in range(2):
-        atom_array = AtomArray(3)
-        base_coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-        atom_array.coord = base_coords + i * 0.1
-        atom_array.set_annotation("chain_id", np.array(["A"] * 3))
-        atom_array.set_annotation("res_id", np.array([1, 2, 3]))
-        atom_array.set_annotation("element", np.array(["C", "C", "C"]))
-        atom_array.set_annotation("b_factor", np.array([20.0, 20.0, 20.0]))
-        atom_array.set_annotation("occupancy", np.array([1.0, 1.0, 1.0]))
-        arrays.append(atom_array)
-
-    atom_array_stack = stack(arrays)
-
-    return atom_array_stack
 
 
 class TestCreateSyntheticGrid:
@@ -141,9 +75,9 @@ class TestCreateSyntheticGrid:
         assert isinstance(xmap, XMap)
         assert xmap.array.ndim == 3
 
-    def test_filters_nan_coordinates(self, atom_array_with_nan):
+    def test_filters_nan_coordinates(self, atom_array_with_nan_coords):
         """Test that NaN coordinates are excluded from bounds calculation."""
-        xmap = create_synthetic_grid(atom_array_with_nan, resolution=2.0)
+        xmap = create_synthetic_grid(atom_array_with_nan_coords, resolution=2.0)
         assert isinstance(xmap, XMap)
         assert np.isfinite(xmap.origin).all()
 
@@ -322,22 +256,33 @@ class TestComputeDensityFromAtomarray:
         )
         assert density.sum() > 0
 
-    @pytest.mark.slow
-    def test_with_real_structure(self, structure_1vme, device):
+    def test_with_real_structure(self, structure_1vme, density_map_1vme, device):
         """Test density computation with real structure."""
         atom_array = structure_1vme["asym_unit"]
         if isinstance(atom_array, AtomArrayStack):
             atom_array = atom_array[0]
 
-        density, _ = compute_density_from_atomarray(
+        density_no_xmap, _ = compute_density_from_atomarray(
             atom_array,  # pyright: ignore[reportArgumentType]
             resolution=2.0,
             em_mode=False,
             device=device,
         )
-        assert isinstance(density, torch.Tensor)
-        assert density.sum() > 0
-        assert torch.isfinite(density).all()
+        assert isinstance(density_no_xmap, torch.Tensor)
+        assert density_no_xmap.sum() > 0
+        assert torch.isfinite(density_no_xmap).all()
+
+        density_xmap, _ = compute_density_from_atomarray(
+            atom_array,  # pyright: ignore[reportArgumentType]
+            xmap=density_map_1vme,  # resolution 1.8 A
+            em_mode=False,
+            device=device,
+        )
+        assert isinstance(density_xmap, torch.Tensor)
+        assert density_xmap.sum() > 0
+        assert torch.isfinite(density_xmap).all()
+
+        assert density_no_xmap.shape != density_xmap.shape  # different resolutions
 
 
 class TestComputeDensityErrors:

@@ -4,134 +4,49 @@ from typing import cast
 
 import numpy as np
 import pytest
-from biotite.structure import AtomArray, AtomArrayStack, stack
+from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.utils.atom_array_utils import filter_to_common_atoms, select_altloc
-
-
-# Fixtures for creating test data
-
-
-@pytest.fixture(scope="module")
-def basic_atom_array() -> AtomArray:
-    """AtomArray with mixed altloc_ids."""
-    atom_array = AtomArray(5)
-    coord = np.array(
-        [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-            [10.0, 11.0, 12.0],
-            [13.0, 14.0, 15.0],
-        ]
-    )
-    atom_array.coord = coord
-    atom_array.set_annotation("chain_id", np.array(["A", "A", "A", "A", "A"]))
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    atom_array.set_annotation("res_name", np.array(["ALA", "GLY", "VAL", "LEU", "SER"]))
-    atom_array.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
-    atom_array.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-    atom_array.set_annotation("altloc_id", np.array(["A", "B", "A", "C", "B"]))
-    atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 0.4, 0.5]))
-    return atom_array
-
-
-# Currently unused, but leaving here in case it is useful in the future.
-@pytest.fixture(scope="module")
-def atom_array_with_full_occupancy():
-    """AtomArray with some atoms having full occupancy."""
-    atom_array = AtomArray(7)
-    atom_array.coord = np.random.rand(7, 3)
-    atom_array.set_annotation("chain_id", np.array(["A"] * 7))
-    atom_array.set_annotation("res_id", np.arange(1, 8))
-    atom_array.set_annotation("res_name", np.array(["ALA"] * 7))
-    atom_array.set_annotation("atom_name", np.array(["CA"] * 7))
-    atom_array.set_annotation("element", np.array(["C"] * 7))
-    atom_array.set_annotation("altloc_id", np.array(["A", "B", "A", "C", "B", "D", "E"]))
-    atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 1.0, 0.4, 1.0, 0.7]))
-    return atom_array
-
-
-@pytest.fixture(scope="module")
-def atom_array_stack():
-    """AtomArrayStack with 3 models."""
-    arrays = []
-    for i in range(3):
-        atom_array = AtomArray(5)
-        atom_array.coord = np.random.rand(5, 3) + i * 0.1
-        arrays.append(atom_array)
-
-    atom_array_stack = stack(arrays)
-    atom_array_stack.set_annotation("chain_id", np.array(["A"] * 5))
-    atom_array_stack.set_annotation("res_id", np.arange(1, 6))
-    atom_array_stack.set_annotation("res_name", np.array(["ALA"] * 5))
-    atom_array_stack.set_annotation("atom_name", np.array(["CA"] * 5))
-    atom_array_stack.set_annotation("element", np.array(["C"] * 5))
-    atom_array_stack.set_annotation("altloc_id", np.array(["A", "B", "A", "C", "B"]))
-    atom_array_stack.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 1.0, 0.4]))
-
-    return atom_array_stack
-
-
-@pytest.fixture(scope="module")
-def atom_array_missing_altloc_id():
-    """AtomArray without altloc_id annotation."""
-    atom_array = AtomArray(5)
-    atom_array.coord = np.random.rand(5, 3)
-    atom_array.set_annotation("occupancy", np.ones(5))
-    return atom_array
-
-
-@pytest.fixture(scope="module")
-def atom_array_missing_occupancy():
-    """AtomArray without occupancy annotation."""
-    atom_array = AtomArray(5)
-    atom_array.coord = np.random.rand(5, 3)
-    atom_array.set_annotation("altloc_id", np.array(["A"] * 5))
-    return atom_array
-
-
-# Tests
 
 
 class TestSelectAltlocBasic:
     """Basic functionality tests for select_altloc."""
 
-    def test_select_specific_altloc(self, basic_atom_array):
+    def test_select_specific_altloc(self, basic_atom_array_altloc):
         """Test selecting atoms with a specific altloc_id."""
-        result = select_altloc(basic_atom_array, "A", return_full_array=False)
+        result = select_altloc(basic_atom_array_altloc, "A", return_full_array=False)
 
         assert len(result) == 2
         assert all(result.altloc_id == "A")
         assert list(cast(np.ndarray, result.res_name)) == ["ALA", "VAL"]
 
-    def test_select_different_altloc(self, basic_atom_array):
+    def test_select_different_altloc(self, basic_atom_array_altloc):
         """Test selecting different altloc_id values."""
-        result_b = select_altloc(basic_atom_array, "B", return_full_array=False)
-        result_c = select_altloc(basic_atom_array, "C", return_full_array=False)
+        result_b = select_altloc(basic_atom_array_altloc, "B", return_full_array=False)
+        result_c = select_altloc(basic_atom_array_altloc, "C", return_full_array=False)
 
         assert len(result_b) == 2
         assert all(result_b.altloc_id == "B")
         assert len(result_c) == 1
         assert all(result_c.altloc_id == "C")
 
-    def test_select_nonexistent_altloc(self, basic_atom_array):
+    def test_select_nonexistent_altloc(self, basic_atom_array_altloc):
         """Test selecting altloc that doesn't exist returns empty array."""
-        result = select_altloc(basic_atom_array, "Z", return_full_array=False)
+        result = select_altloc(basic_atom_array_altloc, "Z", return_full_array=False)
 
         assert len(result) == 0
 
-    def test_preserves_coordinates(self, basic_atom_array):
+    def test_preserves_coordinates(self, basic_atom_array_altloc):
         """Test that selected atoms preserve their original coordinates."""
-        result = select_altloc(basic_atom_array, "A", return_full_array=False)
+        result = select_altloc(basic_atom_array_altloc, "A", return_full_array=False)
         result_coord = cast(np.ndarray, result.coord)
-        basic_coord = cast(np.ndarray, basic_atom_array.coord)
+        basic_coord = cast(np.ndarray, basic_atom_array_altloc.coord)
 
         np.testing.assert_array_equal(result_coord[0], basic_coord[0])
         np.testing.assert_array_equal(result_coord[1], basic_coord[2])
 
-    def test_preserves_annotations(self, basic_atom_array):
+    def test_preserves_annotations(self, basic_atom_array_altloc):
         """Test that other annotations are preserved."""
-        result = select_altloc(basic_atom_array, "A", return_full_array=False)
+        result = select_altloc(basic_atom_array_altloc, "A", return_full_array=False)
 
         assert list(cast(np.ndarray, result.chain_id)) == ["A", "A"]
         assert list(cast(np.ndarray, result.res_id)) == [1, 3]
@@ -141,9 +56,9 @@ class TestSelectAltlocBasic:
 class TestSelectAltlocWithStack:
     """Tests for AtomArrayStack inputs."""
 
-    def test_select_from_stack(self, atom_array_stack):
+    def test_select_from_stack(self, atom_array_stack_altloc):
         """Test selecting altloc from AtomArrayStack."""
-        result = select_altloc(atom_array_stack, "A", return_full_array=False)
+        result = select_altloc(atom_array_stack_altloc, "A", return_full_array=False)
 
         assert isinstance(result, AtomArrayStack)
         assert result.stack_depth() == 3
@@ -152,21 +67,21 @@ class TestSelectAltlocWithStack:
         assert all(result[1].altloc_id == "A")
         assert all(result[2].altloc_id == "A")
 
-    def test_select_from_stack_with_full_array(self, atom_array_stack):
+    def test_select_from_stack_with_full_array(self, atom_array_stack_altloc):
         """Test selecting from stack with return_full_array=True."""
-        result = select_altloc(atom_array_stack, "A", return_full_array=True)
+        result = select_altloc(atom_array_stack_altloc, "A", return_full_array=True)
         result_stack = cast(AtomArrayStack, result)
 
         # Should include: 2 "A" atoms
         assert result_stack.stack_depth() == 3
         assert result_stack.array_length() == 2
 
-    def test_stack_preserves_all_models(self, atom_array_stack):
+    def test_stack_preserves_all_models(self, atom_array_stack_altloc):
         """Test that all models in stack are preserved after filtering."""
-        result = select_altloc(atom_array_stack, "B", return_full_array=False)
+        result = select_altloc(atom_array_stack_altloc, "B", return_full_array=False)
         result_stack = cast(AtomArrayStack, result)
 
-        assert result_stack.stack_depth() == atom_array_stack.stack_depth()
+        assert result_stack.stack_depth() == atom_array_stack_altloc.stack_depth()
         # Each model should have 2 "B" atoms
         for i in range(result_stack.stack_depth()):
             model = cast(AtomArray, result_stack[i])
@@ -239,68 +154,6 @@ class TestSelectAltlocEdgeCases:
         assert all(result.altloc_id == "A")
 
 
-# Fixtures for filter_to_common_atoms tests
-
-
-@pytest.fixture(scope="module")
-def atom_array_partial_overlap():
-    """Two AtomArrays with partial overlap."""
-    # Array 1: 5 atoms (residues 1-5)
-    array1 = AtomArray(5)
-    array1.coord = np.random.rand(5, 3)
-    array1.set_annotation("chain_id", np.array(["A"] * 5))
-    array1.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    array1.set_annotation("res_name", np.array(["ALA", "GLY", "VAL", "LEU", "SER"]))
-    array1.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
-    array1.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-
-    # Array 2: 5 atoms (residues 3-7, overlaps with 3-5 from array1)
-    array2 = AtomArray(5)
-    array2.coord = np.random.rand(5, 3)
-    array2.set_annotation("chain_id", np.array(["A"] * 5))
-    array2.set_annotation("res_id", np.array([3, 4, 5, 6, 7]))
-    array2.set_annotation("res_name", np.array(["VAL", "LEU", "SER", "THR", "TYR"]))
-    array2.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
-    array2.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-
-    return array1, array2
-
-
-@pytest.fixture(scope="module")
-def atom_array_stacks_partial_overlap():
-    """Two AtomArrayStacks with partial overlap."""
-    # Stack 1: 2 models, 4 atoms each
-    arrays1 = []
-    for i in range(2):
-        array = AtomArray(4)
-        array.coord = np.random.rand(4, 3) + i * 0.1
-        arrays1.append(array)
-    stack1 = stack(arrays1)
-    stack1.set_annotation("chain_id", np.array(["A"] * 4))
-    stack1.set_annotation("res_id", np.array([1, 2, 3, 4]))
-    stack1.set_annotation("res_name", np.array(["ALA", "GLY", "VAL", "LEU"]))
-    stack1.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA"]))
-    stack1.set_annotation("element", np.array(["C", "C", "C", "C"]))
-
-    # Stack 2: 2 models, 4 atoms each (overlaps with res 2-4 from stack1)
-    arrays2 = []
-    for i in range(2):
-        array = AtomArray(4)
-        array.coord = np.random.rand(4, 3) + i * 0.1
-        arrays2.append(array)
-    stack2 = stack(arrays2)
-    stack2.set_annotation("chain_id", np.array(["A"] * 4))
-    stack2.set_annotation("res_id", np.array([2, 3, 4, 5]))
-    stack2.set_annotation("res_name", np.array(["GLY", "VAL", "LEU", "SER"]))
-    stack2.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA"]))
-    stack2.set_annotation("element", np.array(["C", "C", "C", "C"]))
-
-    return stack1, stack2
-
-
-# Tests for filter_to_common_atoms
-
-
 class TestFilterToCommonAtoms:
     """Tests for filter_to_common_atoms function."""
 
@@ -333,13 +186,15 @@ class TestFilterToCommonAtoms:
             cast(np.ndarray, filtered1.atom_name), cast(np.ndarray, filtered2.atom_name)
         )
 
-    def test_with_identical_arrays(self, basic_atom_array):
+    def test_with_identical_arrays(self, basic_atom_array_altloc):
         """Test with two identical arrays."""
-        filtered1, filtered2 = filter_to_common_atoms(basic_atom_array, basic_atom_array)
+        filtered1, filtered2 = filter_to_common_atoms(
+            basic_atom_array_altloc, basic_atom_array_altloc
+        )
 
         # Should return all atoms
-        assert filtered1.array_length() == len(basic_atom_array)
-        assert filtered2.array_length() == len(basic_atom_array)
+        assert filtered1.array_length() == len(basic_atom_array_altloc)
+        assert filtered2.array_length() == len(basic_atom_array_altloc)
 
     def test_with_no_overlap(self):
         """Test with arrays that have no common atoms."""
@@ -372,10 +227,12 @@ class TestFilterToCommonAtoms:
         assert filtered1.array_length() == 3
         assert filtered2.array_length() == 3
 
-    def test_mixed_array_and_stack(self, basic_atom_array, atom_array_stack):
+    def test_mixed_array_and_stack(self, basic_atom_array_altloc, atom_array_stack_altloc):
         """Test with one AtomArray and one AtomArrayStack."""
         # Both have same res_ids 1-5
-        filtered1, filtered2 = filter_to_common_atoms(basic_atom_array, atom_array_stack)
+        filtered1, filtered2 = filter_to_common_atoms(
+            basic_atom_array_altloc, atom_array_stack_altloc
+        )
 
         assert isinstance(filtered1, AtomArrayStack)
         assert isinstance(filtered2, AtomArrayStack)
