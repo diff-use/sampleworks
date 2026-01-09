@@ -19,12 +19,13 @@ BLANK_ALTLOC_IDS = {"", ".", " ", "?"}
 class AltlocInfo:
     """Information about alternate conformations (altlocs) in a structure.
 
-        Attributes
-        ----------
-        altloc_ids
-            Sorted list of altloc identifiers (e.g., ['A', 'B'])
-        atom_masks
-    g        belong to that altloc
+    Attributes
+    ----------
+    altloc_ids
+        Sorted list of altloc identifiers (e.g., ['A', 'B'])
+    atom_masks
+        Dictionary mapping each altloc ID to a boolean mask indicating which atoms
+        belong to that altloc
     """
 
     altloc_ids: list[str]
