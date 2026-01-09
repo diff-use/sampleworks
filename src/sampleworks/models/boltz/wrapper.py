@@ -30,6 +30,7 @@ from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
+from loguru import logger
 from torch import Tensor
 
 from sampleworks.utils.msa import MSAManager
@@ -51,7 +52,7 @@ class PredictArgs:
 
 # TODO move this so that it can be imported without requiring a Boltz installation
 def create_boltz_input_from_structure(
-    structure: dict, out_dir: str | Path, msa_manager: MSAManager, msa_pairing_strategy: str
+    structure: dict, out_dir: str | Path, msa_manager: MSAManager | None, msa_pairing_strategy: str
 ) -> Path:
     """Creates Boltz YAML file from an Atomworks parsed structure file.
 
@@ -123,10 +124,12 @@ def create_boltz_input_from_structure(
             f.write(f"        id: {chain_id}\n")
             f.write(f"        sequence: {info['sequence']}\n")
             # If we have MSAs for all chains, then send paths to them.
+            # If we do not include these lines in the config, Boltz will fetch the MSAs itself
+            # so we should only add them if we have all MSAs available.
             if msa_paths and all(c in msa_paths for c in chains):
                 f.write(f"        msa: {str(msa_paths[chain_id])}\n")
             elif msa_paths:
-                logger.warning(f"Missing MSA for chain {chain_id}, skipping.")
+                logger.warning("Missing MSA for at least one chain, skipping.")
             if info.get("cyclic", False):
                 f.write("        cyclic: true\n")
         if ligand_info:
@@ -146,7 +149,7 @@ class Boltz2Wrapper:
     def __init__(
         self,
         checkpoint_path: str | Path,
-        use_msa_server: bool = True,
+        use_msa_manager: bool = True,
         predict_args: PredictArgs = PredictArgs(),
         diffusion_args: Boltz2DiffusionParams = Boltz2DiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
@@ -159,9 +162,9 @@ class Boltz2Wrapper:
         ----------
         checkpoint_path: str | Path
             Filesystem path to the Boltz2 checkpoint containing trained weights.
-        use_msa_server: bool, optional
-            If ``True``, fetch MSA features from the ColabFold server; otherwise rely
-            on precomputed MSAs.
+        use_msa_manager: bool, optional
+            If ``True``, fetch MSA features from the ColabFold server or cached values; otherwise
+            rely on precomputed MSAs.  See sampleworks.utils.msa.MSAManager for details.
         predict_args: PredictArgs, optional
             Runtime prediction configuration such as recycling depth and sampling
             steps.
@@ -177,7 +180,7 @@ class Boltz2Wrapper:
 
         """
         self.checkpoint_path = checkpoint_path
-        self.use_msa_server = use_msa_server
+        self.use_msa_manager = use_msa_manager
         self.predict_args = predict_args
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
@@ -194,7 +197,7 @@ class Boltz2Wrapper:
             num_subsampled_msa=1024,  # Default from boltz repo
             use_paired_feature=True,  # Required for Boltz2
         )
-        self.msa_manager = MSAManager() if use_msa_server else None
+        self.msa_manager = MSAManager() if use_msa_manager else None
         self.msa_pairing_strategy = "greedy"
 
         if not model:
@@ -256,13 +259,18 @@ class Boltz2Wrapper:
 
         data = check_inputs(input_path)
 
+        if self.msa_manager:
+            msa_server_url = self.msa_manager.msa_server_url
+        else:
+            msa_server_url = "https://api.colabfold.com"
+
         process_inputs(
             data=data,
             out_dir=out_dir,
             ccd_path=ccd_path,
             mol_dir=mol_dir,
-            use_msa_server=self.use_msa_server,
-            msa_server_url=self.msa_manager.msa_server_url,
+            use_msa_server=self.use_msa_manager,
+            msa_server_url=msa_server_url,
             msa_pairing_strategy=self.msa_pairing_strategy,
             boltz2=True,
             preprocessing_threads=1,
@@ -720,7 +728,7 @@ class Boltz1Wrapper:
     def __init__(
         self,
         checkpoint_path: str | Path,
-        use_msa_server: bool = True,
+        use_msa_manager: bool = True,
         predict_args: PredictArgs = PredictArgs(),
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
@@ -732,9 +740,9 @@ class Boltz1Wrapper:
         ----------
         checkpoint_path: str | Path
             Filesystem path to the Boltz1 checkpoint containing trained weights.
-        use_msa_server: bool, optional
-            If ``True``, fetch MSA features from the ColabFold server; otherwise rely
-            on precomputed MSAs.
+        use_msa_manager: bool, optional
+            If ``True``, fetch MSA features from the ColabFold server or cached values;
+            otherwise rely on precomputed MSAs. See sampleworks.utils.msa.MSAManager for details.
         predict_args: PredictArgs, optional
             Runtime prediction configuration such as recycling depth and sampling
             steps.
@@ -747,7 +755,7 @@ class Boltz1Wrapper:
             Device to run the model on, by default CUDA if available.
         """
         self.checkpoint_path = checkpoint_path
-        self.use_msa_server = use_msa_server
+        self.use_msa_manager = use_msa_manager
         self.predict_args = predict_args
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
@@ -763,7 +771,7 @@ class Boltz1Wrapper:
             num_subsampled_msa=1024,
             use_paired_feature=False,
         )
-        self.msa_manager = MSAManager() if self.use_msa_server else None
+        self.msa_manager = MSAManager() if self.use_msa_manager else None
         self.msa_pairing_strategy = "greedy"
 
         if not model:
@@ -826,13 +834,18 @@ class Boltz1Wrapper:
 
         data = check_inputs(input_path)
 
+        if self.msa_manager:
+            msa_server_url = self.msa_manager.msa_server_url
+        else:
+            msa_server_url = "https://api.colabfold.com"
+
         process_inputs(
             data=data,
             out_dir=out_dir,
             ccd_path=ccd_path,
             mol_dir=mol_dir,
-            use_msa_server=self.use_msa_server,
-            msa_server_url=self.msa_manager.msa_server_url,
+            use_msa_server=self.use_msa_manager,
+            msa_server_url=msa_server_url,
             msa_pairing_strategy=self.msa_pairing_strategy,
             boltz2=False,
             preprocessing_threads=1,

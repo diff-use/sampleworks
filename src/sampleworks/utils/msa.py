@@ -25,7 +25,7 @@ MAX_MSA_SEQS = 16384
 #   For the love of decent code, don't copy this and use it somewhere else and respect the
 #   leading underscore!
 def _compute_msa(
-    data: dict[str, str],
+    data: dict[str | int, str],
     target_id: str,
     msa_dir: Path,
     msa_server_url: str,
@@ -34,12 +34,12 @@ def _compute_msa(
     msa_server_password: str | None = None,
     api_key_header: str | None = None,
     api_key_value: str | None = None,
-) -> dict[str, Path]:
+) -> dict[str | int, Path]:
     """Compute the MSA for the input data.
 
     Parameters
     ----------
-    data : dict[str, str]
+    data : dict[str | int, str]
         The input protein sequences.
     target_id : str
         The target id.
@@ -60,7 +60,7 @@ def _compute_msa(
 
     Returns
     -------
-    dict[str, Path]
+    dict[str | int, Path]
         A dictionary mapping target names (keys of input data dict) to MSA file paths.
 
     """
@@ -81,7 +81,7 @@ def _compute_msa(
         logger.info("No authentication provided for MSA server")
 
     # NB: this code is borrowed from Boltz, and it appears to ignore the
-    # pairing argument used elsewhere
+    # pairing argument used elsewhere. It also relies on dicts being ordered now
     if len(data) > 1:
         paired_msas = run_mmseqs2(
             list(data.values()),
@@ -121,7 +121,7 @@ def _compute_msa(
         paired = paired[:MAX_PAIRED_SEQS]
 
         # Set key per row and remove empty sequences
-        keys = [idx for idx, s in enumerate(paired) if s != "-" * len(s)]
+        keys = [pair_idx for pair_idx, s in enumerate(paired) if s != "-" * len(s)]
         paired = [s for s in paired if s != "-" * len(s)]
 
         # Combine paired-unpaired sequences
@@ -228,22 +228,25 @@ class MSAManager:
         self._cache_hits = 0
 
     @staticmethod
-    def _hash_arguments(data: dict[str, str], msa_pairing_strategy: str) -> str:
+    def _hash_arguments(data: dict[str | int, str], msa_pairing_strategy: str) -> str:
         encoded_sequence_tuple = str.encode(str(tuple(data.values())) + msa_pairing_strategy)
         hexdigest = sha3_256(encoded_sequence_tuple).hexdigest()
         return hexdigest
 
     def get_msa(
-        self, data: dict[str, str], msa_pairing_strategy: str, structure_predictor: str = BOLTZ_2
-    ) -> dict[str, Path]:
+        self,
+        data: dict[str | int, str],
+        msa_pairing_strategy: str,
+        structure_predictor: str = BOLTZ_2,
+    ) -> dict[str | int, Path]:
         """
         Fetches existing MSA files from disk or computes new ones if necessary.
-        data: dict[str, str]
+        data: dict[str | int, str]
             A dictionary mapping target (usu. chain or index) names to protein sequences.
         msa_pairing_strategy: str
             The MSA pairing strategy to use (usually "greedy").
-        return_a3m: bool
-            If True, returns the MSA in a3m format instead of csv.
+        structure_predictory: str
+            The name of the model that will use the MSA, to make sure the format is correct.
 
         Returns: dict[str, Path]
             A dictionary mapping target names to MSA file paths.
