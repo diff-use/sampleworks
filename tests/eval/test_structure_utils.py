@@ -5,7 +5,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from biotite.structure import AtomArray, AtomArrayStack, stack
+from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.structure_utils import (
     apply_selection,
@@ -15,80 +15,6 @@ from sampleworks.eval.structure_utils import (
     get_reference_structure_coords,
     parse_selection_string,
 )
-
-
-@pytest.fixture(scope="module")
-def basic_atom_array() -> AtomArray:
-    """AtomArray with chain_id, res_id, atom_name annotations."""
-    atom_array = AtomArray(10)
-    coord = np.array(
-        [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-            [10.0, 11.0, 12.0],
-            [13.0, 14.0, 15.0],
-            [16.0, 17.0, 18.0],
-            [19.0, 20.0, 21.0],
-            [22.0, 23.0, 24.0],
-            [25.0, 26.0, 27.0],
-            [28.0, 29.0, 30.0],
-        ]
-    )
-    atom_array.coord = coord
-    atom_array.set_annotation(
-        "chain_id", np.array(["A", "A", "A", "A", "A", "B", "B", "B", "B", "B"])
-    )
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5, 1, 2, 3, 4, 5]))
-    atom_array.set_annotation(
-        "res_name", np.array(["ALA", "GLY", "VAL", "LEU", "SER", "ALA", "GLY", "VAL", "LEU", "SER"])
-    )
-    atom_array.set_annotation(
-        "atom_name", np.array(["CA", "CA", "CA", "CA", "CA", "CA", "CA", "CA", "CA", "CA"])
-    )
-    atom_array.set_annotation(
-        "element", np.array(["C", "C", "C", "C", "C", "C", "C", "C", "C", "C"])
-    )
-    return atom_array
-
-
-@pytest.fixture(scope="module")
-def atom_array_with_nan_coords() -> AtomArray:
-    """AtomArray with some NaN coordinates."""
-    atom_array = AtomArray(5)
-    coord = np.array(
-        [
-            [1.0, 2.0, 3.0],
-            [np.nan, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-            [10.0, np.inf, 12.0],
-            [13.0, 14.0, 15.0],
-        ]
-    )
-    atom_array.coord = coord
-    atom_array.set_annotation("chain_id", np.array(["A", "A", "A", "A", "A"]))
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    atom_array.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
-    return atom_array
-
-
-@pytest.fixture(scope="module")
-def atom_array_stack() -> AtomArrayStack:
-    """AtomArrayStack with 3 models."""
-    arrays = []
-    for i in range(3):
-        atom_array = AtomArray(5)
-        atom_array.coord = np.random.rand(5, 3) + i * 0.1
-        arrays.append(atom_array)
-
-    atom_array_stack = stack(arrays)
-    atom_array_stack.set_annotation("chain_id", np.array(["A"] * 5))
-    atom_array_stack.set_annotation("res_id", np.arange(1, 6))
-    atom_array_stack.set_annotation("res_name", np.array(["ALA"] * 5))
-    atom_array_stack.set_annotation("atom_name", np.array(["CA"] * 5))
-    atom_array_stack.set_annotation("element", np.array(["C"] * 5))
-
-    return atom_array_stack
 
 
 @pytest.fixture
@@ -151,81 +77,81 @@ class TestParseSelectionString:
 class TestApplySelection:
     """Tests for apply_selection function."""
 
-    def test_none_selection_returns_unchanged(self, basic_atom_array):
+    def test_none_selection_returns_unchanged(self, basic_atom_array_multichain):
         """Test that None selection returns original array."""
-        result = apply_selection(basic_atom_array, None)
-        assert result is basic_atom_array
-        assert len(result) == len(basic_atom_array)
+        result = apply_selection(basic_atom_array_multichain, None)
+        assert result is basic_atom_array_multichain
+        assert len(result) == len(basic_atom_array_multichain)
 
-    def test_chain_selection(self, basic_atom_array):
+    def test_chain_selection(self, basic_atom_array_multichain):
         """Test filtering by chain."""
-        result = apply_selection(basic_atom_array, "chain A")
+        result = apply_selection(basic_atom_array_multichain, "chain A")
         assert len(result) == 5
         assert all(result.chain_id == "A")
 
-    def test_residue_selection(self, basic_atom_array):
+    def test_residue_selection(self, basic_atom_array_multichain):
         """Test filtering by residue range."""
-        result = apply_selection(basic_atom_array, "resi 2-4")
+        result = apply_selection(basic_atom_array_multichain, "resi 2-4")
         assert len(result) == 6
         res_ids = cast(np.ndarray, result.res_id)
         assert all((res_ids >= 2) & (res_ids <= 4))
 
-    def test_single_residue_selection(self, basic_atom_array):
+    def test_single_residue_selection(self, basic_atom_array_multichain):
         """Test filtering by single residue."""
-        result = apply_selection(basic_atom_array, "resi 3")
+        result = apply_selection(basic_atom_array_multichain, "resi 3")
         assert len(result) == 2
         assert all(result.res_id == 3)
 
-    def test_combined_selection(self, basic_atom_array):
+    def test_combined_selection(self, basic_atom_array_multichain):
         """Test filtering by chain and residue."""
-        result = apply_selection(basic_atom_array, "chain A and resi 2-4")
+        result = apply_selection(basic_atom_array_multichain, "chain A and resi 2-4")
         assert len(result) == 3
         assert all(result.chain_id == "A")
         res_ids = cast(np.ndarray, result.res_id)
         assert all((res_ids >= 2) & (res_ids <= 4))
 
-    def test_no_matching_atoms_raises_valueerror(self, basic_atom_array):
+    def test_no_matching_atoms_raises_valueerror(self, basic_atom_array_multichain):
         """Test that selection matching no atoms raises ValueError."""
         with pytest.raises(ValueError, match="matched no atoms"):
-            apply_selection(basic_atom_array, "chain Z")
+            apply_selection(basic_atom_array_multichain, "chain Z")
 
-    def test_preserves_annotations(self, basic_atom_array):
+    def test_preserves_annotations(self, basic_atom_array_multichain):
         """Test that annotations are preserved after filtering."""
-        result = apply_selection(basic_atom_array, "chain A")
+        result = apply_selection(basic_atom_array_multichain, "chain A")
         assert hasattr(result, "chain_id")
         assert hasattr(result, "res_id")
         assert hasattr(result, "atom_name")
         assert list(cast(np.ndarray, result.atom_name)) == ["CA"] * 5
 
-    def test_preserves_coordinates(self, basic_atom_array):
+    def test_preserves_coordinates(self, basic_atom_array_multichain):
         """Test that coordinates are preserved correctly."""
-        result = apply_selection(basic_atom_array, "chain A and resi 1")
+        result = apply_selection(basic_atom_array_multichain, "chain A and resi 1")
         result_coord = cast(np.ndarray, result.coord)
-        basic_coord = cast(np.ndarray, basic_atom_array.coord)
+        basic_coord = cast(np.ndarray, basic_atom_array_multichain.coord)
         np.testing.assert_array_equal(result_coord[0], basic_coord[0])
 
 
 class TestExtractSelectionCoordinates:
     """Tests for extract_selection_coordinates function."""
 
-    def test_extracts_coordinates(self, basic_atom_array):
+    def test_extracts_coordinates(self, basic_atom_array_multichain):
         """Test that coordinates are extracted correctly."""
-        coords = extract_selection_coordinates(basic_atom_array, "chain A")
+        coords = extract_selection_coordinates(basic_atom_array_multichain, "chain A")
         assert isinstance(coords, np.ndarray)
         assert coords.shape == (5, 3)
 
-    def test_with_atomarray_stack(self, atom_array_stack):
+    def test_with_atomarray_stack(self, atom_array_stack_simple):
         """Test extraction from AtomArrayStack uses first model."""
-        coords = extract_selection_coordinates(atom_array_stack, "resi 1-3")
+        coords = extract_selection_coordinates(atom_array_stack_simple, "resi 1-3")
         assert isinstance(coords, np.ndarray)
         assert coords.shape == (3, 3)
-        first_model = cast(AtomArray, atom_array_stack[0])
+        first_model = cast(AtomArray, atom_array_stack_simple[0])
         np.testing.assert_array_equal(coords, first_model.coord[:3])  # pyright: ignore[reportOptionalSubscript]
 
-    def test_no_matching_atoms_raises_runtime_error(self, basic_atom_array):
+    def test_no_matching_atoms_raises_runtime_error(self, basic_atom_array_multichain):
         """Test that no matching atoms raises RuntimeError."""
         with pytest.raises(RuntimeError, match="No atoms matched selection"):
-            extract_selection_coordinates(basic_atom_array, "chain Z")
+            extract_selection_coordinates(basic_atom_array_multichain, "chain Z")
 
     def test_filters_nan_coordinates(self, atom_array_with_nan_coords):
         """Test that NaN coordinates are filtered out with warning."""
@@ -244,15 +170,15 @@ class TestExtractSelectionCoordinates:
         with pytest.raises(RuntimeError, match="No valid.*finite.*coordinates"):
             extract_selection_coordinates(atom_array, "chain A")
 
-    def test_returns_numpy_array(self, basic_atom_array):
+    def test_returns_numpy_array(self, basic_atom_array_multichain):
         """Test that output is numpy array."""
-        coords = extract_selection_coordinates(basic_atom_array, "chain A")
+        coords = extract_selection_coordinates(basic_atom_array_multichain, "chain A")
         assert isinstance(coords, np.ndarray)
         assert coords.dtype in (np.float32, np.float64)
 
-    def test_coordinate_values(self, basic_atom_array):
+    def test_coordinate_values(self, basic_atom_array_multichain):
         """Test that coordinate values are correct."""
-        coords = extract_selection_coordinates(basic_atom_array, "chain A and resi 1")
+        coords = extract_selection_coordinates(basic_atom_array_multichain, "chain A and resi 1")
         expected = np.array([[1.0, 2.0, 3.0]])
         np.testing.assert_array_equal(coords, expected)
 
@@ -260,33 +186,33 @@ class TestExtractSelectionCoordinates:
 class TestGetAsymUnitFromStructure:
     """Tests for get_asym_unit_from_structure function."""
 
-    def test_returns_atomarray(self, basic_atom_array):
+    def test_returns_atomarray(self, basic_atom_array_multichain):
         """Test extraction of AtomArray from structure."""
-        structure = {"asym_unit": basic_atom_array}
+        structure = {"asym_unit": basic_atom_array_multichain}
         result = get_asym_unit_from_structure(structure)
         assert isinstance(result, AtomArray)
-        assert result is basic_atom_array
+        assert result is basic_atom_array_multichain
 
-    def test_returns_atomarraystack(self, atom_array_stack):
+    def test_returns_atomarraystack(self, atom_array_stack_simple):
         """Test extraction of AtomArrayStack from structure."""
-        structure = {"asym_unit": atom_array_stack}
+        structure = {"asym_unit": atom_array_stack_simple}
         result = get_asym_unit_from_structure(structure)
         assert isinstance(result, AtomArrayStack)
-        assert result is atom_array_stack
+        assert result is atom_array_stack_simple
 
-    def test_with_atom_array_index(self, atom_array_stack):
+    def test_with_atom_array_index(self, atom_array_stack_simple):
         """Test extraction of specific model from stack."""
-        structure = {"asym_unit": atom_array_stack}
+        structure = {"asym_unit": atom_array_stack_simple}
         result = get_asym_unit_from_structure(structure, atom_array_index=1)
         assert isinstance(result, AtomArray)
-        assert len(result) == atom_array_stack.array_length()
+        assert len(result) == atom_array_stack_simple.array_length()
 
-    def test_index_on_atomarray_ignored(self, basic_atom_array):
+    def test_index_on_atomarray_ignored(self, basic_atom_array_multichain):
         """Test that index is ignored for AtomArray."""
-        structure = {"asym_unit": basic_atom_array}
+        structure = {"asym_unit": basic_atom_array_multichain}
         result = get_asym_unit_from_structure(structure, atom_array_index=0)
         assert isinstance(result, AtomArray)
-        assert result is basic_atom_array
+        assert result is basic_atom_array_multichain
 
     def test_invalid_type_raises_typeerror(self):
         """Test that invalid type raises TypeError."""
@@ -304,12 +230,12 @@ class TestGetReferenceAtomArrayStack:
         assert path is None
         assert struct is None
 
-    def test_converts_atomarray_to_stack(self, tmp_path, basic_atom_array):
+    def test_converts_atomarray_to_stack(self, tmp_path, basic_atom_array_multichain):
         """Test that single AtomArray is converted to stack."""
         from atomworks.io.utils.io_utils import to_cif_file
 
         structure_path = tmp_path / "0.5occA_0.5occB.cif"
-        to_cif_file(basic_atom_array, structure_path)
+        to_cif_file(basic_atom_array_multichain, structure_path)
 
         config = ProteinConfig(
             protein="test",
@@ -325,7 +251,6 @@ class TestGetReferenceAtomArrayStack:
         assert isinstance(struct, AtomArrayStack)
         assert struct.stack_depth() == 1
 
-    @pytest.mark.slow
     def test_with_real_structure(self, resources_dir):
         """Test loading real structure with altlocs."""
         config = ProteinConfig(
@@ -365,7 +290,6 @@ class TestGetReferenceStructureCoords:
         coords = get_reference_structure_coords(config, "test", occ_list=(0.5,))
         assert coords is None
 
-    @pytest.mark.slow
     def test_with_real_structure(self, resources_dir):
         """Test loading coords from real structure."""
         config = ProteinConfig(
