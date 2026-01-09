@@ -10,28 +10,6 @@ from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 
 
-def load_structure_with_altlocs(path: Path) -> AtomArray:
-    """Load a structure file using Atomworks with alternate conformations and occupancy data.
-
-    Takes the first model if multiple models are present.
-
-    Parameters
-    ----------
-    path
-        Path to the structure file (PDB, mmCIF, etc.)
-
-    Returns
-    -------
-    AtomArray
-        Loaded structure with occupancy and B-factor data
-    """
-    # Currently, we need to specify extra_fields=["occupancy"] to load altlocs properly
-    atom_array = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
-    if isinstance(atom_array, AtomArrayStack):
-        atom_array = cast(AtomArray, atom_array[0])
-    return cast(AtomArray, atom_array)
-
-
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
     """Parse a selection string like 'chain A and resi 326-339'.
 
@@ -61,6 +39,49 @@ def parse_selection_string(selection: str) -> tuple[str | None, int | None, int 
         resi_start = resi_end = None
 
     return chain, resi_start, resi_end
+
+
+def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
+    """Apply an atom selection string to filter a structure.
+
+    Parameters
+    ----------
+    atom_array
+        Structure to filter
+    selection
+        Selection string (e.g., 'chain A and resi 10-50'). If None, returns
+        the entire structure unchanged.
+
+    Returns
+    -------
+    AtomArray
+        Filtered structure containing only atoms matching the selection
+
+    Raises
+    ------
+    ValueError
+        If the selection string matches no atoms
+    """
+    if selection is None:
+        return atom_array
+
+    chain_id, resi_start, resi_end = parse_selection_string(selection)
+    mask = np.ones(len(atom_array), dtype=bool)
+
+    if chain_id is not None:
+        mask &= atom_array.chain_id == chain_id
+
+    if resi_start is not None:
+        res_ids = cast(np.ndarray, atom_array.res_id)
+        if resi_end is not None:
+            mask &= (res_ids >= resi_start) & (res_ids <= resi_end)
+        else:
+            mask &= res_ids == resi_start
+
+    if mask.sum() == 0:
+        raise ValueError(f"Selection '{selection}' matched no atoms")
+
+    return cast(AtomArray, atom_array[mask])
 
 
 def extract_selection_coordinates(

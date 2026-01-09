@@ -158,3 +158,23 @@ def do_nothing(*args: Any, **kwargs: Any) -> None:
 
 
 assert_no_nans = _assert_no_nans if should_check_nans else do_nothing
+
+
+def resize_to_ensemble(tensor: torch.Tensor, ensemble_size: int) -> torch.Tensor:
+    """Resize a tensor to the specified ensemble size by repeating the first dimension.
+
+    Parameters
+    ----------
+    tensor
+        Input tensor to resize
+    ensemble_size
+        Target ensemble size for the first dimension
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor with first dimension expanded to ensemble_size
+    """
+    if tensor.ndim < 2:
+        tensor = tensor.unsqueeze(0)
+    return tensor.repeat(ensemble_size, *[1] * (tensor.ndim - 1))

@@ -4,49 +4,21 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast, ClassVar
+from typing import cast, ClassVar
 
-import numpy as np
 import torch
 from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
-from sampleworks.core.forward_models.xray.real_space_density import (
-    DifferentiableTransformer,
-    XMap_torch,
+from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
+from sampleworks.eval.structure_utils import apply_selection
+from sampleworks.utils.atom_array_utils import (
+    AltlocInfo,
+    detect_altlocs,
+    load_structure_with_altlocs,
 )
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.unitcell import (
-    UnitCell,
-)
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
-    GridParameters,
-    Resolution,
-    XMap,
-)
-from sampleworks.core.rewards.real_space_density import (
-    extract_density_inputs_from_atomarray,
-    setup_scattering_params,
-)
-from sampleworks.eval.structure_utils import parse_selection_string
-from sampleworks.utils.atom_array_utils import load_structure_with_altlocs
+from sampleworks.utils.density_utils import compute_density_from_atomarray
 from sampleworks.utils.torch_utils import try_gpu
-
-
-@dataclass
-class AltlocInfo:
-    """Information about alternate conformations (altlocs) in a structure.
-
-    Attributes
-    ----------
-    altloc_ids
-        Sorted list of altloc identifiers (e.g., ['A', 'B'])
-    atom_masks
-        Dictionary mapping each altloc ID to a boolean mask indicating which atoms
-        belong to that altloc
-    """
-
-    altloc_ids: list[str]
-    atom_masks: dict[str, np.ndarray[Any, np.dtype[np.bool_]]]
 
 
 @dataclass
@@ -120,70 +92,6 @@ class BatchRow:
         )
 
 
-def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
-    """Apply an atom selection string to filter a structure.
-
-    Parameters
-    ----------
-    atom_array
-        Structure to filter
-    selection
-        Selection string (e.g., 'chain A and resi 10-50'). If None, returns
-        the entire structure unchanged.
-
-    Returns
-    -------
-    AtomArray
-        Filtered structure containing only atoms matching the selection
-
-    Raises
-    ------
-    ValueError
-        If the selection string matches no atoms
-    """
-    if selection is None:
-        return atom_array
-
-    chain_id, resi_start, resi_end = parse_selection_string(selection)
-    mask = np.ones(len(atom_array), dtype=bool)
-
-    if chain_id is not None:
-        mask &= atom_array.chain_id == chain_id
-
-    if resi_start is not None:
-        res_ids = cast(np.ndarray[Any, np.dtype[np.int64]], atom_array.res_id)
-        if resi_end is not None:
-            mask &= (res_ids >= resi_start) & (res_ids <= resi_end)
-        else:
-            mask &= res_ids == resi_start
-
-    if mask.sum() == 0:
-        raise ValueError(f"Selection '{selection}' matched no atoms")
-
-    return cast(AtomArray, atom_array[mask])
-
-
-ALTLOC_DEFAULT_VALUES = {"", ".", " ", "?"}
-
-
-def detect_altlocs(atom_array: AtomArray) -> AltlocInfo:
-    """Detect alternate conformations in a structure.
-
-    Identifies all non-default altloc IDs and creates boolean masks for each.
-    Default values ("", ".", " ") are excluded from the detected altlocs.
-    """
-    if not hasattr(atom_array, "altloc_id"):
-        return AltlocInfo(altloc_ids=[], atom_masks={})
-
-    altloc_arr = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.altloc_id)
-    altloc_ids = sorted(set(altloc_arr) - ALTLOC_DEFAULT_VALUES)
-    atom_masks: dict[str, np.ndarray[Any, np.dtype[np.bool_]]] = {}
-    for altloc in altloc_ids:
-        atom_masks[altloc] = altloc_arr == altloc
-
-    return AltlocInfo(altloc_ids=altloc_ids, atom_masks=atom_masks)
-
-
 def assign_occupancies(
     atom_array: AtomArray | AtomArrayStack,
     altloc_info: AltlocInfo,
@@ -255,118 +163,6 @@ def assign_occupancies(
             occupancy[altloc_info.atom_masks[altloc]] = occ  # pyright:ignore[reportOptionalSubscript]
 
     return cast(AtomArray, result)
-
-
-def create_synthetic_grid(
-    atom_array: AtomArray | AtomArrayStack, resolution: float, padding: float = 5.0
-) -> XMap:
-    """Create an empty density map grid sized to fit the structure.
-
-    Parameters
-    ----------
-    atom_array
-        Structure to create a grid for
-    resolution
-        Map resolution in Angstroms
-    padding
-        Extra space to add around the structure in each dimension (Angstroms)
-
-    Returns
-    -------
-    XMap
-        Empty density map with appropriate grid parameters and unit cell
-        dimensions to contain the structure
-    """
-    coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
-    if coords.ndim == 3:
-        coords = coords.reshape(-1, 3)
-
-    valid_mask = np.isfinite(coords).all(axis=1)
-    coords = coords[valid_mask]
-
-    min_coords = coords.min(axis=0) - padding
-    max_coords = coords.max(axis=0) + padding
-    extent = max_coords - min_coords
-
-    # standard voxel spacing from Phenix, etc.
-    voxel_spacing = resolution / 4.0
-    grid_shape = np.ceil(extent / voxel_spacing).astype(int)
-
-    unit_cell = UnitCell(
-        a=float(extent[0]),
-        b=float(extent[1]),
-        c=float(extent[2]),
-        alpha=90.0,
-        beta=90.0,
-        gamma=90.0,
-        space_group="P1",
-    )
-
-    # (nz, ny, nx) ordering for array, since most fft routines will expect
-    # z as the "fastest" axis, but CCP4 format uses X as the fastest axis
-    empty_array = np.zeros((grid_shape[2], grid_shape[1], grid_shape[0]), dtype=np.float32)
-
-    empty_xmap = XMap(
-        empty_array,
-        grid_parameters=GridParameters(voxelspacing=voxel_spacing),
-        unit_cell=unit_cell,
-        resolution=Resolution(high=resolution, low=1000.0),
-        origin=min_coords,
-    )
-
-    return empty_xmap
-
-
-def compute_density(
-    atom_array: AtomArray | AtomArrayStack,
-    resolution: float,
-    em_mode: bool,
-    device: torch.device,
-) -> tuple[torch.Tensor, XMap_torch]:
-    """Compute synthetic electron density from atomic coordinates.
-
-    Parameters
-    ----------
-    atom_array
-        Structure to compute density for
-    resolution
-        Map resolution in Angstroms
-    em_mode
-        If True, use electron scattering factors. If False, use X-ray factors.
-    device
-        PyTorch device for computation
-
-    Returns
-    -------
-    tuple[torch.Tensor, XMap_torch]
-        Tuple of (density tensor, XMap_torch object). The density tensor contains
-        the computed electron density values on the grid.
-    """
-    xmap = create_synthetic_grid(atom_array, resolution)
-    scattering_params = setup_scattering_params(atom_array, em_mode, device)
-
-    xmap_torch = XMap_torch(xmap, device=device)
-    transformer = DifferentiableTransformer(
-        xmap=xmap_torch,
-        scattering_params=scattering_params,
-        em=em_mode,
-        device=device,
-        use_cuda_kernels=torch.cuda.is_available(),
-    )
-
-    coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
-        atom_array, device
-    )
-
-    with torch.no_grad():
-        density = transformer(
-            coordinates=coords,
-            elements=elements,
-            b_factors=b_factors,
-            occupancies=occupancies,
-        )
-
-    return density.sum(dim=0), xmap_torch
 
 
 def save_density(density: torch.Tensor, xmap_torch: XMap_torch, output_path: Path) -> None:
@@ -469,7 +265,9 @@ def _process_single_row(
             return
 
     try:
-        density, xmap_torch = compute_density(atom_array, resolution, em_mode, device)
+        density, xmap_torch = compute_density_from_atomarray(
+            atom_array, resolution=resolution, em_mode=em_mode, device=device
+        )
     except Exception as e:
         logger.error(
             f"Failed to compute density for {row.filename} ({type(e).__name__}): {e}\n"
@@ -616,7 +414,9 @@ def main() -> None:
         )
         atom_array = assign_occupancies(atom_array, altloc_info, args.occ_mode, occ_values)
 
-        density, xmap_torch = compute_density(atom_array, args.resolution, args.em_mode, device)
+        density, xmap_torch = compute_density_from_atomarray(
+            atom_array, resolution=args.resolution, em_mode=args.em_mode, device=device
+        )
 
         output_path = (
             args.output or args.output_dir / f"{args.structure.stem}_{args.resolution:.2f}A.ccp4"

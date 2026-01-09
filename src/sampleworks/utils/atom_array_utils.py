@@ -1,4 +1,5 @@
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -7,10 +8,27 @@ from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io.pdbx import CIFFile, set_structure
+from loguru import logger
 
 
 BACKBONE_ATOM_TYPES = ["C", "CA", "N", "O"]
 BLANK_ALTLOC_IDS = {"", ".", " ", "?"}
+
+
+@dataclass
+class AltlocInfo:
+    """Information about alternate conformations (altlocs) in a structure.
+
+        Attributes
+        ----------
+        altloc_ids
+            Sorted list of altloc identifiers (e.g., ['A', 'B'])
+        atom_masks
+    g        belong to that altloc
+    """
+
+    altloc_ids: list[str]
+    atom_masks: dict[str, np.ndarray[Any, np.dtype[np.bool_]]]
 
 
 def load_structure_with_altlocs(path: Path) -> AtomArray:
@@ -177,6 +195,40 @@ def find_all_altloc_ids(atom_array: AtomArray | AtomArrayStack) -> set[str]:
         raise AttributeError("atom_array must have `altloc_id` annotation")
 
     return set(altloc_ids.tolist()) - BLANK_ALTLOC_IDS
+
+
+def detect_altlocs(atom_array: AtomArray) -> AltlocInfo:
+    """Detect alternate conformations in a structure.
+
+    Identifies all non-default altloc IDs and creates boolean masks for each.
+    Default values ("", ".", " ") are excluded from the detected altlocs.
+
+    Parameters
+    ----------
+    atom_array
+        The input AtomArray containing altloc_id annotations.
+
+    Returns
+    -------
+    AltlocInfo
+        Dataclass containing:
+        - altloc_ids: Sorted list of detected altloc IDs
+        - atom_masks: Dictionary mapping each altloc ID to a boolean mask of atoms
+
+    """
+    # find_all_altloc_ids has error checking
+    try:
+        altloc_ids = sorted(find_all_altloc_ids(atom_array))
+    except AttributeError:
+        logger.warning("Structure has no altloc_id annotation; assuming no alternate locations")
+        return AltlocInfo(altloc_ids=[], atom_masks={})
+
+    altloc_arr = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.altloc_id)
+    atom_masks: dict[str, np.ndarray[Any, np.dtype[np.bool_]]] = {}
+    for altloc in altloc_ids:
+        atom_masks[altloc] = altloc_arr == altloc
+
+    return AltlocInfo(altloc_ids=altloc_ids, atom_masks=atom_masks)
 
 
 def map_altlocs_to_stack(
