@@ -29,6 +29,7 @@ from sampleworks.utils.guidance_constants import (
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 from sampleworks.utils.msa import MSAManager
 
+
 # The following imports aren't compatible with each other and are supported in separate
 # hatch/pixi envs
 try:
@@ -151,7 +152,7 @@ def get_model_and_device(
         logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
         model_wrapper = Boltz1Wrapper(  # pyright: ignore
             checkpoint_path=model_checkpoint_path,
-            use_msa_server=True,
+            use_msa_manager=True,
             device=device,
             model=model,
         )
@@ -162,7 +163,7 @@ def get_model_and_device(
         logger.debug(f"Loading Boltz2 model from {model_checkpoint_path}")
         model_wrapper = Boltz2Wrapper(  #  pyright: ignore
             checkpoint_path=model_checkpoint_path,
-            use_msa_server=True,
+            use_msa_manager=True,
             device=device,
             method=method.upper(),
             model=model,
@@ -170,10 +171,7 @@ def get_model_and_device(
     elif model_type == RF3:
         if RF3Wrapper is None:
             raise ImportError("RF3 dependencies not installed")
-        model_wrapper = RF3Wrapper(
-            checkpoint_path=model_checkpoint_path,
-            msa_manager=MSAManager()
-        )
+        model_wrapper = RF3Wrapper(checkpoint_path=model_checkpoint_path, msa_manager=MSAManager())
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -444,7 +442,9 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         # reports the number of API calls and cache hits
         model_wrapper.msa_manager.report_on_usage()
     else:
-        logger.warning("No MSA manager found, cannot report on MSA usage. "
-                       "(why aren't you using an MSAManager?)")
+        logger.warning(
+            "No MSA manager found, cannot report on MSA usage. "
+            "(why aren't you using an MSAManager?)"
+        )
 
     return job_results
