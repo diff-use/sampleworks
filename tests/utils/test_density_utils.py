@@ -17,14 +17,36 @@ from sampleworks.utils.density_utils import (
 class TestCreateSyntheticGrid:
     """Tests for create_synthetic_grid function."""
 
-    @pytest.fixture
-    def synthetic_grid(self, simple_atom_array: AtomArray):
-        xmap = create_synthetic_grid(simple_atom_array, resolution=2.0)
-        return xmap
+    @pytest.fixture(
+        params=[
+            {"resolution": 1.0, "padding": 5.0},
+            {"resolution": 2.0, "padding": 5.0},
+            {"resolution": 2.0, "padding": 10.0},
+            {"resolution": 4.0, "padding": 5.0},
+        ]
+    )
+    def synthetic_grid(self, request, simple_atom_array: AtomArray):
+        params = request.param
+        xmap = create_synthetic_grid(
+            simple_atom_array, resolution=params["resolution"], padding=params["padding"]
+        )
+        resolution = params["resolution"]
+        padding = params["padding"]
+        return xmap, resolution, padding
 
-    def test_returns_xmap(self, synthetic_grid: XMap):
+    def test_returns_xmap(self, synthetic_grid):
         """Test that output is XMap type."""
-        assert isinstance(synthetic_grid, XMap)
+        xmap, resolution, padding = synthetic_grid
+        assert isinstance(xmap, XMap)
+
+        assert xmap.array.ndim == 3
+        assert np.all(xmap.array == 0.0)
+
+        expected_spacing = resolution / 4.0
+        if isinstance(xmap.voxelspacing, np.ndarray):
+            assert np.allclose(xmap.voxelspacing, expected_spacing, rtol=1e-6)
+        else:
+            assert abs(xmap.voxelspacing - expected_spacing) < 1e-6
 
     def test_grid_contains_structure(self, simple_atom_array: AtomArray):
         """Test that grid bounds include all coordinates."""
@@ -39,14 +61,14 @@ class TestCreateSyntheticGrid:
         grid_end = xmap.origin + uc_dims
         assert np.all(grid_end >= max_coords + 5.0)
 
-    def test_voxel_spacing(self, synthetic_grid: XMap):
+    def test_voxel_spacing(self, synthetic_grid):
         """Test that voxel spacing equals resolution / 4.0."""
-        resolution = 2.0
+        xmap, resolution, padding = synthetic_grid
         expected_spacing = resolution / 4.0
-        if isinstance(synthetic_grid.voxelspacing, np.ndarray):
-            assert np.allclose(synthetic_grid.voxelspacing, expected_spacing, rtol=1e-6)
+        if isinstance(xmap.voxelspacing, np.ndarray):
+            assert np.allclose(xmap.voxelspacing, expected_spacing, rtol=1e-6)
         else:
-            assert abs(synthetic_grid.voxelspacing - expected_spacing) < 1e-6
+            assert abs(xmap.voxelspacing - expected_spacing) < 1e-6
 
     def test_padding_applied(self, simple_atom_array: AtomArray):
         """Test that grid is expanded by padding amount."""
@@ -59,15 +81,17 @@ class TestCreateSyntheticGrid:
 
         np.testing.assert_allclose(xmap.origin, expected_origin, rtol=1e-5)
 
-    def test_orthogonal_unit_cell(self, synthetic_grid: XMap):
+    def test_orthogonal_unit_cell(self, synthetic_grid):
         """Test that unit cell has 90 degree angles."""
-        assert synthetic_grid.unit_cell.alpha == 90.0  # pyright: ignore[reportOptionalMemberAccess]
-        assert synthetic_grid.unit_cell.beta == 90.0  # pyright: ignore[reportOptionalMemberAccess]
-        assert synthetic_grid.unit_cell.gamma == 90.0  # pyright: ignore[reportOptionalMemberAccess]
+        xmap, resolution, padding = synthetic_grid
+        assert xmap.unit_cell.alpha == 90.0  # pyright: ignore[reportOptionalMemberAccess]
+        assert xmap.unit_cell.beta == 90.0  # pyright: ignore[reportOptionalMemberAccess]
+        assert xmap.unit_cell.gamma == 90.0  # pyright: ignore[reportOptionalMemberAccess]
 
-    def test_space_group_p1(self, synthetic_grid: XMap):
+    def test_space_group_p1(self, synthetic_grid):
         """Test that space group is P1."""
-        space_group_str = str(synthetic_grid.unit_cell.space_group)  # pyright: ignore[reportOptionalMemberAccess]
+        xmap, resolution, padding = synthetic_grid
+        space_group_str = str(xmap.unit_cell.space_group)  # pyright: ignore[reportOptionalMemberAccess]
         assert "P1" in space_group_str or space_group_str == "P 1"
 
     def test_handles_atomarray_stack(self, simple_atom_array_stack: AtomArrayStack):
@@ -91,24 +115,31 @@ class TestCreateSyntheticGrid:
 
     def test_resolution_affects_grid_shape(self, simple_atom_array: AtomArray):
         """Test that smaller resolution creates more voxels."""
-        xmap_low_res = create_synthetic_grid(simple_atom_array, resolution=4.0)
-        xmap_high_res = create_synthetic_grid(simple_atom_array, resolution=1.0)
+        resolution_low = 4.0
+        resolution_high = 1.0
+        xmap_low_res = create_synthetic_grid(simple_atom_array, resolution=resolution_low)
+        xmap_high_res = create_synthetic_grid(simple_atom_array, resolution=resolution_high)
 
         volume_low = np.prod(xmap_low_res.array.shape)
         volume_high = np.prod(xmap_high_res.array.shape)
 
-        assert volume_high > volume_low
+        resolution_ratio = resolution_low / resolution_high
+        # account for grid boundary effects by multiplying by 0.8
+        expected_min_ratio = (resolution_ratio**3) * 0.8
+        assert volume_high > volume_low * expected_min_ratio
 
-    def test_array_shape_ordering(self, synthetic_grid: XMap):
+    def test_array_shape_ordering(self, synthetic_grid):
         """Test that array shape is (nz, ny, nx)."""
-        assert synthetic_grid.array.ndim == 3
-        assert synthetic_grid.array.shape[0] > 0
-        assert synthetic_grid.array.shape[1] > 0
-        assert synthetic_grid.array.shape[2] > 0
+        xmap, resolution, padding = synthetic_grid
+        assert xmap.array.ndim == 3
+        assert xmap.array.shape[0] > 0
+        assert xmap.array.shape[1] > 0
+        assert xmap.array.shape[2] > 0
 
-    def test_empty_array_initialized(self, synthetic_grid: XMap):
+    def test_empty_array_initialized(self, synthetic_grid):
         """Test that array is initialized to zeros."""
-        assert np.all(synthetic_grid.array == 0.0)
+        xmap, resolution, padding = synthetic_grid
+        assert np.all(xmap.array == 0.0)
 
 
 class TestComputeDensityFromAtomarray:
@@ -152,22 +183,24 @@ class TestComputeDensityFromAtomarray:
         assert density.numel() > 0
 
     def test_with_xmap_parameter(
-        self, simple_atom_array: AtomArray, synthetic_grid: XMap, device: torch.device
+        self, simple_atom_array: AtomArray, synthetic_grid, device: torch.device
     ):
         """Test that function uses provided XMap."""
+        xmap, resolution, padding = synthetic_grid
         density, xmap_torch = compute_density_from_atomarray(
-            simple_atom_array, xmap=synthetic_grid, em_mode=False, device=device
+            simple_atom_array, xmap=xmap, em_mode=False, device=device
         )
         assert isinstance(density, torch.Tensor)
-        assert density.shape == synthetic_grid.array.shape
+        assert density.shape == xmap.array.shape
 
     def test_both_xmap_and_resolution_raises(
-        self, simple_atom_array: AtomArray, synthetic_grid: XMap, device: torch.device
+        self, simple_atom_array: AtomArray, synthetic_grid, device: torch.device
     ):
         """Test that providing both xmap and resolution raises ValueError."""
+        xmap, resolution, padding = synthetic_grid
         with pytest.raises(ValueError, match="Cannot provide both xmap and resolution"):
             compute_density_from_atomarray(
-                simple_atom_array, xmap=synthetic_grid, resolution=2.0, em_mode=False, device=device
+                simple_atom_array, xmap=xmap, resolution=2.0, em_mode=False, device=device
             )
 
     def test_neither_xmap_nor_resolution_raises(
