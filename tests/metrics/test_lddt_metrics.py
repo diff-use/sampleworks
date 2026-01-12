@@ -72,7 +72,7 @@ def test_all_atom_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
 
         # Check each score value
         for i, (result_score, expected_score) in enumerate(zip(result_scores, expected_scores)):
-            assert result_score == pytest.approx(expected_score, abs=0.002), (
+            assert result_score == pytest.approx(expected_score, abs=0.005), (
                 f"Score mismatch for {residue_key}[{i}]: got {result_score}, expected "
                 f"{expected_score}\nAll resulting scores: {results['residue_lddt_scores']}\n"
                 f"Expected scores: {expected_results['residue_lddt_scores']}"

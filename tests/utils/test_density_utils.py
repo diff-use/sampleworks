@@ -14,25 +14,26 @@ from sampleworks.utils.density_utils import (
 )
 
 
+@pytest.fixture(
+    params=[
+        {"resolution": 1.0, "padding": 5.0},
+        {"resolution": 2.0, "padding": 5.0},
+        {"resolution": 2.0, "padding": 10.0},
+        {"resolution": 4.0, "padding": 5.0},
+    ]
+)
+def synthetic_grid(request, simple_atom_array: AtomArray):
+    params = request.param
+    xmap = create_synthetic_grid(
+        simple_atom_array, resolution=params["resolution"], padding=params["padding"]
+    )
+    resolution = params["resolution"]
+    padding = params["padding"]
+    return xmap, resolution, padding
+
+
 class TestCreateSyntheticGrid:
     """Tests for create_synthetic_grid function."""
-
-    @pytest.fixture(
-        params=[
-            {"resolution": 1.0, "padding": 5.0},
-            {"resolution": 2.0, "padding": 5.0},
-            {"resolution": 2.0, "padding": 10.0},
-            {"resolution": 4.0, "padding": 5.0},
-        ]
-    )
-    def synthetic_grid(self, request, simple_atom_array: AtomArray):
-        params = request.param
-        xmap = create_synthetic_grid(
-            simple_atom_array, resolution=params["resolution"], padding=params["padding"]
-        )
-        resolution = params["resolution"]
-        padding = params["padding"]
-        return xmap, resolution, padding
 
     def test_returns_xmap(self, synthetic_grid):
         """Test that output is XMap type."""
