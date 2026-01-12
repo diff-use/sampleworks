@@ -63,10 +63,16 @@ class TestParseSelectionString:
         result = parse_selection_string("CHAIN a AND RESI 10")
         assert result == ("A", 10, 10)
 
-    def test_empty_string(self):
-        """Test parsing empty string."""
+    def test_empty_string(self, caplog):
+        """Test parsing empty string returns warning and all None."""
         result = parse_selection_string("")
         assert result == (None, None, None)
+
+        assert (
+            "Selection string did not match any known patterns (e.g. 'chain A', 'resi 10-50')"
+            in caplog.text
+        )
+        assert caplog.records[0].levelname == "WARNING"
 
     def test_whitespace_handling(self):
         """Test handling of extra whitespace."""
@@ -153,11 +159,16 @@ class TestExtractSelectionCoordinates:
         with pytest.raises(RuntimeError, match="No atoms matched selection"):
             extract_selection_coordinates(basic_atom_array_multichain, "chain Z")
 
-    def test_filters_nan_coordinates(self, atom_array_with_nan_coords):
+    def test_filters_nan_coordinates(self, caplog, atom_array_with_nan_coords):
         """Test that NaN coordinates are filtered out with warning."""
         coords = extract_selection_coordinates(atom_array_with_nan_coords, "chain A")
         assert len(coords) == 3
         assert np.isfinite(coords).all()
+
+        assert "Filtered" in caplog.text
+        assert "valid atoms remaining" in caplog.text
+        assert "atoms with NaN/Inf coordinates" in caplog.text
+        assert caplog.records[0].levelname == "WARNING"
 
     def test_all_nan_raises_runtime_error(self):
         """Test that all invalid coordinates raises RuntimeError."""

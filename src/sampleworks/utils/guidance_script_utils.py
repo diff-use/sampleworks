@@ -203,9 +203,10 @@ def get_reward_function_and_structure(
     xmap = XMap.fromfile(density, resolution=resolution)
 
     logger.debug("Setting up scattering parameters")
-    scattering_params = setup_scattering_params(structure["asym_unit"], em_mode=em, device=device)
 
     atom_array = structure["asym_unit"]  # pyright: ignore
+    scattering_params = setup_scattering_params(atom_array=atom_array, em_mode=em, device=device)
+
     selection_mask = atom_array.occupancy > 0
     n_selected = selection_mask.sum()
     logger.info(f"Selected {n_selected} atoms with occupancy > 0")

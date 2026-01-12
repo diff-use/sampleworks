@@ -15,7 +15,7 @@ analysis = [
   "scikit-learn"
 ]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
-dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright", "ruff"]
+dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright", "ruff", "pytest-loguru"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
