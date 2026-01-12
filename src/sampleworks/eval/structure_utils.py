@@ -38,6 +38,11 @@ def parse_selection_string(selection: str) -> tuple[str | None, int | None, int 
     else:
         resi_start = resi_end = None
 
+    if chain is None and resi_start is None and resi_end is None:
+        logger.warning(
+            "Selection string did not match any known patterns (e.g. 'chain A', 'resi 10-50')"
+        )
+
     return chain, resi_start, resi_end
 
 
