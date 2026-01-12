@@ -20,7 +20,9 @@ class TestCreateBoltzInputFromStructure:
     """Test the helper function that creates Boltz YAML from Atomworks structures."""
 
     def test_creates_yaml_file(self, structure_6b8x: dict, temp_output_dir: Path):
-        yaml_path = create_boltz_input_from_structure(structure_6b8x, temp_output_dir)
+        yaml_path = create_boltz_input_from_structure(
+            structure_6b8x, temp_output_dir, msa_manager=None, msa_pairing_strategy="greedy"
+        )
         assert yaml_path.exists()
         assert yaml_path.suffix == ".yaml"
         assert (
@@ -28,12 +30,16 @@ class TestCreateBoltzInputFromStructure:
         )
 
     def test_yaml_contains_sequences_key(self, structure_6b8x: dict, temp_output_dir: Path):
-        yaml_path = create_boltz_input_from_structure(structure_6b8x, temp_output_dir)
+        yaml_path = create_boltz_input_from_structure(
+            structure_6b8x, temp_output_dir, msa_manager=None, msa_pairing_strategy="greedy"
+        )
         content = yaml_path.read_text()
         assert "sequences:" in content
 
     def test_protein_chain_in_yaml(self, structure_6b8x: dict, temp_output_dir: Path):
-        yaml_path = create_boltz_input_from_structure(structure_6b8x, temp_output_dir)
+        yaml_path = create_boltz_input_from_structure(
+            structure_6b8x, temp_output_dir, msa_manager=None, msa_pairing_strategy="greedy"
+        )
         content = yaml_path.read_text()
 
         for chain_id, chain_data in structure_6b8x["chain_info"].items():
@@ -42,13 +48,17 @@ class TestCreateBoltzInputFromStructure:
                 assert chain_data["processed_entity_canonical_sequence"] in content
 
     def test_handles_cif_format(self, structure_1vme: dict, temp_output_dir: Path):
-        yaml_path = create_boltz_input_from_structure(structure_1vme, temp_output_dir)
+        yaml_path = create_boltz_input_from_structure(
+            structure_1vme, temp_output_dir, msa_manager=None, msa_pairing_strategy="greedy"
+        )
         assert yaml_path.exists()
         content = yaml_path.read_text()
         assert "sequences:" in content
 
     def test_handles_pdb_format(self, structure_6b8x: dict, temp_output_dir: Path):
-        yaml_path = create_boltz_input_from_structure(structure_6b8x, temp_output_dir)
+        yaml_path = create_boltz_input_from_structure(
+            structure_6b8x, temp_output_dir, msa_manager=None, msa_pairing_strategy="greedy"
+        )
         assert yaml_path.exists()
         content = yaml_path.read_text()
         assert "sequences:" in content
@@ -58,7 +68,9 @@ class TestCreateBoltzInputFromStructure:
         self, structure_fixture: str, temp_output_dir: Path, request
     ):
         structure = request.getfixturevalue(structure_fixture)
-        yaml_path = create_boltz_input_from_structure(structure, temp_output_dir)
+        yaml_path = create_boltz_input_from_structure(
+            structure, temp_output_dir, msa_manager=None, msa_pairing_strategy="greedy"
+        )
         assert yaml_path.exists()
         content = yaml_path.read_text()
         assert len(content) > 0
