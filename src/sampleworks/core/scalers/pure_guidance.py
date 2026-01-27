@@ -1,29 +1,19 @@
 """
 Pure diffusion guidance, as described in [DriftLite](http://arxiv.org/abs/2509.21655)
-
-TODO: Make this more generalizable, a reasonable protocol to implement
-Currently this only works with the implemented wrappers and isn't extensible
 """
 
-from typing import Any, cast
+from typing import cast
 
-import einx
-import numpy as np
 import torch
-from biotite.structure import stack
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
-    ATOMIC_NUM_TO_ELEMENT,
-)
 from sampleworks.core.rewards.real_space_density import RewardFunction
-from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
-from sampleworks.utils.frame_transforms import (
-    apply_forward_transform,
-    create_random_transform,
-    weighted_rigid_align_differentiable,
-)
+from sampleworks.core.rewards.utils import RewardInputs
+from sampleworks.core.samplers.protocol import TrajectorySampler
+from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
+from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
+from sampleworks.models.protocol import FlowModelWrapper
 from sampleworks.utils.imports import check_any_model_available
 
 
@@ -31,334 +21,125 @@ check_any_model_available()
 
 
 class PureGuidance:
-    """
-    Pure guidance scaler.
-    """
+    """Pure guidance scaler - applies per-step guidance without resampling."""
 
     def __init__(
         self,
-        model_wrapper: DiffusionModelWrapper,
-        reward_function: RewardFunction,
+        ensemble_size: int = 1,
+        num_steps: int = 200,
+        t_start: float = 0.0,
+        guidance_t_start: float = 0.0,
     ):
-        """Creates a PureGuidance Scaler for guiding a diffusion model with a
-        RewardFunction.
+        """Initializes Pure Guidance scaler.
 
         Parameters
         ----------
-        model_wrapper: DiffusionModelWrapper
-            Diffusion model wrapper instance
-        reward_function: RewardFunction
-            Reward function to guide the diffusion process
+        ensemble_size : int
+            Number of structures in the ensemble to sample. Default is 1 (single structure).
+        num_steps : int
+            Number of diffusion steps to perform. Default is 200, matching AF3 defaults.
+        t_start : float
+            Starting "reverse" time t ∈ [0, 1] for guidance application. Default is 0
+            (start from beginning).
+        guidance_t_start : float
+            Fraction of total steps after which to start applying guidance. Default is 0.
         """
-        self.model_wrapper = model_wrapper
-        self.reward_function = reward_function
+        logger.info("Initialized Pure Guidance scaler.")
+        self.ensemble_size = ensemble_size
+        self.num_steps = num_steps
+        self.guidance_start = int(guidance_t_start * num_steps)
+        self.starting_step = int(t_start * num_steps)
 
-    def run_guidance(
-        self, structure: dict, **kwargs: Any
-    ) -> tuple[dict, tuple[list[Any], list[Any]], list[Any]]:
-        """Run pure guidance (Training-free guidance or Diffusion Posterior Sampling)
-        using the provided ModelWrapper
+    def sample(
+        self,
+        structure: dict,
+        model: FlowModelWrapper,
+        sampler: TrajectorySampler,
+        score_scaler: StepScalerProtocol,
+        reward: RewardFunction,
+        num_particles: int = 1,
+    ) -> GuidanceOutput:
+        """Samples an ensemble using pure guidance.
 
         Parameters
         ----------
-        structure: dict
-            Atomworks parsed structure.
-        **kwargs: dict
-            Additional keyword arguments for pure guidance.
-
-            - step_scale: float, optional
-                Scale for the model's step size (default: 1.5)
-
-            - ensemble_size: int, optional
-                Size of ensemble to generate (default: 1)
-
-            - step_size: float, optional
-                Gradient step size for guidance (default: 0.1)
-
-            - gradient_normalization: bool, optional
-                Whether to normalize/clip gradients (default: False)
-
-            - use_tweedie: bool, optional
-                If True, use Tweedie's formula (gradient on x̂_0 only).
-                    Enables augmentation and alignment. If False, use full
-                    backprop through model (default: False)
-
-            - augmentation: bool, optional
-                Enable data augmentation in denoise step (default: False)
-
-            - align_to_input: bool, optional
-                Enable alignment to input in denoise step (default: True
-                    for Tweedie mode, False for full backprop)
-
-            - partial_diffusion_step: int, optional
-                If provided, start diffusion from this timestep instead of 0.
-                    (default: None). Will use the provided coordinates in structure
-                    to initialize the noise at this timestep.
-
-            - guidance_start: int, optional
-                Diffusion step to start applying guidance (default: -1, meaning
-                    guidance is applied from the beginning)
-
-            - out_dir: str, optional
-                Output directory for any featurization intermediate files
-                (default: "test")
-
-            - msa_path: dict | str | Path | None, optional
-                MSA specification to be passed to model wrapper for featurization.
-                Currently only used by RF3. # TODO: use kwargs better!!
-
-            - alignment_reverse_diffusion: bool, optional
-                Whether to perform alignment of noisy coords to denoised coords
-                during reverse diffusion steps. This is relevant for doing Boltz-2-like
-                alignment during diffusion. (default: False)
-
-        Returns
-        -------
-        tuple[dict[str, Any], tuple[list[torch.Tensor], list[torch.Tensor]],
-        list[float | None]]
-            Structure dict with updated coordinates, tuple of
-            (trajectory_denoised, trajectory_next_step) containing coordinate
-            tensors at each step, list of losses at each step
+        structure : dict
+            Input atomworks structure dictionary. This may have optional configuration keys that are
+            used for initialization of the features for the model.
+        model : FlowModelWrapper
+            FlowModelWrapper to use for sampling.
+        sampler : TrajectorySampler
+            Sampler to use for the diffusion trajectory.
+        score_scaler : StepScalerProtocol
+            StepScalerProtocol to use for guidance scaling.
+        reward : RewardFunction
+            Reward function to use for guidance.
+        num_particles : int (optional)
+            Number of particles to sample in parallel. For PureGuidance, this is ignored since
+            no reweighting/resampling is performed.
         """
-        # TODO: having defaults this deep can be a problem, remove
-        step_scale = cast(float, kwargs.get("step_scale", 1.5))
-        ensemble_size = cast(int, kwargs.get("ensemble_size", 1))
-        step_size = cast(float, kwargs.get("step_size", 0.1))
-        gradient_normalization = kwargs.get("gradient_normalization", False)
-        use_tweedie = kwargs.get("use_tweedie", False)
-        augmentation = kwargs.get("augmentation", False)
-        align_to_input = kwargs.get("align_to_input", use_tweedie)
-        partial_diffusion_step = cast(int, kwargs.get("partial_diffusion_step", 0))
-        guidance_start = cast(int, kwargs.get("guidance_start", -1))
-        out_dir = kwargs.get("out_dir", "test")
-        msa_path = kwargs.get("msa_path", None)
-        alignment_reverse_diffusion = kwargs.get("alignment_reverse_diffusion", not align_to_input)
-        allow_alignment_gradients = not use_tweedie
+        features = model.featurize(structure)
 
-        features = self.model_wrapper.featurize(structure, msa_path=msa_path, out_dir=out_dir)
-
-        # Get coordinates from timestep
         coords = cast(
             torch.Tensor,
-            self.model_wrapper.initialize_from_noise(
-                structure,
-                noise_level=partial_diffusion_step,
-                ensemble_size=ensemble_size,
+            model.initialize_from_prior(
+                batch_size=self.ensemble_size,
+                features=features,
             ),
         )
 
-        # TODO: this is not generalizable currently, figure this out
-        if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
-            atom_array = features["true_atom_array"]
-        else:
-            atom_array = structure["asym_unit"][0]
-        occupancy_mask = atom_array.occupancy > 0
-        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
-        reward_param_mask = occupancy_mask & nan_mask
-
-        # TODO: jank way to get atomic numbers, fix this in real space density
-        elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(e.title()) for e in atom_array.element[reward_param_mask]
-        ]
-        elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
-        b_factors = einx.rearrange(
-            "n -> b n",
-            torch.Tensor(atom_array.b_factor[reward_param_mask]),
-            b=ensemble_size,
+        processed_structure = process_structure_to_trajectory_input(
+            structure=structure,
+            coords_from_prior=coords,
+            features=features,
+            ensemble_size=self.ensemble_size,
         )
-        # TODO: properly handle occupancy values in structure processing
-        # occupancies = einx.rearrange(
-        #     "n -> b n",
-        #     torch.Tensor(atom_array.occupancy[reward_param_mask]),
-        #     b=ensemble_size,
-        # )
-        occupancies = torch.ones_like(cast(torch.Tensor, b_factors)) / ensemble_size
 
-        input_coords = cast(
-            torch.Tensor,
-            einx.rearrange(
-                "... -> e ...",
-                torch.from_numpy(atom_array.coord).to(dtype=coords.dtype, device=coords.device),
-                e=ensemble_size,
-            ),
-        )[..., reward_param_mask, :]
+        reward_inputs = RewardInputs(
+            elements=cast(torch.Tensor, processed_structure.elements),
+            b_factors=cast(torch.Tensor, processed_structure.b_factors),
+            occupancies=cast(torch.Tensor, processed_structure.occupancies),
+            input_coords=cast(torch.Tensor, processed_structure.input_coords),
+            reward_param_mask=processed_structure.mask,
+            mask_like=cast(torch.Tensor, processed_structure.mask),
+        )
 
-        # TODO: account for missing residues in mask
-        mask_like = torch.ones_like(input_coords[..., 0])
+        trajectory_denoised: list[torch.Tensor] = []
+        trajectory_next_step: list[torch.Tensor] = []
+        losses: list[float | None] = []
 
-        if input_coords.shape != coords.shape:
-            raise ValueError(
-                f"Input coordinates shape {input_coords.shape} does not match"
-                f" initialized coordinates {coords.shape} shape."
-            )
+        schedule = sampler.compute_schedule(num_steps=self.num_steps)
 
-        trajectory_denoised = []
-        trajectory_next_step = []
-        losses = []
+        for i in tqdm(range(self.starting_step, self.num_steps)):
+            context = sampler.get_context_for_step(i, schedule)
+            apply_guidance = i >= self.guidance_start
 
-        n_steps = len(cast(torch.Tensor, self.model_wrapper.get_noise_schedule()["sigma_t"]))
-
-        for i in tqdm(range(partial_diffusion_step, n_steps)):
-            apply_guidance = i > guidance_start
-
-            centroid = einx.mean("... [n] c", coords)
-            coords = einx.subtract("... n c, ... c -> ... n c", coords, centroid)
-
-            timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
-            t_hat = timestep_scaling["t_hat"]
-            sigma_t = timestep_scaling["sigma_t"]
-            eps = timestep_scaling["eps_scale"] * torch.randn_like(coords)
-
-            transform = (
-                create_random_transform(coords, center_before_rotation=False)
-                if augmentation
-                else None
-            )
-            maybe_augmented_coords = cast(
-                torch.Tensor,
-                apply_forward_transform(coords, transform, rotation_only=False)
-                if transform is not None
-                else coords,
-            )
-
-            if not use_tweedie and apply_guidance:
-                # Technically training free guidance requires grad on noisy_coords, not
-                # on denoised, but DPS uses Tweedie's formula which has its limitations.
-                # Maddipatla et al. 2025 use full backprop through model with grad on
-                # noisy_coords.
-                maybe_augmented_coords.detach_().requires_grad_(True)
-
-            denoised = self.model_wrapper.denoise_step(
-                features,
-                maybe_augmented_coords,
-                timestep=i,
-                grad_needed=(apply_guidance and not use_tweedie),
-                # Provide precomputed t_hat and eps to allow us to calculate the
-                # denoising direction properly
-                t_hat=t_hat,
-                eps=eps,
-            )["atom_coords_denoised"]
-
-            align_transform = None
-            denoised_working_frame = denoised
-            if align_to_input:
-                denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
-                    denoised,
-                    input_coords,
-                    weights=mask_like,
-                    mask=mask_like,
-                    return_transforms=True,
-                    allow_gradients=allow_alignment_gradients,
-                )
-
-            # To align with FK steering, store denoised in working frame (aligned with the
-            # input coords if align_to_input is True)
-            trajectory_denoised.append(denoised_working_frame.clone().cpu())
-
-            guidance_direction = None
             if apply_guidance:
-                if use_tweedie:
-                    # Using Tweedie's formula like DPS: gradient on denoised (x̂_0) only
-                    denoised_for_grad = denoised_working_frame.detach().requires_grad_(True)
-                    loss = self.reward_function(
-                        coordinates=denoised_for_grad,
-                        elements=cast(torch.Tensor, elements),
-                        b_factors=cast(torch.Tensor, b_factors),
-                        occupancies=cast(torch.Tensor, occupancies),
-                    )
-                    loss.backward()
+                context = context.with_reward(reward, reward_inputs)
 
-                    with torch.no_grad():
-                        grad = cast(torch.Tensor, denoised_for_grad.grad)
-                        guidance_direction = grad.clone()
-                else:
-                    # Like Maddipatla et al. 2025 and training free guidance: gradient
-                    # through model
-                    loss = self.reward_function(
-                        coordinates=denoised_working_frame,
-                        elements=cast(torch.Tensor, elements),
-                        b_factors=cast(torch.Tensor, b_factors),
-                        occupancies=cast(torch.Tensor, occupancies),
-                    )
-                    loss.backward()
+            step_output = sampler.step(
+                state=coords,
+                model_wrapper=model,
+                context=context,
+                scaler=score_scaler if apply_guidance else None,
+                features=features,
+            )
 
-                    with torch.no_grad():
-                        grad = maybe_augmented_coords.grad
-                        assert grad is not None
-                        guidance_direction = grad.clone()
-                        maybe_augmented_coords.grad = None
+            coords = step_output.state
+            trajectory_next_step.append(coords.clone().cpu())
 
-                losses.append(loss.item())
+            if step_output.denoised is not None:
+                trajectory_denoised.append(step_output.denoised.clone().cpu())
+
+            if step_output.loss is not None:
+                losses.append(step_output.loss.mean().item())
             else:
                 losses.append(None)
 
-            with torch.no_grad():
-                # Use the same eps as in the denoising step to properly compute
-                # the denoising direction, and put in the denoised working frame
-                coords_in_working_frame = (
-                    apply_forward_transform(
-                        maybe_augmented_coords, align_transform, rotation_only=False
-                    )
-                    if align_transform is not None
-                    else maybe_augmented_coords
-                )
-                eps_in_working_frame = (
-                    apply_forward_transform(eps, align_transform, rotation_only=True)
-                    if align_transform is not None
-                    else eps
-                )
-                noisy_coords = coords_in_working_frame + eps_in_working_frame
-
-                if alignment_reverse_diffusion:
-                    # Boltz aligns the noisy coords to the denoised coords at each step
-                    # to improve stability.
-                    noisy_coords = weighted_rigid_align_differentiable(
-                        noisy_coords,
-                        denoised_working_frame,
-                        weights=mask_like,
-                        mask=mask_like,
-                        allow_gradients=False,
-                    )
-
-                dt = sigma_t - t_hat
-
-                delta = (noisy_coords - denoised_working_frame) / t_hat
-
-                if guidance_direction is not None:
-                    # Make sure guidance direction is in working frame, since denoised
-                    # may have been aligned. If using Tweedie/DPS, the grad is already
-                    # in working frame because denoised_for_grad was aligned.
-                    if not use_tweedie:
-                        guidance_direction = (
-                            apply_forward_transform(
-                                guidance_direction, align_transform, rotation_only=True
-                            )
-                            if align_transform is not None
-                            else guidance_direction
-                        )
-                    if gradient_normalization:
-                        grad_norm = guidance_direction.norm(dim=(1, 2), keepdim=True)
-                        delta_norm = delta.norm(dim=(1, 2), keepdim=True)
-                        guidance_direction = guidance_direction * delta_norm / (grad_norm + 1e-8)
-                    delta = delta + step_size * guidance_direction
-
-                coords = noisy_coords + step_scale * dt * delta
-
-                coords = coords.detach().clone()
-
-            trajectory_next_step.append(coords.clone().cpu())
-
-        # Concatenate atom array to match ensemble size
-        atom_array = stack([atom_array] * ensemble_size)
-        atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
-
-        structure["asym_unit"] = atom_array
-
-        return structure, (trajectory_denoised, trajectory_next_step), losses
-
-    def __del__(self):
-        logger.debug("Resetting model wrapper cached representations before deleting scaler.")
-        if hasattr(self.model_wrapper, "cached_representations"):
-            self.model_wrapper.cached_representations = {}  # pyright: ignore[reportAttributeAccessIssue] # see boltz.wrapper L201
-        # if there are other reset tasks, they can be added here
-        logger.debug("PureGuidance scaler deleted.")
+        return GuidanceOutput(
+            structure=structure,
+            final_state=coords,
+            trajectory=trajectory_next_step,
+            losses=losses,
+            metadata={"trajectory_denoised": trajectory_denoised},
+        )
