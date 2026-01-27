@@ -1,10 +1,13 @@
 """Shared pytest fixtures for sampleworks tests."""
 
+import importlib
+import inspect
 import sys
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from pathlib import Path
 from site import getsitepackages
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -15,11 +18,20 @@ import torch
 _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
 from atomworks.io.parser import parse
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, stack
-from sampleworks.utils.imports import BOLTZ_AVAILABLE, PROTENIX_AVAILABLE, RF3_AVAILABLE
+from sampleworks.core.samplers.edm import AF3EDMSampler
+from sampleworks.core.samplers.protocol import StepContext
+from sampleworks.utils.imports import (
+    BOLTZ_AVAILABLE,
+    PROTENIX_AVAILABLE,
+    RF3_AVAILABLE,
+)
 from sampleworks.utils.torch_utils import try_gpu
+
+from tests.mocks import MockFlowModelWrapper
 
 
 if TYPE_CHECKING:
@@ -167,7 +179,7 @@ def temp_output_dir(tmp_path: Path) -> Generator[Path, None, None]:
 
 @pytest.fixture(scope="session")
 def density_map_1vme(resources_dir: Path):
-    from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (  # noqa: E501
+    from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
         XMap,
     )
 
@@ -299,12 +311,12 @@ def basic_atom_array_altloc():
     )
     atom_array.coord = coord
     atom_array.set_annotation("chain_id", np.array(["A", "A", "A", "A", "A"]))
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    atom_array.set_annotation("res_name", np.array(["ALA", "GLY", "VAL", "LEU", "SER"]))
+    atom_array.set_annotation("res_id", np.array([1, 1, 2, 2, 2]))
+    atom_array.set_annotation("res_name", np.array(["ALA", "ALA", "VAL", "VAL", "VAL"]))
     atom_array.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
     atom_array.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-    atom_array.set_annotation("altloc_id", np.array(["A", "B", "A", "C", "B"]))
-    atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 0.4, 0.5]))
+    atom_array.set_annotation("altloc_id", np.array(["A", "B", "A", "B", "C"]))
+    atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 0.3, 0.1]))
     return atom_array
 
 
@@ -312,15 +324,15 @@ def basic_atom_array_altloc():
 def atom_array_with_full_occupancy():
     """AtomArray with some atoms having full occupancy."""
 
-    atom_array = AtomArray(7)
-    atom_array.coord = np.random.rand(7, 3)
-    atom_array.set_annotation("chain_id", np.array(["A"] * 7))
-    atom_array.set_annotation("res_id", np.arange(1, 8))
-    atom_array.set_annotation("res_name", np.array(["ALA"] * 7))
-    atom_array.set_annotation("atom_name", np.array(["CA"] * 7))
-    atom_array.set_annotation("element", np.array(["C"] * 7))
-    atom_array.set_annotation("altloc_id", np.array(["A", "B", "A", "C", "B", "D", "E"]))
-    atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 1.0, 0.4, 1.0, 0.7]))
+    atom_array = AtomArray(8)
+    atom_array.coord = np.random.rand(8, 3)
+    atom_array.set_annotation("chain_id", np.array(["A"] * 8))
+    atom_array.set_annotation("res_id", [1, 1, 2, 3, 4, 5, 5, 5])
+    atom_array.set_annotation("res_name", np.array(["ALA"] * 8))
+    atom_array.set_annotation("atom_name", np.array(["CA"] * 8))
+    atom_array.set_annotation("element", np.array(["C"] * 8))
+    atom_array.set_annotation("altloc_id", np.array(["A", "B", "A", "A", "A", "A", "B", "C"]))
+    atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 0.4, 1.0, 0.7, 0.2, 0.1]))
     return atom_array
 
 
@@ -336,12 +348,12 @@ def atom_array_stack_altloc():
 
     atom_array_stack = stack(arrays)
     atom_array_stack.set_annotation("chain_id", np.array(["A"] * 5))
-    atom_array_stack.set_annotation("res_id", np.arange(1, 6))
-    atom_array_stack.set_annotation("res_name", np.array(["ALA"] * 5))
+    atom_array_stack.set_annotation("res_id", np.array([1, 1, 2, 2, 2]))
+    atom_array_stack.set_annotation("res_name", np.array(["ALA", "ALA", "VAL", "VAL", "VAL"]))
     atom_array_stack.set_annotation("atom_name", np.array(["CA"] * 5))
     atom_array_stack.set_annotation("element", np.array(["C"] * 5))
-    atom_array_stack.set_annotation("altloc_id", np.array(["A", "B", "A", "C", "B"]))
-    atom_array_stack.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 1.0, 0.4]))
+    atom_array_stack.set_annotation("altloc_id", np.array(["A", "B", "A", "B", "C"]))
+    atom_array_stack.set_annotation("occupancy", np.array([0.5, 0.5, 0.6, 0.3, 0.1]))
 
     return atom_array_stack
 
