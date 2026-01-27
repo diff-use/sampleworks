@@ -55,6 +55,273 @@ if RF3_AVAILABLE:
     from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 
+# ============================================================================
+# Unified wrapper configuration
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class WrapperInfo:
+    """Unified configuration for wrapper tests.
+
+    Parameters
+    ----------
+    name
+        Human-readable name for test IDs (e.g., "boltz1", "mock").
+    fixture_name
+        Name of the pytest fixture that provides the wrapper instance.
+    annotate_fn_path
+        Fully qualified path to the annotate function (empty string for mock).
+    conditioning_type_path
+        Fully qualified path to the conditioning type (empty string for mock).
+    requires_out_dir
+        Whether the annotate function requires an out_dir parameter.
+    requires_slow
+        Whether this wrapper requires @pytest.mark.slow (needs checkpoints).
+    """
+
+    name: str
+    fixture_name: str
+    annotate_fn_path: str
+    conditioning_type_path: str
+    requires_out_dir: bool = True
+    requires_slow: bool = True
+
+
+WRAPPERS: list[WrapperInfo] = [
+    WrapperInfo(
+        "boltz1",
+        "boltz1_wrapper",
+        "sampleworks.models.boltz.wrapper.annotate_structure_for_boltz",
+        "sampleworks.models.boltz.wrapper.BoltzConditioning",
+    ),
+    WrapperInfo(
+        "boltz2",
+        "boltz2_wrapper",
+        "sampleworks.models.boltz.wrapper.annotate_structure_for_boltz",
+        "sampleworks.models.boltz.wrapper.BoltzConditioning",
+    ),
+    WrapperInfo(
+        "protenix",
+        "protenix_wrapper",
+        "sampleworks.models.protenix.wrapper.annotate_structure_for_protenix",
+        "sampleworks.models.protenix.wrapper.ProtenixConditioning",
+    ),
+    WrapperInfo(
+        "rf3",
+        "rf3_wrapper",
+        "sampleworks.models.rf3.wrapper.annotate_structure_for_rf3",
+        "sampleworks.models.rf3.wrapper.RF3Conditioning",
+        requires_out_dir=False,
+    ),
+    WrapperInfo(
+        "mock",
+        "mock_wrapper",
+        "",
+        "",
+        requires_out_dir=False,
+        requires_slow=False,
+    ),
+]
+
+STRUCTURES: list[str] = ["structure_1vme", "structure_6b8x"]
+
+
+def get_wrapper_by_name(name: str) -> WrapperInfo:
+    """Get wrapper info by name."""
+    for wrapper in WRAPPERS:
+        if wrapper.name == name:
+            return wrapper
+    raise ValueError(f"Unknown wrapper: {name}")
+
+
+def get_wrapper_by_fixture(fixture_name: str) -> WrapperInfo:
+    """Get wrapper info by fixture name."""
+    for wrapper in WRAPPERS:
+        if wrapper.fixture_name == fixture_name:
+            return wrapper
+    raise ValueError(f"Unknown wrapper fixture: {fixture_name}")
+
+
+def get_wrapper_ids() -> list[str]:
+    """Get wrapper IDs for parametrization."""
+    return [info.name for info in WRAPPERS]
+
+
+def get_fast_wrappers() -> list[WrapperInfo]:
+    """Get wrappers that don't require slow tests (mock wrappers)."""
+    return [info for info in WRAPPERS if not info.requires_slow]
+
+
+def get_slow_wrappers() -> list[WrapperInfo]:
+    """Get wrappers that require slow tests (real model checkpoints)."""
+    return [info for info in WRAPPERS if info.requires_slow]
+
+
+# ============================================================================
+# Sampler test configuration
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class SamplerTestConfig:
+    """Configuration for sampler tests.
+
+    Parameters
+    ----------
+    sampler_factory
+        Fully qualified path to the sampler class.
+    is_trajectory_sampler
+        Whether this sampler implements TrajectorySampler protocol.
+    default_num_steps
+        Default number of steps for testing.
+    sampler_kwargs
+        Keyword arguments for sampler construction (as tuple of tuples for hashability).
+    """
+
+    sampler_factory: str
+    is_trajectory_sampler: bool = True
+    default_num_steps: int = 10
+    sampler_kwargs: tuple[tuple[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class StepScalerTestConfig:
+    """Configuration for step scaler tests.
+
+    Parameters
+    ----------
+    scaler_factory
+        Fully qualified path to the scaler class, or None for no scaler.
+    requires_reward
+        Whether this scaler requires a reward function.
+    scaler_kwargs
+        Keyword arguments for scaler construction (as tuple of tuples for hashability).
+    """
+
+    scaler_factory: str | None
+    requires_reward: bool = False
+    scaler_kwargs: tuple[tuple[str, Any], ...] = ()
+
+
+SAMPLER_CONFIGS: dict[str, SamplerTestConfig] = {
+    "edm": SamplerTestConfig(
+        sampler_factory="sampleworks.core.samplers.edm.AF3EDMSampler",
+        sampler_kwargs=(("augmentation", False), ("align_to_input", False)),
+    ),
+    "mock_trajectory": SamplerTestConfig(
+        sampler_factory="tests.mocks.samplers.MockTrajectorySampler",
+    ),
+}
+
+STEP_SCALER_CONFIGS: dict[str, StepScalerTestConfig] = {
+    "none": StepScalerTestConfig(scaler_factory=None),
+    "no_scaling": StepScalerTestConfig(
+        scaler_factory="sampleworks.core.scalers.score_scalers.NoScalingScaler",
+    ),
+    "mock_step": StepScalerTestConfig(
+        scaler_factory="tests.mocks.scalers.MockStepScaler",
+        scaler_kwargs=(("step_size", 0.1),),
+    ),
+}
+
+ALL_SAMPLER_IDS = list(SAMPLER_CONFIGS.keys())
+FAST_SCALER_IDS = ["none", "no_scaling", "mock_step"]
+
+
+def create_sampler(config: SamplerTestConfig, device: torch.device) -> Any:
+    """Create sampler instance from config.
+
+    Parameters
+    ----------
+    config
+        The sampler test configuration.
+    device
+        The device to use for the sampler.
+
+    Returns
+    -------
+    Any
+        The instantiated sampler.
+    """
+    cls = _import_from_path(config.sampler_factory)
+    kwargs = dict(config.sampler_kwargs)
+    sig = inspect.signature(cls)
+    if "device" in sig.parameters:
+        kwargs["device"] = device
+    return cls(**kwargs)
+
+
+def create_scaler(config: StepScalerTestConfig) -> Any | None:
+    """Create step scaler instance from config.
+
+    Parameters
+    ----------
+    config
+        The step scaler test configuration.
+
+    Returns
+    -------
+    Any | None
+        The instantiated scaler, or None if config.scaler_factory is None.
+    """
+    if config.scaler_factory is None:
+        return None
+    cls = _import_from_path(config.scaler_factory)
+    return cls(**dict(config.scaler_kwargs))
+
+
+def _import_from_path(path: str) -> Any:
+    """Dynamically import an object from a fully qualified path."""
+    module_path, obj_name = path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, obj_name)
+
+
+def get_annotate_fn(wrapper: WrapperInfo) -> Callable[..., dict]:
+    """Get the annotate function for a wrapper configuration."""
+    if not wrapper.annotate_fn_path:
+        raise ValueError(f"Wrapper {wrapper.name} does not have an annotate function")
+    return _import_from_path(wrapper.annotate_fn_path)
+
+
+def get_conditioning_type(wrapper: WrapperInfo) -> type:
+    """Get the conditioning type for a wrapper configuration."""
+    if not wrapper.conditioning_type_path:
+        raise ValueError(f"Wrapper {wrapper.name} does not have a conditioning type")
+    return _import_from_path(wrapper.conditioning_type_path)
+
+
+def annotate_structure_for_wrapper(
+    wrapper: WrapperInfo,
+    structure: dict,
+    temp_output_dir: Path | None = None,
+    **kwargs: Any,
+) -> dict:
+    """Call the appropriate annotate function for a wrapper configuration.
+
+    Parameters
+    ----------
+    wrapper
+        The wrapper info configuration.
+    structure
+        The structure dictionary to annotate.
+    temp_output_dir
+        Temporary output directory (required if wrapper.requires_out_dir is True).
+    **kwargs
+        Additional keyword arguments passed to the annotate function.
+
+    Returns
+    -------
+    dict
+        The annotated structure.
+    """
+    annotate_fn = get_annotate_fn(wrapper)
+    if wrapper.requires_out_dir:
+        return annotate_fn(structure, out_dir=temp_output_dir, **kwargs)
+    return annotate_fn(structure, **kwargs)
+
+
 @pytest.fixture(scope="session")
 def resources_dir() -> Path:
     return Path(__file__).parent / "resources"
@@ -486,3 +753,59 @@ def atom_array_stack_simple():
     atom_array_stack.set_annotation("element", np.array(["C"] * 5))
 
     return atom_array_stack
+
+
+# ============================================================================
+# Mock wrapper and sampler fixtures for fast testing
+# ============================================================================
+
+
+@pytest.fixture
+def mock_wrapper() -> MockFlowModelWrapper:
+    """MockFlowModelWrapper with default settings."""
+    return MockFlowModelWrapper(num_atoms=50)
+
+
+@pytest.fixture
+def mock_structure() -> dict:
+    """Mock structure dict for testing without real PDB files."""
+    atom_array = type(
+        "MockAtomArray",
+        (),
+        {
+            "occupancy": np.ones(50),
+            "coord": np.random.randn(50, 3).astype(np.float32),
+            "element": np.array(["C"] * 50),
+            "b_factor": np.ones(50) * 20.0,
+        },
+    )()
+    return {"asym_unit": [atom_array], "metadata": {"id": "mock"}}
+
+
+@pytest.fixture
+def converging_mock_wrapper() -> MockFlowModelWrapper:
+    """MockFlowModelWrapper configured for convergence testing."""
+    target = torch.randn(1, 50, 3)
+    return MockFlowModelWrapper(num_atoms=50, target=target, convergence_rate=0.2)
+
+
+@pytest.fixture
+def edm_sampler(device: torch.device) -> AF3EDMSampler:
+    """AF3EDMSampler configured for testing."""
+    return AF3EDMSampler(
+        device=device,
+        augmentation=False,
+        align_to_input=False,
+    )
+
+
+@pytest.fixture
+def mock_trajectory_context() -> StepContext:
+    """Valid StepContext for trajectory-based sampling."""
+    return StepContext(
+        step_index=0,
+        total_steps=10,
+        t=torch.tensor([1.0]),
+        dt=torch.tensor([-0.1]),
+        noise_scale=torch.tensor([1.003]),
+    )
