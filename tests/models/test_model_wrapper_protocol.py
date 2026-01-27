@@ -1,167 +1,181 @@
 """Tests for protocol compliance of model wrappers.
 
-Tests that implementations correctly implement ModelWrapper and
-DiffusionModelWrapper protocols. These tests automatically run for
-all wrapper implementations listed in WRAPPER_FIXTURES.
+Tests that implementations correctly implement FlowModelWrapper protocol.
 """
 
-from collections.abc import Mapping
-
-import numpy as np
 import pytest
 import torch
 
 
-WRAPPER_FIXTURES = [
+BOLTZ_WRAPPER_FIXTURES = [
     "boltz1_wrapper",
     "boltz2_wrapper",
-    "protenix_wrapper",
-    "rf3_wrapper",
 ]
 
 
-@pytest.mark.parametrize("wrapper_fixture", WRAPPER_FIXTURES)
-class TestModelWrapperProtocol:
-    """Test that wrappers implement ModelWrapper protocol correctly.
+@pytest.mark.parametrize("wrapper_fixture", BOLTZ_WRAPPER_FIXTURES)
+class TestFlowModelWrapperProtocol:
+    """Test that Boltz wrappers implement FlowModelWrapper protocol correctly.
 
-    The ModelWrapper protocol requires:
-    - featurize(structure: dict, **kwargs) -> dict[str, Any]
-    - step(features: dict, grad_needed: bool, **kwargs) -> dict[str, Any]
+    The FlowModelWrapper protocol requires:
+    - featurize(structure: dict) -> GenerativeModelInput[C]
+    - step(x_t, t, *, features) -> FlowOrEnergyBasedModelOutputT
+    - initialize_from_prior(t, *, structure) -> FlowOrEnergyBasedModelOutputT
     """
 
+    def test_isinstance_flow_model_wrapper(self, wrapper_fixture: str, request):
+        """Test wrapper implements FlowModelWrapper protocol."""
+        from sampleworks.models.protocol import FlowModelWrapper
+
+        wrapper = request.getfixturevalue(wrapper_fixture)
+        assert isinstance(wrapper, FlowModelWrapper), (
+            f"{wrapper_fixture} does not implement FlowModelWrapper protocol"
+        )
+
     @pytest.mark.slow
-    def test_featurize_return_type(
+    def test_featurize_returns_generative_model_input(
         self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
     ):
-        """Test that featurize returns dict[str, Any]."""
+        """Test featurize returns GenerativeModelInput with x_init and conditioning."""
+        from sampleworks.models.boltz.wrapper import annotate_structure_for_boltz, BoltzConditioning
+        from sampleworks.models.protocol import GenerativeModelInput
+
         wrapper = request.getfixturevalue(wrapper_fixture)
-        features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        assert isinstance(features, dict), (
-            f"{wrapper_fixture}.featurize must return dict, got {type(features)}"
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = wrapper.featurize(structure)
+
+        assert isinstance(features, GenerativeModelInput), (
+            f"{wrapper_fixture}.featurize must return GenerativeModelInput, got {type(features)}"
         )
-        assert len(features) > 0, f"{wrapper_fixture}.featurize returned empty dict"
-
-    @pytest.mark.slow
-    def test_step_runs(self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request):
-        """Test that step executes without exceptions."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = wrapper.step(features, grad_needed=False)
-        assert output is not None, f"{wrapper_fixture}.step returned None"
-
-
-# TODO: More thorough tests once we lock down the protocol details
-
-
-@pytest.mark.parametrize("wrapper_fixture", WRAPPER_FIXTURES)
-class TestDiffusionModelWrapperProtocol:
-    """Test that wrappers implement DiffusionModelWrapper protocol correctly.
-
-    The DiffusionModelWrapper protocol extends ModelWrapper and requires:
-    - get_noise_schedule() -> Mapping[str, Float[ArrayLike | Tensor, "..."]]
-    - get_timestep_scaling(timestep: float | int) -> dict[str, float]
-    - denoise_step(features, noisy_coords, timestep, grad_needed, **kwargs)
-        -> dict[str, Any]
-    - initialize_from_noise(structure, noise_level, **kwargs)
-        -> Float[Tensor, "*batch _num_atoms 3"]
-    """
-
-    def test_get_noise_schedule_runs(self, wrapper_fixture: str, request):
-        """Test that get_noise_schedule executes without exceptions."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        schedule = wrapper.get_noise_schedule()
-        assert schedule is not None, f"{wrapper_fixture}.get_noise_schedule returned None"
-
-    def test_get_noise_schedule_return_type(self, wrapper_fixture: str, request):
-        """Test that get_noise_schedule returns Mapping with float arrays."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        schedule = wrapper.get_noise_schedule()
-        assert isinstance(schedule, Mapping), (
-            f"{wrapper_fixture}.get_noise_schedule must return Mapping, got{type(schedule)}"
+        assert features.x_init is not None, f"{wrapper_fixture}.featurize returned None for x_init"
+        assert features.conditioning is not None, (
+            f"{wrapper_fixture}.featurize returned None for conditioning"
         )
-        assert len(schedule) > 0, f"{wrapper_fixture}.get_noise_schedule returned empty mapping"
-
-        for key, value in schedule.items():
-            assert isinstance(key, str), (
-                f"{wrapper_fixture}.get_noise_schedule key must be str, got {type(key)}"
-            )
-            is_valid_array = (
-                torch.is_tensor(value)
-                or isinstance(value, np.ndarray)
-                or (hasattr(value, "__array__") and hasattr(value, "shape"))
-            )
-            assert is_valid_array, (
-                f"{wrapper_fixture}.get_noise_schedule['{key}'] must be array-like,"
-                f"got {type(value)}"
-            )
-
-    def test_get_noise_schedule_required_keys(self, wrapper_fixture: str, request):
-        """Test that get_noise_schedule returns required keys."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        schedule = wrapper.get_noise_schedule()
-
-        required_keys = {"sigma_tm", "sigma_t", "gamma"}
-        missing_keys = required_keys - set(schedule.keys())
-        assert not missing_keys, (
-            f"{wrapper_fixture}.get_noise_schedule missing required keys:{missing_keys}"
+        assert isinstance(features.conditioning, BoltzConditioning), (
+            f"{wrapper_fixture}.featurize conditioning must be BoltzConditioning, "
+            f"got {type(features.conditioning)}"
         )
 
-    def test_get_timestep_scaling_runs(self, wrapper_fixture: str, request):
-        """Test that get_timestep_scaling executes without exceptions."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        scaling = wrapper.get_timestep_scaling(0)
-        assert scaling is not None, f"{wrapper_fixture}.get_timestep_scaling returned None"
-
     @pytest.mark.slow
-    def test_initialize_from_noise_runs(self, wrapper_fixture: str, structure_6b8x: dict, request):
-        """Test that initialize_from_noise executes without exceptions."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        assert noisy_coords is not None, f"{wrapper_fixture}.initialize_from_noise returned None"
-
-    @pytest.mark.slow
-    def test_denoise_step_runs(
+    def test_featurize_x_init_shape(
         self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
     ):
-        """Test that denoise_step executes without exceptions."""
-        wrapper = request.getfixturevalue(wrapper_fixture)
-        features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
+        """Test featurize x_init has correct shape (batch, atoms, 3)."""
+        from sampleworks.models.boltz.wrapper import annotate_structure_for_boltz
 
-        output = wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
+        wrapper = request.getfixturevalue(wrapper_fixture)
+        ensemble_size = 2
+        structure = annotate_structure_for_boltz(
+            structure_6b8x, out_dir=temp_output_dir, ensemble_size=ensemble_size
         )
-        assert output is not None, f"{wrapper_fixture}.denoise_step returned None"
+        features = wrapper.featurize(structure)
+
+        assert features.x_init.ndim == 3, (
+            f"{wrapper_fixture}.featurize x_init should be 3D, got {features.x_init.ndim}D"
+        )
+        assert features.x_init.shape[0] == ensemble_size, (
+            f"{wrapper_fixture}.featurize x_init batch should be {ensemble_size}, "
+            f"got {features.x_init.shape[0]}"
+        )
+        assert features.x_init.shape[2] == 3, (
+            f"{wrapper_fixture}.featurize x_init last dim should be 3, "
+            f"got {features.x_init.shape[2]}"
+        )
 
     @pytest.mark.slow
-    def test_denoise_step_return_type(
+    def test_step_returns_tensor(
         self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
     ):
-        """Test that denoise_step returns dict with atom_coords_denoised."""
+        """Test step(x_t, t, features) returns coordinates tensor."""
+        from sampleworks.models.boltz.wrapper import annotate_structure_for_boltz
+
         wrapper = request.getfixturevalue(wrapper_fixture)
-        features = wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = wrapper.featurize(structure)
 
-        output = wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
+        t = torch.tensor([1.0])
+        result = wrapper.step(features.x_init, t, features=features)
+
+        assert torch.is_tensor(result), (
+            f"{wrapper_fixture}.step must return Tensor, got {type(result)}"
         )
-        assert isinstance(output, dict), (
-            f"{wrapper_fixture}.denoise_step must return dict, got {type(output)}"
+        assert result.shape[-1] == 3, (
+            f"{wrapper_fixture}.step result last dim should be 3, got {result.shape[-1]}"
         )
-        assert "atom_coords_denoised" in output, (
-            f"{wrapper_fixture}.denoise_step must return 'atom_coords_denoised' key"
+        assert result.shape == features.x_init.shape, (
+            f"{wrapper_fixture}.step output shape {result.shape} != input shape "
+            f"{features.x_init.shape}"
         )
 
+    @pytest.mark.slow
+    def test_step_with_float_t(
+        self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
+    ):
+        """Test step works with float t value."""
+        from sampleworks.models.boltz.wrapper import annotate_structure_for_boltz
 
-@pytest.mark.parametrize("wrapper_fixture", WRAPPER_FIXTURES)
+        wrapper = request.getfixturevalue(wrapper_fixture)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = wrapper.featurize(structure)
+
+        t = 1.0
+        result = wrapper.step(features.x_init, t, features=features)
+
+        assert torch.is_tensor(result), f"{wrapper_fixture}.step must return Tensor with float t"
+
+    @pytest.mark.slow
+    def test_initialize_from_prior_with_features(
+        self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
+    ):
+        """Test initialize_from_prior with features from featurize."""
+        from sampleworks.models.boltz.wrapper import annotate_structure_for_boltz
+
+        wrapper = request.getfixturevalue(wrapper_fixture)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = wrapper.featurize(structure)
+
+        batch_size = 3
+        result = wrapper.initialize_from_prior(batch_size, features=features)
+
+        assert torch.is_tensor(result), (
+            f"{wrapper_fixture}.initialize_from_prior must return Tensor"
+        )
+        assert result.shape[0] == batch_size, (
+            f"{wrapper_fixture}.initialize_from_prior batch should be {batch_size}, "
+            f"got {result.shape[0]}"
+        )
+        assert result.shape[-1] == 3, (
+            f"{wrapper_fixture}.initialize_from_prior last dim should be 3, got {result.shape[-1]}"
+        )
+
+    @pytest.mark.slow
+    def test_initialize_from_prior_with_shape(self, wrapper_fixture: str, request):
+        """Test initialize_from_prior with explicit shape."""
+        wrapper = request.getfixturevalue(wrapper_fixture)
+
+        batch_size = 2
+        num_atoms = 100
+        result = wrapper.initialize_from_prior(batch_size, shape=(num_atoms, 3))
+
+        assert torch.is_tensor(result), (
+            f"{wrapper_fixture}.initialize_from_prior must return Tensor"
+        )
+        assert result.shape == (batch_size, num_atoms, 3), (
+            f"{wrapper_fixture}.initialize_from_prior shape should be "
+            f"({batch_size}, {num_atoms}, 3), got {result.shape}"
+        )
+
+    def test_initialize_from_prior_raises_without_features_or_shape(
+        self, wrapper_fixture: str, request
+    ):
+        """Test initialize_from_prior raises ValueError without features or shape."""
+        wrapper = request.getfixturevalue(wrapper_fixture)
+
+        with pytest.raises(ValueError, match="features|shape"):
+            wrapper.initialize_from_prior(batch_size=2)
+
+
+@pytest.mark.parametrize("wrapper_fixture", BOLTZ_WRAPPER_FIXTURES)
 class TestFeaturizeClearsCache:
     """Test that featurize() clears cached representations.
 
@@ -174,18 +188,35 @@ class TestFeaturizeClearsCache:
         self, wrapper_fixture: str, structure_6b8x: dict, temp_output_dir, request
     ):
         """Test that calling featurize() clears any cached representations."""
+        from sampleworks.models.boltz.wrapper import annotate_structure_for_boltz
+
         wrapper = request.getfixturevalue(wrapper_fixture)
 
-        # only test wrappers that actually have cached_representations
         if not hasattr(wrapper, "cached_representations"):
             pytest.skip(f"{wrapper_fixture} does not have cached_representations attribute")
 
-        # dummy data to simulate previous run
         wrapper.cached_representations = {"cached": "representations"}
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        wrapper.featurize(structure)
 
-        wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-
-        assert len(wrapper.cached_representations) == 0, (
-            f"{wrapper_fixture}.featurize must clear cached_representations, "
-            f"but cache still contains: {list(wrapper.cached_representations.keys())}"
+        # After featurize, cache should be populated with fresh representations
+        # (not the dummy data we set)
+        assert "cached" not in wrapper.cached_representations, (
+            f"{wrapper_fixture}.featurize must clear old cached_representations"
         )
+
+
+@pytest.mark.parametrize("wrapper_fixture", BOLTZ_WRAPPER_FIXTURES)
+class TestStepRequiresFeatures:
+    """Test that step() requires features parameter."""
+
+    @pytest.mark.slow
+    def test_step_raises_without_features(self, wrapper_fixture: str, request):
+        """Test step raises ValueError when features is None."""
+        wrapper = request.getfixturevalue(wrapper_fixture)
+
+        x_t = torch.randn(1, 100, 3, device=wrapper.device)
+        t = torch.tensor([1.0])
+
+        with pytest.raises(ValueError, match="features"):
+            wrapper.step(x_t, t, features=None)

@@ -4,16 +4,21 @@ Tests specific to Boltz1Wrapper and Boltz2Wrapper implementations,
 including helper functions and model-specific behavior.
 """
 
+import dataclasses
 from pathlib import Path
+from typing import cast
 
-import numpy as np
 import pytest
 import torch
 from sampleworks.models.boltz.wrapper import (
+    annotate_structure_for_boltz,
     Boltz1Wrapper,
     Boltz2Wrapper,
+    BoltzConditioning,
+    BoltzConfig,
     create_boltz_input_from_structure,
 )
+from torch import Tensor
 
 
 class TestCreateBoltzInputFromStructure:
@@ -64,7 +69,7 @@ class TestCreateBoltzInputFromStructure:
         assert "sequences:" in content
 
     @pytest.mark.parametrize("structure_fixture", ["structure_1vme", "structure_6b8x"])
-    def test_works_with_both_test_structures(
+    def test_works_with_test_structures(
         self, structure_fixture: str, temp_output_dir: Path, request
     ):
         structure = request.getfixturevalue(structure_fixture)
@@ -77,6 +82,87 @@ class TestCreateBoltzInputFromStructure:
         assert "sequences:" in content
 
 
+class TestAnnotateStructureForBoltz:
+    """Test the annotate_structure_for_boltz helper function."""
+
+    def test_annotate_adds_boltz_config(self, structure_6b8x: dict, temp_output_dir: Path):
+        result = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        assert "_boltz_config" in result
+        assert isinstance(result["_boltz_config"], BoltzConfig)
+
+    def test_annotate_preserves_original_structure(
+        self, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        result = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        for key in structure_6b8x:
+            assert key in result
+            assert result[key] is structure_6b8x[key]
+
+    def test_annotate_default_values(self, structure_6b8x: dict, temp_output_dir: Path):
+        result = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        config = result["_boltz_config"]
+        assert config.num_workers == 8
+        assert config.ensemble_size == 1
+        assert config.recycling_steps == 3
+
+    def test_annotate_custom_values(self, structure_6b8x: dict, temp_output_dir: Path):
+        result = annotate_structure_for_boltz(
+            structure_6b8x,
+            out_dir=temp_output_dir,
+            num_workers=4,
+            ensemble_size=2,
+            recycling_steps=5,
+        )
+        config = result["_boltz_config"]
+        assert config.num_workers == 4
+        assert config.ensemble_size == 2
+        assert config.recycling_steps == 5
+
+    def test_annotate_out_dir_from_metadata(self, structure_6b8x: dict):
+        result = annotate_structure_for_boltz(structure_6b8x)
+        config = result["_boltz_config"]
+        expected_id = structure_6b8x.get("metadata", {}).get("id", "boltz_output")
+        assert config.out_dir == expected_id
+
+
+class TestBoltzConfig:
+    """Test the BoltzConfig dataclass."""
+
+    def test_boltz_config_default_values(self):
+        config = BoltzConfig()
+        assert config.out_dir is None
+        assert config.num_workers == 8
+        assert config.ensemble_size == 1
+        assert config.recycling_steps == 3
+
+    def test_boltz_config_custom_values(self, temp_output_dir: Path):
+        config = BoltzConfig(
+            out_dir=temp_output_dir,
+            num_workers=4,
+            ensemble_size=5,
+            recycling_steps=2,
+        )
+        assert config.out_dir == temp_output_dir
+        assert config.num_workers == 4
+        assert config.ensemble_size == 5
+        assert config.recycling_steps == 2
+
+
+class TestBoltzConditioning:
+    """Test the BoltzConditioning dataclass."""
+
+    def test_boltz_conditioning_is_frozen(self):
+        assert dataclasses.is_dataclass(BoltzConditioning)
+        fields = dataclasses.fields(BoltzConditioning)
+        field_names = [f.name for f in fields]
+        assert "s" in field_names
+        assert "z" in field_names
+        assert "s_inputs" in field_names
+        assert "relative_position_encoding" in field_names
+        assert "feats" in field_names
+        assert "diffusion_conditioning" in field_names
+
+
 @pytest.mark.slow
 class TestBoltz1WrapperInitialization:
     """Test Boltz1Wrapper initialization and setup."""
@@ -86,24 +172,13 @@ class TestBoltz1WrapperInitialization:
         assert hasattr(boltz1_wrapper, "model")
         assert hasattr(boltz1_wrapper, "device")
 
-    def test_noise_schedule_created(self, boltz1_wrapper: Boltz1Wrapper):
-        schedule = boltz1_wrapper.get_noise_schedule()
-        assert "sigma_tm" in schedule
-        assert "sigma_t" in schedule
-        assert "gamma" in schedule
-
-    def test_noise_schedule_shapes(self, boltz1_wrapper: Boltz1Wrapper):
-        schedule = boltz1_wrapper.get_noise_schedule()
-        assert torch.is_tensor(schedule["sigma_tm"])
-        assert torch.is_tensor(schedule["sigma_t"])
-        assert torch.is_tensor(schedule["gamma"])
-        assert len(schedule["sigma_tm"]) == boltz1_wrapper.predict_args.sampling_steps
-        assert len(schedule["sigma_t"]) == boltz1_wrapper.predict_args.sampling_steps
-        assert len(schedule["gamma"]) == boltz1_wrapper.predict_args.sampling_steps
-
     def test_model_on_correct_device(self, boltz1_wrapper: Boltz1Wrapper, device):
         assert boltz1_wrapper.device == device
         assert next(boltz1_wrapper.model.parameters()).device == device
+
+    def test_has_cached_representations_dict(self, boltz1_wrapper: Boltz1Wrapper):
+        assert hasattr(boltz1_wrapper, "cached_representations")
+        assert isinstance(boltz1_wrapper.cached_representations, dict)
 
 
 @pytest.mark.slow
@@ -115,113 +190,450 @@ class TestBoltz2WrapperInitialization:
         assert hasattr(boltz2_wrapper, "model")
         assert hasattr(boltz2_wrapper, "device")
 
-    def test_noise_schedule_created(self, boltz2_wrapper: Boltz2Wrapper):
-        schedule = boltz2_wrapper.get_noise_schedule()
-        assert "sigma_tm" in schedule
-        assert "sigma_t" in schedule
-        assert "gamma" in schedule
-
-    def test_noise_schedule_shapes(self, boltz2_wrapper: Boltz2Wrapper):
-        schedule = boltz2_wrapper.get_noise_schedule()
-        assert torch.is_tensor(schedule["sigma_tm"])
-        assert torch.is_tensor(schedule["sigma_t"])
-        assert torch.is_tensor(schedule["gamma"])
-        assert len(schedule["sigma_tm"]) == boltz2_wrapper.predict_args.sampling_steps
-        assert len(schedule["sigma_t"]) == boltz2_wrapper.predict_args.sampling_steps
-        assert len(schedule["gamma"]) == boltz2_wrapper.predict_args.sampling_steps
-
     def test_model_on_correct_device(self, boltz2_wrapper: Boltz2Wrapper, device):
         assert boltz2_wrapper.device == device
         assert next(boltz2_wrapper.model.parameters()).device == device
+
+    def test_has_cached_representations_dict(self, boltz2_wrapper: Boltz2Wrapper):
+        assert hasattr(boltz2_wrapper, "cached_representations")
+        assert isinstance(boltz2_wrapper.cached_representations, dict)
 
 
 @pytest.mark.slow
 class TestBoltz1WrapperFeaturize:
     """Test Boltz1Wrapper featurize method."""
 
-    def test_featurize_returns_features(
+    def test_featurize_returns_generative_model_input(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
-        assert len(features) > 0
-        # featurize returns raw batch features from dataloader
-        assert "token_pad_mask" in features
-        assert "atom_pad_mask" in features
+        from sampleworks.models.protocol import GenerativeModelInput
+
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        assert isinstance(features, GenerativeModelInput)
+        assert features.x_init is not None
+        assert isinstance(features.conditioning, BoltzConditioning)
+        assert "token_pad_mask" in features.conditioning.feats
+        assert "atom_pad_mask" in features.conditioning.feats
 
     def test_featurize_with_cif_structure(
         self, boltz1_wrapper: Boltz1Wrapper, structure_1vme: dict, temp_output_dir: Path
     ):
-        features = boltz1_wrapper.featurize(structure_1vme, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
-        assert len(features) > 0
+        from sampleworks.models.protocol import GenerativeModelInput
+
+        structure = annotate_structure_for_boltz(structure_1vme, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        assert isinstance(features, GenerativeModelInput)
+        assert features.x_init is not None
 
     def test_featurize_with_pdb_structure(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
-        assert len(features) > 0
+        from sampleworks.models.protocol import GenerativeModelInput
+
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        assert isinstance(features, GenerativeModelInput)
+        assert features.x_init is not None
 
     def test_featurize_creates_data_module(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        boltz1_wrapper.featurize(structure)
         assert hasattr(boltz1_wrapper, "data_module")
         assert boltz1_wrapper.data_module is not None
+
+    def test_featurize_clears_cached_representations(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        boltz1_wrapper.cached_representations = {"test_key": "test_value"}
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        boltz1_wrapper.featurize(structure)
+        assert "test_key" not in boltz1_wrapper.cached_representations
+
+    def test_featurize_with_ensemble_size(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        ensemble_size = 3
+        structure = annotate_structure_for_boltz(
+            structure_6b8x, out_dir=temp_output_dir, ensemble_size=ensemble_size
+        )
+        features = boltz1_wrapper.featurize(structure)
+        assert features.x_init.shape[0] == ensemble_size
 
 
 @pytest.mark.slow
 class TestBoltz2WrapperFeaturize:
     """Test Boltz2Wrapper featurize method."""
 
-    def test_featurize_returns_features(
+    def test_featurize_returns_generative_model_input(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
-        assert len(features) > 0
-        # featurize returns raw batch features from dataloader
-        assert "token_pad_mask" in features
-        assert "atom_pad_mask" in features
+        from sampleworks.models.protocol import GenerativeModelInput
+
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        assert isinstance(features, GenerativeModelInput)
+        assert features.x_init is not None
+        assert isinstance(features.conditioning, BoltzConditioning)
+        assert "token_pad_mask" in features.conditioning.feats
+        assert "atom_pad_mask" in features.conditioning.feats
 
     def test_featurize_with_cif_structure(
         self, boltz2_wrapper: Boltz2Wrapper, structure_1vme: dict, temp_output_dir: Path
     ):
-        features = boltz2_wrapper.featurize(structure_1vme, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
-        assert len(features) > 0
-        # featurize returns raw batch features from dataloader
-        assert "token_pad_mask" in features
-        assert "atom_pad_mask" in features
+        from sampleworks.models.protocol import GenerativeModelInput
+
+        structure = annotate_structure_for_boltz(structure_1vme, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        assert isinstance(features, GenerativeModelInput)
+        assert features.x_init is not None
+        assert features.conditioning is not None
+        assert "token_pad_mask" in features.conditioning.feats
+        assert "atom_pad_mask" in features.conditioning.feats
 
     def test_featurize_with_pdb_structure(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
-        assert len(features) > 0
-        # featurize returns raw batch features from dataloader
-        assert "token_pad_mask" in features
-        assert "atom_pad_mask" in features
+        from sampleworks.models.protocol import GenerativeModelInput
+
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        assert isinstance(features, GenerativeModelInput)
+        assert features.x_init is not None
+        assert features.conditioning is not None
+        assert "token_pad_mask" in features.conditioning.feats
+        assert "atom_pad_mask" in features.conditioning.feats
 
     def test_featurize_creates_data_module(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        boltz2_wrapper.featurize(structure)
         assert hasattr(boltz2_wrapper, "data_module")
         assert boltz2_wrapper.data_module is not None
+
+    def test_featurize_clears_cached_representations(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        boltz2_wrapper.cached_representations = {"test_key": "test_value"}
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        boltz2_wrapper.featurize(structure)
+        assert "test_key" not in boltz2_wrapper.cached_representations
+
+    def test_featurize_with_ensemble_size(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        ensemble_size = 3
+        structure = annotate_structure_for_boltz(
+            structure_6b8x, out_dir=temp_output_dir, ensemble_size=ensemble_size
+        )
+        features = boltz2_wrapper.featurize(structure)
+        assert features.x_init.shape[0] == ensemble_size
 
 
 @pytest.mark.slow
 class TestBoltz1WrapperStep:
     """Test Boltz1Wrapper step method."""
 
-    def test_step_returns_outputs(
+    def test_step_returns_tensor(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = boltz1_wrapper.step(features, grad_needed=False)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        result = boltz1_wrapper.step(x_init, t, features=features)
+
+        assert torch.is_tensor(result)
+
+    def test_step_output_shape_matches_input(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        result = boltz1_wrapper.step(x_init, t, features=features)
+
+        assert result.shape == x_init.shape
+        assert result.shape[-1] == 3
+
+    def test_step_with_high_t(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([160.0])
+        result = boltz1_wrapper.step(x_init, t, features=features)
+
+        assert torch.is_tensor(result)
+        assert result.shape == x_init.shape
+
+    def test_step_with_low_t(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([0.01])
+        result = boltz1_wrapper.step(x_init, t, features=features)
+
+        assert torch.is_tensor(result)
+        assert result.shape == x_init.shape
+
+    def test_step_with_float_t(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        result = boltz1_wrapper.step(x_init, 1.0, features=features)
+
+        assert torch.is_tensor(result)
+
+    def test_step_requires_features(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        with pytest.raises(ValueError, match="features"):
+            boltz1_wrapper.step(x_init, t, features=None)
+
+    def test_step_denoises_input(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        result = boltz1_wrapper.step(x_init, t, features=features)
+
+        assert not torch.allclose(result, x_init)
+
+
+@pytest.mark.slow
+class TestBoltz2WrapperStep:
+    """Test Boltz2Wrapper step method."""
+
+    def test_step_returns_tensor(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        result = boltz2_wrapper.step(x_init, t, features=features)
+
+        assert torch.is_tensor(result)
+
+    def test_step_output_shape_matches_input(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        result = boltz2_wrapper.step(x_init, t, features=features)
+
+        assert result.shape == x_init.shape
+        assert result.shape[-1] == 3
+
+    def test_step_with_high_t(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([160.0])
+        result = boltz2_wrapper.step(x_init, t, features=features)
+
+        assert torch.is_tensor(result)
+        assert result.shape == x_init.shape
+
+    def test_step_with_low_t(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([0.01])
+        result = boltz2_wrapper.step(x_init, t, features=features)
+
+        assert torch.is_tensor(result)
+        assert result.shape == x_init.shape
+
+    def test_step_with_float_t(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        result = boltz2_wrapper.step(x_init, 1.0, features=features)
+
+        assert torch.is_tensor(result)
+
+    def test_step_requires_features(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        with pytest.raises(ValueError, match="features"):
+            boltz2_wrapper.step(x_init, t, features=None)
+
+    def test_step_denoises_input(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        x_init = cast(Tensor, features.x_init)
+
+        t = torch.tensor([1.0])
+        result = boltz2_wrapper.step(x_init, t, features=features)
+
+        assert not torch.allclose(result, x_init)
+
+
+@pytest.mark.slow
+class TestBoltz1WrapperInitializeFromPrior:
+    """Test Boltz1Wrapper initialize_from_prior method."""
+
+    def test_initialize_from_prior_returns_tensor(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+
+        result = boltz1_wrapper.initialize_from_prior(batch_size=2, features=features)
+
+        assert torch.is_tensor(result)
+
+    def test_initialize_from_prior_correct_shape_from_features(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+
+        batch_size = 3
+        result = boltz1_wrapper.initialize_from_prior(batch_size=batch_size, features=features)
+
+        assert result.shape[0] == batch_size
+        assert result.shape[-1] == 3
+
+    def test_initialize_from_prior_correct_shape_from_explicit(self, boltz1_wrapper: Boltz1Wrapper):
+        batch_size = 2
+        num_atoms = 100
+        result = boltz1_wrapper.initialize_from_prior(batch_size=batch_size, shape=(num_atoms, 3))
+
+        assert result.shape == (batch_size, num_atoms, 3)
+
+    def test_initialize_from_prior_batch_dimension(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+
+        for batch_size in [1, 2, 5]:
+            result = boltz1_wrapper.initialize_from_prior(batch_size=batch_size, features=features)
+            assert result.shape[0] == batch_size
+
+    def test_initialize_from_prior_shape_validation(self, boltz1_wrapper: Boltz1Wrapper):
+        with pytest.raises(ValueError, match="shape"):
+            boltz1_wrapper.initialize_from_prior(batch_size=2, shape=(100,))
+
+        with pytest.raises(ValueError, match="shape"):
+            boltz1_wrapper.initialize_from_prior(batch_size=2, shape=(100, 4))
+
+    def test_initialize_from_prior_requires_features_or_shape(self, boltz1_wrapper: Boltz1Wrapper):
+        with pytest.raises(ValueError, match="features|shape"):
+            boltz1_wrapper.initialize_from_prior(batch_size=2)
+
+
+@pytest.mark.slow
+class TestBoltz2WrapperInitializeFromPrior:
+    """Test Boltz2Wrapper initialize_from_prior method."""
+
+    def test_initialize_from_prior_returns_tensor(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+
+        result = boltz2_wrapper.initialize_from_prior(batch_size=2, features=features)
+
+        assert torch.is_tensor(result)
+
+    def test_initialize_from_prior_correct_shape_from_features(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+
+        batch_size = 3
+        result = boltz2_wrapper.initialize_from_prior(batch_size=batch_size, features=features)
+
+        assert result.shape[0] == batch_size
+        assert result.shape[-1] == 3
+
+    def test_initialize_from_prior_correct_shape_from_explicit(self, boltz2_wrapper: Boltz2Wrapper):
+        batch_size = 2
+        num_atoms = 100
+        result = boltz2_wrapper.initialize_from_prior(batch_size=batch_size, shape=(num_atoms, 3))
+
+        assert result.shape == (batch_size, num_atoms, 3)
+
+    def test_initialize_from_prior_batch_dimension(
+        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+
+        for batch_size in [1, 2, 5]:
+            result = boltz2_wrapper.initialize_from_prior(batch_size=batch_size, features=features)
+            assert result.shape[0] == batch_size
+
+    def test_initialize_from_prior_shape_validation(self, boltz2_wrapper: Boltz2Wrapper):
+        with pytest.raises(ValueError, match="shape"):
+            boltz2_wrapper.initialize_from_prior(batch_size=2, shape=(100,))
+
+        with pytest.raises(ValueError, match="shape"):
+            boltz2_wrapper.initialize_from_prior(batch_size=2, shape=(100, 4))
+
+    def test_initialize_from_prior_requires_features_or_shape(self, boltz2_wrapper: Boltz2Wrapper):
+        with pytest.raises(ValueError, match="features|shape"):
+            boltz2_wrapper.initialize_from_prior(batch_size=2)
+
+
+@pytest.mark.slow
+class TestBoltz1WrapperPairformerPass:
+    """Test Boltz1Wrapper _pairformer_pass method (internal Pairformer computation)."""
+
+    def test_pairformer_pass_returns_outputs(
+        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
+    ):
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        assert features.conditioning is not None
+        output = boltz1_wrapper._pairformer_pass(features.conditioning.feats)
         assert isinstance(output, dict)
         assert "s" in output
         assert "z" in output
@@ -229,30 +641,27 @@ class TestBoltz1WrapperStep:
         assert "s_inputs" in output
         assert "relative_position_encoding" in output
 
-    def test_step_with_grad_enabled(
+    def test_pairformer_pass_respects_recycling_steps(
         self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = boltz1_wrapper.step(features, grad_needed=True)
-        assert isinstance(output, dict)
-
-    def test_step_respects_recycling_steps(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = boltz1_wrapper.step(features, grad_needed=False, recycling_steps=0)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz1_wrapper.featurize(structure)
+        assert features.conditioning is not None
+        output = boltz1_wrapper._pairformer_pass(features.conditioning.feats, recycling_steps=0)
         assert isinstance(output, dict)
 
 
 @pytest.mark.slow
-class TestBoltz2WrapperStep:
-    """Test Boltz2Wrapper step method."""
+class TestBoltz2WrapperPairformerPass:
+    """Test Boltz2Wrapper _pairformer_pass method (internal Pairformer computation)."""
 
-    def test_step_returns_outputs(
+    def test_pairformer_pass_returns_outputs(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = boltz2_wrapper.step(features, grad_needed=False)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        assert features.conditioning is not None
+        output = boltz2_wrapper._pairformer_pass(features.conditioning.feats)
         assert isinstance(output, dict)
         assert "s" in output
         assert "z" in output
@@ -267,385 +676,14 @@ class TestBoltz2WrapperStep:
         assert "atom_dec_bias" in dc
         assert "token_trans_bias" in dc
 
-    def test_step_with_grad_enabled(
+    def test_pairformer_pass_respects_recycling_steps(
         self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
     ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = boltz2_wrapper.step(features, grad_needed=True)
+        structure = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = boltz2_wrapper.featurize(structure)
+        assert features.conditioning is not None
+        output = boltz2_wrapper._pairformer_pass(features.conditioning.feats, recycling_steps=0)
         assert isinstance(output, dict)
-
-    def test_step_respects_recycling_steps(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        output = boltz2_wrapper.step(features, grad_needed=False, recycling_steps=0)
-        assert isinstance(output, dict)
-
-
-@pytest.mark.slow
-class TestBoltz1WrapperNoiseSchedule:
-    """Test Boltz1Wrapper noise schedule methods."""
-
-    def test_get_timestep_scaling_at_start(self, boltz1_wrapper: Boltz1Wrapper):
-        scaling = boltz1_wrapper.get_timestep_scaling(0)
-        assert "t_hat" in scaling
-        assert "sigma_t" in scaling
-        assert "eps_scale" in scaling
-        assert all(isinstance(v, float) for v in scaling.values())
-
-    def test_get_timestep_scaling_at_middle(self, boltz1_wrapper: Boltz1Wrapper):
-        mid_timestep = boltz1_wrapper.predict_args.sampling_steps // 2
-        scaling = boltz1_wrapper.get_timestep_scaling(mid_timestep)
-        assert all(isinstance(v, float) for v in scaling.values())
-
-    def test_get_timestep_scaling_at_end(self, boltz1_wrapper: Boltz1Wrapper):
-        last_timestep = boltz1_wrapper.predict_args.sampling_steps - 1
-        scaling = boltz1_wrapper.get_timestep_scaling(last_timestep)
-        assert all(isinstance(v, float) for v in scaling.values())
-
-    def test_timestep_scalings_are_positive(self, boltz1_wrapper: Boltz1Wrapper):
-        for t in [0, 5, 9]:
-            scaling = boltz1_wrapper.get_timestep_scaling(t)
-            assert scaling["sigma_t"] >= 0
-            assert scaling["eps_scale"] >= 0
-
-
-@pytest.mark.slow
-class TestBoltz2WrapperNoiseSchedule:
-    """Test Boltz2Wrapper noise schedule methods."""
-
-    def test_get_timestep_scaling_at_start(self, boltz2_wrapper: Boltz2Wrapper):
-        scaling = boltz2_wrapper.get_timestep_scaling(0)
-        assert "t_hat" in scaling
-        assert "sigma_t" in scaling
-        assert "eps_scale" in scaling
-        assert all(isinstance(v, float) for v in scaling.values())
-
-    def test_get_timestep_scaling_at_middle(self, boltz2_wrapper: Boltz2Wrapper):
-        mid_timestep = boltz2_wrapper.predict_args.sampling_steps // 2
-        scaling = boltz2_wrapper.get_timestep_scaling(mid_timestep)
-        assert all(isinstance(v, float) for v in scaling.values())
-
-    def test_get_timestep_scaling_at_end(self, boltz2_wrapper: Boltz2Wrapper):
-        last_timestep = boltz2_wrapper.predict_args.sampling_steps - 1
-        scaling = boltz2_wrapper.get_timestep_scaling(last_timestep)
-        assert all(isinstance(v, float) for v in scaling.values())
-
-    def test_timestep_scalings_are_positive(self, boltz2_wrapper: Boltz2Wrapper):
-        for t in [0, 5, 9]:
-            scaling = boltz2_wrapper.get_timestep_scaling(t)
-            assert scaling["sigma_t"] >= 0
-            assert scaling["eps_scale"] >= 0
-
-
-@pytest.mark.slow
-class TestBoltz1WrapperInitializeFromNoise:
-    """Test Boltz1Wrapper initialize_from_noise method."""
-
-    def test_initialize_from_noise_returns_tensor(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
-    ):
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        assert torch.is_tensor(noisy_coords)
-
-    def test_initialize_from_noise_correct_shape(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
-    ):
-        atom_array = structure_6b8x["asym_unit"]
-        coords = atom_array.coord
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        noisy_coords = (
-            np.asarray(noisy_coords.cpu())
-            if isinstance(noisy_coords, torch.Tensor)
-            else np.asarray(noisy_coords)
-        )
-        # Use a local variable and cast to Any to help pyright
-        mask = atom_array.occupancy > 0
-        sliced_coords = coords[:, mask]
-        assert noisy_coords.shape == sliced_coords.shape
-        assert noisy_coords.shape[-1] == 3
-
-    def test_initialize_from_noise_adds_noise(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
-    ):
-        atom_array = structure_6b8x["asym_unit"]
-        coords = atom_array.coord
-        noisy_coords = torch.as_tensor(
-            boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
-        )
-        assert not torch.allclose(
-            noisy_coords,
-            torch.as_tensor(
-                coords[:, atom_array.occupancy > 0],
-                device=boltz1_wrapper.device,
-            ),
-        )
-
-    def test_initialize_from_noise_at_different_levels(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
-    ):
-        for noise_level in [0, 5, 9]:
-            noisy_coords = boltz1_wrapper.initialize_from_noise(
-                structure_6b8x, noise_level=noise_level
-            )
-            assert torch.is_tensor(noisy_coords)
-            assert noisy_coords.shape[-1] == 3
-
-    def test_initialize_from_noise_raises_without_asym_unit(self, boltz1_wrapper: Boltz1Wrapper):
-        bad_structure = {"metadata": {}}
-        with pytest.raises(ValueError, match="asym_unit"):
-            boltz1_wrapper.initialize_from_noise(bad_structure, noise_level=0)
-
-
-@pytest.mark.slow
-class TestBoltz2WrapperInitializeFromNoise:
-    """Test Boltz2Wrapper initialize_from_noise method."""
-
-    def test_initialize_from_noise_returns_tensor(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
-    ):
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        assert torch.is_tensor(noisy_coords)
-
-    def test_initialize_from_noise_correct_shape(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
-    ):
-        atom_array = structure_6b8x["asym_unit"]
-        coords = atom_array.coord
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        noisy_coords = (
-            np.asarray(noisy_coords.cpu())
-            if isinstance(noisy_coords, torch.Tensor)
-            else np.asarray(noisy_coords)
-        )
-        assert noisy_coords.shape == coords[:, atom_array.occupancy > 0].shape
-        assert noisy_coords.shape[-1] == 3
-
-    def test_initialize_from_noise_adds_noise(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
-    ):
-        atom_array = structure_6b8x["asym_unit"]
-        coords = atom_array.coord
-        noisy_coords = torch.as_tensor(
-            boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=5)
-        )
-        assert not torch.allclose(
-            noisy_coords,
-            torch.as_tensor(
-                coords[:, atom_array.occupancy > 0],
-                device=boltz2_wrapper.device,
-            ),
-        )
-
-    def test_initialize_from_noise_at_different_levels(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
-    ):
-        for noise_level in [0, 5, 9]:
-            noisy_coords = boltz2_wrapper.initialize_from_noise(
-                structure_6b8x, noise_level=noise_level
-            )
-            assert torch.is_tensor(noisy_coords)
-            assert noisy_coords.shape[-1] == 3
-
-    def test_initialize_from_noise_raises_without_asym_unit(self, boltz2_wrapper: Boltz2Wrapper):
-        bad_structure = {"metadata": {}}
-        with pytest.raises(ValueError, match="asym_unit"):
-            boltz2_wrapper.initialize_from_noise(bad_structure, noise_level=0)
-
-
-@pytest.mark.slow
-class TestBoltz1WrapperDenoiseStep:
-    """Test Boltz1Wrapper denoise_step method."""
-
-    def test_denoise_step_returns_dict(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz1_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
-        )
-        assert isinstance(output, dict)
-        assert "atom_coords_denoised" in output
-
-    def test_denoise_step_output_is_tensor(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz1_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
-        )
-        assert torch.is_tensor(output["atom_coords_denoised"])
-        assert output["atom_coords_denoised"].shape[-1] == 3
-
-    def test_denoise_step_with_grad(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz1_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=True,
-            align_to_input=False,
-        )
-        assert torch.is_tensor(output["atom_coords_denoised"])
-
-    def test_denoise_step_raises_on_missing_features(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict
-    ):
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        bad_features = {"s": None}
-        with pytest.raises(KeyError, match="token_pad_mask"):
-            boltz1_wrapper.denoise_step(
-                bad_features,
-                noisy_coords,
-                timestep=0,
-                align_to_input=False,
-                overwrite_representations=True,
-            )
-
-        bad_features = {
-            "s": None,
-            "z": None,
-            "s_inputs": None,
-            "relative_position_encoding": None,
-            "feats": None,
-        }
-        boltz1_wrapper.cached_representations = bad_features
-
-        with pytest.raises(ValueError, match="Missing required features"):
-            boltz1_wrapper.denoise_step(
-                bad_features,
-                noisy_coords,
-                timestep=0,
-                align_to_input=False,
-                overwrite_representations=False,
-            )
-
-    def test_denoise_step_with_augmentation_disabled(
-        self, boltz1_wrapper: Boltz1Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz1_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz1_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz1_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            augmentation=False,
-            align_to_input=False,
-            overwrite_representations=True,
-        )
-        assert torch.is_tensor(output["atom_coords_denoised"])
-
-
-@pytest.mark.slow
-class TestBoltz2WrapperDenoiseStep:
-    """Test Boltz2Wrapper denoise_step method."""
-
-    def test_denoise_step_returns_dict(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz2_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
-        )
-        assert isinstance(output, dict)
-        assert "atom_coords_denoised" in output
-
-    def test_denoise_step_output_is_tensor(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz2_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
-        )
-        assert torch.is_tensor(output["atom_coords_denoised"])
-        assert output["atom_coords_denoised"].shape[-1] == 3
-
-    def test_denoise_step_with_grad(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz2_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=True,
-            align_to_input=False,
-        )
-        assert torch.is_tensor(output["atom_coords_denoised"])
-
-    def test_denoise_step_raises_on_missing_features(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict
-    ):
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        bad_features = {"s": None}
-
-        with pytest.raises(KeyError, match="token_pad_mask"):
-            boltz2_wrapper.denoise_step(
-                bad_features,
-                noisy_coords,
-                timestep=0,
-                align_to_input=False,
-                overwrite_representations=True,
-            )
-
-        bad_features = {
-            "s": None,
-            "z": None,
-            "s_inputs": None,
-            "relative_position_encoding": None,
-            "feats": None,
-        }
-        boltz2_wrapper.cached_representations = bad_features
-
-        with pytest.raises(ValueError, match="Missing required features"):
-            boltz2_wrapper.denoise_step(
-                bad_features,
-                noisy_coords,
-                timestep=0,
-                align_to_input=False,
-                overwrite_representations=False,
-            )
-
-    def test_denoise_step_with_augmentation_disabled(
-        self, boltz2_wrapper: Boltz2Wrapper, structure_6b8x: dict, temp_output_dir: Path
-    ):
-        features = boltz2_wrapper.featurize(structure_6b8x, out_dir=temp_output_dir)
-        noisy_coords = boltz2_wrapper.initialize_from_noise(structure_6b8x, noise_level=0)
-        output = boltz2_wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            augmentation=False,
-            align_to_input=False,
-            overwrite_representations=True,
-        )
-        assert torch.is_tensor(output["atom_coords_denoised"])
 
 
 @pytest.mark.slow
@@ -669,31 +707,46 @@ class TestBoltzWrappersEndToEnd:
         temp_output_dir: Path,
         request,
     ):
+        from sampleworks.models.protocol import GenerativeModelInput
+
         wrapper = request.getfixturevalue(wrapper_fixture)
         structure = request.getfixturevalue(structure_fixture)
 
-        features = wrapper.featurize(structure, out_dir=temp_output_dir)
-        assert isinstance(features, dict)
+        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        features = wrapper.featurize(annotated)
+        assert isinstance(features, GenerativeModelInput)
+        assert isinstance(features.conditioning, BoltzConditioning)
 
-        step_output = wrapper.step(features)
-        assert isinstance(step_output, dict)
+        pairformer_output = wrapper._pairformer_pass(features.conditioning.feats)
+        assert isinstance(pairformer_output, dict)
 
-        schedule = wrapper.get_noise_schedule()
-        assert isinstance(schedule, dict)
+        x_init = wrapper.initialize_from_prior(batch_size=2, features=features)
+        assert torch.is_tensor(x_init)
+        assert x_init.shape[0] == 2
 
-        scaling = wrapper.get_timestep_scaling(0)
-        assert isinstance(scaling, dict)
+        t = torch.tensor([1.0])
+        output = wrapper.step(x_init, t, features=features)
+        assert torch.is_tensor(output)
+        assert output.shape == x_init.shape
 
-        noisy_coords = wrapper.initialize_from_noise(structure, noise_level=0)
-        assert torch.is_tensor(noisy_coords)
+    @pytest.mark.parametrize("wrapper_fixture", ["boltz1_wrapper", "boltz2_wrapper"])
+    def test_multiple_step_calls(
+        self,
+        wrapper_fixture: str,
+        structure_6b8x: dict,
+        temp_output_dir: Path,
+        request,
+    ):
+        """Test that multiple step() calls work correctly (simulating sampling loop)."""
+        wrapper = request.getfixturevalue(wrapper_fixture)
 
-        output = wrapper.denoise_step(
-            features,
-            noisy_coords,
-            timestep=0,
-            grad_needed=False,
-            align_to_input=False,
-            overwrite_representations=True,
-        )
-        assert "atom_coords_denoised" in output
-        assert torch.is_tensor(output["atom_coords_denoised"])
+        annotated = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        features = wrapper.featurize(annotated)
+
+        x_t = wrapper.initialize_from_prior(batch_size=1, features=features)
+
+        for t_val in [160.0, 80.0, 40.0, 20.0, 10.0]:
+            t = torch.tensor([t_val])
+            x_t = wrapper.step(x_t, t, features=features)
+            assert torch.is_tensor(x_t)
+            assert x_t.shape[-1] == 3

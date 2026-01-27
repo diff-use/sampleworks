@@ -1,5 +1,6 @@
 """Shared pytest fixtures for sampleworks tests."""
 
+import sys
 from collections.abc import Generator
 from pathlib import Path
 from site import getsitepackages
@@ -8,6 +9,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 import torch
+
+
+# Add the project root to sys.path so that 'tests' can be imported as a package
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 from atomworks.io.parser import parse
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, stack
@@ -19,7 +26,6 @@ if TYPE_CHECKING:
     from sampleworks.models.boltz.wrapper import (
         Boltz1Wrapper,
         Boltz2Wrapper,
-        PredictArgs,
     )
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
     from sampleworks.models.rf3.wrapper import RF3Wrapper
@@ -28,7 +34,6 @@ if BOLTZ_AVAILABLE:
     from sampleworks.models.boltz.wrapper import (
         Boltz1Wrapper,
         Boltz2Wrapper,
-        PredictArgs,
     )
 
 if PROTENIX_AVAILABLE:
@@ -96,11 +101,9 @@ def boltz2_checkpoint_path() -> Path:
 def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
     if not BOLTZ_AVAILABLE:
         pytest.skip("Boltz dependencies not installed in this environment")
-    predict_args = PredictArgs(recycling_steps=1, sampling_steps=10, diffusion_samples=1)
     return Boltz1Wrapper(
         checkpoint_path=boltz1_checkpoint_path,
         use_msa_manager=True,
-        predict_args=predict_args,
         device=device,
     )
 
@@ -109,11 +112,9 @@ def boltz1_wrapper(boltz1_checkpoint_path: Path, device: torch.device):
 def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device):
     if not BOLTZ_AVAILABLE:
         pytest.skip("Boltz dependencies not installed in this environment")
-    predict_args = PredictArgs(recycling_steps=1, sampling_steps=10, diffusion_samples=1)
     return Boltz2Wrapper(
         checkpoint_path=boltz2_checkpoint_path,
         use_msa_manager=True,
-        predict_args=predict_args,
         device=device,
     )
 
