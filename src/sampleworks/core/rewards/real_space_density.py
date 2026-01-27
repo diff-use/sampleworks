@@ -5,7 +5,6 @@ import torch
 from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import ArrayLike, Float, Int
 from loguru import logger
-
 from sampleworks.core.forward_models.xray.real_space_density import (
     DifferentiableTransformer,
     XMap_torch,
