@@ -15,7 +15,10 @@ from biotite.structure.io import save_structure
 from loguru import logger
 
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
-from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
+from sampleworks.core.rewards.real_space_density import (
+    RealSpaceRewardFunction,
+    setup_scattering_params,
+)
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.utils.guidance_constants import (
@@ -186,7 +189,7 @@ def get_reward_function_and_structure(
     loss_order,
     resolution,
     structure_path: str | Path,
-) -> tuple[RewardFunction, dict[str, Any]]:
+) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
     logger.debug(f"Loading structure from {structure_path}")
     structure = parse(
         structure_path,  # pyright: ignore  (doesn't like the type being passed)
@@ -208,7 +211,7 @@ def get_reward_function_and_structure(
     logger.info(f"Selected {n_selected} atoms with occupancy > 0")
 
     logger.info("Creating reward function")
-    reward_function = RewardFunction(
+    reward_function = RealSpaceRewardFunction(
         xmap,
         scattering_params,
         selection_mask,

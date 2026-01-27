@@ -1,33 +1,15 @@
 """Shared utilities for scaler implementations."""
 
-from dataclasses import dataclass
 from typing import Any
 
 import einx
 import numpy as np
 import torch
 from biotite.structure import AtomArray, AtomArrayStack
-from jaxtyping import Float
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
     ATOMIC_NUM_TO_ELEMENT,
 )
-
-
-@dataclass
-class RewardInputs:
-    """Extracted inputs for reward function computation.
-
-    Contains all the information needed to call a RewardFunctionProtocol,
-    extracted from an atom array. This allows the caller to extract inputs
-    once and pass them to scale() methods without redundant extraction.
-    """
-
-    elements: Float[torch.Tensor, "*batch n_atoms"]
-    b_factors: Float[torch.Tensor, "*batch n_atoms"]
-    occupancies: Float[torch.Tensor, "*batch n_atoms"]
-    input_coords: Float[torch.Tensor, "*batch n_atoms 3"]
-    reward_param_mask: np.ndarray
-    mask_like: Float[torch.Tensor, "*batch n_atoms"]
+from sampleworks.core.rewards.protocol import RewardInputs
 
 
 def extract_reward_inputs(

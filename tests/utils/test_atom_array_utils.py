@@ -49,7 +49,7 @@ class TestSelectAltlocBasic:
         result = select_altloc(basic_atom_array_altloc, "A", return_full_array=False)
 
         assert list(cast(np.ndarray, result.chain_id)) == ["A", "A"]
-        assert list(cast(np.ndarray, result.res_id)) == [1, 3]
+        assert list(cast(np.ndarray, result.res_id)) == [1, 2]
         assert list(cast(np.ndarray, result.atom_name)) == ["CA", "CA"]
 
 

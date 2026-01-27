@@ -18,17 +18,13 @@ from tqdm import tqdm
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
     ATOMIC_NUM_TO_ELEMENT,
 )
-from sampleworks.core.rewards.real_space_density import RewardFunction
+from sampleworks.core.rewards.protocol import PrecomputableRewardFunctionProtocol
 from sampleworks.models.protocol import FlowModelWrapper
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
     create_random_transform,
     weighted_rigid_align_differentiable,
 )
-from sampleworks.utils.imports import check_any_model_available
-
-
-check_any_model_available()
 
 
 class FKSteering:
@@ -39,17 +35,17 @@ class FKSteering:
     def __init__(
         self,
         model_wrapper: FlowModelWrapper,
-        reward_function: RewardFunction,
+        reward_function: PrecomputableRewardFunctionProtocol,
     ):
         """Creates a Feynman-Kac Steering Scaler for guiding a diffusion model with a
-        RewardFunction.
+        PrecomputableRewardFunctionProtocol.
 
         Parameters
         ----------
         model_wrapper: FlowModelWrapper
             Diffusion model wrapper instance
-        reward_function: RewardFunction
-            Reward function to guide the diffusion process
+        reward_function: PrecomputableRewardFunctionProtocol
+            Reward function with precomputation support to guide the diffusion process
         """
         self.model_wrapper = model_wrapper
         self.reward_function = reward_function
