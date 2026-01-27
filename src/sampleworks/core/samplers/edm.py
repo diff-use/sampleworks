@@ -125,6 +125,23 @@ class AF3EDMSampler:
         if context.step_index >= context.total_steps:
             raise ValueError("StepContext step_index exceeds total_steps")
 
+    def check_schedule(self, schedule: SamplerSchedule) -> None:
+        """Validate that the provided schedule is compatible with this sampler.
+
+        Raises
+        ------
+        ValueError
+            If the schedule is incompatible with this sampler.
+        """
+        if not (
+            hasattr(schedule, "sigma_tm")
+            and hasattr(schedule, "sigma_t")
+            and hasattr(schedule, "gamma")
+        ):
+            raise ValueError(
+                "EDMSampler requires SamplerSchedule with sigma_tm, sigma_t, and gamma"
+            )
+
     def compute_schedule(self, num_steps: int) -> EDMSchedule:
         """Compute sigma-based schedule using RF3's EDM formula.
 
@@ -167,7 +184,7 @@ class AF3EDMSampler:
         )
 
     def get_context_for_step(
-        self, step_index: int, schedule: EDMSchedule, total_steps: int | None = None
+        self, step_index: int, schedule: SamplerSchedule, total_steps: int | None = None
     ) -> StepContext:
         """Build StepContext from schedule for given step.
 
@@ -175,8 +192,8 @@ class AF3EDMSampler:
         ----------
         step_index: int
             Current timestep index (0-indexed).
-        schedule: EDMSchedule
-            The schedule returned by compute_schedule().
+        schedule: SamplerSchedule
+            The schedule returned by compute_schedule() (must be EDMSchedule).
         total_steps: int | None
             Total number of steps (optional, inferred from schedule if not provided).
 
@@ -185,16 +202,19 @@ class AF3EDMSampler:
         StepContext
             Context with t, dt, noise_scale populated for this step.
         """
-        sigma_tm = schedule.sigma_tm[step_index]
-        sigma_t = schedule.sigma_t[step_index]
-        gamma = schedule.gamma[step_index]
+
+        self.check_schedule(schedule)
+
+        sigma_tm = schedule.sigma_tm[step_index]  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
+        sigma_t = schedule.sigma_t[step_index]  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
+        gamma = schedule.gamma[step_index]  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
 
         t_hat = sigma_tm * (1 + gamma)
         eps_scale = self.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
         dt = sigma_t - t_hat
 
         if total_steps is None:
-            total_steps = len(schedule.sigma_t)
+            total_steps = len(schedule.sigma_t)  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
 
         return StepContext(
             step_index=step_index,

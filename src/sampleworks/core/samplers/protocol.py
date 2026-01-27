@@ -224,6 +224,16 @@ class TrajectorySampler(Sampler[StateT, FlowModelWrapper], Protocol):
         """
         ...
 
+    def check_schedule(self, schedule: SamplerSchedule) -> None:
+        """Validate that the provided schedule is compatible with this sampler.
+
+        Raises
+        ------
+        ValueError
+            If the schedule is incompatible with this sampler.
+        """
+        ...
+
     def get_context_for_step(self, step_index: int, schedule: SamplerSchedule) -> StepContext:
         """Build StepContext from schedule for given step.
 
