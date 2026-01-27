@@ -24,7 +24,7 @@ from sampleworks.utils.framework_utils import Array
 
 
 if TYPE_CHECKING:
-    from sampleworks.core.rewards.real_space_density import RewardFunction
+    from sampleworks.core.rewards.protocol import RewardFunctionProtocol
     from sampleworks.core.samplers.protocol import StepContext, TrajectorySampler
 
 
@@ -106,7 +106,7 @@ class TrajectoryScalerProtocol(Protocol):
         model: FlowModelWrapper,
         sampler: TrajectorySampler,
         step_scaler: StepScalerProtocol[FlowModelWrapper],
-        reward: RewardFunction,
+        reward: RewardFunctionProtocol,
         num_particles: int = 1,
     ) -> GuidanceOutput:
         """Generate samples using trajectory level scaling methods. Defines the loop around
@@ -122,7 +122,7 @@ class TrajectoryScalerProtocol(Protocol):
             Sampler to use for generating the trajectory, e.g. EDM solver, Annealed Langevin, etc.
         step_scaler: StepScalerProtocol
             StepScalerProtocol defining update rule for per-step guidance.
-        reward: RewardFunction
+        reward: RewardFunctionProtocol
             Reward function for steering the model.
         num_particles: int
             Number of particles for trajectory-level methods that require a population.

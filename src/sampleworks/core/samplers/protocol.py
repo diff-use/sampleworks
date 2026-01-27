@@ -8,6 +8,7 @@ from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING, TypeVar
 import torch
 from jaxtyping import Float
 
+from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 from sampleworks.models.protocol import (
     EnergyBasedModelWrapper,
     FlowModelWrapper,
@@ -18,8 +19,7 @@ from sampleworks.utils.framework_utils import Array
 
 
 if TYPE_CHECKING:
-    from sampleworks.core.rewards.real_space_density import RewardFunction
-    from sampleworks.core.rewards.utils import RewardInputs
+    from sampleworks.core.rewards.protocol import RewardInputs
     from sampleworks.core.scalers.protocol import StepScalerProtocol
 
 
@@ -60,7 +60,7 @@ class StepContext:
     learning_rate: Float[Array, " batch"] | None = None
 
     # Guidance parameters (optional, for guided sampling)
-    reward: RewardFunction | None = None
+    reward: RewardFunctionProtocol | None = None
     reward_inputs: RewardInputs | None = None
 
     # Optional other metadata (could include velocity for momentum, etc.)
@@ -101,7 +101,7 @@ class StepContext:
 
     def with_reward(
         self,
-        reward: RewardFunction,
+        reward: RewardFunctionProtocol,
         reward_inputs: RewardInputs,
     ) -> StepContext:
         """Return a new context with reward information for guided sampling."""
