@@ -138,7 +138,7 @@ def extract_density_inputs_from_atomarray(
     )
 
 
-class RewardFunction:
+class RealSpaceRewardFunction:
     def __init__(
         self,
         xmap: XMap,

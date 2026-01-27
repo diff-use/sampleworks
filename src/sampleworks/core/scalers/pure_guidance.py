@@ -8,16 +8,11 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.real_space_density import RewardFunction
-from sampleworks.core.rewards.utils import RewardInputs
+from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
 from sampleworks.core.samplers.protocol import TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.models.protocol import FlowModelWrapper
-from sampleworks.utils.imports import check_any_model_available
-
-
-check_any_model_available()
 
 
 class PureGuidance:
@@ -56,7 +51,7 @@ class PureGuidance:
         model: FlowModelWrapper,
         sampler: TrajectorySampler,
         score_scaler: StepScalerProtocol,
-        reward: RewardFunction,
+        reward: RewardFunctionProtocol,
         num_particles: int = 1,
     ) -> GuidanceOutput:
         """Samples an ensemble using pure guidance.
