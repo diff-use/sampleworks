@@ -31,7 +31,7 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
-        exclude: (real_space_density|protenix|rf3)
+        exclude: (real_space_density|protenix|rf3|rfd3)
 
       - id: pyright-rf3
         name: pyright (rf3 environment)
@@ -39,7 +39,7 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
-        files: rf3
+        files: (rf3|rfd3)
 
       - id: pyright-protenix
         name: pyright (protenix environment)
