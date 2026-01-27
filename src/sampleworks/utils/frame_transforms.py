@@ -498,3 +498,93 @@ def weighted_rigid_align_differentiable(
 
     msg = f"Unsupported backend: {backend_name}"
     raise RuntimeError(msg)
+
+
+def align_to_reference_frame(
+    coords: Tensor,
+    reference: Tensor,
+    mask: Tensor | None = None,
+    weights: Tensor | None = None,
+    allow_gradients: bool = False,
+) -> tuple[Tensor, Mapping[str, Tensor]]:
+    """Align coordinates to a reference frame (torch-only).
+
+    Wrapper around weighted_rigid_align_differentiable with sensible defaults.
+    Always returns the transform for downstream use.
+
+    Parameters
+    ----------
+    coords
+        Coordinates to align (e.g., denoised prediction x̂₀), shape (batch, n, 3)
+    reference
+        Target reference coordinates (e.g., input structure x_init), shape (batch, n, 3)
+    mask
+        Optional atom mask. If None, uses all atoms (ones).
+    weights
+        Optional per-atom weights for alignment. If None, uses uniform weights (ones).
+    allow_gradients
+        Whether to preserve gradients through alignment.
+
+    Returns
+    -------
+    tuple[Tensor, Mapping]
+        (aligned_coords, transform) where transform has "rotation" and "translation"
+    """
+    import torch
+
+    coords_t = torch.as_tensor(coords)
+    reference_t = torch.as_tensor(reference)
+
+    if mask is None:
+        mask = torch.ones_like(coords_t[..., 0])
+    if weights is None:
+        weights = torch.ones_like(coords_t[..., 0])
+
+    aligned, transform = weighted_rigid_align_differentiable(
+        coords_t,
+        reference_t,
+        weights=torch.as_tensor(weights),
+        mask=torch.as_tensor(mask),
+        return_transforms=True,
+        allow_gradients=allow_gradients,
+    )
+    return aligned, transform
+
+
+def transform_coords_and_noise_to_frame(
+    coords: Tensor,
+    noise: Tensor,
+    transform: Mapping[str, Tensor],
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Transform coordinates and noise to target frame (torch-only).
+
+    Correctly handles the translation-invariance of noise: coordinates receive
+    the full transform (rotation + translation), while noise only receives
+    rotation.
+
+    This is important for diffusion models where the noisy state x_t = x + eps
+    should be reconstructed properly in the right frame when guidance is applied.
+
+    Parameters
+    ----------
+    coords
+        Clean coordinates before noise was added
+    noise
+        The noise (eps) that was added to coords
+    transform
+        Transform with "rotation" and "translation" keys
+
+    Returns
+    -------
+    tuple[Tensor, Tensor, Tensor]
+        (coords_in_frame, noise_in_frame, noisy_coords_in_frame)
+    """
+    import torch
+
+    coords_in_frame = apply_forward_transform(
+        torch.as_tensor(coords), transform, rotation_only=False
+    )
+    noise_in_frame = apply_forward_transform(torch.as_tensor(noise), transform, rotation_only=True)
+    noisy_coords_in_frame = coords_in_frame + noise_in_frame
+
+    return coords_in_frame, noise_in_frame, noisy_coords_in_frame
