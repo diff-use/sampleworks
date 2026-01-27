@@ -4,6 +4,7 @@ import functools
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+
 BOLTZ_AVAILABLE = False
 PROTENIX_AVAILABLE = False
 RF3_AVAILABLE = False
