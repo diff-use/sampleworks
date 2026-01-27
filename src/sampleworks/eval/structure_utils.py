@@ -1,13 +1,100 @@
 import re
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+import einx
 import numpy as np
+import torch
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
+from sampleworks.core.rewards.real_space_density import ATOMIC_NUM_TO_ELEMENT
 from sampleworks.eval.eval_dataclasses import ProteinConfig
+from sampleworks.models.protocol import GenerativeModelInput
+
+
+# TODO: standardize this more! This needs to have a specified output dataclass that
+# we deal with, and define how we couple the data here to the structure we output at the end
+# of sampling.
+@dataclass(frozen=True, slots=True)
+class SampleworksProcessedStructure:
+    """Processed structure and associated model and forward model info for sampling."""
+
+    structure: dict
+    model_input: GenerativeModelInput
+    input_coords: torch.Tensor
+    mask: np.ndarray
+    occupancies: torch.Tensor
+    b_factors: torch.Tensor
+    elements: torch.Tensor
+
+
+def process_structure_to_trajectory_input(
+    structure: dict,
+    coords_from_prior: torch.Tensor,
+    features: GenerativeModelInput,
+    ensemble_size: int,
+) -> SampleworksProcessedStructure:
+    # TODO: this is not generalizable currently, figure this out
+    if features.conditioning and features.__class__.__name__ == "ProtenixConditioning":
+        atom_array = features.conditioning["true_atom_array"]
+    else:
+        atom_array = structure["asym_unit"][0]
+    occupancy_mask = atom_array.occupancy > 0
+    nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
+    reward_param_mask = occupancy_mask & nan_mask
+
+    # TODO: jank way to get atomic numbers, fix this in real space density
+    elements = [
+        ATOMIC_NUM_TO_ELEMENT.index(e.title()) for e in atom_array.element[reward_param_mask]
+    ]
+    elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
+    b_factors = einx.rearrange(
+        "n -> b n",
+        torch.Tensor(atom_array.b_factor[reward_param_mask]),
+        b=ensemble_size,
+    )
+    # TODO: properly handle occupancy values in structure processing
+    # occupancies = einx.rearrange(
+    #     "n -> b n",
+    #     torch.Tensor(atom_array.occupancy[reward_param_mask]),
+    #     b=ensemble_size,
+    # )
+    occupancies = torch.ones_like(cast(torch.Tensor, b_factors)) / ensemble_size
+
+    input_coords = cast(
+        torch.Tensor,
+        einx.rearrange(
+            "... -> e ...",
+            torch.from_numpy(atom_array.coord).to(
+                dtype=coords_from_prior.dtype, device=coords_from_prior.device
+            ),
+            e=ensemble_size,
+        ),
+    )[..., reward_param_mask, :]
+
+    # TODO: account for missing residues in mask
+    mask_like = torch.ones_like(input_coords[..., 0])
+
+    if input_coords.shape != coords_from_prior.shape:
+        raise ValueError(
+            f"Input coordinates shape {input_coords.shape} does not match"
+            f" initialized coordinates {coords_from_prior.shape} shape."
+        )
+
+    return SampleworksProcessedStructure(
+        structure=structure,
+        model_input=features,
+        input_coords=input_coords,
+        mask=cast(np.ndarray, mask_like.cpu().numpy()),
+        occupancies=occupancies,
+        # (both of these are because einx.rearrange(graph=True) returns a tuple[Tensor, Tensor] not
+        # Tensor, and pyright doesn't infer it)
+        b_factors=b_factors,  # pyright: ignore[reportArgumentType]
+        elements=elements,  # pyright: ignore[reportArgumentType]
+    )
 
 
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
