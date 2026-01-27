@@ -4,7 +4,6 @@ Follows the protocol in model_wrapper_protocol.py
 to allow dependency injection/interchangeable use in sampling pipelines.
 """
 
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -28,17 +27,109 @@ from boltz.main import (
 )
 from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
-from einx import rearrange
-from jaxtyping import ArrayLike, Float
+from jaxtyping import Float
 from loguru import logger
 from torch import Tensor
 
+from sampleworks.eval.structure_utils import get_asym_unit_from_structure
+from sampleworks.models.protocol import GenerativeModelInput
 from sampleworks.utils.msa import MSAManager
+
+
+@dataclass(frozen=True, slots=True)
+class BoltzConditioning:
+    """Conditioning tensors from Boltz Pairformer pass.
+    Passable to diffusion module forward.
+
+    Attributes
+    ----------
+    s : Tensor
+        Single representation, shape [batch, tokens, dim].
+    z : Tensor
+        Pair representation, shape [batch, tokens, tokens, dim].
+    s_inputs : Tensor
+        Input embeddings, shape [batch, tokens, dim].
+    relative_position_encoding : Tensor
+        Relative position encoding tensor.
+    feats : dict[str, Any]
+        Raw batch dict from dataloader.
+    diffusion_conditioning : dict[str, Tensor] | None
+        Additional diffusion conditioning (Boltz2 only).
+    """
+
+    s: Tensor
+    z: Tensor
+    s_inputs: Tensor
+    relative_position_encoding: Tensor
+    feats: dict[str, Any]
+    diffusion_conditioning: dict[str, Tensor] | None = None
+
+
+@dataclass
+class BoltzConfig:
+    """Configuration for Boltz featurization.
+
+    Attributes
+    ----------
+    out_dir : str | Path | None
+        Output directory for processed Boltz files.
+    num_workers : int
+        Number of parallel workers for preprocessing.
+    ensemble_size : int
+        Number of samples to generate (batch dimension of x_init).
+    recycling_steps : int
+        Number of recycling steps to perform during featurization Pairformer pass.
+
+    """
+
+    out_dir: str | Path | None = None
+    num_workers: int = 8
+    ensemble_size: int = 1
+    recycling_steps: int = 3
+
+
+def annotate_structure_for_boltz(
+    structure: dict,
+    *,
+    out_dir: str | Path | None = None,
+    num_workers: int = 8,
+    ensemble_size: int = 1,
+    recycling_steps: int = 3,
+) -> dict:
+    """Annotate an Atomworks structure with Boltz-specific configuration.
+
+    Parameters
+    ----------
+    structure : dict
+        Atomworks structure dictionary.
+    out_dir : str | Path | None
+        Output directory for processed Boltz files.
+        Defaults to structure metadata ID or "boltz_output".
+    num_workers : int
+        Number of parallel workers for preprocessing.
+    ensemble_size : int
+        Number of samples to generate (batch dimension of x_init).
+    recycling_steps : int
+        Number of recycling steps to perform during featurization Pairformer pass.
+
+    Returns
+    -------
+    dict
+        Structure dict with "_boltz_config" key added.
+    """
+    config = BoltzConfig(
+        out_dir=out_dir or structure.get("metadata", {}).get("id", "boltz_output"),
+        num_workers=num_workers,
+        ensemble_size=ensemble_size,
+        recycling_steps=recycling_steps,
+    )
+    return {**structure, "_boltz_config": config}
 
 
 @dataclass
 class PredictArgs:
-    """Arguments for model prediction."""
+    """Arguments for model prediction. This is just used for compatibility with Boltz model init,
+    not anywhere else"""
 
     recycling_steps: int = 3  # default in Boltz1
     sampling_steps: int = 200
@@ -150,7 +241,6 @@ class Boltz2Wrapper:
         self,
         checkpoint_path: str | Path,
         use_msa_manager: bool = True,
-        predict_args: PredictArgs = PredictArgs(),
         diffusion_args: Boltz2DiffusionParams = Boltz2DiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         method: str = "MD",
@@ -165,9 +255,6 @@ class Boltz2Wrapper:
         use_msa_manager: bool, optional
             If ``True``, fetch MSA features from the ColabFold server or cached values; otherwise
             rely on precomputed MSAs.  See sampleworks.utils.msa.MSAManager for details.
-        predict_args: PredictArgs, optional
-            Runtime prediction configuration such as recycling depth and sampling
-            steps.
         diffusion_args: Boltz2DiffusionParams, optional
             Diffusion process parameters passed down to the Boltz2 model.
         steering_args: BoltzSteeringParams, optional
@@ -181,7 +268,6 @@ class Boltz2Wrapper:
         """
         self.checkpoint_path = checkpoint_path
         self.use_msa_manager = use_msa_manager
-        self.predict_args = predict_args
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
         self.method = method
@@ -205,7 +291,7 @@ class Boltz2Wrapper:
                 Boltz2.load_from_checkpoint(
                     checkpoint_path,
                     strict=True,
-                    predict_args=asdict(predict_args),
+                    predict_args=asdict(PredictArgs()),
                     map_location="cpu",
                     diffusion_process_args=asdict(diffusion_args),
                     ema=False,
@@ -221,18 +307,6 @@ class Boltz2Wrapper:
 
         self.data_module: Boltz2InferenceDataModule
         self.cached_representations: dict[str, Any] = {}
-
-        sigmas = self.model.structure_module.sample_schedule(self.predict_args.sampling_steps)
-        gammas = torch.where(
-            sigmas > self.model.structure_module.gamma_min,
-            self.model.structure_module.gamma_0,
-            0.0,
-        )
-        self.noise_schedule: dict[str, Float[Tensor, ...]] = {
-            "sigma_tm": sigmas[:-1],
-            "sigma_t": sigmas[1:],
-            "gamma": gammas[1:],
-        }
 
     def _setup_data_module(
         self,
@@ -304,140 +378,144 @@ class Boltz2Wrapper:
             override_method=self.method,
         )
 
-    def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
+    def featurize(self, structure: dict) -> GenerativeModelInput[BoltzConditioning]:
         """From an Atomworks structure, calculate Boltz-2 input features.
+
+        Runs Pairformer pass and initializes x_init from prior distribution.
 
         Parameters
         ----------
         structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-2 featurization.
-
-            - out_dir: str | Path
-                Output directory for processed Boltz intermediate files. Defaults first
-                to the structure ID from metadata, then to "boltz2_output" in the
-                current working directory.
-            - num_workers: int
-                Number of parallel workers for input data processing. Defaults to 8.
+            Atomworks structure dictionary. Can be annotated with Boltz config
+            via `annotate_structure_for_boltz()`. Config is read from
+            `structure["_boltz_config"]` if present, otherwise default BoltzConfig
+            values are used.
 
         Returns
         -------
-        dict[str, Any]
-            Boltz-2 input features (from dataloader).
+        GenerativeModelInput[BoltzConditioning]
+            Model input with x_init and Pairformer conditioning.
         """
-        # If featurize is called again, we should clear cached representations
-        # to avoid using stale data
         self.cached_representations.clear()
 
-        # Side effect: creates Boltz input YAML file in out_dir
+        config = structure.get("_boltz_config", BoltzConfig())
+        if isinstance(config, dict):
+            config = BoltzConfig(**config)
+
+        out_dir = config.out_dir or structure.get("metadata", {}).get("id", "boltz2_output")
+        num_workers = config.num_workers
+        ensemble_size = config.ensemble_size
+
         input_path = create_boltz_input_from_structure(
             structure,
-            kwargs.get("out_dir", structure.get("metadata", {}).get("id", "boltz2_output")),
+            out_dir,
             msa_manager=self.msa_manager,
             msa_pairing_strategy=self.msa_pairing_strategy,
         )
 
-        # Side effect: creates files in the processed directory of out_dir
-        self._setup_data_module(
-            input_path,
-            kwargs.get("out_dir", "boltz2_output"),
-            num_workers=kwargs.get("num_workers", 8),
-        )
+        self._setup_data_module(input_path, out_dir, num_workers=num_workers)
 
         batch = self.data_module.transfer_batch_to_device(
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
-        return batch
 
-    def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
-        """
-        Perform a pass through the Pairformer module to obtain output, which can then be
-        passed into the diffusion module. Pretty much only here to match the protocol
-        and be used in featurize, but could be useful for doing exploration in
-        the Boltz embedding space.
+        pairformer_out = self._pairformer_pass(batch, recycling_steps=config.recycling_steps)
+        self.cached_representations = pairformer_out
+
+        conditioning = BoltzConditioning(
+            s=pairformer_out["s"],
+            z=pairformer_out["z"],
+            s_inputs=pairformer_out["s_inputs"],
+            relative_position_encoding=pairformer_out["relative_position_encoding"],
+            feats=pairformer_out["feats"],
+            diffusion_conditioning=pairformer_out.get("diffusion_conditioning"),
+        )
+
+        # NOTE: the structure dict input to featurize will be used to determine the shape here -
+        # this might mean that we have compatibility issues with the data module featurization of
+        # the structure if they differ.
+        x_init = self.initialize_from_prior(
+            batch_size=ensemble_size, shape=(get_asym_unit_from_structure(structure).shape[-1], 3)
+        )
+
+        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+
+    def _pairformer_pass(
+        self, features: dict[str, Any], recycling_steps: int = 3
+    ) -> dict[str, Any]:
+        """Perform a pass through the Pairformer module.
+
+        Internal method that computes Pairformer representations. Called by
+        `featurize()` and cached for reuse across denoising steps.
 
         Parameters
         ----------
-        features: dict[str, Any]
-            Model features as returned by `featurize`.
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-2 Pairformer step.
-
-            - recycling_steps: int
-                Number of recycling steps to perform. Defaults to the value in
-                predict_args.
-
+        features : dict[str, Any]
+            Raw batch dict from dataloader.
+        recycling_steps : int | None, optional
+            Number of recycling steps to perform, by default 3.
 
         Returns
         -------
         dict[str, Any]
-            Boltz-2 Pairformer outputs.
+            Pairformer outputs (s, z, s_inputs, relative_position_encoding, feats).
         """
-        with torch.set_grad_enabled(grad_needed):
-            mask: Tensor = features["token_pad_mask"]
-            pair_mask = mask[:, :, None] * mask[:, None, :]
-            s_inputs = self.model.input_embedder(features)
+        mask: Tensor = features["token_pad_mask"]
+        pair_mask = mask[:, :, None] * mask[:, None, :]
+        s_inputs = self.model.input_embedder(features)
 
-            s_init = self.model.s_init(s_inputs)
-            z_init = (
-                self.model.z_init_1(s_inputs)[:, :, None]
-                + self.model.z_init_2(s_inputs)[:, None, :]
-            )
+        s_init = self.model.s_init(s_inputs)
+        z_init = (
+            self.model.z_init_1(s_inputs)[:, :, None] + self.model.z_init_2(s_inputs)[:, None, :]
+        )
 
-            relative_position_encoding = self.model.rel_pos(features)
+        relative_position_encoding = self.model.rel_pos(features)
 
-            z_init = z_init + relative_position_encoding
-            z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
+        z_init = z_init + relative_position_encoding
+        z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
 
-            if self.model.bond_type_feature:
-                z_init = z_init + self.model.token_bonds_type(features["type_bonds"].long())
-            z_init = z_init + self.model.contact_conditioning(features)
+        if self.model.bond_type_feature:
+            z_init = z_init + self.model.token_bonds_type(features["type_bonds"].long())
+        z_init = z_init + self.model.contact_conditioning(features)
 
-            s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
+        s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
 
-            for _ in range(
-                kwargs.get("recycling_steps", self.predict_args.recycling_steps) + 1
-            ):  # 3 is Boltz-2 default
-                s = s_init + self.model.s_recycle(self.model.s_norm(s))
-                z = z_init + self.model.z_recycle(self.model.z_norm(z))
+        for _ in range(recycling_steps):  # 3 is Boltz-2 default
+            s = s_init + self.model.s_recycle(self.model.s_norm(s))
+            z = z_init + self.model.z_recycle(self.model.z_norm(z))
 
-                if self.model.use_templates:
-                    if self.model.is_template_compiled:
-                        template_module = (
-                            self.model.template_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                        )
-                    else:
-                        template_module = self.model.template_module
-
-                    z = z + template_module(
-                        z, features, pair_mask, use_kernels=self.model.use_kernels
-                    )  # type: ignore (Object will be callable here)
-
-                if self.model.is_msa_compiled:
-                    msa_module = self.model.msa_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+            if self.model.use_templates:
+                if self.model.is_template_compiled:
+                    template_module = (
+                        self.model.template_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                    )
                 else:
-                    msa_module = self.model.msa_module
+                    template_module = self.model.template_module
 
-                z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)  # type: ignore (Object will be callable here)
+                z = z + template_module(z, features, pair_mask, use_kernels=self.model.use_kernels)  # type: ignore (Object will be callable here)
 
-                if self.model.is_pairformer_compiled:
-                    pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                else:
-                    pairformer_module = self.model.pairformer_module
+            if self.model.is_msa_compiled:
+                msa_module = self.model.msa_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+            else:
+                msa_module = self.model.msa_module
 
-                s, z = pairformer_module(s, z, mask=mask, pair_mask=pair_mask)  # type: ignore (Object will be callable here)
+            z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)  # type: ignore (Object will be callable here)
 
-            q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
-                self.model.diffusion_conditioning(
-                    s_trunk=s,
-                    z_trunk=z,
-                    relative_position_encoding=relative_position_encoding,
-                    feats=features,
-                )
+            if self.model.is_pairformer_compiled:
+                pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+            else:
+                pairformer_module = self.model.pairformer_module
+
+            s, z = pairformer_module(s, z, mask=mask, pair_mask=pair_mask)  # type: ignore (Object will be callable here)
+
+        q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+            self.model.diffusion_conditioning(
+                s_trunk=s,
+                z_trunk=z,
+                relative_position_encoding=relative_position_encoding,
+                feats=features,
             )
+        )
 
         diffusion_conditioning = {
             "q": q,
@@ -457,269 +535,115 @@ class Boltz2Wrapper:
             "diffusion_conditioning": diffusion_conditioning,
         }
 
-    def denoise_step(
+    def step(
         self,
-        features: dict[str, Any],
-        noisy_coords: Float[ArrayLike | Tensor, "..."],
-        timestep: float | int,
-        grad_needed: bool = False,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """
-        Perform denoising at given timestep/noise level.
-        Returns predicted clean sample or predicted noise depending on
-        model parameterization.
+        x_t: Float[Tensor, "batch atoms 3"],
+        t: Float[Tensor, "*batch"] | float,
+        *,
+        features: GenerativeModelInput[BoltzConditioning] | None = None,
+    ) -> Float[Tensor, "batch atoms 3"]:
+        """Perform denoising at given timestep/noise level.
 
-        Note that once this is run, a cached set of features will be stored--to avoid this,
-        the best practice to re-instantiate the wrapper.
+        Returns predicted clean sample (x̂₀).
 
         Parameters
         ----------
-        features: dict[str, Any]
-            Model features produced by :meth:`featurize` or :meth:`step`.
-        noisy_coords: Float[Tensor, "..."]
-            Noisy atom coordinates at the current timestep.
-        timestep: int
-            Current timestep/noise level - for Boltz, this is the reverse timestep.
-            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
-            is the "reverse" diffusion time.
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-2 denoising.
-
-            t_hat (float, optional)
-                Precomputed t_hat value for the current timestep; if not provided, it
-                will be computed internally.
-
-            eps (Tensor, optional)
-                Precomputed noise tensor for the current timestep; if not provided, it
-                will be sampled internally.
-
-            multiplicity (int, optional)
-                Overrides the multiplicity passed to the diffusion network, which is the
-                replicating the model does internally along axis=0; defaults to the
-                batch size of `noisy_coords`.
-
-            overwrite_representations (bool, optional)
-                Whether to overwrite cached representations (default False).
-                Do this if you are running a new input sample through the model.
-
-            recycling_steps (int, optional)
-                Number of recycling steps to perform (default 3 from PredictArgs).
-                This will only be applied if overwrite_representations is True, as
-                it is passed to the pairformer module computation that is ideally
-                cached for efficiency.
+        x_t : Float[Tensor, "batch atoms 3"]
+            Noisy structure at timestep t.
+        t : Float[Tensor, "*batch"] | float
+            Current timestep/noise level (t_hat from EDM schedule).
+        features : GenerativeModelInput[BoltzConditioning] | None
+            Model features as returned by `featurize`.
 
         Returns
         -------
-        dict[str, Tensor]
-            Dictionary containing ``"atom_coords_denoised"`` with the cleaned
-            coordinate tensor.
+        Float[Tensor, "batch atoms 3"]
+            Predicted clean sample coordinates.
         """
+        if features is None or features.conditioning is None:
+            raise ValueError("features with conditioning required for step()")
 
-        if not self.cached_representations or kwargs.get("overwrite_representations", False):
-            # Side effect: overwrites class attribute
-            self.cached_representations = self.step(
-                features,
-                grad_needed=grad_needed,
-                recycling_steps=kwargs.get("recycling_steps", self.predict_args.recycling_steps),
-            )
+        cond = features.conditioning
+        if not isinstance(x_t, torch.Tensor):
+            x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
 
-        features = self.cached_representations
-
-        if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
-
-        s = features.get("s", None)
-        z = features.get("z", None)
-        s_inputs = features.get("s_inputs", None)
-        relative_position_encoding = features.get("relative_position_encoding", None)
-        # These are the input features to the conditioning networks
-        feats = features.get("feats", None)
-
-        if any(x is None for x in [s, z, s_inputs, relative_position_encoding, features]):
-            raise ValueError("Missing required features for denoise_step")
-
-        # shape [1, N_padded]
-        feats = cast(dict[str, Any], feats)
+        feats = cond.feats
         atom_mask = feats.get("atom_pad_mask")
         atom_mask = cast(Tensor, atom_mask)
-        # shape [batch_size, N_padded]
-        atom_mask = atom_mask.repeat_interleave(noisy_coords.shape[0], dim=0)
+        atom_mask = atom_mask.repeat_interleave(x_t.shape[0], dim=0)
 
-        with torch.set_grad_enabled(grad_needed):
-            pad_len = atom_mask.shape[1] - noisy_coords.shape[1]
-            if pad_len >= 0:
-                padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
-            else:
-                raise ValueError("pad_len is negative, cannot pad noisy_coords")
+        pad_len = atom_mask.shape[1] - x_t.shape[1]
+        if pad_len >= 0:
+            padded_x_t = pad_dim(x_t, dim=1, pad_len=pad_len)
+        else:
+            raise ValueError("pad_len is negative, cannot pad x_t")
 
-            if "t_hat" in kwargs and "eps" in kwargs:
-                t_hat = kwargs["t_hat"]
-                eps = cast(Tensor, kwargs["eps"])
-                if pad_len > 0 and eps.shape[1] != padded_noisy_coords.shape[1]:
-                    eps = pad_dim(eps, dim=1, pad_len=pad_len)
-            else:
-                timestep_scaling = self.get_timestep_scaling(timestep)
-                eps = timestep_scaling["eps_scale"] * torch.randn(
-                    padded_noisy_coords.shape, device=self.device
-                )
-                t_hat = timestep_scaling["t_hat"]
+        padded_atom_coords_denoised = self.model.structure_module.preconditioned_network_forward(
+            padded_x_t,
+            t,
+            network_condition_kwargs=dict(
+                multiplicity=padded_x_t.shape[0],
+                s_inputs=cond.s_inputs,
+                s_trunk=cond.s,
+                feats=feats,
+                diffusion_conditioning=cond.diffusion_conditioning,
+            ),
+        )
 
-            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
+        atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :].reshape(
+            x_t.shape[0], -1, 3
+        )
 
-            padded_atom_coords_denoised = (
-                self.model.structure_module.preconditioned_network_forward(
-                    padded_noisy_coords_eps,
-                    t_hat,
-                    network_condition_kwargs=dict(
-                        multiplicity=kwargs.get("multiplicity", padded_noisy_coords_eps.shape[0]),
-                        s_inputs=s_inputs,
-                        s_trunk=s,
-                        feats=feats,
-                        diffusion_conditioning=features["diffusion_conditioning"],
-                    ),
-                )
-            )
+        return atom_coords_denoised
 
-            atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :].reshape(
-                noisy_coords.shape[0], -1, 3
-            )
-
-        return {"atom_coords_denoised": atom_coords_denoised}
-
-    def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
-        """
-        Return the full noise schedule with semantic keys.
-
-        Returns
-        -------
-        Mapping[str, Float[ArrayLike | Tensor, "..."]]
-            Noise schedule arrays.
-            Sigma at time t-1: "sigma_tm"
-            Sigma at time t: "sigma_t"
-            Gamma at time t: "gamma"
-        """
-        return self.noise_schedule
-
-    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
-        """
-        Return scaling constants for Boltz.
-
-        Parameters
-        ----------
-        timestep: float | int
-            Current timestep/noise level. (starts from 0)
-
-        Returns
-        -------
-        dict[str, float]
-            Scaling constants.
-            "t_hat", "sigma_t", "eps_scale"
-        """
-        if timestep < 0 or timestep >= self.predict_args.sampling_steps:
-            raise ValueError(
-                f"timestep {timestep} is out of bounds for sampling steps "
-                f"{self.predict_args.sampling_steps}"
-            )
-
-        sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
-        sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
-        gamma = self.noise_schedule["gamma"][int(timestep)]
-
-        t_hat = sigma_tm * (1 + gamma)
-        eps_scale = self.model.structure_module.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
-
-        return {
-            "t_hat": t_hat.item(),
-            "sigma_t": sigma_t.item(),
-            "eps_scale": eps_scale.item(),
-        }
-
-    def initialize_from_noise(
+    def initialize_from_prior(
         self,
-        structure: dict,
-        noise_level: float | int,
-        ensemble_size: int = 1,
-        **kwargs,
-    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
-        """Create a noisy version of structure's coordinates at given noise level.
+        batch_size: int,
+        features: GenerativeModelInput[BoltzConditioning] | None = None,
+        *,
+        shape: tuple[int, ...] | None = None,
+    ) -> Float[Tensor, "batch atoms 3"]:
+        """Create a noisy version of a state at given noise level.
 
         Parameters
         ----------
-        structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level: float | int
-            Timestep/noise level - for Boltz, this is the reverse timestep.
-            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
-            is the "reverse" diffusion time.
-        ensemble_size: int, optional
-            Number of noisy samples to generate per input structure (default 1).
-        **kwargs: dict, optional
-            Additional keyword arguments needed for classes that implement this Protocol
+        batch_size : int
+            Number of noisy samples to generate.
+        features: GenerativeModelInput[BoltzConditioning] | None, optional
+            Model features as returned by `featurize`. Useful for determining shape, etc. for
+            the state.
+        shape: tuple[int, ...] | None, optional
+            Explicit shape of the generated state (in the form [num_atoms, 3]), if features is None
+            or does not provide shape info. NOTE: shape will override features if both are provided.
 
         Returns
         -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates for atoms that have nonzero occupancy.
+        Float[Tensor, "batch atoms 3"]
+            Gaussian initialized coordinates.
+
+        Raises
+        ------
+        ValueError
+            If both features and shape are None.
         """
-        if "asym_unit" not in structure:
-            raise ValueError(
-                "structure must contain 'asym_unit' key to access"
-                "the coordinates in the asymmetric unit."
-            )
+        if shape is not None:
+            if len(shape) != 2 or shape[1] != 3:
+                raise ValueError("shape must be of the form (num_atoms, 3)")
+            x_init = torch.randn((batch_size, *shape), device=self.device)
+            return x_init
+        if features is None or features.conditioning is None:
+            raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
-        if noise_level < 0 or noise_level >= self.predict_args.sampling_steps:
-            raise ValueError(
-                f"noise_level {noise_level} is out of bounds for sampling steps "
-                f"{self.predict_args.sampling_steps}"
-            )
+        cond = features.conditioning
+        feats = cond.feats
+        atom_mask = feats.get("atom_pad_mask")
+        atom_mask = cast(Tensor, atom_mask)
 
-        # Filter atoms with zero occupancy or NaN coordinates
-        import numpy as np
+        num_atoms = int(atom_mask.sum())
 
-        asym_unit = structure["asym_unit"]
-        occupancy_mask = asym_unit.occupancy > 0
-        coord_array = np.asarray(asym_unit.coord)
-        if coord_array.ndim == 3:
-            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
-            valid_mask = occupancy_mask & nan_mask
-            coords = asym_unit.coord[:, valid_mask]
-        else:
-            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
-            valid_mask = occupancy_mask & nan_mask
-            coords = asym_unit.coord[valid_mask]
+        x_init = torch.randn((batch_size, num_atoms, 3), device=self.device)
 
-        if isinstance(coords, ArrayLike):
-            coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
-
-        if coords.ndim == 2:  # single structure
-            coords = cast(Tensor, rearrange("n c -> e n c", coords, e=ensemble_size))
-        elif coords.ndim == 3 and coords.shape[0] == 1:  # single structure
-            coords = cast(Tensor, rearrange("() n c -> e n c", coords, e=ensemble_size))
-        elif coords.ndim == 3 and coords.shape[0] != ensemble_size:
-            coords = cast(
-                Tensor,
-                rearrange(
-                    "n c -> e n c", coords[0], e=ensemble_size
-                ),  # grab only the first structure
-            )
-
-        # validate coords shape
-        if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
-            raise ValueError(
-                f"coords shape should be (ensemble_size, N_atoms, 3), but is {coords.shape}"
-            )
-
-        if noise_level == 0:
-            noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
-        else:
-            noisy_coords = coords + self.noise_schedule["sigma_tm"][
-                int(noise_level)
-            ] * torch.randn_like(coords)
-
-        return noisy_coords
+        return x_init
 
 
 class Boltz1Wrapper:
@@ -729,7 +653,6 @@ class Boltz1Wrapper:
         self,
         checkpoint_path: str | Path,
         use_msa_manager: bool = True,
-        predict_args: PredictArgs = PredictArgs(),
         diffusion_args: BoltzDiffusionParams = BoltzDiffusionParams(),
         steering_args: BoltzSteeringParams = BoltzSteeringParams(),
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -743,9 +666,6 @@ class Boltz1Wrapper:
         use_msa_manager: bool, optional
             If ``True``, fetch MSA features from the ColabFold server or cached values;
             otherwise rely on precomputed MSAs. See sampleworks.utils.msa.MSAManager for details.
-        predict_args: PredictArgs, optional
-            Runtime prediction configuration such as recycling depth and sampling
-            steps.
         diffusion_args: BoltzDiffusionParams, optional
             Diffusion process parameters passed down to the Boltz1 model.
         steering_args: BoltzSteeringParams, optional
@@ -753,10 +673,10 @@ class Boltz1Wrapper:
             sampling.
         device: torch.device, optional
             Device to run the model on, by default CUDA if available.
+
         """
         self.checkpoint_path = checkpoint_path
         self.use_msa_manager = use_msa_manager
-        self.predict_args = predict_args
         self.diffusion_args = diffusion_args
         self.steering_args = steering_args
         self.device = torch.device(device)
@@ -779,7 +699,7 @@ class Boltz1Wrapper:
                 Boltz1.load_from_checkpoint(
                     checkpoint_path,
                     strict=True,
-                    predict_args=asdict(predict_args),
+                    predict_args=asdict(PredictArgs()),
                     map_location="cpu",
                     diffusion_process_args=asdict(diffusion_args),
                     ema=False,
@@ -796,18 +716,6 @@ class Boltz1Wrapper:
 
         self.data_module: BoltzInferenceDataModule
         self.cached_representations: dict[str, Any] = {}
-
-        sigmas = self.model.structure_module.sample_schedule(self.predict_args.sampling_steps)
-        gammas = torch.where(
-            sigmas > self.model.structure_module.gamma_min,
-            self.model.structure_module.gamma_0,
-            0.0,
-        )
-        self.noise_schedule: dict[str, Float[Tensor, ...]] = {
-            "sigma_tm": sigmas[:-1],
-            "sigma_t": sigmas[1:],
-            "gamma": gammas[1:],
-        }
 
     def _setup_data_module(
         self,
@@ -873,172 +781,236 @@ class Boltz1Wrapper:
             constraints_dir=processed.constraints_dir,
         )
 
-    def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
-        """From an Atomworks structure, calculate model features.
+    def featurize(self, structure: dict) -> GenerativeModelInput[BoltzConditioning]:
+        """From an Atomworks structure, calculate Boltz-1 input features.
+
+        Runs Pairformer pass and initializes x_init from prior distribution.
 
         Parameters
         ----------
         structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-1 featurization.
-
-            - out_dir: str | Path
-                Output directory for processed Boltz intermediate files. Defaults first
-                to the structure ID from metadata, then to "boltz1_output" in the
-                current working directory.
-            - num_workers: int
-                Number of parallel workers for input data processing. Defaults to 2.
+            Atomworks structure dictionary. Can be annotated with Boltz config
+            via `annotate_structure_for_boltz()`. Config is read from
+            `structure["_boltz_config"]` if present, otherwise default BoltzConfig
+            values are used.
 
         Returns
         -------
-        dict[str, Any]
-            Boltz-1 input features (raw batch from dataloader).
+        GenerativeModelInput[BoltzConditioning]
+            Model input with x_init and Pairformer conditioning.
         """
-
-        # If featurize is called again, we should clear cached representations
-        # to avoid using stale data
         self.cached_representations.clear()
 
-        # Side effect: creates Boltz input YAML file in out_dir
+        config = structure.get("_boltz_config", BoltzConfig())
+        if isinstance(config, dict):
+            config = BoltzConfig(**config)
+
+        out_dir = config.out_dir or structure.get("metadata", {}).get("id", "boltz1_output")
+        num_workers = config.num_workers
+        ensemble_size = config.ensemble_size
+
         input_path = create_boltz_input_from_structure(
             structure,
-            kwargs.get("out_dir", structure.get("metadata", {}).get("id", "boltz1_output")),
+            out_dir,
             msa_manager=self.msa_manager,
             msa_pairing_strategy=self.msa_pairing_strategy,
         )
 
-        # Side effect: creates files in the processed directory of out_dir
-        self._setup_data_module(
-            input_path,
-            kwargs.get("out_dir", "boltz1_output"),
-            num_workers=kwargs.get("num_workers", 2),
-        )
+        self._setup_data_module(input_path, out_dir, num_workers=num_workers)
 
         batch = self.data_module.transfer_batch_to_device(
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
 
-        return batch
+        pairformer_out = self._pairformer_pass(batch, recycling_steps=config.recycling_steps)
+        self.cached_representations = pairformer_out
 
-    def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
-        """
-        Return the full noise schedule with semantic keys.
+        conditioning = BoltzConditioning(
+            s=pairformer_out["s"],
+            z=pairformer_out["z"],
+            s_inputs=pairformer_out["s_inputs"],
+            relative_position_encoding=pairformer_out["relative_position_encoding"],
+            feats=pairformer_out["feats"],
+            diffusion_conditioning=None,
+        )
 
-        Returns
-        -------
-        Mapping[str, Float[ArrayLike | Tensor, "..."]]
-            Noise schedule arrays.
-            Sigma at time t-1: "sigma_tm"
-            Sigma at time t: "sigma_t"
-            Gamma at time t: "gamma"
-        """
-        return self.noise_schedule
+        # NOTE: the structure dict input to featurize will be used to determine the shape here -
+        # this might mean that we have compatibility issues with the data module featurization of
+        # the structure if they differ.
+        x_init = self.initialize_from_prior(
+            batch_size=ensemble_size, shape=(get_asym_unit_from_structure(structure).shape[-1], 3)
+        )
 
-    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
-        """
-        Return scaling constants for Boltz1.
-
-        Parameters
-        ----------
-        timestep: float | int
-            Current timestep/noise level.
-
-        Returns
-        -------
-        dict[str, float]
-            Scaling constants.
-            "t_hat", "sigma_t", "eps_scale"
-        """
-
-        if timestep < 0 or timestep >= self.predict_args.sampling_steps:
-            raise ValueError(
-                f"timestep {timestep} is out of bounds for sampling steps "
-                f"{self.predict_args.sampling_steps}"
-            )
-
-        sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
-        sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
-        gamma = self.noise_schedule["gamma"][int(timestep)]
-
-        t_hat = sigma_tm * (1 + gamma)
-        eps_scale = self.model.structure_module.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
-
-        return {
-            "t_hat": t_hat.item(),
-            "sigma_t": sigma_t.item(),
-            "eps_scale": eps_scale.item(),
-        }
+        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 
     def step(
         self,
-        features: dict[str, Any],
-        grad_needed: bool = False,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """
-        Perform a pass through the Pairformer module to obtain output, which can then be
-        passed into the diffusion module.
+        x_t: Float[Tensor, "batch atoms 3"],
+        t: Float[Tensor, "*batch"] | float,
+        *,
+        features: GenerativeModelInput[BoltzConditioning] | None = None,
+    ) -> Float[Tensor, "batch atoms 3"]:
+        """Perform denoising at given timestep/noise level.
+
+        Returns predicted clean sample (x̂₀).
 
         Parameters
         ----------
-        features: dict[str, Any]
+        x_t : Float[Tensor, "batch atoms 3"]
+            Noisy structure at timestep t.
+        t : Float[Tensor, "*batch"] | float
+            Current timestep/noise level (t_hat from EDM schedule).
+        features : GenerativeModelInput[BoltzConditioning] | None
             Model features as returned by `featurize`.
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-1 Pairformer step.
 
-            - recycling_steps: int
-                Number of recycling steps to perform. Defaults to the value in
-                predict_args.
+        Returns
+        -------
+        Float[Tensor, "batch atoms 3"]
+            Predicted clean sample coordinates.
+        """
+        if features is None or features.conditioning is None:
+            raise ValueError("features with conditioning required for step()")
 
+        cond = features.conditioning
+        if not isinstance(x_t, torch.Tensor):
+            x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
+
+        feats = cond.feats
+        atom_mask = feats.get("atom_pad_mask")
+        atom_mask = cast(Tensor, atom_mask)
+        atom_mask = atom_mask.repeat_interleave(x_t.shape[0], dim=0)
+
+        pad_len = atom_mask.shape[1] - x_t.shape[1]
+        if pad_len >= 0:
+            padded_x_t = pad_dim(x_t, dim=1, pad_len=pad_len)
+        else:
+            raise ValueError("pad_len is negative, cannot pad x_t")
+
+        padded_atom_coords_denoised, _ = self.model.structure_module.preconditioned_network_forward(
+            padded_x_t,
+            t,
+            training=False,
+            network_condition_kwargs=dict(
+                s_trunk=cond.s,
+                z_trunk=cond.z,
+                s_inputs=cond.s_inputs,
+                feats=feats,
+                relative_position_encoding=cond.relative_position_encoding,
+                multiplicity=padded_x_t.shape[0],
+            ),
+        )
+
+        atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :].reshape(
+            x_t.shape[0], -1, 3
+        )
+
+        return atom_coords_denoised
+
+    def initialize_from_prior(
+        self,
+        batch_size: int,
+        features: GenerativeModelInput[BoltzConditioning] | None = None,
+        *,
+        shape: tuple[int, ...] | None = None,
+    ) -> Float[Tensor, "batch atoms 3"]:
+        """Create a noisy version of a state at given noise level.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of noisy samples to generate.
+        features: GenerativeModelInput[BoltzConditioning] | None, optional
+            Model features as returned by `featurize`. Useful for determining shape, etc. for
+            the state.
+        shape: tuple[int, ...] | None, optional
+            Explicit shape of the generated state (in the form [num_atoms, 3]), if features is None
+            or does not provide shape info. NOTE: shape will override features if both are provided.
+
+        Returns
+        -------
+        Float[Tensor, "batch atoms 3"]
+            Gaussian initialized coordinates.
+
+        Raises
+        ------
+        ValueError
+            If both features and shape are None.
+        """
+        if shape is not None:
+            if len(shape) != 2 or shape[1] != 3:
+                raise ValueError("shape must be of the form (num_atoms, 3)")
+            x_init = torch.randn((batch_size, *shape), device=self.device)
+            return x_init
+        if features is None or features.conditioning is None:
+            raise ValueError("Either features or shape must be provided to initialize_from_prior()")
+
+        cond = features.conditioning
+        feats = cond.feats
+        atom_mask = feats.get("atom_pad_mask")
+        atom_mask = cast(Tensor, atom_mask)
+
+        num_atoms = int(atom_mask.sum())
+
+        x_init = torch.randn((batch_size, num_atoms, 3), device=self.device)
+
+        return x_init
+
+    def _pairformer_pass(
+        self, features: dict[str, Any], recycling_steps: int = 3
+    ) -> dict[str, Any]:
+        """Perform a pass through the Pairformer module.
+
+        Internal method that computes Pairformer representations. Called by
+        `featurize()` and cached for reuse across denoising steps.
+
+        Parameters
+        ----------
+        features : dict[str, Any]
+            Raw batch dict from dataloader.
+        recycling_steps : int | None, optional
+            Number of recycling steps to perform, by default 3.
 
         Returns
         -------
         dict[str, Any]
-            Boltz-1 Pairformer outputs.
+            Pairformer outputs (s, z, s_inputs, relative_position_encoding, feats).
         """
-        with torch.set_grad_enabled(grad_needed):
-            mask: Tensor = features["token_pad_mask"]
-            pair_mask = mask[:, :, None] * mask[:, None, :]
-            s_inputs = self.model.input_embedder(features)
+        mask: Tensor = features["token_pad_mask"]
+        pair_mask = mask[:, :, None] * mask[:, None, :]
+        s_inputs = self.model.input_embedder(features)
 
-            s_init = self.model.s_init(s_inputs)
-            z_init = (
-                self.model.z_init_1(s_inputs)[:, :, None]
-                + self.model.z_init_2(s_inputs)[:, None, :]
-            )
+        s_init = self.model.s_init(s_inputs)
+        z_init = (
+            self.model.z_init_1(s_inputs)[:, :, None] + self.model.z_init_2(s_inputs)[:, None, :]
+        )
 
-            relative_position_encoding = self.model.rel_pos(features)
-            z_init = z_init + relative_position_encoding
-            z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
+        relative_position_encoding = self.model.rel_pos(features)
+        z_init = z_init + relative_position_encoding
+        z_init = z_init + self.model.token_bonds(features["token_bonds"].float())
 
-            s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
+        s, z = torch.zeros_like(s_init), torch.zeros_like(z_init)
 
-            for _ in range(
-                kwargs.get("recycling_steps", self.predict_args.recycling_steps) + 1
-            ):  # 3 is Boltz-1 default
-                s = s_init + self.model.s_recycle(self.model.s_norm(s))
-                z = z_init + self.model.z_recycle(self.model.z_norm(z))
+        for _ in range(recycling_steps):  # 3 is Boltz-1 default
+            s = s_init + self.model.s_recycle(self.model.s_norm(s))
+            z = z_init + self.model.z_recycle(self.model.z_norm(z))
 
-                if not self.model.no_msa:
-                    z = z + self.model.msa_module(
-                        z, s_inputs, features, use_kernels=self.model.use_kernels
-                    )  # type: ignore (Object will be callable here)
-
-                if self.model.is_pairformer_compiled:
-                    pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                else:
-                    pairformer_module = self.model.pairformer_module
-
-                s, z = pairformer_module(
-                    s,
-                    z,
-                    mask=mask,
-                    pair_mask=pair_mask,
-                    use_kernels=self.model.use_kernels,
+            if not self.model.no_msa:
+                z = z + self.model.msa_module(
+                    z, s_inputs, features, use_kernels=self.model.use_kernels
                 )  # type: ignore (Object will be callable here)
+
+            if self.model.is_pairformer_compiled:
+                pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+            else:
+                pairformer_module = self.model.pairformer_module
+
+            s, z = pairformer_module(
+                s,
+                z,
+                mask=mask,
+                pair_mask=pair_mask,
+                use_kernels=self.model.use_kernels,
+            )  # type: ignore (Object will be callable here)
 
         return {
             "s": s,
@@ -1047,216 +1019,3 @@ class Boltz1Wrapper:
             "relative_position_encoding": relative_position_encoding,
             "feats": features,
         }
-
-    def denoise_step(
-        self,
-        features: dict[str, Any],
-        noisy_coords: Float[ArrayLike | Tensor, "..."],
-        timestep: float | int,
-        grad_needed: bool = False,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """
-        Perform one denoising step at given timestep/noise level.
-        Returns predicted clean sample or predicted noise depending on
-        model parameterization.
-
-        Parameters
-        ----------
-        features: dict[str, Any]
-            Model features produced by :meth:`featurize`.
-        noisy_coords: Float[ArrayLike | Tensor, "..."]
-            Noisy atom coordinates at current timestep.
-        timestep: float | int
-            Current timestep/noise level - for Boltz, this is the reverse timestep.
-            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
-            is the "reverse" diffusion time.
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-1 denoising.
-
-            t_hat (float, optional)
-                Precomputed t_hat value for the current timestep; if not provided, it
-                will be computed internally.
-
-            eps (Tensor, optional)
-                Precomputed noise tensor for the current timestep; if not provided, it
-                will be sampled internally.
-
-            multiplicity (int, optional)
-                Overrides the multiplicity passed to the diffusion network, which is the
-                replicating the model does internally along axis=0; defaults to the
-                batch size of `noisy_coords`.
-
-            overwrite_representations (bool, optional)
-                Whether to overwrite cached representations (default False).
-                Do this if you are running a new input sample through the model.
-
-            recycling_steps (int, optional)
-                Number of recycling steps to perform (default 3 from PredictArgs).
-                This will only be applied if overwrite_representations is True, as
-                it is passed to the pairformer module computation that is ideally
-                cached for efficiency.
-
-        Returns
-        -------
-        dict[str, Any]
-            Predicted clean sample or predicted noise.
-        """
-        if not self.cached_representations or kwargs.get("overwrite_representations", False):
-            # Side effect: overwrites class attribute
-            self.cached_representations = self.step(
-                features,
-                grad_needed=grad_needed,
-                recycling_steps=kwargs.get("recycling_steps", self.predict_args.recycling_steps),
-            )
-
-        features = self.cached_representations
-        if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(noisy_coords, device=self.device, dtype=torch.float32)
-
-        s = features.get("s", None)
-        z = features.get("z", None)
-        s_inputs = features.get("s_inputs", None)
-        relative_position_encoding = features.get("relative_position_encoding", None)
-        # These are the input features to the conditioning networks
-        feats = features.get("feats", None)
-
-        if any(x is None for x in [s, z, s_inputs, relative_position_encoding, feats]):
-            raise ValueError("Missing required features for denoise_step")
-
-        feats = cast(dict[str, Any], feats)
-        atom_mask = feats.get("atom_pad_mask")
-        atom_mask = cast(Tensor, atom_mask)
-        atom_mask = atom_mask.repeat_interleave(noisy_coords.shape[0], dim=0)
-
-        with torch.set_grad_enabled(grad_needed):
-            pad_len = atom_mask.shape[1] - noisy_coords.shape[1]
-            if pad_len >= 0:
-                padded_noisy_coords = pad_dim(noisy_coords, dim=1, pad_len=pad_len)
-            else:
-                raise ValueError("pad_len is negative, cannot pad noisy_coords")
-
-            if "t_hat" in kwargs and "eps" in kwargs:
-                t_hat = kwargs["t_hat"]
-                eps = cast(Tensor, kwargs["eps"])
-                if pad_len > 0 and eps.shape[1] != padded_noisy_coords.shape[1]:
-                    eps = pad_dim(eps, dim=1, pad_len=pad_len)
-            else:
-                timestep_scaling = self.get_timestep_scaling(timestep)
-                eps = timestep_scaling["eps_scale"] * torch.randn(
-                    padded_noisy_coords.shape, device=self.device
-                )
-                t_hat = timestep_scaling["t_hat"]
-
-            padded_noisy_coords_eps = cast(Tensor, padded_noisy_coords) + eps
-
-            padded_atom_coords_denoised, _ = (
-                self.model.structure_module.preconditioned_network_forward(
-                    padded_noisy_coords_eps,
-                    t_hat,
-                    training=False,
-                    network_condition_kwargs=dict(
-                        s_trunk=s,
-                        z_trunk=z,
-                        s_inputs=s_inputs,
-                        feats=feats,
-                        relative_position_encoding=relative_position_encoding,
-                        multiplicity=kwargs.get(
-                            "multiplicity",
-                            cast(Tensor, padded_noisy_coords_eps).shape[0],
-                        ),
-                    ),
-                )
-            )
-
-            atom_coords_denoised = padded_atom_coords_denoised[atom_mask.bool(), :].reshape(
-                noisy_coords.shape[0], -1, 3
-            )
-
-        return {"atom_coords_denoised": atom_coords_denoised}
-
-    def initialize_from_noise(
-        self,
-        structure: dict,
-        noise_level: float | int,
-        ensemble_size: int = 1,
-        **kwargs,
-    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
-        """Create a noisy version of structure's coordinates at given noise level.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level: float | int
-            Timestep/noise level - for Boltz, this is the reverse timestep.
-            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
-            is the "reverse" diffusion time.
-        ensemble_size: int, optional
-            Number of noisy samples to generate per input structure (default 1).
-        **kwargs: dict, optional
-            Additional keyword arguments needed for classes that implement this Protocol
-
-        Returns
-        -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates for atoms that have nonzero occupancy.
-        """
-        if "asym_unit" not in structure:
-            raise ValueError(
-                "structure must contain 'asym_unit' key to access"
-                "the coordinates in the asymmetric unit."
-            )
-
-        if noise_level < 0 or noise_level >= self.predict_args.sampling_steps:
-            raise ValueError(
-                f"noise_level {noise_level} is out of bounds for sampling steps "
-                f"{self.predict_args.sampling_steps}"
-            )
-
-        # Filter atoms with zero occupancy or NaN coordinates
-        import numpy as np
-
-        asym_unit = structure["asym_unit"]
-        occupancy_mask = asym_unit.occupancy > 0
-        coord_array = np.asarray(asym_unit.coord)
-        if coord_array.ndim == 3:
-            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
-            valid_mask = occupancy_mask & nan_mask
-            coords = asym_unit.coord[:, valid_mask]
-        else:
-            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
-            valid_mask = occupancy_mask & nan_mask
-            coords = asym_unit.coord[valid_mask]
-
-        if isinstance(coords, ArrayLike):
-            coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
-
-        if coords.ndim == 2:  # single structure
-            coords = cast(Tensor, rearrange("n c -> e n c", coords, e=ensemble_size))
-        elif coords.ndim == 3 and coords.shape[0] == 1:  # single structure
-            coords = cast(Tensor, rearrange("() n c -> e n c", coords, e=ensemble_size))
-        elif coords.ndim == 3 and coords.shape[0] != ensemble_size:
-            coords = cast(
-                Tensor,
-                rearrange(
-                    "n c -> e n c", coords[0], e=ensemble_size
-                ),  # grab only the first structure
-            )
-
-        # validate coords shape
-        if coords.ndim != 3 or coords.shape[0] != ensemble_size or coords.shape[2] != 3:
-            raise ValueError(
-                f"coords shape should be (ensemble_size, N_atoms, 3), but is {coords.shape}"
-            )
-
-        if noise_level == 0:
-            noisy_coords = self.noise_schedule["sigma_tm"][0] * torch.randn_like(coords)
-        else:
-            noisy_coords = coords + self.noise_schedule["sigma_tm"][
-                int(noise_level)
-            ] * torch.randn_like(coords)
-
-        return noisy_coords
