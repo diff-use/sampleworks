@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING, TypeVar
 
@@ -117,6 +118,23 @@ class StepContext:
             metadata=self.metadata,
         )
 
+    def with_metadata(
+        self,
+        metadata: dict[str, Any],
+    ) -> StepContext:
+        """Return a new context with updated metadata."""
+        return StepContext(
+            step_index=self.step_index,
+            total_steps=self.total_steps,
+            t=self.t,
+            dt=self.dt,
+            noise_scale=self.noise_scale,
+            learning_rate=self.learning_rate,
+            reward=self.reward,
+            reward_inputs=self.reward_inputs,
+            metadata=metadata,
+        )
+
 
 StateT = TypeVar("StateT")
 ScheduleT = TypeVar("ScheduleT", bound=SamplerSchedule)
@@ -145,6 +163,12 @@ class SamplerStepOutput[StateT]:
 
     loss: Float[Array, " batch"] | None = None
     """Loss/reward value from scaler, if guidance was applied."""
+
+    frame_transforms: Mapping[str, Float[torch.Tensor, ...]] | None = None
+    """Alignment transform applied during step (rotation, translation)."""
+
+    guidance_direction: Float[Array, "*batch atoms 3"] | None = None
+    """Raw guidance direction from scaler before weighting."""
 
 
 @runtime_checkable

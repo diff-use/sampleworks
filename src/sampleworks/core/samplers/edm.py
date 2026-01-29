@@ -234,23 +234,19 @@ class AF3EDMSampler:
         model_wrapper: FlowModelWrapper,
         align_transform: Mapping[str, torch.Tensor] | None,
         allow_gradients: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """Apply guidance from scaler to the denoising direction."""
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+        """Apply guidance from scaler to the denoising direction.
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]
+            (modified_delta, loss, raw_guidance_direction)
+        """
         scaler_metadata: dict[str, object] = {"x_t": noisy_state}
         if context.metadata:
             scaler_metadata = {**context.metadata, "x_t": noisy_state}
 
-        scaler_context = StepContext(
-            step_index=context.step_index,
-            total_steps=context.total_steps,
-            t=context.t,
-            dt=context.dt,
-            noise_scale=context.noise_scale,
-            learning_rate=context.learning_rate,
-            reward=context.reward,
-            reward_inputs=context.reward_inputs,
-            metadata=scaler_metadata,
-        )
+        scaler_context = context.with_metadata(scaler_metadata)
 
         guidance_direction, loss = scaler.scale(
             x_hat_0_working_frame, scaler_context, model=model_wrapper
@@ -258,6 +254,8 @@ class AF3EDMSampler:
         guidance_direction = torch.as_tensor(guidance_direction)
         loss = torch.as_tensor(loss)
         guidance_weight = scaler.guidance_strength(context)
+
+        guidance_direction_raw = guidance_direction.clone()
 
         if align_transform is not None and allow_gradients:
             guidance_direction = apply_forward_transform(
@@ -269,7 +267,7 @@ class AF3EDMSampler:
             guidance_weight = guidance_weight.view(-1, 1, 1)
 
         result = delta + guidance_weight * guidance_direction
-        return torch.as_tensor(result), loss
+        return torch.as_tensor(result), loss, guidance_direction_raw
 
     def step(
         self,
@@ -369,8 +367,9 @@ class AF3EDMSampler:
         delta = torch.as_tensor((noisy_state_working_frame_t - x_hat_0_working_frame_t) / t_hat)
 
         loss = None
+        guidance_direction_raw = None
         if scaler is not None:
-            delta, loss = self._apply_scaler_guidance(
+            delta, loss, guidance_direction_raw = self._apply_scaler_guidance(
                 scaler=scaler,
                 x_hat_0_working_frame=x_hat_0_working_frame_t,
                 noisy_state=noisy_state,
@@ -389,4 +388,6 @@ class AF3EDMSampler:
             state=next_state,
             denoised=x_hat_0_working_frame_t,
             loss=loss,
+            frame_transforms=align_transform,
+            guidance_direction=guidance_direction_raw,
         )
