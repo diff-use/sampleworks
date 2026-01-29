@@ -4,11 +4,12 @@ from enum import Enum
 
 
 class GuidanceType(str, Enum):
-    """Enum for guidance/scaler types used in diffusion model guidance.
+    """
+    Enum for guidance/scaler types used in diffusion model guidance.
 
-    These values control which guidance algorithm is used during sampling:
-    - FK_STEERING: Feynman-Kac steering approach
-    - PURE_GUIDANCE: Pure gradient-based guidance (DPS/Training-free guidance)
+    References:
+    - Feynman-Kaç steering http://arxiv.org/abs/2501.06848
+    - Pure guidance (DPS) http://arxiv.org/abs/2209.14687
     """
 
     FK_STEERING = "fk_steering"
@@ -16,13 +17,8 @@ class GuidanceType(str, Enum):
 
 
 class StructurePredictor(str, Enum):
-    """Enum for supported structure prediction models.
-
-    Currently supported models:
-    - BOLTZ_1: Boltz-1 model
-    - BOLTZ_2: Boltz-2 model
-    - PROTENIX: Protenix model
-    - RF3: RF3 (RosettaFold3) model
+    """
+    Enum for supported structure prediction models.
     """
 
     BOLTZ_1 = "boltz1"
