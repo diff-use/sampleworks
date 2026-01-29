@@ -23,8 +23,8 @@ class GuidanceConfig:
     protein: str
     structure: str  # actually a path to a structure file
     density: str
-    model: str
-    guidance_type: str
+    model: str | StructurePredictor
+    guidance_type: str | GuidanceType
     log_path: str
     output_dir: str = "output"
     partial_diffusion_step: int = 0
