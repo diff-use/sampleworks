@@ -1,491 +1,431 @@
-"""
-Feynman-Kaç Steering scaler implementation.
+"""Feynman-Kac Steering scaler implementation.
 
-TODO: Make this more generalizable, a reasonable protocol to implement
-Currently this only works with the implemented wrappers and isn't extensible
+Implements TrajectoryScalerProtocol for particle-based guided diffusion sampling
+using Feynman-Kaç steering. All per-step guidance comes from a given StepScalerProtocol.
+
+Per Singhal et al. (arXiv 2501.06848) and Boltz-1x (doi:10.1101/2024.11.19.624167)
 """
 
-from functools import partial
-from typing import Any, cast
+from typing import cast
 
 import einx
 import numpy as np
 import torch
 import torch.nn.functional as F
 from biotite.structure import stack
+from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
-    ATOMIC_NUM_TO_ELEMENT,
+from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
+from sampleworks.core.samplers.protocol import (
+    SamplerStepOutput,
+    StepContext,
+    TrajectorySampler,
 )
-from sampleworks.core.rewards.protocol import PrecomputableRewardFunctionProtocol
-from sampleworks.models.protocol import FlowModelWrapper
-from sampleworks.utils.frame_transforms import (
-    apply_forward_transform,
-    create_random_transform,
-    weighted_rigid_align_differentiable,
-)
+from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
+from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
+from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
+from sampleworks.utils.framework_utils import Array
 
 
 class FKSteering:
-    """
-    Feynman-Kac Steering scaler.
+    """Feynman-Kac Steering trajectory scaler.
+
+    The key difference from the standard FKSteering implementation is that "particles"
+    are ensembles of structures
+
+    Parameters
+    ----------
+    ensemble_size : int
+        Number of structures per particle. Default is 1.
+    num_steps : int
+        Number of diffusion steps. Default is 200.
+    resampling_interval : int
+        Steps between FK resampling. Default is 1 (every step).
+    fk_lambda : float
+        Weight for FK log-likelihood in resampling. Default is 1.0.
+    t_start : float
+        Starting time fraction for partial diffusion. Default is 0.0.
+    guidance_t_start : float
+        Fraction of trajectory after which to start guidance. Default is 0.0.
     """
 
     def __init__(
         self,
-        model_wrapper: FlowModelWrapper,
-        reward_function: PrecomputableRewardFunctionProtocol,
+        ensemble_size: int = 1,
+        num_steps: int = 200,
+        resampling_interval: int = 1,
+        fk_lambda: float = 1.0,
+        guidance_t_start: float = 0.0,
+        t_start: float = 0.0,
     ):
-        """Creates a Feynman-Kac Steering Scaler for guiding a diffusion model with a
-        PrecomputableRewardFunctionProtocol.
+        self.ensemble_size = ensemble_size
+        self.num_steps = num_steps
+        self.resampling_interval = resampling_interval
+        self.fk_lambda = fk_lambda
+        self.guidance_start = int(guidance_t_start * num_steps)
+        self.starting_step = int(t_start * num_steps)
+
+    def sample(
+        self,
+        structure: dict,
+        model: FlowModelWrapper,
+        sampler: TrajectorySampler,
+        step_scaler: StepScalerProtocol[FlowModelWrapper],
+        reward: RewardFunctionProtocol,
+        num_particles: int = 1,
+    ) -> GuidanceOutput:
+        """Generate samples using Feynman-Kac steering.
 
         Parameters
         ----------
-        model_wrapper: FlowModelWrapper
-            Diffusion model wrapper instance
-        reward_function: PrecomputableRewardFunctionProtocol
-            Reward function with precomputation support to guide the diffusion process
-        """
-        self.model_wrapper = model_wrapper
-        self.reward_function = reward_function
-
-    def run_guidance(
-        self, structure: dict, **kwargs: Any
-    ) -> tuple[dict, tuple[list[Any], list[Any]], list[Any]]:
-        """Run Feynman-Kac steering guidance using the provided ModelWrapper.
-
-        NOTE: Because we are interested in sampling ensembles, not individual
-        structures, from the guidance, our "particles" are ensembles of ensemble_size
-        structures. Of course, if ensemble_size=1, then each particle is a single
-        structure.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks parsed structure.
-        **kwargs: dict
-            Additional keyword arguments for FK steering:
-
-            - num_particles: int, optional
-                Number of particles (replicas) for FK steering (default: 10)
-
-            - fk_resampling_interval: int, optional
-                How often to apply resampling (default: 1, every step)
-
-            - fk_lambda: float, optional
-                Weighting factor for resampling (default: 1.0)
-
-            - num_gd_steps: int, optional
-                Number of gradient descent steps on x0 (default: 0)
-
-            - guidance_weight: float, optional
-                Weight for gradient descent guidance (default: 0.0)
-
-            - gradient_normalization: bool, optional
-                Whether to normalize/clip gradients during guidance (default: False)
-                NOTE: This is done BEFORE applying the guidance weight.
-
-            - guidance_interval: int, optional
-                How often to apply guidance (default: 1, every step)
-
-            - guidance_start: int, optional
-                Diffusion step to start applying guidance (default: -1, meaning
-                    guidance is applied from the beginning)
-
-            Inference arguments:
-
-            - step_scale: float, optional
-                Scale for the model's step size (default: 1.5)
-
-            - ensemble_size: int, optional
-                Size of ensemble to generate (default: 1)
-
-            - augmentation: bool, optional
-                Enable data augmentation in denoise step (default: True)
-
-            - align_to_input: bool, optional
-                Enable alignment to input in denoise step (default: False)
-
-            - partial_diffusion_step: int, optional
-                If provided, start diffusion from this timestep instead of 0.
-                    (default: None). Will use the provided coordinates in structure
-                    to initialize the noise at this timestep.
-
-            - msa_path: dict | str | Path | None, optional
-                MSA specification to be passed to model wrapper for featurization.
-                Currently only used by RF3. # TODO: use kwargs better!!
-
-            - out_dir: str, optional
-                Output directory for any featurization intermediate files
-                (default: "test")
-
-            - alignment_reverse_diffusion: bool, optional
-                Whether to perform alignment of noisy coords to denoised coords
-                during reverse diffusion steps. This is relevant for doing Boltz-2-like
-                alignment during diffusion. (default: False)
+        structure : dict
+            Input atomworks structure dictionary.
+        model : FlowModelWrapper
+            Model wrapper for denoising steps.
+        sampler : TrajectorySampler
+            Sampler for trajectory generation (provides schedule and step mechanics).
+        step_scaler : StepScalerProtocol
+            Step scaler for per-step guidance.
+        reward : RewardFunctionProtocol
+            Reward function for computing particle energies.
+        num_particles : int
+            Number of particles. Default is 1, i.e., no population.
 
         Returns
         -------
-        tuple[dict[str, Any], tuple[list[torch.Tensor], list[torch.Tensor]],
-        list[float | None]]
-            Structure dict with updated coordinates (ensemble), trajectories, losses
+        GuidanceOutput
+            Output containing final state, trajectory, losses, and metadata.
         """
-        # FK Parameters
-        num_particles = kwargs.get("num_particles", 10)
-        fk_resampling_interval = kwargs.get("fk_resampling_interval", 1)
-        fk_lambda = kwargs.get("fk_lambda", 1.0)
 
-        # Guidance Parameters
-        num_gd_steps = kwargs.get("num_gd_steps", 1)
-        guidance_weight = kwargs.get("guidance_weight", 0.01)
-        gradient_normalization = kwargs.get("gradient_normalization", False)
-        guidance_interval = kwargs.get("guidance_interval", 1)
-        guidance_start = cast(int, kwargs.get("guidance_start", -1))
-
-        # Inference Parameters
-        step_scale = kwargs.get("step_scale", 1.5)
-        ensemble_size = kwargs.get("ensemble_size", 1)
-        augmentation = kwargs.get("augmentation", True)
-        align_to_input = kwargs.get("align_to_input", False)
-        partial_diffusion_step = kwargs.get("partial_diffusion_step", 0)
-        msa_path = kwargs.get("msa_path", None)
-        out_dir = kwargs.get("out_dir", "test")
-        alignment_reverse_diffusion = kwargs.get("alignment_reverse_diffusion", False)
-
-        features = self.model_wrapper.featurize(structure, msa_path=msa_path, out_dir=out_dir)
-
-        # Get coordinates from timestep
-        # coords shape: (ensemble_size, N_atoms, 3)
-        coords = cast(
+        features = model.featurize(structure)
+        coords_init = cast(
             torch.Tensor,
-            self.model_wrapper.initialize_from_noise(
-                structure,
-                noise_level=partial_diffusion_step,
-                ensemble_size=ensemble_size,
-            ),
+            model.initialize_from_prior(batch_size=self.ensemble_size, features=features),
         )
 
-        # (num_particles, ensemble_size, N_atoms, 3)
-        coords = cast(torch.Tensor, einx.rearrange("e n c -> p e n c", coords, p=num_particles))
+        # shape: (ensemble_size, atoms, 3) -> (num_particles * ensemble_size, atoms, 3)
+        coords: torch.Tensor = cast(
+            torch.Tensor,
+            einx.rearrange("e n c -> (p e) n c", coords_init, p=num_particles),
+        )
 
-        # TODO: this is not generalizable currently, figure this out
-        if self.model_wrapper.__class__.__name__ == "ProtenixWrapper":
-            atom_array = features["true_atom_array"]
+        processed = process_structure_to_trajectory_input(
+            structure=structure,
+            coords_from_prior=coords[: self.ensemble_size],
+            features=features,
+            ensemble_size=self.ensemble_size,
+        )
+
+        reward_inputs = RewardInputs(
+            elements=cast(torch.Tensor, processed.elements),
+            b_factors=cast(torch.Tensor, processed.b_factors),
+            occupancies=cast(torch.Tensor, processed.occupancies),
+            input_coords=cast(torch.Tensor, processed.input_coords),
+            reward_param_mask=processed.mask,
+            mask_like=torch.as_tensor(processed.mask, dtype=coords.dtype, device=coords.device),
+        )
+
+        schedule = sampler.compute_schedule(self.num_steps)
+        loss_history: list[torch.Tensor] = []
+
+        trajectory_denoised: list[torch.Tensor] = []
+        trajectory_next_step: list[torch.Tensor] = []
+        losses: list[float | None] = []
+
+        loss_prev: torch.Tensor | None = None
+        log_proposal_correction_prev: torch.Tensor | None = None
+
+        pbar = tqdm(range(self.starting_step, self.num_steps), desc="FK Steering")
+        for i in pbar:
+            context = sampler.get_context_for_step(i, schedule)
+            apply_guidance = i >= self.guidance_start
+
+            if apply_guidance:
+                context = context.with_reward(reward, reward_inputs)
+
+            # RESAMPLE
+            if apply_guidance and loss_prev is not None and self._should_resample(i, context):
+                coords = self._resample_particles(
+                    coords=coords,
+                    loss_curr=loss_prev,
+                    loss_history=loss_history,
+                    log_proposal_correction=log_proposal_correction_prev,
+                    num_particles=num_particles,
+                )
+
+            # PROPOSE
+            step_output, denoised_4d, coords_4d = self._run_step(
+                coords=coords,
+                model=model,
+                sampler=sampler,
+                features=features,
+                context=context,
+                step_scaler=step_scaler if apply_guidance else None,
+                num_particles=num_particles,
+            )
+
+            # Store for next iteration's resampling
+            loss = torch.as_tensor(step_output.loss)
+            if loss is not None:
+                loss_prev = loss
+                loss_history.append(loss.clone())
+
+            if denoised_4d is not None:
+                trajectory_denoised.append(denoised_4d.clone().cpu())
+
+            current_loss = (
+                loss.mean().item()
+                if loss is not None
+                else (loss_history[-1].mean().item() if loss_history else 0.0)
+            )
+            losses.append(current_loss)
+            pbar.set_postfix({"loss": current_loss})
+
+            coords = step_output.state
+            trajectory_next_step.append(coords.clone().cpu())
+
+        # compute lowest loss particle
+        lowest_loss_index = torch.argmin(loss_history[-1]) if loss_history else 0
+        lowest_loss_coords = coords_4d[lowest_loss_index]  # pyright: ignore[reportPossiblyUnboundVariable]
+
+        return GuidanceOutput(
+            structure=structure,
+            final_state=lowest_loss_coords,
+            trajectory=trajectory_next_step,
+            losses=losses,
+            metadata={
+                "trajectory_denoised": trajectory_denoised,
+            },
+        )
+
+    def _run_step(
+        self,
+        coords: torch.Tensor,
+        model: FlowModelWrapper,
+        sampler: TrajectorySampler,
+        features: GenerativeModelInput,
+        context: StepContext,
+        step_scaler: StepScalerProtocol | None,
+        num_particles: int,
+    ) -> tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]:
+        """Run single step with per-particle guidance via loop.
+
+        When step_scaler is provided, loops over particles to ensure each particle
+        receives independent guidance. This gives correct FK semantics where each
+        particle's loss gradient is computed only from its own state.
+
+        Parameters
+        ----------
+        coords : torch.Tensor
+            Current coordinates with shape (particles * ensemble, atoms, 3).
+        model : FlowModelWrapper
+            Model wrapper for denoising.
+        sampler : TrajectorySampler
+            Sampler that handles the step mechanics.
+        features : GenerativeModelInput
+            Model features/inputs.
+        context : StepContext
+            Step context with time info and optionally reward.
+        step_scaler : StepScalerProtocol | None
+            Step scaler for guidance (None if guidance not active).
+        num_particles : int
+            Number of particles.
+
+        Returns
+        -------
+        tuple
+            (step_output, denoised_4d, coords_4d)
+            - step_output: Full SamplerStepOutput from sampler
+            - denoised_4d: Denoised coords reshaped to (particles, ensemble, atoms, 3)
+            - coords_4d: Next coords reshaped to (particles, ensemble, atoms, 3)
+        """
+        coords_4d = coords.reshape(num_particles, self.ensemble_size, -1, 3)
+
+        if step_scaler is None:
+            # No guidance - batch all particles together (fast path)
+            step_output = sampler.step(
+                state=coords,
+                model_wrapper=model,
+                context=context,
+                scaler=None,
+                features=features,
+            )
+
+            denoised_4d = None
+            if step_output.denoised is not None:
+                denoised_4d = step_output.denoised.reshape(num_particles, self.ensemble_size, -1, 3)
+
+            coords_4d = step_output.state.reshape(num_particles, self.ensemble_size, -1, 3)
+
+            return step_output, denoised_4d, coords_4d
+
+        states_per_particle: list[Array] = []
+        denoised_per_particle: list[Array] = []
+        losses_per_particle: list[Array] = []
+        log_proposal_corrections_per_particle: list[Array] = []
+
+        for p in range(num_particles):
+            particle_coords = coords_4d[p]  # (ensemble, atoms, 3)
+
+            particle_output = sampler.step(
+                state=particle_coords,
+                model_wrapper=model,
+                context=context,
+                scaler=step_scaler,
+                features=features,
+            )
+
+            states_per_particle.append(particle_output.state)
+
+            if particle_output.denoised is not None:
+                denoised_per_particle.append(particle_output.denoised)
+
+            if particle_output.loss is not None:
+                loss = particle_output.loss
+                if loss.ndim > 0:
+                    loss = loss.mean()
+                losses_per_particle.append(loss)
+
+            if particle_output.log_proposal_correction is not None:
+                log_proposal_correction = particle_output.log_proposal_correction
+                if log_proposal_correction.ndim > 0:
+                    log_proposal_correction = log_proposal_correction.mean()
+                log_proposal_corrections_per_particle.append(log_proposal_correction)
+
+        # Stack results back to 4D: (particles, ensemble, atoms, 3)
+        state_4d = torch.stack(cast(list[torch.Tensor], states_per_particle), dim=0)
+
+        denoised_4d = None
+        if denoised_per_particle:
+            denoised_4d = torch.stack(cast(list[torch.Tensor], denoised_per_particle), dim=0)
+
+        loss_per_particle = None
+        if losses_per_particle:
+            loss_per_particle = torch.stack(cast(list[torch.Tensor], losses_per_particle), dim=0)
+
+        log_proposal_per_particle = None
+        if log_proposal_corrections_per_particle:
+            log_proposal_per_particle = torch.stack(
+                cast(list[torch.Tensor], log_proposal_corrections_per_particle), dim=0
+            )
+
+        combined_output = SamplerStepOutput(
+            state=state_4d.reshape(-1, state_4d.shape[-2], 3),
+            denoised=(
+                denoised_4d.reshape(-1, denoised_4d.shape[-2], 3)
+                if denoised_4d is not None
+                else None
+            ),
+            loss=loss_per_particle,
+            log_proposal_correction=log_proposal_per_particle,
+        )
+
+        return combined_output, denoised_4d, state_4d
+
+    def _should_resample(self, step: int, context: StepContext) -> bool:
+        """Determine if FK resampling should occur at this step."""
+        noise_scale = context.noise_scale
+
+        try:
+            is_resampling_step = step % self.resampling_interval == 0 and float(noise_scale) > 0  # pyright: ignore[reportArgumentType]
+        except ValueError:
+            logger.exception(
+                "Cannot determine FK resampling step due to None noise_scale in StepContext."
+            )
+            raise
+
+        is_final_step = step == self.num_steps - 1
+        return is_resampling_step or is_final_step
+
+    def _resample_particles(
+        self,
+        coords: torch.Tensor,
+        loss_curr: torch.Tensor,
+        loss_history: list[torch.Tensor],
+        log_proposal_correction: torch.Tensor | None,
+        num_particles: int,
+    ) -> torch.Tensor:
+        """Resample particles using FK weights before the next step.
+
+        Parameters
+        ----------
+        coords : torch.Tensor
+            Coordinates with shape (particles * ensemble, atoms, 3).
+        loss_curr : torch.Tensor
+            Loss per particle from current step, shape (particles,).
+        loss_history : list[torch.Tensor]
+            History of loss tensors from previous steps.
+        log_proposal_correction : torch.Tensor | None
+            Log-ratio of base to guided proposal, shape (particles,) or None.
+        num_particles : int
+            Number of particles.
+
+        Returns
+        -------
+        torch.Tensor
+            Resampled coordinates, shape (particles * ensemble, atoms, 3).
+        """
+        if len(loss_history) < 2:
+            log_G = -self.fk_lambda * loss_curr
+        else:
+            log_G = self.fk_lambda * (loss_history[-2] - loss_history[-1])
+
+        if log_proposal_correction is not None:
+            log_G = log_G + log_proposal_correction
+
+        weights = F.softmax(log_G, dim=0)
+        indices = torch.multinomial(weights, num_particles, replacement=True)
+
+        # Resample coordinates
+        coords_4d = coords.reshape(num_particles, self.ensemble_size, -1, 3)
+        resampled = coords_4d[indices]
+
+        # Also resample loss history to keep particle correspondence
+        for j in range(len(loss_history)):
+            loss_history[j] = loss_history[j][indices]
+
+        return resampled.reshape(-1, coords_4d.shape[-2], 3)
+
+    def _build_final_structure(
+        self,
+        structure: dict,
+        coords: torch.Tensor,
+        loss_history: list[torch.Tensor],
+        features: GenerativeModelInput,
+        effective_particles: int,
+    ):
+        """Build final AtomArrayStack from lowest-loss particle.
+
+        Returns
+        -------
+        AtomArrayStack | object
+            AtomArrayStack with coordinates from lowest-loss particle,
+            or mock object in test contexts.
+        """
+        if features.conditioning and hasattr(features.conditioning, "__class__"):
+            if features.conditioning.__class__.__name__ == "ProtenixConditioning":
+                atom_array = features.conditioning["true_atom_array"]
+            else:
+                atom_array = structure["asym_unit"][0]
         else:
             atom_array = structure["asym_unit"][0]
+
         occupancy_mask = atom_array.occupancy > 0
         nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
         reward_param_mask = occupancy_mask & nan_mask
 
-        # TODO: jank way to get atomic numbers, fix this in real space density
-        elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(e.title()) for e in atom_array.element[reward_param_mask]
-        ]
-        elements = cast(
-            torch.Tensor,
-            einx.rearrange("n -> p e n", torch.Tensor(elements), p=num_particles, e=ensemble_size),
-        )
-        b_factors = cast(
-            torch.Tensor,
-            einx.rearrange(
-                "n -> p e n",
-                torch.Tensor(atom_array.b_factor[reward_param_mask]),
-                p=num_particles,
-                e=ensemble_size,
-            ),
-        )
-        # TODO: properly handle occupancy values in structure processing
-        # occupancies = cast(
-        #     torch.Tensor,
-        #     einx.rearrange(
-        #         "n -> p e n",
-        #         torch.Tensor(atom_array.occupancy[reward_param_mask]),
-        #         p=num_particles,
-        #         e=ensemble_size,
-        #     ),
-        # )
-        occupancies = torch.ones_like(cast(torch.Tensor, b_factors)) / ensemble_size
+        final_atom_array = stack([atom_array] * self.ensemble_size)
 
-        # Pre-compute unique combinations for vmap compatibility
-        # since torch.unique returns dynamic shape
-        # NOTE: For now, this blocks grad w.r.t. B-factor
-        unique_combinations, inverse_indices = self.reward_function.precompute_unique_combinations(
-            elements[0].detach(),  # shape: (batch, n_atoms)
-            b_factors[0].detach(),  # shape: (batch, n_atoms)
-        )
+        if loss_history:
+            min_loss_index = torch.argmin(loss_history[-1])
+        else:
+            min_loss_index = 0
 
-        partial_reward_function = partial(
-            self.reward_function,
-            unique_combinations=unique_combinations,
-            inverse_indices=inverse_indices,
-        )
-
-        # (num_particles * ensemble_size, N_atoms, 3)
-        input_coords = cast(
-            torch.Tensor,
-            einx.rearrange(
-                "... -> b ...",
-                torch.from_numpy(atom_array.coord).to(dtype=coords.dtype, device=coords.device),
-                b=num_particles * ensemble_size,
-            ),
-        )[..., reward_param_mask, :]
-
-        # TODO: account for missing residues in mask
-        mask_like = torch.ones_like(input_coords[..., 0])
-
-        # FK State variables
-        energy_traj = torch.empty((num_particles, 0), device=coords.device)
-        scaled_guidance_update = torch.zeros_like(coords)
-
-        trajectory_denoised = []
-        trajectory_next_step = []
-        losses = []
-
-        n_steps = len(cast(torch.Tensor, self.model_wrapper.get_noise_schedule()["sigma_t"]))
-
-        pbar = tqdm(range(partial_diffusion_step, n_steps))
-        for i in pbar:
-            # (num_particles * ensemble_size, N_atoms, 3) for denoising,
-            # will reshape for FK steering usage
-            coords = cast(torch.Tensor, einx.rearrange("... n c -> (...) n c", coords))
-
-            centroid = einx.mean("... [n] c", coords)
-            coords = einx.subtract("... n c, ... c -> ... n c", coords, centroid)
-
-            timestep_scaling = self.model_wrapper.get_timestep_scaling(i)
-            t_hat = timestep_scaling["t_hat"]
-            sigma_t = timestep_scaling["sigma_t"]
-            eps_scale = timestep_scaling["eps_scale"]
-
-            eps = eps_scale * torch.randn_like(coords)
-
-            transform = (
-                create_random_transform(coords, center_before_rotation=False)
-                if augmentation
-                else None
-            )
-            maybe_augmented_coords = cast(
-                torch.Tensor,
-                apply_forward_transform(coords, transform, rotation_only=False)
-                if transform is not None
-                else coords,
+        coords_4d = coords.reshape(effective_particles, self.ensemble_size, -1, 3)
+        if final_atom_array.coord is not None:
+            final_atom_array.coord[..., reward_param_mask, :] = (
+                coords_4d[min_loss_index].cpu().numpy()
             )
 
-            if num_gd_steps > 0:
-                scaled_guidance_update = (
-                    apply_forward_transform(
-                        scaled_guidance_update.reshape(num_particles * ensemble_size, -1, 3),
-                        transform,
-                        rotation_only=True,
-                    ).reshape(num_particles, ensemble_size, -1, 3)
-                    if transform is not None
-                    else scaled_guidance_update
-                )
-
-            denoised = cast(
-                torch.Tensor,
-                self.model_wrapper.denoise_step(
-                    features,
-                    maybe_augmented_coords,
-                    timestep=i,
-                    grad_needed=False,
-                    # Provide precomputed t_hat and eps to allow us to calculate the
-                    # denoising direction properly
-                    t_hat=t_hat,
-                    eps=eps,
-                )["atom_coords_denoised"],
-            )
-
-            # do alignment before reshaping
-            # align_transform will have shape (num_particles * ensemble_size, ...)
-            align_transform = None
-            denoised_working_frame = denoised
-            if align_to_input:
-                denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
-                    denoised,
-                    input_coords,
-                    weights=mask_like,
-                    mask=mask_like,
-                    return_transforms=True,
-                    allow_gradients=False,
-                )
-
-            # we need coords and eps and scaled_guidance_update in working frame
-            coords_in_working_frame = (
-                apply_forward_transform(
-                    maybe_augmented_coords, align_transform, rotation_only=False
-                )
-                if align_transform is not None
-                else maybe_augmented_coords
-            )
-            eps_in_working_frame = (
-                apply_forward_transform(eps, align_transform, rotation_only=True)
-                if align_transform is not None
-                else eps
-            )
-            if num_gd_steps > 0:
-                scaled_guidance_update = (
-                    apply_forward_transform(
-                        scaled_guidance_update.reshape(num_particles * ensemble_size, -1, 3),
-                        align_transform,
-                        rotation_only=True,
-                    ).reshape(num_particles, ensemble_size, -1, 3)
-                    if align_transform is not None
-                    else scaled_guidance_update
-                )
-
-            # reshape to be (num_particles, ensemble_size, N_atoms, 3)
-            denoised_working_frame = denoised_working_frame.reshape(
-                num_particles, ensemble_size, -1, 3
-            )
-            coords_in_working_frame = coords_in_working_frame.reshape(
-                num_particles, ensemble_size, -1, 3
-            )
-            eps_in_working_frame = eps_in_working_frame.reshape(num_particles, ensemble_size, -1, 3)
-
-            ### FK Resampling
-            noise_var = eps_scale**2
-            should_resample = (i % fk_resampling_interval == 0 and noise_var > 0) or (
-                i == n_steps - 1
-            )
-
-            if should_resample:
-                with torch.no_grad():
-                    # energy shape: (num_particles,)
-                    energy = cast(
-                        torch.Tensor,
-                        einx.vmap(
-                            "p [e n c], p [e n], p [e n], p [e n] -> p",
-                            denoised_working_frame,
-                            elements,
-                            b_factors,
-                            occupancies,
-                            op=partial_reward_function,
-                        ),
-                    )
-
-                # energy_traj shape: (num_particles, steps)
-                energy_traj = torch.cat((energy_traj, energy.unsqueeze(1)), dim=1)
-
-                if i == partial_diffusion_step:
-                    log_G = -1 * energy
-                else:
-                    log_G = energy_traj[:, -2] - energy_traj[:, -1]
-
-                ll_difference = torch.zeros_like(energy)
-                if num_gd_steps > 0 and noise_var > 0:
-                    # eps is the noise added. scaled_guidance_update is the shift.
-                    # ll_diff = (eps^2 - (eps + shift)^2) / 2var
-                    # Sum over dimensions to get total log likelihood difference
-                    diff = (
-                        eps_in_working_frame**2
-                        - (eps_in_working_frame + scaled_guidance_update) ** 2
-                    )
-
-                    # shape (num_particles,)
-                    ll_difference = diff.sum(dim=(-1, -2, -3)) / (2 * noise_var)
-
-                # Resampling weights
-                log_weights = ll_difference + fk_lambda * log_G
-                resample_weights = F.softmax(log_weights, dim=0)
-
-                # Resample indices
-                # multinomial returns indices in [0, N-1]
-                indices = torch.multinomial(
-                    resample_weights, num_particles, replacement=True
-                )  # shape: (num_particles,)
-
-                coords_in_working_frame = coords_in_working_frame[indices]
-                denoised_working_frame = denoised_working_frame[indices]
-                eps_in_working_frame = eps_in_working_frame[indices]
-                energy_traj = energy_traj[indices]
-                scaled_guidance_update = scaled_guidance_update[indices]
-
-            ### Guidance on x̂_0
-            if num_gd_steps > 0 and i < n_steps - 1 and i >= guidance_start:
-                guidance_update = torch.zeros_like(denoised_working_frame)
-                delta_norm = guidance_update.clone()
-                if gradient_normalization:
-                    original_delta = (
-                        coords_in_working_frame + eps_in_working_frame - denoised_working_frame
-                    ) / t_hat
-                    delta_norm = torch.linalg.norm(original_delta, dim=(-1, -2), keepdim=True)
-
-                current_x0 = denoised_working_frame.detach().clone()
-
-                # this is different from Boltz-*x, where they always do num_gd_steps of
-                # guidance at every step, and the interval affects how many of those
-                # steps each potential is applied. Here, we only do guidance every
-                # guidance_interval steps.
-                if i % guidance_interval == 0:
-                    for _ in range(num_gd_steps):
-                        current_x0.requires_grad_(True)
-                        loss = cast(
-                            torch.Tensor,
-                            einx.vmap(
-                                "p [e n c], p [e n], p [e n], p [e n] -> p",
-                                current_x0,
-                                elements,
-                                b_factors,
-                                occupancies,
-                                op=partial_reward_function,
-                            ),
-                        ).mean()
-
-                        (grad,) = torch.autograd.grad(loss, current_x0)
-
-                        if gradient_normalization:
-                            grad_norm = torch.linalg.norm(grad, dim=(-1, -2), keepdim=True)
-                            grad = grad * (delta_norm / (grad_norm + 1e-8))
-
-                        current_x0 = current_x0.detach() - guidance_weight * grad
-
-                guidance_update = current_x0 - denoised_working_frame
-                denoised_working_frame = current_x0
-
-                dt = sigma_t - t_hat
-                scaled_guidance_update = guidance_update * -1 * step_scale * dt / t_hat
-
-            trajectory_denoised.append(denoised_working_frame.clone().cpu())
-            losses.append(energy_traj[:, -1].mean().item() if energy_traj.shape[1] > 0 else 0.0)
-            pbar.set_postfix({"loss": losses[-1]})
-
-            with torch.no_grad():
-                noisy_coords = coords_in_working_frame + eps_in_working_frame
-
-                if alignment_reverse_diffusion:
-                    # Boltz aligns the noisy coords to the denoised coords at each step
-                    # to improve stability.
-
-                    # TODO: need all this reshaping since
-                    # weighted_rigid_align_differentiable only supports 1 batch dim
-                    noisy_coords = weighted_rigid_align_differentiable(
-                        noisy_coords.reshape(num_particles * ensemble_size, -1, 3),
-                        denoised_working_frame.reshape(num_particles * ensemble_size, -1, 3),
-                        weights=mask_like,
-                        mask=mask_like,
-                        allow_gradients=False,
-                    ).reshape(num_particles, ensemble_size, -1, 3)
-
-                dt = sigma_t - t_hat
-                denoised_over_sigma = (noisy_coords - denoised_working_frame) / t_hat
-
-                coords_next = noisy_coords + step_scale * dt * denoised_over_sigma
-
-                coords = coords_next.detach().clone()
-
-            trajectory_next_step.append(coords.clone().cpu())
-
-        # Stack atom array to match ensemble size
-        final_atom_array = stack([atom_array] * ensemble_size)
-
-        # Get lowest energy particle
-        min_energy_index = torch.argmin(energy_traj[:, -1])
-        final_atom_array.coord[..., reward_param_mask, :] = (  # type: ignore[reportOptionalSubscript] coords will be subscriptable
-            coords[min_energy_index].cpu().numpy()
-        )
-
-        structure["asym_unit"] = final_atom_array
-
-        return structure, (trajectory_denoised, trajectory_next_step), losses
+        return final_atom_array
