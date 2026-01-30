@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING, TypeVar
 
@@ -164,11 +163,11 @@ class SamplerStepOutput[StateT]:
     loss: Float[Array, " batch"] | None = None
     """Loss/reward value from scaler, if guidance was applied."""
 
-    frame_transforms: Mapping[str, Float[torch.Tensor, ...]] | None = None
-    """Alignment transform applied during step (rotation, translation)."""
+    log_proposal_correction: Float[Array, " batch"] | None = None
+    """Log-ratio of base to guided proposal densities for trajectory-based resampling:
+    log q_base(x_{t+1}|x_t) - log q_guided(x_{t+1}|x_t).
 
-    guidance_direction: Float[Array, "*batch atoms 3"] | None = None
-    """Raw guidance direction from scaler before weighting."""
+    None if: deterministic step, no guidance applied, or correction not computable."""
 
 
 @runtime_checkable

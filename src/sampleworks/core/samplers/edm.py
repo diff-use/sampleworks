@@ -56,6 +56,7 @@ class EDMSamplerConfig:
     augmentation: bool = True
     align_to_input: bool = True
     alignment_reverse_diffusion: bool = False
+    scale_guidance_to_diffusion: bool = True
     device: str | torch.device = "cpu"
 
     # Default per-step scale (AF3 default)
@@ -75,6 +76,7 @@ class EDMSamplerConfig:
             augmentation=self.augmentation,
             align_to_input=self.align_to_input,
             alignment_reverse_diffusion=self.alignment_reverse_diffusion,
+            scale_guidance_to_diffusion=self.scale_guidance_to_diffusion,
             device=self.device,
         )
 
@@ -103,6 +105,7 @@ class AF3EDMSampler:
     augmentation: bool = True
     align_to_input: bool = True
     alignment_reverse_diffusion: bool = False
+    scale_guidance_to_diffusion: bool = True
     device: str | torch.device = "cpu"
 
     def check_context(self, context: StepContext) -> None:
@@ -240,7 +243,7 @@ class AF3EDMSampler:
         Returns
         -------
         tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]
-            (modified_delta, loss, raw_guidance_direction)
+            (modified_delta, loss, proposal_shift)
         """
         scaler_metadata: dict[str, object] = {"x_t": noisy_state}
         if context.metadata:
@@ -255,19 +258,25 @@ class AF3EDMSampler:
         loss = torch.as_tensor(loss)
         guidance_weight = scaler.guidance_strength(context)
 
-        guidance_direction_raw = guidance_direction.clone()
-
         if align_transform is not None and allow_gradients:
             guidance_direction = apply_forward_transform(
                 guidance_direction, align_transform, rotation_only=True
             )
 
-        # Ensure proper broadcasting of guidance weight
-        if isinstance(guidance_weight, torch.Tensor) and guidance_weight.ndim == 1:
-            guidance_weight = guidance_weight.view(-1, 1, 1)
+        if self.scale_guidance_to_diffusion:
+            delta_norm = torch.linalg.norm(delta, dim=(-1, -2), keepdim=True)
+            # scaler handles any adjustment/clipping of guidance direction, but we have diffusion
+            # update magnitude here, so can optionally scale to match
+            guidance_direction = guidance_direction * delta_norm
 
-        result = delta + guidance_weight * guidance_direction
-        return torch.as_tensor(result), loss, guidance_direction_raw
+        scaled_delta_contribution = (
+            einx.multiply("b, b n c -> b n c", guidance_weight, guidance_direction)
+            / context.t_effective
+        )
+        proposal_shift = self.step_scale * context.dt * scaled_delta_contribution  # pyright: ignore[reportOperatorIssue] (dt will be Array if check_context passed)
+
+        result = delta + scaled_delta_contribution
+        return torch.as_tensor(result), loss, torch.as_tensor(proposal_shift)
 
     def step(
         self,
@@ -331,9 +340,10 @@ class AF3EDMSampler:
         # t_hat will be float if check_context passed
         x_hat_0 = model_wrapper.step(noisy_state, t_hat, features=features)
 
-        # Default: work in augmented frame
+        # work in augmented frame
         x_hat_0_working_frame = x_hat_0
         noisy_state_working_frame = noisy_state
+        eps_working_frame = eps
         align_transform = None
 
         if self.align_to_input and features is not None:
@@ -349,7 +359,7 @@ class AF3EDMSampler:
                 weights=align_mask,
                 allow_gradients=allow_gradients,
             )
-            _, _, noisy_state_working_frame = transform_coords_and_noise_to_frame(
+            _, eps_working_frame, noisy_state_working_frame = transform_coords_and_noise_to_frame(
                 torch.as_tensor(maybe_augmented_state), torch.as_tensor(eps), align_transform
             )
 
@@ -367,9 +377,9 @@ class AF3EDMSampler:
         delta = torch.as_tensor((noisy_state_working_frame_t - x_hat_0_working_frame_t) / t_hat)
 
         loss = None
-        guidance_direction_raw = None
+        log_proposal_correction = None
         if scaler is not None:
-            delta, loss, guidance_direction_raw = self._apply_scaler_guidance(
+            delta, loss, proposal_shift = self._apply_scaler_guidance(
                 scaler=scaler,
                 x_hat_0_working_frame=x_hat_0_working_frame_t,
                 noisy_state=noisy_state,
@@ -380,6 +390,13 @@ class AF3EDMSampler:
                 allow_gradients=allow_gradients,
             )
 
+            # eps is the noise added. scaled_guidance_update is the shift.
+            # ll_diff = (eps^2 - (eps + shift)^2) / 2var
+            # Sum over dimensions to get total log likelihood difference
+            log_proposal_correction = (
+                eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
+            ) / (2 * eps_scale**2)  # pyright: ignore[reportOptionalOperand] (eps_scale will be float if check_context passed)
+
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
         # pyright sees dt as float | None, but it will be float if check_context passed
         next_state = noisy_state_working_frame_t + self.step_scale * dt * delta  # pyright: ignore[reportOperatorIssue]
@@ -388,6 +405,5 @@ class AF3EDMSampler:
             state=next_state,
             denoised=x_hat_0_working_frame_t,
             loss=loss,
-            frame_transforms=align_transform,
-            guidance_direction=guidance_direction_raw,
+            log_proposal_correction=log_proposal_correction,
         )
