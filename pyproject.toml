@@ -79,6 +79,15 @@ sampleworks = {editable = true, path = "."}
 cuda = "12"
 
 [tool.pixi.tasks]
+all-tests = "pytest"
+
+# NOTE: if new model environment is added, we need new entry here
+[tool.pixi.tasks.test-all]
+depends-on = [
+  {environment = "boltz-dev", task = "all-tests"},
+  {environment = "protenix-dev", task = "all-tests"},
+  {environment = "rf3-dev", task = "all-tests"}
+]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
