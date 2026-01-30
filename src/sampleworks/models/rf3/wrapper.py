@@ -1,6 +1,6 @@
 import json
 from collections import deque
-from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -8,8 +8,8 @@ import numpy as np
 import torch
 from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
-from einx import rearrange
-from jaxtyping import ArrayLike, Float
+from biotite.structure import AtomArray
+from jaxtyping import Float
 from loguru import logger as log
 from rf3.inference_engines import RF3InferenceEngine
 from rf3.model.RF3 import RF3WithConfidence
@@ -18,8 +18,92 @@ from rf3.utils.inference import InferenceInput, InferenceInputDataset
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from sampleworks.models.protocol import GenerativeModelInput
 from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
+
+
+@dataclass(frozen=True, slots=True)
+class RF3Conditioning:
+    """Conditioning tensors from RF3 trunk forward pass.
+
+    Passable to diffusion module forward.
+
+    Attributes
+    ----------
+    s_inputs : Tensor
+        Input embeddings (S_inputs_I).
+    s_trunk : Tensor
+        Single representation from trunk (S_I).
+    z_trunk : Tensor
+        Pair representation from trunk (Z_II).
+    features : dict[str, Any]
+        Raw feature dict (f tensor).
+    true_atom_array : AtomArray | None
+        The AtomArray of the true structure, used for determining proper atom counts.
+    """
+
+    s_inputs: Tensor
+    s_trunk: Tensor
+    z_trunk: Tensor
+    features: dict[str, Any]
+    true_atom_array: AtomArray | None = None
+
+
+@dataclass
+class RF3Config:
+    """Configuration for RF3 featurization.
+
+    Attributes
+    ----------
+    msa_path : str | Path | dict | None
+        MSA specification. Can be:
+        - dict: chain_id -> MSA file path mapping
+        - str/Path to .json: JSON file with chain_id -> MSA path mapping
+        - str/Path to .a3m: Single MSA file applied to all protein chains
+        - None: No MSA information is used
+    ensemble_size : int
+        Number of samples to generate (batch dimension of x_init).
+    recycling_steps : int | None
+        Number of recycling steps to perform. If None, uses model default.
+    """
+
+    msa_path: str | Path | dict | None = None
+    ensemble_size: int = 1
+    recycling_steps: int | None = None
+
+
+def annotate_structure_for_rf3(
+    structure: dict,
+    *,
+    msa_path: str | Path | dict | None = None,
+    ensemble_size: int = 1,
+    recycling_steps: int | None = None,
+) -> dict:
+    """Annotate an Atomworks structure with RF3-specific configuration.
+
+    Parameters
+    ----------
+    structure : dict
+        Atomworks structure dictionary.
+    msa_path : str | Path | dict | None
+        MSA specification for RF3.
+    ensemble_size : int
+        Number of samples to generate (batch dimension of x_init).
+    recycling_steps : int | None
+        Number of recycling steps to perform. If None, uses model default.
+
+    Returns
+    -------
+    dict
+        Structure dict with "_rf3_config" key added.
+    """
+    config = RF3Config(
+        msa_path=msa_path,
+        ensemble_size=ensemble_size,
+        recycling_steps=recycling_steps,
+    )
+    return {**structure, "_rf3_config": config}
 
 
 # TODO: This should go in some sort of atomworks utils module
@@ -47,7 +131,7 @@ def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) 
     if msa_path is None:
         return updated_chain_info
 
-        # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
+    # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
     if isinstance(msa_path, (str, Path)):
         msa_path_obj = Path(msa_path)
         if msa_path_obj.suffix == ".json" and msa_path_obj.exists():
@@ -71,16 +155,6 @@ def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) 
 class RF3Wrapper:
     """Wrapper for RosettaFold 3 (Baker Lab AlphaFold 3 replication)."""
 
-    # Parameters from AF3: see Algorithm 18 and Supplement section 3.7.1
-    SIGMA_DATA = 16.0
-    S_MIN = 4e-4
-    S_MAX = 160.0
-    P = 7.0
-    GAMMA_0 = 0.8
-    GAMMA_MIN = 0.05
-    STEP_SCALE = 1.5
-    NOISE_SCALE = 1.003
-
     def __init__(
         self,
         checkpoint_path: str | Path,
@@ -91,6 +165,8 @@ class RF3Wrapper:
         ----------
         checkpoint_path: str | Path
             Filesystem path to the checkpoint containing trained weights.
+        msa_manager: MSAManager | None
+            MSA manager for retrieving MSAs for input structures.
         """
         log.info("Loading RF3 Inference Engine")
 
@@ -99,14 +175,10 @@ class RF3Wrapper:
         self.msa_pairing_strategy = "greedy"
 
         # TODO: expose num_steps, num_recycles to user
-        self.num_steps = 200  # RF3 default number of diffusion steps
-        self.num_recycles = 10  # RF3 default number of recycles
 
         self.inference_engine = RF3InferenceEngine(
             ckpt_path=str(self.checkpoint_path),
-            n_recycles=self.num_recycles,
             diffusion_batch_size=1,
-            num_steps=self.num_steps,
         )
         self.inference_engine.initialize()
 
@@ -115,9 +187,6 @@ class RF3Wrapper:
         )
         self.model = self.inference_engine.trainer.state["model"]
         self._device = self.inference_engine.trainer.fabric.device
-
-        self.cached_representations: dict[str, Any] = {}
-        self.noise_schedule = self._compute_noise_schedule(self.num_steps)
 
     @property
     def device(self) -> torch.device:
@@ -135,78 +204,31 @@ class RF3Wrapper:
             model = model.shadow
         return cast(RF3WithConfidence, model)
 
-    def _compute_noise_schedule(self, num_steps: int) -> dict[str, Float[Tensor, "..."]]:
-        """Compute the noise schedule for diffusion sampling.
-
-        Uses RF3's EDM-style schedule formula:
-        t_hat = sigma_data * (s_max^(1/p) + t*(s_min^(1/p) - s_max^(1/p)))^p
-
-        See Karras, T. et al. Elucidating the Design Space of Diffusion-Based Generative Models.
-        https://doi.org/10.48550/arXiv.2206.00364
-
-
-        Parameters
-        ----------
-        num_steps: int
-            Number of diffusion sampling steps.
-
-        Returns
-        -------
-        dict[str, Tensor]
-            Noise schedule with keys sigma_tm, sigma_t, gamma.
-        """
-        t_values = torch.linspace(0, 1, num_steps + 1, device=self.device)
-
-        sigmas = (
-            self.SIGMA_DATA
-            * (
-                self.S_MAX ** (1 / self.P)
-                + t_values * (self.S_MIN ** (1 / self.P) - self.S_MAX ** (1 / self.P))
-            )
-            ** self.P
-        )
-
-        gammas = torch.where(
-            sigmas > self.GAMMA_MIN,
-            torch.tensor(self.GAMMA_0, device=self.device),
-            torch.tensor(0.0, device=self.device),
-        )
-
-        return {
-            "sigma_tm": sigmas[:-1],
-            "sigma_t": sigmas[1:],
-            "gamma": gammas[1:],
-        }
-
-    def featurize(
-        self, structure: dict, msa_path: str | Path | dict | None = None, **kwargs: dict
-    ) -> dict[str, Any]:
+    def featurize(self, structure: dict) -> GenerativeModelInput[RF3Conditioning]:
         """From an Atomworks structure, calculate RF3 input features.
+
+        Runs trunk forward pass and initializes x_init from prior distribution.
 
         Parameters
         ----------
         structure: dict
-            Atomworks structure dictionary.
-        msa_path: dict | str | Path | None
-            MSA specification. Can be:
-            - dict: chain_id -> MSA file path mapping
-            - str/Path to .json: JSON file with chain_id -> MSA path mapping
-            - str/Path to .a3m: Single MSA file applied to all protein chains
-            - None: No MSA information is used
-        **kwargs: dict, optional
-            Additional arguments for feature generation.
+            Atomworks structure dictionary. Can be annotated with RF3 config
+            via `annotate_structure_for_rf3()`. Config is read from
+            `structure["_rf3_config"]` if present, otherwise default RF3Config
+            values are used.
 
         Returns
         -------
-        dict[str, Any]
-            RF3 input features.
+        GenerativeModelInput[RF3Conditioning]
+            Model input with x_init and trunk conditioning.
         """
+        config = structure.get("_rf3_config", RF3Config())
+        if isinstance(config, dict):
+            config = RF3Config(**config)
 
-        # If featurize is called again, we should clear cached representations
-        # to avoid using stale data
-        # TODO: add unit tests for all wrappers to check that this is called here.
-        #  https://github.com/k-chrispens/sampleworks/issues/43
-        self.cached_representations.clear()
+        msa_path = config.msa_path
+        ensemble_size = config.ensemble_size
+        recycling_steps = config.recycling_steps
 
         if "asym_unit" not in structure:
             raise ValueError("structure must contain 'asym_unit' key")
@@ -275,15 +297,44 @@ class RF3Wrapper:
             msg=f"network_input for example_id: {pipeline_output['example_id']}",
         )
 
-        return features
+        pairformer_out = self._pairformer_pass(
+            features, grad_needed=False, recycling_steps=recycling_steps or 10
+        )
 
-    def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
-        """Perform a pass through the RF3 Pairformer to obtain representations.
+        occupancy_mask = atom_array.occupancy > 0
+        coord_array = np.asarray(atom_array.coord)
+        if coord_array.ndim == 3:
+            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
+        else:
+            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
+        valid_mask = occupancy_mask & nan_mask
+
+        valid_atom_array = atom_array[valid_mask]
+
+        conditioning = RF3Conditioning(
+            s_inputs=pairformer_out["s_inputs"],
+            s_trunk=pairformer_out["s_trunk"],
+            z_trunk=pairformer_out["z_trunk"],
+            features=pairformer_out["features"],
+            true_atom_array=valid_atom_array,
+        )
+
+        num_atoms = len(valid_atom_array)
+        x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
+
+        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+
+    def _pairformer_pass(
+        self, features: dict[str, Any], grad_needed: bool = False, recycling_steps: int = 10
+    ) -> dict[str, Any]:
+        """Perform a pass through the RF3 trunk to obtain representations.
+
+        Internal method that computes trunk representations.
 
         Parameters
         ----------
         features: dict[str, Any]
-            Model features as returned by featurize.
+            Model features dict (raw features, not GenerativeModelInput).
         grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs: dict, optional
@@ -295,10 +346,8 @@ class RF3Wrapper:
         Returns
         -------
         dict[str, Any]
-            RF3 model outputs including trunk representations (s_inputs, s_trunk,
-            z_trunk).
+            Trunk outputs (s_inputs, s_trunk, z_trunk, features).
         """
-        recycling_steps = kwargs.get("recycling_steps", self.num_recycles)
 
         with (
             torch.set_grad_enabled(grad_needed),
@@ -327,188 +376,102 @@ class RF3Wrapper:
             "features": features["f"],
         }
 
-    def denoise_step(
+    def step(
         self,
-        features: dict[str, Any],
-        noisy_coords: Float[ArrayLike | Tensor, "..."],
-        timestep: float | int,
-        grad_needed: bool = False,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Perform denoising at given timestep for RF3 model.
+        x_t: Float[Tensor, "batch atoms 3"],
+        t: Float[Tensor, "*batch"] | float,
+        *,
+        features: GenerativeModelInput[RF3Conditioning] | None = None,
+    ) -> Float[Tensor, "batch atoms 3"]:
+        """Perform denoising at given timestep/noise level.
+
+        Returns predicted clean sample (x̂₀).
 
         Parameters
         ----------
-        features: dict[str, Any]
-            Model features produced by featurize or step.
-        noisy_coords: Float[ArrayLike | Tensor, "..."]
-            Noisy atom coordinates at the current timestep.
-        timestep: float | int
-            Current timestep or noise level in reverse time (starts from 0).
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional keyword arguments for RF3 denoising.
-            - t_hat: float, optional
-                Precomputed t_hat value; computed internally if not provided.
-            - eps: Tensor, optional
-                Precomputed noise tensor; sampled internally if not provided.
-            - overwrite_representations: bool, optional
-                Whether to recompute cached representations (default False).
-            - recycling_steps: int
-                Number of recycling steps to perform.
+        x_t : Float[Tensor, "batch atoms 3"]
+            Noisy structure at timestep t.
+        t : Float[Tensor, "*batch"] | float
+            Current timestep/noise level (t_hat from noise schedule).
+        features : GenerativeModelInput[RF3Conditioning] | None
+            Model features as returned by `featurize`.
 
         Returns
         -------
-        dict[str, Tensor]
-            Dictionary containing atom_coords_denoised with cleaned coordinates.
+        Float[Tensor, "batch atoms 3"]
+            Predicted clean sample coordinates.
         """
-        if not self.cached_representations or kwargs.get("overwrite_representations", False):
-            self.cached_representations = self.step(
-                features,
-                grad_needed=False,
-                recycling_steps=kwargs.get("recycling_steps", self.num_recycles),
-            )
+        if features is None or features.conditioning is None:
+            raise ValueError("features with conditioning required for step()")
 
-        outputs = self.cached_representations
+        cond = features.conditioning
+        if not isinstance(x_t, torch.Tensor):
+            x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
 
-        if not isinstance(noisy_coords, torch.Tensor):
-            noisy_coords = torch.tensor(noisy_coords, device=self.device)
+        if isinstance(t, (int, float)):
+            t_tensor = torch.tensor([t] * x_t.shape[0], device=self.device, dtype=x_t.dtype)
+        else:
+            t_tensor = t.to(device=self.device, dtype=x_t.dtype)
+            if t_tensor.ndim == 0:
+                t_tensor = t_tensor.unsqueeze(0).expand(x_t.shape[0])
+            elif t_tensor.shape[0] == 1 and x_t.shape[0] > 1:
+                t_tensor = t_tensor.expand(x_t.shape[0])
 
-        with (
-            torch.set_grad_enabled(grad_needed),
-            torch.autocast("cuda", dtype=torch.float32),
+        with torch.autocast(
+            "cuda", dtype=torch.float32
         ):  # TODO: bfloat16 will require newer GPU generations and new CUDA
-            if "t_hat" in kwargs and "eps" in kwargs:
-                t_hat = kwargs["t_hat"]
-                eps = cast(Tensor, kwargs["eps"])
-            else:
-                timestep_scaling = self.get_timestep_scaling(timestep)
-                eps = timestep_scaling["eps_scale"] * torch.randn(
-                    noisy_coords.shape, device=self.device
-                )
-                t_hat = timestep_scaling["t_hat"]
-
-            noisy_coords_eps = noisy_coords + eps
-
-            batch_size = noisy_coords_eps.shape[0]
-            t_tensor = torch.full((batch_size,), t_hat, device=self.device)
-
-            atom_coords_denoised: torch.Tensor = self._inner_model.diffusion_module(
-                X_noisy_L=noisy_coords_eps,
+            atom_coords_denoised: Tensor = self._inner_model.diffusion_module(
+                X_noisy_L=x_t,
                 t=t_tensor,
-                f=outputs["features"],
-                S_inputs_I=outputs["s_inputs"],
-                S_trunk_I=outputs["s_trunk"],
-                Z_trunk_II=outputs["z_trunk"],
+                f=cond.features,
+                S_inputs_I=cond.s_inputs,
+                S_trunk_I=cond.s_trunk,
+                Z_trunk_II=cond.z_trunk,
             )
 
-        return {"atom_coords_denoised": atom_coords_denoised.float()}
+        return atom_coords_denoised.float()
 
-    def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
-        """Return the full noise schedule with semantic keys.
-
-        Returns
-        -------
-        Mapping[str, Float[ArrayLike | Tensor, "..."]]
-            Noise schedule arrays with keys sigma_tm, sigma_t, and gamma.
-        """
-        return self.noise_schedule
-
-    def get_timestep_scaling(self, timestep: float | int) -> dict[str, float]:
-        """Return scaling constants for RF3 diffusion at given timestep.
-
-        Parameters
-        ----------
-        timestep: float | int
-            Current timestep or noise level starting from 0.
-
-        Returns
-        -------
-        dict[str, float]
-            Dictionary containing t_hat, sigma_t, and eps_scale.
-        """
-        if timestep < 0 or timestep >= self.num_steps:
-            raise ValueError(f"timestep {timestep} is out of bounds for {self.num_steps} steps")
-
-        sigma_tm = self.noise_schedule["sigma_tm"][int(timestep)]
-        sigma_t = self.noise_schedule["sigma_t"][int(timestep)]
-        gamma = self.noise_schedule["gamma"][int(timestep)]
-
-        t_hat = sigma_tm * (1 + gamma)
-        eps_scale = self.NOISE_SCALE * torch.sqrt(t_hat**2 - sigma_tm**2)
-
-        return {
-            "t_hat": t_hat.item(),
-            "sigma_t": sigma_t.item(),
-            "eps_scale": eps_scale.item(),
-        }
-
-    def initialize_from_noise(
+    def initialize_from_prior(
         self,
-        structure: dict,
-        noise_level: float | int,
-        ensemble_size: int = 1,
-        **kwargs,
-    ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
-        """Create a noisy version of structure coordinates at given noise level.
+        batch_size: int,
+        features: GenerativeModelInput[RF3Conditioning] | None = None,
+        *,
+        shape: tuple[int, ...] | None = None,
+    ) -> Float[Tensor, "batch atoms 3"]:
+        """Create initial samples from the prior distribution.
 
         Parameters
         ----------
-        structure: dict
-            Atomworks structure dictionary.
-        noise_level: float | int
-            Timestep or noise level in reverse time starting from 0.
-        ensemble_size: int, optional
-            Number of noisy samples to generate per input structure (default 1).
-        **kwargs: dict, optional
-            Additional keyword arguments for initialization.
+        batch_size : int
+            Number of samples to generate.
+        features : GenerativeModelInput[RF3Conditioning] | None, optional
+            Model features as returned by `featurize`. Useful for determining shape.
+        shape : tuple[int, ...] | None, optional
+            Explicit shape of the generated state (in the form [num_atoms, 3]).
+            NOTE: shape will override features if both are provided.
 
         Returns
         -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates for atoms with nonzero occupancy.
+        Float[Tensor, "batch atoms 3"]
+            Gaussian initialized coordinates.
+
+        Raises
+        ------
+        ValueError
+            If both features and shape are None, or if shape is invalid.
         """
-        if "asym_unit" not in structure:
-            raise ValueError("structure must contain 'asym_unit' key to access coordinates")
+        if shape is not None:
+            if len(shape) != 2 or shape[1] != 3:
+                raise ValueError("shape must be of the form (num_atoms, 3)")
+            return torch.randn((batch_size, *shape), device=self.device)
 
-        if noise_level < 0 or noise_level >= self.num_steps:
-            raise ValueError(
-                f"noise_level {noise_level} is out of bounds for {self.num_steps} steps"
-            )
+        if features is None or features.conditioning is None:
+            raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
-        asym_unit = structure["asym_unit"]
-        occupancy_mask = asym_unit.occupancy > 0
-        coord_array = np.asarray(asym_unit.coord)
-
-        if coord_array.ndim == 3:
-            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
+        cond = features.conditioning
+        if cond.true_atom_array is not None:
+            num_atoms = len(cond.true_atom_array)
         else:
-            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
+            raise ValueError("Cannot determine atom count from features without true_atom_array")
 
-        valid_mask = occupancy_mask & nan_mask
-        coords = asym_unit.coord[:, valid_mask]
-
-        if isinstance(coords, np.ndarray):
-            coords = torch.tensor(coords, device=self.device, dtype=torch.float32)
-
-        if coords.ndim == 2:
-            coords = cast(Tensor, rearrange("n c -> e n c", coords, e=ensemble_size))
-        elif coords.ndim == 3 and coords.shape[0] == 1:
-            coords = cast(Tensor, rearrange("() n c -> e n c", coords, e=ensemble_size))
-        elif coords.ndim == 3 and coords.shape[0] != ensemble_size:
-            coords = cast(Tensor, rearrange("n c -> e n c", coords[0], e=ensemble_size))
-
-        valid_shape = coords.ndim == 3 and coords.shape[0] == ensemble_size and coords.shape[2] == 3
-        if not valid_shape:
-            raise ValueError(
-                f"coords shape should be ({ensemble_size}, N_atoms, 3), got {coords.shape}"
-            )
-
-        sigma = self.noise_schedule["sigma_tm"][int(noise_level)]
-        if noise_level == 0:
-            noisy_coords = sigma * torch.randn_like(coords)
-        else:
-            noisy_coords = coords + sigma * torch.randn_like(coords)
-
-        return noisy_coords
+        return torch.randn((batch_size, num_atoms, 3), device=self.device)
