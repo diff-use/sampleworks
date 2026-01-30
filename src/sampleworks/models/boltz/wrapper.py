@@ -194,11 +194,23 @@ def create_boltz_input_from_structure(
             ligand_info[chain]["ccd"] = chain_info[chain]["res_name"][0]
 
     # get all the MSA paths, fetching MSAs as needed.
+    # For homodimers (chains with identical sequences), Boltz requires all chains
+    # with the same sequence to share the same MSA file. We deduplicate by sequence
+    # and map all chains with identical sequences to the representative's MSA.
     if msa_manager:
-        msa_paths = msa_manager.get_msa(
-            {chain_id: info["sequence"] for chain_id, info in polymer_info.items()},
-            msa_pairing_strategy,
-        )
+        sequence_to_chains: dict[str, list[str]] = {}
+        for chain_id, info in polymer_info.items():
+            seq = info["sequence"]
+            sequence_to_chains.setdefault(seq, []).append(chain_id)
+
+        unique_chain_sequences = {chains[0]: seq for seq, chains in sequence_to_chains.items()}
+        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)  # pyright: ignore[reportArgumentType]
+
+        msa_paths = {}
+        for seq, chains_with_seq in sequence_to_chains.items():
+            representative_msa = msa_paths_unique[chains_with_seq[0]]
+            for chain_id in chains_with_seq:
+                msa_paths[chain_id] = representative_msa
     else:
         msa_paths = None
 
