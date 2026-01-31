@@ -480,7 +480,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--methods",
-        default="MD,X-RAY DIFFRACTION",
+        default="X-RAY DIFFRACTION",
         help="Comma-separated methods for Boltz2",
     )
 
