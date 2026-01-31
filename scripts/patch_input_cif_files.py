@@ -54,7 +54,14 @@ def crawl_dir_by_depth(
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--input-dir", required=True)
-    parser.add_argument("--cif-pattern", default='*occ*.cif')
+    parser.add_argument("--cif-pattern", default='refined.cif')
+    parser.add_argument(
+        "--rcsb-pattern", default='grid_search_results/(.{4})',
+        help="Regex pattern for rcsb ids in file paths. "
+             "Must have only one group, surrounding the id"
+    )
+    parser.add_argument("--depth", type=int, default=4,
+                        help="Depth to search the directory tree below input-dir")
     args = parser.parse_args()
     return args
 
@@ -62,12 +69,17 @@ def main(
         input_dir: str | Path,
         target_pattern: str,
         rcsb_regex: str = r"grid_search_results/(.{4})",
-        depth: int = 4) -> None:
+        depth: int = 4
+) -> None:
     cif_files_to_patch = crawl_dir_by_depth(input_dir, target_pattern, n_levels=depth)
     results = joblib.Parallel()(
-        patch_individual_cif_file(f, rcsb_regex) for f in cif_files_to_patch
+        joblib.delayed(patch_individual_cif_file)(f, rcsb_regex) for f in cif_files_to_patch
     )
     results = [r for r in results if r]
+    if results:
+        print("The following files could not be patched:")
+        for r in results:
+            print(r)
 
 
 def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
@@ -122,4 +134,4 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
 if __name__ == "__main__":
 
     args = parse_args()
-    main(args.input_dir, args.cif_pattern)
+    main(args.input_dir, args.cif_pattern, args.rcsb_pattern, args.depth)
