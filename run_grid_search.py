@@ -221,7 +221,7 @@ def run_grid_search(
 def run_guidance_queue_script(args: tuple[str, int, str, int]):
     job_queue_path, max_workers, model, worker_num = args
     pixi_env = get_pixi_env(model)
-    script_path = Path(__file__).parent / "examples" / "run_guidance_pipeline.py"
+    script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
     cmd = f"pixi run -e {pixi_env} python {script_path} --job-queue-path {job_queue_path}"
     cmd = cmd.split()
     log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
@@ -481,7 +481,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--methods",
-        default="MD,X-RAY DIFFRACTION",
+        default="X-RAY DIFFRACTION",
         help="Comma-separated methods for Boltz2",
     )
 
