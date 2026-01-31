@@ -11,9 +11,10 @@ from atomworks.io.parser import parse
 from biotite.structure import AtomArrayStack
 from biotite.structure.io.pdbx import CIFFile, set_structure, CIFColumn
 from biotite.database.rcsb import fetch
+from loguru import logger
 
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
-SAMPLEWORKS_CACHE.mkdir(parents=True, exist_ok=True)
+
 
 def crawl_dir_by_depth(
         root_dir: str | Path,
@@ -71,29 +72,32 @@ def main(
         rcsb_regex: str = r"grid_search_results/(.{4})",
         depth: int = 4
 ) -> None:
+    # make sure the cache exists
+    SAMPLEWORKS_CACHE.mkdir(parents=True, exist_ok=True)
+
     cif_files_to_patch = crawl_dir_by_depth(input_dir, target_pattern, n_levels=depth)
     results = joblib.Parallel()(
         joblib.delayed(patch_individual_cif_file)(f, rcsb_regex) for f in cif_files_to_patch
     )
     results = [r for r in results if r]
     if results:
-        print("The following files could not be patched:")
+        logger.warning("The following files could not be patched:")
         for r in results:
             print(r)
 
 
 def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
     cif_path = Path(cif_file)
-    # write a backup version of the input cif file
-    copy(cif_path, cif_path.parent / (cif_path.name + ".bak"))
-
     m = re.search(rcsb_regex, str(cif_path))
     rcsb_id = m.group(1) if m else None
     if not m:
-        print(
+        logger.warning(
             f"Unable to parse an RCSB structure id: from path {cif_file} with pattern {rcsb_regex}"
         )
         return cif_file
+
+    # write a backup version of the input cif file
+    copy(cif_path, cif_path.parent / (cif_path.name + ".bak"))
 
     # fetch only downloads the file if it isn't already present.
     rcsb_path = fetch(rcsb_id, format="cif", target_path=str(SAMPLEWORKS_CACHE))
@@ -104,14 +108,17 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
     asym_unit: AtomArrayStack = cif_to_patch["asym_unit"]
 
     # make sure entity ids match in atom_site and entity_poly
-    ep = template.block["entity_poly"]
-    # fixme for now I'm using a hack--if there's one polymer entity, just assert that
-    #   polymers in atom_site have to be that one. Otherwise do nothing.
-    if len(ep["entity_id"]) == 1:
-        entity_id = ep["entity_id"].as_item()
-        if not "label_entity_id" in asym_unit.get_annotation_categories():
-            asym_unit.add_annotation("label_entity_id", int)
-        asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)
+    if "entity_poly" in template.block:
+        ep = template.block["entity_poly"]
+        # fixme for now I'm using a hack--if there's one polymer entity, just assert that
+        #   polymers in atom_site have to be that one. Otherwise do nothing.
+        if len(ep["entity_id"]) == 1:
+            entity_id = ep["entity_id"].as_item()
+            if "label_entity_id" not in asym_unit.get_annotation_categories():
+                asym_unit.add_annotation("label_entity_id", int)
+            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)
+    else:
+        logger.warning("No entity_poly block found in template CIF file. Cannot patch entity ids")
 
     # now set the structure with correct entity ids
     set_structure(template, asym_unit)
@@ -127,7 +134,7 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
 
     template.block.name = cif_path.stem
     template.write(cif_file)
-    print(f"Wrote {cif_file}")
+    logger.info(f"Wrote {cif_file}")
     return None
 
 
