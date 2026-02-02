@@ -31,15 +31,23 @@ class SampleworksProcessedStructure:
     elements: torch.Tensor
 
 
+# TODO: this function could maybe be an atomworks transform/use those?
 def process_structure_to_trajectory_input(
     structure: dict,
     coords_from_prior: torch.Tensor,
     features: GenerativeModelInput,
     ensemble_size: int,
 ) -> SampleworksProcessedStructure:
-    # TODO: this is not generalizable currently, figure this out
-    if features.conditioning and features.__class__.__name__ == "ProtenixConditioning":
-        atom_array = features.conditioning["true_atom_array"]
+    if features.conditioning:
+        cond_class = features.conditioning.__class__.__name__
+        if cond_class in ("ProtenixConditioning", "BoltzConditioning") and hasattr(
+            features.conditioning, "true_atom_array"
+        ):
+            atom_array = features.conditioning.true_atom_array
+            if atom_array is None:
+                atom_array = structure["asym_unit"][0]
+        else:
+            atom_array = structure["asym_unit"][0]
     else:
         atom_array = structure["asym_unit"][0]
     occupancy_mask = atom_array.occupancy > 0
@@ -77,12 +85,6 @@ def process_structure_to_trajectory_input(
 
     # TODO: account for missing residues in mask
     mask_like = torch.ones_like(input_coords[..., 0])
-
-    if input_coords.shape != coords_from_prior.shape:
-        raise ValueError(
-            f"Input coordinates shape {input_coords.shape} does not match"
-            f" initialized coordinates {coords_from_prior.shape} shape."
-        )
 
     return SampleworksProcessedStructure(
         structure=structure,

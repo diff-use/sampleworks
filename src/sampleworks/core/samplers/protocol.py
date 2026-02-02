@@ -54,7 +54,8 @@ class StepContext:
     # Trajectory parameters (diffusion/flow-matching)
     t: Float[Array, " batch"] | None = None  # Current time/noise level
     dt: Float[Array, " batch"] | None = None  # Step size in time
-    noise_scale: Float[Array, " batch"] | None = None  # Scale of noise added to inputs (diffusion)
+    # Scale of noise added to inputs (diffusion). Typically is the std. dev. of the noise at this t.
+    noise_scale: Float[Array, " batch"] | None = None
 
     # Optimization parameters
     learning_rate: Float[Array, " batch"] | None = None

@@ -27,6 +27,33 @@ class StructurePredictor(StrEnum):
     RF3 = "rf3"
 
 
+class TrajectorySamplers(StrEnum):
+    """Enum for all TrajectorySampler implementations."""
+
+    AF3EDM = "af3edm"
+
+
+class StepScalers(StrEnum):
+    """Enum for all StepScalerProtocol implementations."""
+
+    NO_SCALING = "no_scaling"
+    DATA_SPACE_DPS = "data_space_dps"
+    NOISE_SPACE_DPS = "noise_space_dps"
+
+
+class TrajectoryScalers(StrEnum):
+    """Enum for all TrajectoryScalerProtocol implementations."""
+
+    PURE_GUIDANCE = "pure_guidance"
+    FK_STEERING = "fk_steering"
+
+
+class Rewards(StrEnum):
+    """Enum for all RewardFunctionProtocol implementations."""
+
+    REAL_SPACE_DENSITY = "real_space_density"
+
+
 class Boltz2Method(StrEnum):
     """Enum for Boltz2 sampling methods.
 

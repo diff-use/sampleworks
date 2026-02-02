@@ -258,6 +258,14 @@ class AF3EDMSampler:
         loss = torch.as_tensor(loss)
         guidance_weight = scaler.guidance_strength(context)
 
+        # Ensure guidance_weight has batch dimension matching guidance_direction
+        batch_size = guidance_direction.shape[0]
+        guidance_weight = torch.as_tensor(guidance_weight)
+        if guidance_weight.ndim == 0:
+            guidance_weight = guidance_weight.unsqueeze(0).expand(batch_size)
+        elif guidance_weight.shape[0] == 1 and batch_size > 1:
+            guidance_weight = guidance_weight.expand(batch_size)
+
         if align_transform is not None and allow_gradients:
             guidance_direction = apply_forward_transform(
                 guidance_direction, align_transform, rotation_only=True
