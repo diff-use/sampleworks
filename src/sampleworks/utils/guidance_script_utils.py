@@ -19,8 +19,13 @@ from sampleworks.core.rewards.real_space_density import (
     RealSpaceRewardFunction,
     setup_scattering_params,
 )
+from sampleworks.core.samplers.edm import AF3EDMSampler
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
+from sampleworks.core.scalers.score_scalers import (
+    DataSpaceDPSScaler,
+    NoiseSpaceDPSScaler,
+)
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -286,11 +291,12 @@ def run_guidance(
     Returns:
     """
 
-    os.makedirs(os.path.dirname(args.log_path), exist_ok=True)
+    log_path = getattr(args, "log_path", None) or os.path.join(args.output_dir, "run.log")
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
 
     # separate logs for each guidance run
     handle = logger.add(
-        args.log_path, level="INFO", filter=lambda rec: rec["extra"].get("special", False) is True
+        log_path, level="INFO", filter=lambda rec: rec["extra"].get("special", False) is True
     )
     started_at = datetime.now()
     try:
@@ -299,7 +305,7 @@ def run_guidance(
         logger.info("Guidance run successfully!")
         return get_job_result(args, device, started_at, datetime.now(), 0, "success")
     except Exception as e:
-        logger.error(f"Error running guidance: {e} consult logs ({args.log_path}) for real errors.")
+        logger.error(f"Error running guidance: {e} consult logs ({log_path}) for real errors.")
         logger.error(traceback.format_exc())
         return get_job_result(args, device, started_at, datetime.now(), 1, "failed")
     finally:
@@ -319,55 +325,97 @@ def _run_guidance(
         args.structure,  # path/string to a structure file.
     )
 
+    # Determine model type from wrapper class name
+    wrapper_class_name = model_wrapper.__class__.__name__
+    is_boltz = "Boltz" in wrapper_class_name
+
     # Boltz was trained with this, others might not have been.
-    use_alignment_for_reverse_diffusion = args.model in (
-        StructurePredictor.BOLTZ_1,
-        StructurePredictor.BOLTZ_2,
+    use_alignment_for_reverse_diffusion = is_boltz
+
+    # Create sampler with model-appropriate settings
+    sampler = AF3EDMSampler(
+        device=str(device),
+        augmentation=args.augmentation,
+        align_to_input=args.align_to_input,
+        alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
     )
+
+    # Create step scaler for gradient-based guidance
+    use_tweedie = getattr(args, "use_tweedie", False)
+    if use_tweedie:
+        step_scaler = DataSpaceDPSScaler(
+            step_size=args.step_size,
+            gradient_normalization=args.gradient_normalization,
+        )
+    else:
+        step_scaler = NoiseSpaceDPSScaler(
+            step_size=args.step_size,
+            gradient_normalization=args.gradient_normalization,
+        )
+
+    # TODO: this should be a config option
+    num_steps = 200
 
     if guidance_type == GuidanceType.PURE_GUIDANCE:
         logger.info("Initializing pure guidance")
-        guidance = PureGuidance(model_wrapper=model_wrapper, reward_function=reward_function)
+
+        # TODO: these should be fractions in the args directly
+        guidance_t_start = args.guidance_start / num_steps if args.guidance_start > 0 else 0.0
+        t_start = args.partial_diffusion_step / num_steps if args.partial_diffusion_step else 0.0
+
+        guidance = PureGuidance(
+            ensemble_size=args.ensemble_size,
+            num_steps=num_steps,
+            t_start=t_start,
+            guidance_t_start=guidance_t_start,
+        )
 
         logger.info(f"Running pure guidance using model with hash {model_wrapper.model.__hash__()}")
-        refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
-            structure,
-            msa_path=getattr(args, "msa_path", None),
-            guidance_start=args.guidance_start,
-            step_size=args.step_size,
-            gradient_normalization=args.gradient_normalization,
-            use_tweedie=args.use_tweedie,
-            augmentation=args.augmentation,
-            align_to_input=args.align_to_input,
-            partial_diffusion_step=args.partial_diffusion_step,
-            out_dir=args.output_dir,
-            alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
-            ensemble_size=args.ensemble_size,
+        result = guidance.sample(
+            structure=structure,
+            model=model_wrapper,
+            sampler=sampler,
+            step_scaler=step_scaler,
+            reward=reward_function,
         )
+
+        refined_structure = result.structure
+        losses = result.losses if result.losses else []
+        traj_denoised = result.metadata.get("trajectory_denoised", []) if result.metadata else []
+        traj_next_step = list(result.trajectory) if result.trajectory else []
 
     elif guidance_type == GuidanceType.FK_STEERING:
         logger.info("Initializing Feynman-Kac steering")
-        guidance = FKSteering(model_wrapper=model_wrapper, reward_function=reward_function)
+
+        # TODO: same as above
+        gs = args.guidance_start
+        guidance_start_fraction = gs / num_steps if gs > 0 else 0.0
+        pd = args.partial_diffusion_step
+        t_start = pd / num_steps if pd else 0.0
+
+        guidance = FKSteering(
+            ensemble_size=args.ensemble_size,
+            num_steps=num_steps,
+            resampling_interval=args.fk_resampling_interval,
+            fk_lambda=args.fk_lambda,
+            guidance_t_start=guidance_start_fraction,
+            t_start=t_start,
+        )
 
         logger.info("Running FK steering")
-        refined_structure, (traj_denoised, traj_next_step), losses = guidance.run_guidance(
-            structure,
-            msa_path=getattr(args, "msa_path", None),
+        result = guidance.sample(
+            structure=structure,
+            model=model_wrapper,
+            sampler=sampler,
+            step_scaler=step_scaler,
+            reward=reward_function,
             num_particles=args.num_particles,
-            ensemble_size=args.ensemble_size,
-            fk_resampling_interval=args.fk_resampling_interval,
-            fk_lambda=args.fk_lambda,
-            num_gd_steps=args.num_gd_steps,
-            guidance_weight=args.guidance_weight,
-            gradient_normalization=args.gradient_normalization,
-            guidance_interval=args.guidance_interval,  # pyright: ignore (attr added after init intentionally)
-            guidance_start=args.guidance_start,
-            augmentation=args.augmentation,
-            align_to_input=args.align_to_input,
-            partial_diffusion_step=args.partial_diffusion_step,
-            out_dir=args.output_dir,
-            alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
         )
+
+        refined_structure = result.structure
+        losses = result.losses if result.losses else []
+        traj_denoised = result.metadata.get("trajectory_denoised", []) if result.metadata else []
+        traj_next_step = list(result.trajectory) if result.trajectory else []
     else:
         logger.error(f"Unknown guidance type: {guidance_type}")
         raise TypeError("Unknown guidance type!")
@@ -392,19 +440,19 @@ def get_job_result(
     start_time = epoch_seconds(started_at)
     end_time = epoch_seconds(ended_at)
     result = JobResult(
-        protein=args.protein,
-        model=args.model,
-        method=args.method if hasattr(args, "method") else "None",
-        scaler=args.guidance_type,
-        ensemble_size=args.ensemble_size,
-        gradient_weight=args.guidance_weight if hasattr(args, "guidance_weight") else -1.0,
-        gd_steps=args.num_gd_steps if hasattr(args, "num_gd_steps") else -1,
+        protein=getattr(args, "protein", "unknown"),
+        model=getattr(args, "model", "unknown"),
+        method=getattr(args, "method", "None"),
+        scaler=getattr(args, "guidance_type", "unknown"),
+        ensemble_size=getattr(args, "ensemble_size", 1),
+        gradient_weight=getattr(args, "guidance_weight", -1.0),
+        gd_steps=getattr(args, "num_gd_steps", -1),
         status=status,
         exit_code=exit_code,
         runtime_seconds=round(end_time - start_time, 2),
         started_at=started_at.isoformat(),
         finished_at=ended_at.isoformat(),
-        log_path=args.log_path,
+        log_path=getattr(args, "log_path", None) or os.path.join(args.output_dir, "run.log"),
         output_dir=args.output_dir,
     )
     return result

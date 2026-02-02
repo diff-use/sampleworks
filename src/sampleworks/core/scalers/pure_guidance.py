@@ -50,7 +50,7 @@ class PureGuidance:
         structure: dict,
         model: FlowModelWrapper,
         sampler: TrajectorySampler,
-        score_scaler: StepScalerProtocol,
+        step_scaler: StepScalerProtocol,
         reward: RewardFunctionProtocol,
         num_particles: int = 1,
     ) -> GuidanceOutput:
@@ -65,9 +65,9 @@ class PureGuidance:
             FlowModelWrapper to use for sampling.
         sampler : TrajectorySampler
             Sampler to use for the diffusion trajectory.
-        score_scaler : StepScalerProtocol
+        step_scaler : StepScalerProtocol
             StepScalerProtocol to use for guidance scaling.
-        reward : RewardFunction
+        reward : RewardFunctionProtocol
             Reward function to use for guidance.
         num_particles : int (optional)
             Number of particles to sample in parallel. For PureGuidance, this is ignored since
@@ -104,6 +104,16 @@ class PureGuidance:
         losses: list[float | None] = []
 
         schedule = sampler.compute_schedule(num_steps=self.num_steps)
+        if self.starting_step > 0:
+            logger.info(
+                f"Partial diffusion starting from step {self.starting_step} of {self.num_steps}."
+            )
+            starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
+            # coords will be a noisy version of input coords at this t
+            coords = (
+                processed_structure.input_coords
+                + coords * torch.as_tensor(starting_context.noise_scale) ** 2
+            )
 
         for i in tqdm(range(self.starting_step, self.num_steps)):
             context = sampler.get_context_for_step(i, schedule)
@@ -116,7 +126,7 @@ class PureGuidance:
                 state=coords,
                 model_wrapper=model,
                 context=context,
-                scaler=score_scaler if apply_guidance else None,
+                scaler=step_scaler if apply_guidance else None,
                 features=features,
             )
 

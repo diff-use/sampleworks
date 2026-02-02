@@ -136,6 +136,16 @@ class FKSteering:
         loss_prev: torch.Tensor | None = None
         log_proposal_correction_prev: torch.Tensor | None = None
 
+        if self.starting_step > 0:
+            logger.info(
+                f"Partial diffusion starting from step {self.starting_step} of {self.num_steps}."
+            )
+            starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
+            # coords will be a noisy version of input coords at this t
+            coords = (
+                processed.input_coords + coords * torch.as_tensor(starting_context.noise_scale) ** 2
+            )
+
         pbar = tqdm(range(self.starting_step, self.num_steps), desc="FK Steering")
         for i in pbar:
             context = sampler.get_context_for_step(i, schedule)
@@ -404,8 +414,17 @@ class FKSteering:
             or mock object in test contexts.
         """
         if features.conditioning and hasattr(features.conditioning, "__class__"):
-            if features.conditioning.__class__.__name__ == "ProtenixConditioning":
+            cond_class = features.conditioning.__class__.__name__
+            if cond_class == "ProtenixConditioning":
                 atom_array = features.conditioning["true_atom_array"]
+            elif cond_class == "BoltzConditioning":
+                if (
+                    hasattr(features.conditioning, "true_atom_array")
+                    and features.conditioning.true_atom_array is not None
+                ):
+                    atom_array = features.conditioning.true_atom_array
+                else:
+                    atom_array = structure["asym_unit"][0]
             else:
                 atom_array = structure["asym_unit"][0]
         else:
@@ -424,8 +443,19 @@ class FKSteering:
 
         coords_4d = coords.reshape(effective_particles, self.ensemble_size, -1, 3)
         if final_atom_array.coord is not None:
-            final_atom_array.coord[..., reward_param_mask, :] = (
-                coords_4d[min_loss_index].cpu().numpy()
-            )
+            num_reward_atoms = int(reward_param_mask.sum())
+            model_coords = coords_4d[min_loss_index].cpu().numpy()
+
+            # Boltz model coords may have more atoms than original structure due to
+            # sequence-based vs occupancy-filtered atom sets. Slice to match.
+            if model_coords.shape[-2] != num_reward_atoms:
+                logger.warning(
+                    f"Model coordinate count ({model_coords.shape[-2]}) differs from "
+                    f"structure atom count ({num_reward_atoms}). "
+                    f"Using first {num_reward_atoms} atoms."
+                )
+                model_coords = model_coords[..., :num_reward_atoms, :]
+
+            final_atom_array.coord[..., reward_param_mask, :] = model_coords
 
         return final_atom_array

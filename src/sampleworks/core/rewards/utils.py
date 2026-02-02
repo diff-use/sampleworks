@@ -104,15 +104,19 @@ def get_atom_array_from_model_input(
     structure
         Atomworks structure dictionary
     model_class_name
-        Name of the model wrapper class (e.g., "ProtenixWrapper", "BoltzWrapper")
+        Name of the model wrapper class (e.g., "ProtenixWrapper", "Boltz1Wrapper", "Boltz2Wrapper")
 
     Returns
     -------
     AtomArray | AtomArrayStack
         The atom array to use for reward computation
     """
-    if model_class_name == "ProtenixWrapper":
+    if model_class_name in ("ProtenixWrapper", "Boltz1Wrapper", "Boltz2Wrapper"):
+        if hasattr(features, "conditioning") and hasattr(features.conditioning, "true_atom_array"):
+            if features.conditioning.true_atom_array is not None:
+                return features.conditioning.true_atom_array
         if hasattr(features, "conditioning") and hasattr(features.conditioning, "feats"):
-            return features.conditioning.feats.get("true_atom_array")
-        return features.get("true_atom_array")
+            atom_array = features.conditioning.feats.get("true_atom_array")
+            if atom_array is not None:
+                return atom_array
     return structure["asym_unit"][0]

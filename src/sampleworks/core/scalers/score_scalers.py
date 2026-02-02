@@ -30,9 +30,7 @@ class NoScalingScaler:
 
     def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
         t = context.t_effective
-        if isinstance(t, Tensor):
-            return torch.zeros_like(t)
-        return torch.zeros(1)
+        return torch.zeros_like(torch.as_tensor(t))
 
 
 class DataSpaceDPSScaler:
@@ -80,9 +78,7 @@ class DataSpaceDPSScaler:
 
     def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
         t = context.t_effective
-        if isinstance(t, Tensor):
-            return torch.ones_like(t) * self.step_size
-        return torch.ones(1) * self.step_size
+        return torch.ones_like(torch.as_tensor(t)) * self.step_size
 
 
 class NoiseSpaceDPSScaler:
@@ -127,13 +123,18 @@ class NoiseSpaceDPSScaler:
             occupancies=context.reward_inputs.occupancies,
         )
 
-        try:
-            (grad,) = torch.autograd.grad(loss, x_t)
-        except RuntimeError as e:
+        # Use loss.backward() instead of torch.autograd.grad() to work with
+        # gradient checkpointing (which models like Boltz/Protenix use)
+        if x_t.grad is not None:
+            x_t.grad.zero_()
+        loss.backward()
+
+        grad = x_t.grad
+        if grad is None:
             raise RuntimeError(
                 "Gradient computation failed. Ensure x_t has requires_grad=True "
                 "before model forward pass."
-            ) from e
+            )
 
         if self.gradient_normalization:
             grad_norm = grad.norm(dim=(-1, -2), keepdim=True)
@@ -143,6 +144,4 @@ class NoiseSpaceDPSScaler:
 
     def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
         t = context.t_effective
-        if isinstance(t, Tensor):
-            return torch.ones_like(t) * self.step_size
-        return torch.ones(1) * self.step_size
+        return torch.ones_like(torch.as_tensor(t)) * self.step_size
