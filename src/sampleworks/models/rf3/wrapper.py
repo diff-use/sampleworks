@@ -4,11 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-import numpy as np
 import torch
 from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
-from biotite.structure import AtomArray
+from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import Float
 from loguru import logger as log
 from rf3.inference_engines import RF3InferenceEngine
@@ -301,25 +300,19 @@ class RF3Wrapper:
             features, grad_needed=False, recycling_steps=recycling_steps or 10
         )
 
-        occupancy_mask = atom_array.occupancy > 0
-        coord_array = np.asarray(atom_array.coord)
-        if coord_array.ndim == 3:
-            nan_mask = ~np.any(np.isnan(coord_array[0]), axis=-1)
-        else:
-            nan_mask = ~np.any(np.isnan(coord_array), axis=-1)
-        valid_mask = occupancy_mask & nan_mask
-
-        valid_atom_array = atom_array[valid_mask]
+        true_atom_array: AtomArray = (
+            cast(AtomArray, atom_array[0]) if isinstance(atom_array, AtomArrayStack) else atom_array
+        )
 
         conditioning = RF3Conditioning(
             s_inputs=pairformer_out["s_inputs"],
             s_trunk=pairformer_out["s_trunk"],
             z_trunk=pairformer_out["z_trunk"],
             features=pairformer_out["features"],
-            true_atom_array=valid_atom_array,
+            true_atom_array=true_atom_array,
         )
 
-        num_atoms = len(valid_atom_array)
+        num_atoms = len(pairformer_out["features"]["atom_to_token_map"])
         x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
@@ -469,9 +462,6 @@ class RF3Wrapper:
             raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
         cond = features.conditioning
-        if cond.true_atom_array is not None:
-            num_atoms = len(cond.true_atom_array)
-        else:
-            raise ValueError("Cannot determine atom count from features without true_atom_array")
+        num_atoms = len(cond.features["atom_to_token_map"])
 
         return torch.randn((batch_size, num_atoms, 3), device=self.device)

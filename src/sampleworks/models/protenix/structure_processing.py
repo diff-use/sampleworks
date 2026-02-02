@@ -728,6 +728,18 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     has_ligand_bonds = lig_polymer_bonds.size > 0 or lig_lig_bonds.size > 0
 
     if has_modifications or has_ligand_bonds:
+        entity_min_res_id: dict[str, int] = {}
+        for label_entity_id in np.unique(cast(np.ndarray, atom_array.label_entity_id)):
+            for chain_id, info in chain_info.items():
+                chain_atom = atom_array[atom_array.chain_id == chain_id]
+                if len(chain_atom) > 0 and chain_atom[0].label_entity_id == label_entity_id:  # pyright: ignore[reportArgumentType, reportIndexIssue]
+                    if chain_id in valid_positions and valid_positions[chain_id]:
+                        entity_min_res_id[str(label_entity_id)] = min(valid_positions[chain_id])
+                    else:
+                        chain_res_ids = cast(np.ndarray, chain_atom.res_id)
+                        entity_min_res_id[str(label_entity_id)] = int(np.min(chain_res_ids))
+                    break
+
         token_bonds_list = []
 
         if has_ligand_bonds:
@@ -749,13 +761,17 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             for atoms in token_bonds[:, :2]:
                 bond_dict = {}
                 for i in range(2):
-                    position = cast(np.ndarray, atom_array.res_id)[atoms[i]]
+                    raw_res_id = int(cast(np.ndarray, atom_array.res_id)[atoms[i]])
+                    label_entity_id = atom_array.get_annotation("label_entity_id")[atoms[i]]
+                    if label_entity_id in entity_poly_type:
+                        min_res_id = entity_min_res_id.get(str(label_entity_id), 1)
+                        position = raw_res_id - min_res_id + 1
+                    else:
+                        position = 1
                     bond_dict[f"entity{i + 1}"] = int(
-                        label_entity_id_to_entity_id_in_json[
-                            atom_array.get_annotation("label_entity_id")[atoms[i]]
-                        ]
+                        label_entity_id_to_entity_id_in_json[label_entity_id]
                     )
-                    bond_dict[f"position{i + 1}"] = int(position)
+                    bond_dict[f"position{i + 1}"] = position
                     bond_dict[f"atom{i + 1}"] = cast(np.ndarray, atom_array.atom_name)[atoms[i]]
                     bond_dict[f"copy{i + 1}"] = int(atom_array.get_annotation("copy_id")[atoms[i]])
 

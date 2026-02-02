@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import torch
 from atomworks.enums import ChainType
+from biotite.structure import AtomArray, AtomArrayStack
 from boltz.data.module.inference import BoltzInferenceDataModule
 from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
 from boltz.data.pad import pad_dim
@@ -55,6 +56,11 @@ class BoltzConditioning:
         Raw batch dict from dataloader.
     diffusion_conditioning : dict[str, Tensor] | None
         Additional diffusion conditioning (Boltz2 only).
+    true_atom_array : AtomArray | None
+        Original structure's atom array (occupancy-filtered) for reward computation.
+        Boltz's internal atom representation may differ from this due to padding, etc.
+        # TODO: figure out a standardized way of handling all these! related to several
+        todos elsewhere
     """
 
     s: Tensor
@@ -63,6 +69,7 @@ class BoltzConditioning:
     relative_position_encoding: Tensor
     feats: dict[str, Any]
     diffusion_conditioning: dict[str, Tensor] | None = None
+    true_atom_array: AtomArray | None = None
 
 
 @dataclass
@@ -434,6 +441,13 @@ class Boltz2Wrapper:
         pairformer_out = self._pairformer_pass(batch, recycling_steps=config.recycling_steps)
         self.cached_representations = pairformer_out
 
+        atom_array_or_stack = get_asym_unit_from_structure(structure)
+        true_atom_array: AtomArray = (
+            cast(AtomArray, atom_array_or_stack[0])
+            if isinstance(atom_array_or_stack, AtomArrayStack)
+            else atom_array_or_stack
+        )
+
         conditioning = BoltzConditioning(
             s=pairformer_out["s"],
             z=pairformer_out["z"],
@@ -441,14 +455,18 @@ class Boltz2Wrapper:
             relative_position_encoding=pairformer_out["relative_position_encoding"],
             feats=pairformer_out["feats"],
             diffusion_conditioning=pairformer_out.get("diffusion_conditioning"),
+            true_atom_array=true_atom_array,
         )
 
-        # NOTE: the structure dict input to featurize will be used to determine the shape here -
-        # this might mean that we have compatibility issues with the data module featurization of
-        # the structure if they differ.
-        x_init = self.initialize_from_prior(
-            batch_size=ensemble_size, shape=(get_asym_unit_from_structure(structure).shape[-1], 3)
-        )
+        # TODO: we need to address the larger problem with these sorts of shape mismatches mentioned
+        # below. Protenix has these issues too, and Boltz works a bit cleaner but I'm sure there's
+        # still a way to make this much better.
+
+        # Use atom count from Boltz featurization (via conditioning) to ensure consistency
+        # between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
+        # a temporary placeholder; initialize_from_prior derives shape from conditioning.
+        temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
+        x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 
@@ -578,6 +596,14 @@ class Boltz2Wrapper:
         cond = features.conditioning
         if not isinstance(x_t, torch.Tensor):
             x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
+
+        # Ensure t has batch dimension and is on correct device
+        if isinstance(t, (int, float)):
+            t = torch.tensor([t], device=self.device, dtype=torch.float32)
+        else:
+            if isinstance(t, torch.Tensor) and t.ndim == 0:
+                t = t.unsqueeze(0)
+            t = t.to(device=self.device, dtype=torch.float32)
 
         feats = cond.feats
         atom_mask = feats.get("atom_pad_mask")
@@ -837,6 +863,13 @@ class Boltz1Wrapper:
         pairformer_out = self._pairformer_pass(batch, recycling_steps=config.recycling_steps)
         self.cached_representations = pairformer_out
 
+        atom_array_or_stack = get_asym_unit_from_structure(structure)
+        true_atom_array: AtomArray = (
+            cast(AtomArray, atom_array_or_stack[0])
+            if isinstance(atom_array_or_stack, AtomArrayStack)
+            else atom_array_or_stack
+        )
+
         conditioning = BoltzConditioning(
             s=pairformer_out["s"],
             z=pairformer_out["z"],
@@ -844,14 +877,18 @@ class Boltz1Wrapper:
             relative_position_encoding=pairformer_out["relative_position_encoding"],
             feats=pairformer_out["feats"],
             diffusion_conditioning=None,
+            true_atom_array=true_atom_array,
         )
 
-        # NOTE: the structure dict input to featurize will be used to determine the shape here -
-        # this might mean that we have compatibility issues with the data module featurization of
-        # the structure if they differ.
-        x_init = self.initialize_from_prior(
-            batch_size=ensemble_size, shape=(get_asym_unit_from_structure(structure).shape[-1], 3)
-        )
+        # TODO: we need to address the larger problem with these sorts of shape mismatches mentioned
+        # below. Protenix has these issues too, and Boltz works a bit cleaner but I'm sure there's
+        # still a way to make this much better.
+
+        # Use atom count from Boltz featurization (via conditioning) to ensure consistency
+        # between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
+        # a temporary placeholder; initialize_from_prior derives shape from conditioning.
+        temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
+        x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 
@@ -886,6 +923,14 @@ class Boltz1Wrapper:
         cond = features.conditioning
         if not isinstance(x_t, torch.Tensor):
             x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
+
+        # Ensure t has batch dimension and is on correct device
+        if isinstance(t, (int, float)):
+            t = torch.tensor([t], device=self.device, dtype=torch.float32)
+        else:
+            if isinstance(t, torch.Tensor) and t.ndim == 0:
+                t = t.unsqueeze(0)
+            t = t.to(device=self.device, dtype=torch.float32)
 
         feats = cond.feats
         atom_mask = feats.get("atom_pad_mask")

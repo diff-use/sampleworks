@@ -55,6 +55,9 @@ class ProtenixConditioning:
         Pair representation from Pairformer.
     features : dict[str, Any]
         Raw feature dict for diffusion module.
+    num_atoms : int
+        Number of atoms in the Protenix model's representation. This is the authoritative
+        atom count for the diffusion module and should be used for x_init shape.
     pair_z : Tensor | None
         Cached pair representation for diffusion conditioning.
     p_lm : Tensor | None
@@ -62,13 +65,14 @@ class ProtenixConditioning:
     c_l : Tensor | None
         Cached atom attention encoder output.
     true_atom_array : AtomArray | None
-        The AtomArray of the true structure, used for determining proper atom counts.
+        The AtomArray of the true structure, used for alignment/evaluation.
     """
 
     s_inputs: Tensor
     s_trunk: Tensor
     z_trunk: Tensor
     features: dict[str, Any]
+    num_atoms: int
     pair_z: Tensor | None = None
     p_lm: Tensor | None = None
     c_l: Tensor | None = None
@@ -402,19 +406,20 @@ class ProtenixWrapper:
         p_lm = p_lm_c_l[0] if p_lm_c_l else None
         c_l = p_lm_c_l[1] if p_lm_c_l else None
 
+        num_atoms_protenix = len(atom_array_protenix)
         conditioning = ProtenixConditioning(
             s_inputs=pairformer_out["s_inputs"],
             s_trunk=pairformer_out["s_trunk"],
             z_trunk=pairformer_out["z_trunk"],
             features=pairformer_out["features"],
+            num_atoms=num_atoms_protenix,
             pair_z=pairformer_out.get("pair_z"),
             p_lm=p_lm,
             c_l=c_l,
             true_atom_array=atom_array if "asym_unit" in structure else None,
         )
 
-        num_atoms = len(atom_array)
-        x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
+        x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms_protenix, 3))
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 
@@ -615,9 +620,4 @@ class ProtenixWrapper:
             raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
         cond = features.conditioning
-        if cond.true_atom_array is not None:
-            num_atoms = len(cond.true_atom_array)
-        else:
-            raise ValueError("Cannot determine atom count from features without true_atom_array")
-
-        return torch.randn((batch_size, num_atoms, 3), device=self.device)
+        return torch.randn((batch_size, cond.num_atoms, 3), device=self.device)
