@@ -79,7 +79,7 @@ sampleworks = {editable = true, path = "."}
 cuda = "12"
 
 [tool.pixi.tasks]
-all-tests = "pytest"
+all-tests = {args = [{arg = "flags", default = ""}], cmd = "pytest {{ flags }}"}
 
 # NOTE: if new model environment is added, we need new entry here
 [tool.pixi.tasks.test-all]
