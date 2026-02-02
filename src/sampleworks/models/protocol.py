@@ -6,6 +6,7 @@ Allows different model wrappers to be used interchangeably in sampling pipelines
 
 from dataclasses import dataclass
 from typing import (
+    Generic,
     Protocol,
     runtime_checkable,
     TypeVar,
@@ -22,7 +23,7 @@ FlowOrEnergyBasedModelOutputT = TypeVar("FlowOrEnergyBasedModelOutputT")
 
 
 @dataclass
-class GenerativeModelInput[C]:
+class GenerativeModelInput(Generic[C]):  # noqa: UP046 (for Python 3.11 compatibility)
     """
     Container for inputs to generative models.
 

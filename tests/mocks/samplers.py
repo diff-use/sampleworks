@@ -38,7 +38,7 @@ class MockTrajectorySampler:
     def __init__(self, device: torch.device | None = None):
         self.device = device or torch.device("cpu")
 
-    def compute_schedule(self, num_steps: int, **kwargs) -> MockSchedule:
+    def compute_schedule(self, num_steps: int) -> MockSchedule:
         """Compute a simple linear schedule from 1.0 to 0.0."""
         timesteps = torch.linspace(1.0, 0.0, num_steps + 1, device=self.device)
         return MockSchedule(timesteps=timesteps, num_steps=num_steps)

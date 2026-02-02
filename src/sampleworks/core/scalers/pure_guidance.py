@@ -110,9 +110,8 @@ class PureGuidance:
             )
             starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
             # coords will be a noisy version of input coords at this t
-            coords = (
-                processed_structure.input_coords
-                + coords * torch.as_tensor(starting_context.noise_scale) ** 2
+            coords = processed_structure.input_coords + coords * torch.as_tensor(
+                starting_context.noise_scale
             )
 
         for i in tqdm(range(self.starting_step, self.num_steps)):
