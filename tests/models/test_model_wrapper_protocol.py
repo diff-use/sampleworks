@@ -8,21 +8,20 @@ import torch
 
 from tests.conftest import (
     annotate_structure_for_wrapper,
+    ComponentInfo,
     get_conditioning_type,
-    get_slow_wrappers,
+    get_fixture_name_for_wrapper,
+    MODEL_WRAPPER_REGISTRY,
     STRUCTURES,
-    WrapperInfo,
 )
 
 
-def wrapper_structure_id(val):
-    """Generate test ID for wrapper or structure."""
-    if isinstance(val, WrapperInfo):
-        return val.name
-    return val.replace("structure_", "")
+def get_slow_wrapper_infos() -> list[ComponentInfo]:
+    """Get ComponentInfo for all wrappers that require checkpoints."""
+    return [info for info in MODEL_WRAPPER_REGISTRY.values() if info.requires_checkpoint]
 
 
-@pytest.mark.parametrize("wrapper_info", get_slow_wrappers(), ids=lambda w: w.name)
+@pytest.mark.parametrize("wrapper_info", get_slow_wrapper_infos(), ids=lambda w: w.name)
 class TestFlowModelWrapperProtocol:
     """Test that wrappers implement FlowModelWrapper protocol correctly.
 
@@ -32,11 +31,12 @@ class TestFlowModelWrapperProtocol:
     - initialize_from_prior(batch_size, features, *, shape) -> FlowOrEnergyBasedModelOutputT
     """
 
-    def test_isinstance_flow_model_wrapper(self, wrapper_info: WrapperInfo, request):
+    def test_isinstance_flow_model_wrapper(self, wrapper_info: ComponentInfo, request):
         """Test wrapper implements FlowModelWrapper protocol."""
         from sampleworks.models.protocol import FlowModelWrapper
 
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
         assert isinstance(wrapper, FlowModelWrapper), (
             f"{wrapper_info.name} does not implement FlowModelWrapper protocol"
         )
@@ -46,12 +46,13 @@ class TestFlowModelWrapperProtocol:
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
     def test_featurize_returns_generative_model_input(
-        self, wrapper_info: WrapperInfo, structure_fixture: str, temp_output_dir, request
+        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
     ):
         """Test featurize returns GenerativeModelInput with x_init and conditioning."""
         from sampleworks.models.protocol import GenerativeModelInput
 
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
         structure = request.getfixturevalue(structure_fixture)
         conditioning_type = get_conditioning_type(wrapper_info)
 
@@ -77,10 +78,11 @@ class TestFlowModelWrapperProtocol:
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
     def test_featurize_x_init_shape(
-        self, wrapper_info: WrapperInfo, structure_fixture: str, temp_output_dir, request
+        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
     ):
         """Test featurize x_init has correct shape (batch, atoms, 3)."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
         structure = request.getfixturevalue(structure_fixture)
 
         ensemble_size = 2
@@ -106,10 +108,11 @@ class TestFlowModelWrapperProtocol:
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
     def test_step_returns_tensor(
-        self, wrapper_info: WrapperInfo, structure_fixture: str, temp_output_dir, request
+        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
     ):
         """Test step(x_t, t, features) returns coordinates tensor."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
         structure = request.getfixturevalue(structure_fixture)
 
         annotated = annotate_structure_for_wrapper(wrapper_info, structure, temp_output_dir)
@@ -134,10 +137,11 @@ class TestFlowModelWrapperProtocol:
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
     def test_step_with_float_t(
-        self, wrapper_info: WrapperInfo, structure_fixture: str, temp_output_dir, request
+        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
     ):
         """Test step works with float t value."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
         structure = request.getfixturevalue(structure_fixture)
 
         annotated = annotate_structure_for_wrapper(wrapper_info, structure, temp_output_dir)
@@ -153,10 +157,11 @@ class TestFlowModelWrapperProtocol:
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
     def test_initialize_from_prior_with_features(
-        self, wrapper_info: WrapperInfo, structure_fixture: str, temp_output_dir, request
+        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
     ):
         """Test initialize_from_prior with features from featurize."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
         structure = request.getfixturevalue(structure_fixture)
 
         annotated = annotate_structure_for_wrapper(wrapper_info, structure, temp_output_dir)
@@ -178,9 +183,10 @@ class TestFlowModelWrapperProtocol:
         )
 
     @pytest.mark.slow
-    def test_initialize_from_prior_with_shape(self, wrapper_info: WrapperInfo, request):
+    def test_initialize_from_prior_with_shape(self, wrapper_info: ComponentInfo, request):
         """Test initialize_from_prior with explicit shape."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
 
         batch_size = 2
         num_atoms = 100
@@ -195,22 +201,24 @@ class TestFlowModelWrapperProtocol:
         )
 
     def test_initialize_from_prior_raises_without_features_or_shape(
-        self, wrapper_info: WrapperInfo, request
+        self, wrapper_info: ComponentInfo, request
     ):
         """Test initialize_from_prior raises ValueError without features or shape."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
 
         with pytest.raises(ValueError, match="features|shape"):
             wrapper.initialize_from_prior(batch_size=2)
 
 
-@pytest.mark.parametrize("wrapper_info", get_slow_wrappers(), ids=lambda w: w.name)
+@pytest.mark.parametrize("wrapper_info", get_slow_wrapper_infos(), ids=lambda w: w.name)
 class TestStepRequiresFeatures:
     """Test that step() requires features parameter."""
 
-    def test_step_raises_without_features(self, wrapper_info: WrapperInfo, request):
+    def test_step_raises_without_features(self, wrapper_info: ComponentInfo, request):
         """Test step raises ValueError when features is None."""
-        wrapper = request.getfixturevalue(wrapper_info.fixture_name)
+        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
+        wrapper = request.getfixturevalue(fixture_name)
 
         x_t = torch.randn(1, 100, 3, device=wrapper.device)
         t = torch.tensor([1.0])
