@@ -1,10 +1,7 @@
 """Tests for framework conversion utilities from sampleworks.utils.framework_utils."""
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
-import torch
 from sampleworks.utils.framework_utils import (
     ensure_jax,
     ensure_torch,
@@ -13,6 +10,13 @@ from sampleworks.utils.framework_utils import (
     jax_to_torch,
     torch_to_jax,
 )
+
+
+jax = pytest.importorskip("jax")
+import jax.numpy as jnp
+
+
+torch = pytest.importorskip("torch")
 
 
 class TestTypeChecking:

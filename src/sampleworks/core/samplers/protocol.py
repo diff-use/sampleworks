@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING, TypeVar
+from typing import Any, Generic, Protocol, runtime_checkable, TYPE_CHECKING, TypeVar
 
 import torch
 from jaxtyping import Float
@@ -143,12 +143,12 @@ ModelWrapperT = TypeVar(
     FlowModelWrapper,
     EnergyBasedModelWrapper,
     StructureModelWrapper,
-    infer_variance=True,
+    contravariant=True,
 )
 
 
 @dataclass(frozen=True, slots=True)
-class SamplerStepOutput[StateT]:
+class SamplerStepOutput(Generic[StateT]):  # noqa: UP046
     """Output from a single sampler step.
 
     Encapsulates the updated state along with optional intermediate values

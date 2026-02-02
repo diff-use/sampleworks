@@ -99,15 +99,11 @@ class FKSteering:
         """
 
         features = model.featurize(structure)
-        coords_init = cast(
+        coords = cast(
             torch.Tensor,
-            model.initialize_from_prior(batch_size=self.ensemble_size, features=features),
-        )
-
-        # shape: (ensemble_size, atoms, 3) -> (num_particles * ensemble_size, atoms, 3)
-        coords: torch.Tensor = cast(
-            torch.Tensor,
-            einx.rearrange("e n c -> (p e) n c", coords_init, p=num_particles),
+            model.initialize_from_prior(
+                batch_size=self.ensemble_size * num_particles, features=features
+            ),
         )
 
         processed = process_structure_to_trajectory_input(
@@ -142,8 +138,12 @@ class FKSteering:
             )
             starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
             # coords will be a noisy version of input coords at this t
-            coords = (
-                processed.input_coords + coords * torch.as_tensor(starting_context.noise_scale) ** 2
+            # input_coords: (ensemble, atoms, 3), coords: (particles * ensemble, atoms, 3)
+            coords = einx.add(
+                "e a c, (p e) a c -> (p e) a c",
+                processed.input_coords,
+                coords * torch.as_tensor(starting_context.noise_scale),
+                e=self.ensemble_size,
             )
 
         pbar = tqdm(range(self.starting_step, self.num_steps), desc="FK Steering")
@@ -176,10 +176,14 @@ class FKSteering:
             )
 
             # Store for next iteration's resampling
-            loss = torch.as_tensor(step_output.loss)
+            loss = step_output.loss
             if loss is not None:
+                loss = torch.as_tensor(loss)
                 loss_prev = loss
                 loss_history.append(loss.clone())
+
+            if step_output.log_proposal_correction is not None:
+                log_proposal_correction_prev = torch.as_tensor(step_output.log_proposal_correction)
 
             if denoised_4d is not None:
                 trajectory_denoised.append(denoised_4d.clone().cpu())

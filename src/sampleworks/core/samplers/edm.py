@@ -400,9 +400,11 @@ class AF3EDMSampler:
 
             # eps is the noise added. scaled_guidance_update is the shift.
             # ll_diff = (eps^2 - (eps + shift)^2) / 2var
-            # Sum over dimensions to get total log likelihood difference
-            log_proposal_correction = (
-                eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
+            # Sum over dimensions to get total log likelihood difference for this particle.
+            # TODO: this will need to be altered if we figure out how to vmap over this step for
+            # multiple particles.
+            log_proposal_correction = einx.sum(
+                "... [b n c]", eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
             ) / (2 * eps_scale**2)  # pyright: ignore[reportOptionalOperand] (eps_scale will be float if check_context passed)
 
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
