@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from atomworks import parse
 from biotite.structure import AtomArray, AtomArrayStack, stack
@@ -234,6 +235,7 @@ def save_everything(
     traj_denoised: list[Any],
     traj_next_step: list[Any],
     scaler_type: str,
+    final_state: torch.Tensor | None = None,
 ) -> None:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -241,8 +243,21 @@ def save_everything(
     logger.info("Saving results")
     from biotite.structure.io.pdbx import CIFFile, set_structure
 
+    atom_array = refined_structure["asym_unit"]
+    if isinstance(atom_array, AtomArrayStack):
+        atom_array = atom_array[0]
+
+    if final_state is not None:
+        ensemble_size = final_state.shape[0]
+        occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        reward_param_mask = occupancy_mask & nan_mask
+        ensemble_array = stack([atom_array.copy() for _ in range(ensemble_size)])
+        ensemble_array.coord[:, reward_param_mask] = final_state.detach().cpu().numpy()  # pyright: ignore[reportOptionalSubscript]
+        atom_array = ensemble_array
+
     final_structure = CIFFile()
-    set_structure(final_structure, refined_structure["asym_unit"])
+    set_structure(final_structure, atom_array)
     final_structure.write(str(output_dir / "refined.cif"))
 
     # Two calls to save_trajectory, very similar, but saving different trajectories!
@@ -421,7 +436,13 @@ def _run_guidance(
         raise TypeError("Unknown guidance type!")
 
     save_everything(
-        args.output_dir, losses, refined_structure, traj_denoised, traj_next_step, guidance_type
+        args.output_dir,
+        losses,
+        refined_structure,
+        traj_denoised,
+        traj_next_step,
+        guidance_type,
+        final_state=torch.as_tensor(result.final_state),
     )
 
 

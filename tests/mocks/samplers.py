@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import cast, TYPE_CHECKING
 
+import einx
 import torch
 from jaxtyping import Float
 from sampleworks.core.samplers.protocol import SamplerSchedule, SamplerStepOutput, StepContext
@@ -145,6 +146,7 @@ class MockTrajectorySampler:
             if noise_var > 0:
                 # Approximate: -shift^2 / (2 * var)
                 log_proposal_correction = -(guidance_direction_raw**2) / (2 * noise_var)
+                log_proposal_correction = einx.sum("... [b n c]", log_proposal_correction)
 
         return SamplerStepOutput(
             state=next_state.detach(),

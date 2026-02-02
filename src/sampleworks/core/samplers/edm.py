@@ -346,7 +346,10 @@ class AF3EDMSampler:
         noisy_state = torch.as_tensor(noisy_state).detach().requires_grad_(allow_gradients)
 
         # t_hat will be float if check_context passed
-        x_hat_0 = model_wrapper.step(noisy_state, t_hat, features=features)
+        # Use no_grad when gradients aren't needed to avoid memory overhead from
+        # gradient checkpointing holding intermediate activations
+        with torch.set_grad_enabled(allow_gradients):
+            x_hat_0 = model_wrapper.step(noisy_state, t_hat, features=features)
 
         # work in augmented frame
         x_hat_0_working_frame = x_hat_0
@@ -403,9 +406,13 @@ class AF3EDMSampler:
             # Sum over dimensions to get total log likelihood difference for this particle.
             # TODO: this will need to be altered if we figure out how to vmap over this step for
             # multiple particles.
-            log_proposal_correction = einx.sum(
-                "... [b n c]", eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
-            ) / (2 * eps_scale**2)  # pyright: ignore[reportOptionalOperand] (eps_scale will be float if check_context passed)
+            # Only compute when noise_var > 0 to avoid division by near-zero
+            # (matching Boltz behavior)
+            noise_var = eps_scale**2  # pyright: ignore[reportOptionalOperand]
+            if noise_var > 0:
+                log_proposal_correction = einx.sum(
+                    "... [b n c]", eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
+                ) / (2 * noise_var)
 
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
         # pyright sees dt as float | None, but it will be float if check_context passed
