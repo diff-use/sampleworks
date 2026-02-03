@@ -91,6 +91,14 @@ class AF3EDMSampler:
     This sampler implements the EDM (Karras et al.) style sampling
     approach as used in AlphaFold3 and related models, which is the Euler
     variant.
+
+    References
+    ----------
+    Karras et al. "Elucidating the Design Space of Diffusion-Based Generative
+    Models" (NeurIPS 2022). https://arxiv.org/abs/2206.00364
+
+    AlphaFold3 Supplementary Information, Algorithm 18 "Sample".
+    https://www.nature.com/articles/s41586-024-07487-w
     """
 
     # Schedule parameters (with defaults from AF3 and the like)
