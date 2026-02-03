@@ -9,10 +9,8 @@ Per Singhal et al. (arXiv 2501.06848) and Boltz-1x (doi:10.1101/2024.11.19.62416
 from typing import cast
 
 import einx
-import numpy as np
 import torch
 import torch.nn.functional as F
-from biotite.structure import stack
 from loguru import logger
 from tqdm import tqdm
 
@@ -400,66 +398,3 @@ class FKSteering:
             loss_history[j] = loss_history[j][indices]
 
         return resampled.reshape(-1, coords_4d.shape[-2], 3)
-
-    def _build_final_structure(
-        self,
-        structure: dict,
-        coords: torch.Tensor,
-        loss_history: list[torch.Tensor],
-        features: GenerativeModelInput,
-        effective_particles: int,
-    ):
-        """Build final AtomArrayStack from lowest-loss particle.
-
-        Returns
-        -------
-        AtomArrayStack | object
-            AtomArrayStack with coordinates from lowest-loss particle,
-            or mock object in test contexts.
-        """
-        if features.conditioning and hasattr(features.conditioning, "__class__"):
-            cond_class = features.conditioning.__class__.__name__
-            if cond_class == "ProtenixConditioning":
-                atom_array = features.conditioning["true_atom_array"]
-            elif cond_class == "BoltzConditioning":
-                if (
-                    hasattr(features.conditioning, "true_atom_array")
-                    and features.conditioning.true_atom_array is not None
-                ):
-                    atom_array = features.conditioning.true_atom_array
-                else:
-                    atom_array = structure["asym_unit"][0]
-            else:
-                atom_array = structure["asym_unit"][0]
-        else:
-            atom_array = structure["asym_unit"][0]
-
-        occupancy_mask = atom_array.occupancy > 0
-        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
-        reward_param_mask = occupancy_mask & nan_mask
-
-        final_atom_array = stack([atom_array] * self.ensemble_size)
-
-        if loss_history:
-            min_loss_index = torch.argmin(loss_history[-1])
-        else:
-            min_loss_index = 0
-
-        coords_4d = coords.reshape(effective_particles, self.ensemble_size, -1, 3)
-        if final_atom_array.coord is not None:
-            num_reward_atoms = int(reward_param_mask.sum())
-            model_coords = coords_4d[min_loss_index].cpu().numpy()
-
-            # Boltz model coords may have more atoms than original structure due to
-            # sequence-based vs occupancy-filtered atom sets. Slice to match.
-            if model_coords.shape[-2] != num_reward_atoms:
-                logger.warning(
-                    f"Model coordinate count ({model_coords.shape[-2]}) differs from "
-                    f"structure atom count ({num_reward_atoms}). "
-                    f"Using first {num_reward_atoms} atoms."
-                )
-                model_coords = model_coords[..., :num_reward_atoms, :]
-
-            final_atom_array.coord[..., reward_param_mask, :] = model_coords
-
-        return final_atom_array
