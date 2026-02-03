@@ -165,18 +165,18 @@ SAMPLER_REGISTRY: dict[TrajectorySamplers, ComponentInfo] = {
 STEP_SCALER_REGISTRY: dict[StepScalers, ComponentInfo] = {
     StepScalers.NO_SCALING: ComponentInfo(
         name="no_scaling",
-        module_path="sampleworks.core.scalers.score_scalers.NoScalingScaler",
+        module_path="sampleworks.core.scalers.step_scalers.NoScalingScaler",
         requires_reward=False,
     ),
     StepScalers.DATA_SPACE_DPS: ComponentInfo(
         name="data_space_dps",
-        module_path="sampleworks.core.scalers.score_scalers.DataSpaceDPSScaler",
+        module_path="sampleworks.core.scalers.step_scalers.DataSpaceDPSScaler",
         requires_reward=True,
         default_kwargs=(("step_size", 0.1),),
     ),
     StepScalers.NOISE_SPACE_DPS: ComponentInfo(
         name="noise_space_dps",
-        module_path="sampleworks.core.scalers.score_scalers.NoiseSpaceDPSScaler",
+        module_path="sampleworks.core.scalers.step_scalers.NoiseSpaceDPSScaler",
         requires_reward=True,
         default_kwargs=(("step_size", 0.1),),
     ),

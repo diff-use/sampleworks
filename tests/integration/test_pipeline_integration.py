@@ -20,7 +20,7 @@ from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.core.samplers.edm import AF3EDMSampler
 from sampleworks.core.samplers.protocol import SamplerStepOutput, StepContext
 from sampleworks.core.scalers.protocol import GuidanceOutput
-from sampleworks.core.scalers.score_scalers import (
+from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
     NoiseSpaceDPSScaler,
     NoScalingScaler,
