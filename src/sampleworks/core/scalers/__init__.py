@@ -9,7 +9,7 @@ from sampleworks.core.scalers.protocol import (
     TrajectoryScalerProtocol,
 )
 from sampleworks.core.scalers.pure_guidance import PureGuidance
-from sampleworks.core.scalers.score_scalers import (
+from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
     NoiseSpaceDPSScaler,
     NoScalingScaler,

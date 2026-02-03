@@ -23,7 +23,7 @@ from sampleworks.core.rewards.real_space_density import (
 from sampleworks.core.samplers.edm import AF3EDMSampler
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
-from sampleworks.core.scalers.score_scalers import (
+from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
     NoiseSpaceDPSScaler,
 )
