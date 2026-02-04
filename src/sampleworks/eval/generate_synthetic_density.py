@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast, ClassVar
 
 import torch
+from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
@@ -15,7 +16,11 @@ from sampleworks.eval.structure_utils import apply_selection
 from sampleworks.utils.atom_array_utils import (
     AltlocInfo,
     detect_altlocs,
+    keep_amino_acids,
+    keep_polymer,
     load_structure_with_altlocs,
+    remove_hydrogens,
+    save_structure_to_cif,
 )
 from sampleworks.utils.density_utils import compute_density_from_atomarray
 from sampleworks.utils.torch_utils import try_gpu
@@ -218,6 +223,10 @@ def _process_single_row(
     resolution: float,
     em_mode: bool,
     device: torch.device,
+    strip_hydrogens: bool = False,
+    strip_waters: bool = False,
+    strip_ligands: bool = False,
+    save_structure: bool = False,
 ) -> None:
     """Process a single structure row.
 
@@ -235,6 +244,16 @@ def _process_single_row(
         If True, use electron scattering factors. If False, use X-ray factors.
     device
         PyTorch device for computation
+    strip_hydrogens
+        If True, remove hydrogen atoms before computing density.
+    strip_waters
+        If True, remove water molecules before computing density.
+    strip_ligands
+        If True, remove ligand molecules (non-water heteroatoms) before computing density. This is
+        done by keeping only polymer atoms in the selection, which are typically not ligands.
+        TODO: be more thorough with this? We could make this a transform
+    save_structure
+        If True, save the processed structure to a CIF file in the input directory.
     """
     structure_path = base_dir / row.filename
     if not structure_path.exists():
@@ -256,13 +275,33 @@ def _process_single_row(
         logger.error(f"Selection error for {row.filename}: {e}")
         return
 
-    altloc_info = detect_altlocs(atom_array)
+    if strip_hydrogens:
+        atom_array = remove_hydrogens(atom_array)
+
+    if strip_waters:
+        atom_array = remove_waters(atom_array)
+
+    if strip_ligands:
+        atom_array = keep_polymer(keep_amino_acids(atom_array))
+
+    altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
     if row.occ_values:
         try:
             atom_array = assign_occupancies(atom_array, altloc_info, "custom", row.occ_values)
         except ValueError as e:
             logger.error(f"Occupancy assignment error for {row.filename}: {e}")
             return
+
+    if save_structure:
+        structure_output_path = structure_path.parent / f"{structure_path.stem}_density_input.cif"
+        try:
+            save_structure_to_cif(atom_array, structure_output_path)
+            logger.info(f"Saved processed structure to {structure_output_path}")
+        except Exception as e:
+            logger.error(
+                f"Failed to save structure for {row.filename} ({type(e).__name__}): {e}\n"
+                f"{''.join(traceback.format_tb(e.__traceback__))}"
+            )
 
     try:
         density, xmap_torch = compute_density_from_atomarray(
@@ -299,6 +338,10 @@ def process_batch(
     em_mode: bool,
     device: torch.device,
     n_jobs: int = -1,
+    strip_hydrogens: bool = False,
+    strip_waters: bool = False,
+    strip_ligands: bool = False,
+    save_structure: bool = False,
 ) -> None:
     """Process multiple structures from a CSV file in batch mode.
 
@@ -318,12 +361,31 @@ def process_batch(
         PyTorch device for computation
     n_jobs
         Number of parallel jobs. -1 means use all available CPUs.
+    strip_hydrogens
+        If True, remove hydrogen atoms before computing density.
+    strip_waters
+        If True, remove water molecules before computing density.
+    strip_ligands
+        If True, remove ligand molecules (non-water heteroatoms) before computing density.
+    save_structure
+        If True, save the processed structure to a CIF file in the input directory.
     """
     rows = load_batch_csv(csv_path)
     logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
 
     Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_process_single_row)(row, base_dir, output_dir, resolution, em_mode, device)
+        delayed(_process_single_row)(
+            row,
+            base_dir,
+            output_dir,
+            resolution,
+            em_mode,
+            device,
+            strip_hydrogens,
+            strip_waters,
+            strip_ligands,
+            save_structure,
+        )
         for row in rows
     )
 
@@ -372,8 +434,28 @@ def parse_args() -> argparse.Namespace:
     density_group.add_argument(
         "--em-mode", action="store_true", help="Use electron scattering factors (EM mode)"
     )
+    density_group.add_argument(
+        "--remove-hydrogens",
+        action="store_true",
+        help="Remove hydrogen atoms before computing density",
+    )
+    density_group.add_argument(
+        "--remove-waters",
+        action="store_true",
+        help="Remove water molecules before computing density",
+    )
+    density_group.add_argument(
+        "--remove-ligands",
+        action="store_true",
+        help="Remove ligand molecules (non-water heteroatoms) before computing density",
+    )
 
     output_group = parser.add_argument_group("Output Options")
+    output_group.add_argument(
+        "--save-structure",
+        action="store_true",
+        help="Save the processed structure (after selection, occupancy assignment) to CIF",
+    )
     output_group.add_argument("--output", "-o", type=Path, help="Output CCP4 map file path")
     output_group.add_argument(
         "--output-dir", type=Path, default=Path("."), help="Output directory for batch mode"
@@ -403,16 +485,36 @@ def main() -> None:
             args.em_mode,
             device,
             args.n_jobs,
+            args.remove_hydrogens,
+            args.remove_waters,
+            args.remove_ligands,
+            args.save_structure,
         )
     elif args.structure:
         atom_array = load_structure_with_altlocs(args.structure)
         atom_array = apply_selection(atom_array, args.selection)
 
-        altloc_info = detect_altlocs(atom_array)
+        if args.remove_hydrogens:
+            atom_array = remove_hydrogens(atom_array)
+
+        if args.remove_waters:
+            atom_array = remove_waters(atom_array)
+
+        if args.remove_ligands:
+            atom_array = keep_polymer(atom_array)
+
+        altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
         occ_values = (
             [float(v.strip()) for v in args.occ_values.split(":")] if args.occ_values else None
         )
         atom_array = assign_occupancies(atom_array, altloc_info, args.occ_mode, occ_values)
+
+        if args.save_structure:
+            structure_output_path = (
+                args.structure.parent / f"{args.structure.stem}_density_input.cif"
+            )
+            save_structure_to_cif(atom_array, structure_output_path)
+            logger.info(f"Saved processed structure to {structure_output_path}")
 
         density, xmap_torch = compute_density_from_atomarray(
             atom_array, resolution=args.resolution, em_mode=args.em_mode, device=device

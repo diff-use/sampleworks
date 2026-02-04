@@ -6,7 +6,7 @@ from typing import Any, cast
 import numpy as np
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
-from biotite.structure import AtomArray, AtomArrayStack, stack
+from biotite.structure import AtomArray, AtomArrayStack, filter_amino_acids, filter_polymer, stack
 from biotite.structure.io.pdbx import CIFFile, set_structure
 from loguru import logger
 
@@ -353,10 +353,71 @@ def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Ato
         return cast(AtomArray, atom_array[mask])
 
 
+def keep_polymer(
+    atom_array: AtomArray | AtomArrayStack, pol_type: str = "peptide"
+) -> AtomArray | AtomArrayStack:
+    """Keep only polymer atoms from an AtomArray or AtomArrayStack.
+
+    Filters to return only atoms where the polymer flag is True.
+
+    Parameters:
+        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+        pol_type (str): The type of polymer to filter for. Default is "peptide".
+            Options are: "peptide", "nucleotide", or "carbohydrate".
+            Abbreviations are supported: "p", "pep", "n", etc.
+
+    Returns:
+        AtomArray | AtomArrayStack: A new array/stack with only polymer atoms.
+
+    Raises:
+        TypeError: If input is not an AtomArray or AtomArrayStack.
+    """
+    if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
+        raise TypeError(
+            f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
+        )
+
+    polymer_mask = filter_polymer(atom_array, pol_type=pol_type)
+
+    if isinstance(atom_array, AtomArrayStack):
+        return cast(AtomArrayStack, atom_array[:, polymer_mask])
+    else:
+        return cast(AtomArray, atom_array[polymer_mask])
+
+
+def keep_amino_acids(
+    atom_array: AtomArray | AtomArrayStack,
+) -> AtomArray | AtomArrayStack:
+    """Keep only amino acid atoms from an AtomArray or AtomArrayStack.
+
+    Filters to return only atoms that are part of standard amino acids.
+
+    Parameters:
+        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+
+    Returns:
+        AtomArray | AtomArrayStack: A new array/stack with only amino acid atoms.
+
+    Raises:
+        TypeError: If input is not an AtomArray or AtomArrayStack.
+    """
+    if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
+        raise TypeError(
+            f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
+        )
+
+    amino_acid_mask = filter_amino_acids(atom_array)
+
+    if isinstance(atom_array, AtomArrayStack):
+        return cast(AtomArrayStack, atom_array[:, amino_acid_mask])
+    else:
+        return cast(AtomArray, atom_array[amino_acid_mask])
+
+
 def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
     """Remove hydrogen atoms from an AtomArray or AtomArrayStack.
 
-    Filters out all atoms where the element annotation is "H" (hydrogen).
+    Filters out all atoms where the element annotation is "H" (hydrogen) or "D" (deuterium).
 
     Parameters:
         atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
@@ -375,7 +436,7 @@ def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Atom
     element = atom_array.element
     if element is None:
         raise AttributeError("atom_array must have 'element' annotation")
-    mask = element != "H"
+    mask = (element != "H") & (element != "D")
 
     if isinstance(atom_array, AtomArrayStack):
         return cast(AtomArrayStack, atom_array[:, mask])
