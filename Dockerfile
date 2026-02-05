@@ -49,9 +49,11 @@ RUN curl -fsSL https://pixi.sh/install.sh | bash
 
 WORKDIR /app
 
-# Copy dependency files first for better layer caching
-# Changes to source code won't invalidate the dependency layer
+# Copy all project files - needed because sampleworks is installed as editable package
+# The pypi-dependencies section has: sampleworks = {editable = true, path = "."}
 COPY pyproject.toml pixi.lock ./
+COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # ============================================================================
 # Boltz environment - Primary model for protein structure prediction
@@ -61,10 +63,6 @@ FROM base AS boltz
 # Install boltz environment dependencies
 # Using --frozen ensures reproducible builds from lock file
 RUN pixi install -e boltz --frozen
-
-# Copy source code after dependencies are installed
-COPY src/ ./src/
-COPY scripts/ ./scripts/
 
 # Set up entrypoint to run Python scripts via pixi environment
 ENTRYPOINT ["pixi", "run", "-e", "boltz", "python"]
@@ -77,9 +75,6 @@ FROM base AS protenix
 
 RUN pixi install -e protenix --frozen
 
-COPY src/ ./src/
-COPY scripts/ ./scripts/
-
 ENTRYPOINT ["pixi", "run", "-e", "protenix", "python"]
 CMD ["--help"]
 
@@ -89,9 +84,6 @@ CMD ["--help"]
 FROM base AS rf3
 
 RUN pixi install -e rf3 --frozen
-
-COPY src/ ./src/
-COPY scripts/ ./scripts/
 
 ENTRYPOINT ["pixi", "run", "-e", "rf3", "python"]
 CMD ["--help"]
