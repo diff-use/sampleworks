@@ -1,20 +1,57 @@
 # syntax=docker/dockerfile:1
 # Sampleworks - Protein structure prediction with diffusion model guidance
-# Multi-stage build for different model environments (Boltz, Protenix, RF3)
 #
-# Build examples:
-#   docker build --target boltz -t sampleworks:boltz .
-#   docker build --target protenix -t sampleworks:protenix .
-#   docker build --target rf3 -t sampleworks:rf3 .
+# This container includes all three model environments: boltz, protenix, rf3
 #
-# Run example (with GPU):
-#   docker run --gpus all -v /mnt/checkpoints:/checkpoints:ro \
-#     sampleworks:boltz scripts/boltz2_pure_guidance.py \
-#     --model-checkpoint /checkpoints/boltz2_conf.ckpt \
-#     --output-dir /output \
-#     --structure /input/structure.cif \
-#     --density /input/density.ccp4 \
-#     --resolution 1.8
+# Build:
+#   docker build -t sampleworks .
+#
+# Run examples:
+#   # Show help
+#   docker run sampleworks --help
+#
+#   # Run grid search with RF3
+#   docker run --gpus all -v /data:/data sampleworks \
+#     -e rf3 run_grid_search.py \
+#     --proteins /data/proteins.csv \
+#     --models rf3 \
+#     --scalers pure_guidance \
+#     --ensemble-sizes "1 4" \
+#     --gradient-weights "0.1 0.2" \
+#     --output-dir /data/results \
+#     --use-tweedie \
+#     --gradient-normalization \
+#     --augmentation \
+#     --align-to-input \
+#     --rf3-checkpoint /data/checkpoints/rf3.ckpt
+#
+#   # Run grid search with Boltz2
+#   docker run --gpus all -v /data:/data sampleworks \
+#     -e boltz run_grid_search.py \
+#     --proteins /data/proteins.csv \
+#     --models boltz2 \
+#     --scalers pure_guidance \
+#     --methods "X-RAY DIFFRACTION" \
+#     --ensemble-sizes "1 4" \
+#     --gradient-weights "0.1 0.2" \
+#     --output-dir /data/results \
+#     --use-tweedie \
+#     --boltz2-checkpoint /data/checkpoints/boltz2.ckpt
+#
+#   # Run grid search with Protenix
+#   docker run --gpus all -v /data:/data sampleworks \
+#     -e protenix run_grid_search.py \
+#     --proteins /data/proteins.csv \
+#     --models protenix \
+#     --scalers pure_guidance \
+#     --ensemble-sizes "1 4" \
+#     --gradient-weights "0.1 0.2" \
+#     --output-dir /data/results \
+#     --use-tweedie \
+#     --protenix-checkpoint /data/checkpoints/protenix.pt
+#
+#   # Interactive shell
+#   docker run --gpus all -it sampleworks bash
 
 # ============================================================================
 # Base stage: CUDA + Pixi + common system dependencies
@@ -29,7 +66,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     # Disable user site packages (isolation)
-    PYTHONNOUSERSITE=1
+    PYTHONNOUSERSITE=1 \
+    # Optimize CUDA compilation for H100
+    TORCH_CUDA_ARCH_LIST="9.0"
 
 # Install system dependencies required for building scientific packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -54,36 +93,24 @@ WORKDIR /app
 COPY pyproject.toml pixi.lock ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+COPY run_grid_search.py ./
+COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # ============================================================================
-# Boltz environment - Primary model for protein structure prediction
+# Install all three environments: boltz, protenix, rf3
 # ============================================================================
-FROM base AS boltz
-
-# Install boltz environment dependencies
-# Using --frozen ensures reproducible builds from lock file
-RUN pixi install -e boltz --frozen
-
-# Set up entrypoint to run Python scripts via pixi environment
-ENTRYPOINT ["pixi", "run", "-e", "boltz", "python"]
-CMD ["--help"]
+RUN pixi install -e boltz --frozen && \
+    pixi install -e protenix --frozen && \
+    pixi install -e rf3 --frozen
 
 # ============================================================================
-# Protenix environment - Alternative model (requires triton/NVIDIA)
+# Pre-compile CUDA extensions to avoid JIT compilation at runtime
+# This triggers the dilate_points_cuda extension build
 # ============================================================================
-FROM base AS protenix
+RUN pixi run -e boltz python -c "\
+from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
+print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
 
-RUN pixi install -e protenix --frozen
-
-ENTRYPOINT ["pixi", "run", "-e", "protenix", "python"]
-CMD ["--help"]
-
-# ============================================================================
-# RF3 environment - RoseTTAFold3 model
-# ============================================================================
-FROM base AS rf3
-
-RUN pixi install -e rf3 --frozen
-
-ENTRYPOINT ["pixi", "run", "-e", "rf3", "python"]
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["--help"]
