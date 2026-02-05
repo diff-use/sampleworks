@@ -377,11 +377,12 @@ def keep_polymer(
             f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
         )
 
-    polymer_mask = filter_polymer(atom_array, pol_type=pol_type)
-
+    # TODO: fix once this is fixed: https://github.com/biotite-dev/biotite/issues/865
     if isinstance(atom_array, AtomArrayStack):
+        polymer_mask = filter_polymer(atom_array[0], pol_type=pol_type)
         return cast(AtomArrayStack, atom_array[:, polymer_mask])
     else:
+        polymer_mask = filter_polymer(atom_array, pol_type=pol_type)
         return cast(AtomArray, atom_array[polymer_mask])
 
 

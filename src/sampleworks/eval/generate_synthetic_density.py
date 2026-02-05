@@ -218,6 +218,7 @@ def load_batch_csv(csv_path: Path) -> list[BatchRow]:
 
 def _process_single_row(
     row: BatchRow,
+    occ_mode: str,
     base_dir: Path,
     output_dir: Path,
     resolution: float,
@@ -234,6 +235,8 @@ def _process_single_row(
     ----------
     row
         BatchRow containing structure information
+    occ_mode
+        Occupancy assignment mode: 'default', 'uniform', or 'custom'
     base_dir
         Base directory for resolving relative structure file paths
     output_dir
@@ -286,11 +289,26 @@ def _process_single_row(
 
     altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
     if row.occ_values:
+        if occ_mode != "custom":
+            logger.warning(
+                f"Custom occupancy values provided for {row.filename}, "
+                f"but occ_mode is '{occ_mode}'. Using 'custom' mode."
+            )
+            occ_mode = "custom"
         try:
             atom_array = assign_occupancies(atom_array, altloc_info, "custom", row.occ_values)
         except ValueError as e:
             logger.error(f"Occupancy assignment error for {row.filename}: {e}")
-            return
+            raise
+    elif occ_mode in {"uniform", "default"}:
+        try:
+            atom_array = assign_occupancies(atom_array, altloc_info, occ_mode)
+        except ValueError as e:
+            logger.error(f"Occupancy assignment error for {row.filename}: {e}")
+            raise
+    else:
+        logger.error(f"Invalid occupancy mode '{occ_mode}' for {row.filename}")
+        raise ValueError(f"Invalid occupancy mode '{occ_mode}'")
 
     if save_structure:
         structure_output_path = structure_path.parent / f"{structure_path.stem}_density_input.cif"
@@ -335,6 +353,7 @@ def process_batch(
     base_dir: Path,
     output_dir: Path,
     resolution: float,
+    occ_mode: str,
     em_mode: bool,
     device: torch.device,
     n_jobs: int = -1,
@@ -375,16 +394,17 @@ def process_batch(
 
     Parallel(n_jobs=n_jobs, backend="loky")(
         delayed(_process_single_row)(
-            row,
-            base_dir,
-            output_dir,
-            resolution,
-            em_mode,
-            device,
-            strip_hydrogens,
-            strip_waters,
-            strip_ligands,
-            save_structure,
+            row=row,
+            occ_mode=occ_mode,
+            base_dir=base_dir,
+            output_dir=output_dir,
+            resolution=resolution,
+            em_mode=em_mode,
+            device=device,
+            strip_hydrogens=strip_hydrogens,
+            strip_waters=strip_waters,
+            strip_ligands=strip_ligands,
+            save_structure=save_structure,
         )
         for row in rows
     )
@@ -478,17 +498,18 @@ def main() -> None:
 
     if args.batch_csv:
         process_batch(
-            args.batch_csv,
-            args.base_dir,
-            args.output_dir,
-            args.resolution,
-            args.em_mode,
-            device,
-            args.n_jobs,
-            args.remove_hydrogens,
-            args.remove_waters,
-            args.remove_ligands,
-            args.save_structure,
+            csv_path=args.batch_csv,
+            base_dir=args.base_dir,
+            output_dir=args.output_dir,
+            resolution=args.resolution,
+            occ_mode=args.occ_mode,
+            em_mode=args.em_mode,
+            device=device,
+            n_jobs=args.n_jobs,
+            strip_hydrogens=args.remove_hydrogens,
+            strip_waters=args.remove_waters,
+            strip_ligands=args.remove_ligands,
+            save_structure=args.save_structure,
         )
     elif args.structure:
         atom_array = load_structure_with_altlocs(args.structure)
@@ -501,7 +522,7 @@ def main() -> None:
             atom_array = remove_waters(atom_array)
 
         if args.remove_ligands:
-            atom_array = keep_polymer(atom_array)
+            atom_array = keep_polymer(keep_amino_acids(atom_array))
 
         altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
         occ_values = (
