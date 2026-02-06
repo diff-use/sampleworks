@@ -83,23 +83,6 @@ class StepContext:
         """Whether this is a trajectory-based step (diffusion/flow)."""
         return self.t is not None
 
-    @property
-    def is_optimization(self) -> bool:
-        """Whether this is an optimization-based step."""
-        return self.learning_rate is not None
-
-    @property
-    def is_guided(self) -> bool:
-        """Whether this step has reward information for guidance."""
-        return self.reward is not None and self.reward_inputs is not None
-
-    @property
-    def is_final_step(self) -> bool:
-        """Whether this is the final step."""
-        if self.total_steps is None:
-            return False
-        return self.step_index >= self.total_steps - 1
-
     def with_reward(
         self,
         reward: RewardFunctionProtocol,
