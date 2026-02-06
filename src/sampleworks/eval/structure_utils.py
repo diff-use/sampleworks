@@ -10,7 +10,9 @@ import torch
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
-from sampleworks.core.rewards.real_space_density import ATOMIC_NUM_TO_ELEMENT
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
+    ELEMENT_TO_ATOMIC_NUM,
+)
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.models.protocol import GenerativeModelInput
 
@@ -84,7 +86,7 @@ def process_structure_to_trajectory_input(
 
     # TODO: jank way to get atomic numbers, fix this in real space density
     elements = [
-        ATOMIC_NUM_TO_ELEMENT.index(e.title())
+        ELEMENT_TO_ATOMIC_NUM[e.title()]
         for e in atom_array.element[reward_param_mask]  # pyright: ignore[reportOptionalSubscript]
     ]
     elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
