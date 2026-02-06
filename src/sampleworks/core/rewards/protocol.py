@@ -1,9 +1,19 @@
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable, TYPE_CHECKING
+
+import einx
 import numpy as np
 import torch
 from jaxtyping import Float
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
+    ELEMENT_TO_ATOMIC_NUM,
+)
+
+
+if TYPE_CHECKING:
+    from biotite.structure import AtomArray, AtomArrayStack
 
 
 @dataclass
@@ -21,6 +31,89 @@ class RewardInputs:
     input_coords: Float[torch.Tensor, "*batch n_atoms 3"]
     reward_param_mask: np.ndarray
     mask_like: Float[torch.Tensor, "*batch n_atoms"]
+
+    @classmethod
+    def from_atom_array(
+        cls,
+        atom_array: AtomArray | AtomArrayStack,
+        ensemble_size: int,
+        num_particles: int = 1,
+        device: torch.device | str = "cpu",
+    ) -> RewardInputs:
+        """Construct RewardInputs from a Biotite AtomArray.
+
+        Parameters
+        ----------
+        atom_array
+            Biotite AtomArray or AtomArrayStack containing structure data.
+        ensemble_size
+            Number of ensemble members (batch dimension).
+        num_particles
+            Number of particles for FK steering (default 1 for pure guidance).
+        device
+            PyTorch device to place tensors on.
+
+        Returns
+        -------
+        RewardInputs
+            Dataclass containing all inputs needed for reward function computation.
+        """
+        occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        reward_param_mask = occupancy_mask & nan_mask
+
+        elements_list = [
+            ELEMENT_TO_ATOMIC_NUM[e.title()]
+            for e in atom_array.element[reward_param_mask]  # pyright: ignore[reportOptionalSubscript]
+        ]
+
+        total_batch_size = num_particles * ensemble_size if num_particles > 1 else ensemble_size
+
+        # If we have multiple particles (e.g. in FK Steering), we need to tile the elements and
+        # b_factors across the particle dimension.
+        if num_particles > 1:
+            elements = einx.rearrange(
+                "n -> p e n", torch.Tensor(elements_list), p=num_particles, e=ensemble_size
+            )
+            b_factors = einx.rearrange(
+                "n -> p e n",
+                torch.Tensor(atom_array.b_factor[reward_param_mask]),  # pyright: ignore[reportOptionalSubscript]
+                p=num_particles,
+                e=ensemble_size,
+            )
+            occupancies = torch.ones_like(b_factors) / ensemble_size  # pyright: ignore[reportArgumentType]
+            input_coords = einx.rearrange(
+                "... -> b ...",
+                torch.from_numpy(atom_array.coord).to(dtype=torch.float32),
+                b=total_batch_size,
+            )[..., reward_param_mask, :]  # pyright: ignore[reportArgumentType, reportCallIssue]
+        else:
+            elements = einx.rearrange("n -> b n", torch.Tensor(elements_list), b=ensemble_size)
+            b_factors = einx.rearrange(
+                "n -> b n",
+                torch.Tensor(atom_array.b_factor[reward_param_mask]),  # pyright: ignore[reportOptionalSubscript]
+                b=ensemble_size,
+            )
+            occupancies = torch.ones_like(b_factors) / ensemble_size  # pyright: ignore[reportArgumentType]
+            input_coords = einx.rearrange(
+                "... -> e ...",
+                torch.from_numpy(atom_array.coord).to(dtype=torch.float32),
+                e=ensemble_size,
+            )[..., reward_param_mask, :]  # pyright: ignore[reportArgumentType, reportCallIssue]
+
+        mask_like = torch.ones_like(input_coords[..., 0])
+
+        if isinstance(device, str):
+            device = torch.device(device)
+
+        return cls(
+            elements=elements.to(device),  # pyright: ignore[reportAttributeAccessIssue]
+            b_factors=b_factors.to(device),  # pyright: ignore[reportAttributeAccessIssue]
+            occupancies=occupancies.to(device),
+            input_coords=input_coords.to(device),
+            reward_param_mask=reward_param_mask,
+            mask_like=mask_like.to(device),
+        )
 
 
 @runtime_checkable
@@ -52,6 +145,8 @@ class RewardFunctionProtocol(Protocol):
             Per-atom B-factors, shape [batch, n_atoms]
         occupancies
             Per-atom occupancies, shape [batch, n_atoms]
+
+        These next parameters are required for vmap compatibility:
         unique_combinations
             Optional pre-computed unique (element, b_factor) pairs
         inverse_indices

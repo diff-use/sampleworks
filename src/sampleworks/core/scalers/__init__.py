@@ -1,7 +1,6 @@
 """Scalers for guiding generative models with experimental observables."""
 
 from sampleworks.core.rewards.protocol import RewardInputs
-from sampleworks.core.rewards.utils import extract_reward_inputs
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.protocol import (
     GuidanceOutput,
@@ -26,5 +25,4 @@ __all__ = [
     "RewardInputs",
     "StepScalerProtocol",
     "TrajectoryScalerProtocol",
-    "extract_reward_inputs",
 ]
