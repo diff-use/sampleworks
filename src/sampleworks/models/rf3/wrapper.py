@@ -9,7 +9,7 @@ from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
 from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import Float
-from loguru import logger as log
+from loguru import logger
 from rf3.inference_engines import RF3InferenceEngine
 from rf3.model.RF3 import RF3WithConfidence
 from rf3.trainers.rf3 import assert_no_nans, RF3TrainerWithConfidence
@@ -167,7 +167,7 @@ class RF3Wrapper:
         msa_manager: MSAManager | None
             MSA manager for retrieving MSAs for input structures.
         """
-        log.info("Loading RF3 Inference Engine")
+        logger.info("Loading RF3 Inference Engine")
 
         self.checkpoint_path = Path(checkpoint_path).expanduser().resolve()
         self.msa_manager = msa_manager
@@ -251,7 +251,7 @@ class RF3Wrapper:
             # These are debugging assertions.
             assert all(isinstance(pp, str) for pp in polypeptides.values())
 
-        log.info(f"Using MSA paths: {msa_path}")
+        logger.info(f"Using MSA paths: {msa_path}")
 
         chain_info = add_msa_to_chain_info(chain_info, msa_path)
 
@@ -313,7 +313,18 @@ class RF3Wrapper:
         )
 
         num_atoms = len(pairformer_out["features"]["atom_to_token_map"])
-        x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
+
+        # x_init should be the reference coordinates for alignment purposes.
+        if true_atom_array is not None and len(true_atom_array) == num_atoms:
+            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
+            x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
+        else:
+            logger.warning(
+                "True structure not available or atom count mismatch; initializing "
+                "x_init from prior. This means align_to_input will not work properly,"
+                " and reward functions dependent on this won't be accurate."
+            )
+            x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 

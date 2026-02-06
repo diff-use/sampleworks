@@ -308,7 +308,7 @@ class Boltz2Wrapper:
         if not model:
             self.model = (
                 Boltz2.load_from_checkpoint(
-                    checkpoint_path,
+                    checkpoint_path=checkpoint_path,
                     strict=True,
                     predict_args=asdict(PredictArgs()),
                     map_location="cpu",
@@ -421,7 +421,13 @@ class Boltz2Wrapper:
         if isinstance(config, dict):
             config = BoltzConfig(**config)
 
-        out_dir = config.out_dir or structure.get("metadata", {}).get("id", "boltz2_output")
+        # Use model-version-specific directory to avoid conflicts with Boltz1 preprocessed files
+        base_dir = config.out_dir or structure.get("metadata", {}).get("id", "boltz2_output")
+        out_dir = (
+            f"{base_dir}_boltz2"
+            if not str(base_dir).endswith(("boltz2", "boltz2_output"))
+            else base_dir
+        )
         num_workers = config.num_workers
         ensemble_size = config.ensemble_size
 
@@ -465,8 +471,22 @@ class Boltz2Wrapper:
         # Use atom count from Boltz featurization (via conditioning) to ensure consistency
         # between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
         # a temporary placeholder; initialize_from_prior derives shape from conditioning.
-        temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
-        x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
+        feats = pairformer_out["feats"]
+        atom_mask = cast(Tensor, feats.get("atom_pad_mask"))
+        num_atoms = int(atom_mask.sum())
+
+        # x_init should be the reference coordinates for alignment purposes.
+        if true_atom_array is not None and len(true_atom_array) == num_atoms:
+            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
+            x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
+        else:
+            logger.warning(
+                "True structure not available or atom count mismatch; initializing "
+                "x_init from prior. This means align_to_input will not work properly,"
+                " and reward functions dependent on this won't be accurate."
+            )
+            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
+            x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 
@@ -843,7 +863,13 @@ class Boltz1Wrapper:
         if isinstance(config, dict):
             config = BoltzConfig(**config)
 
-        out_dir = config.out_dir or structure.get("metadata", {}).get("id", "boltz1_output")
+        # Use model-version-specific directory to avoid conflicts with Boltz2 preprocessed files
+        base_dir = config.out_dir or structure.get("metadata", {}).get("id", "boltz1_output")
+        out_dir = (
+            f"{base_dir}_boltz1"
+            if not str(base_dir).endswith(("boltz1", "boltz1_output"))
+            else base_dir
+        )
         num_workers = config.num_workers
         ensemble_size = config.ensemble_size
 
@@ -880,15 +906,20 @@ class Boltz1Wrapper:
             true_atom_array=true_atom_array,
         )
 
-        # TODO: we need to address the larger problem with these sorts of shape mismatches mentioned
-        # below. Protenix has these issues too, and Boltz works a bit cleaner but I'm sure there's
-        # still a way to make this much better.
+        # x_init should be the reference coordinates for alignment purposes.
+        # The guidance scalers call initialize_from_prior() separately for starting noise.
+        # Use atom count from Boltz featurization to ensure shape consistency with model.
+        feats = pairformer_out["feats"]
+        atom_mask = cast(Tensor, feats.get("atom_pad_mask"))
+        num_atoms = int(atom_mask.sum())
 
-        # Use atom count from Boltz featurization (via conditioning) to ensure consistency
-        # between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
-        # a temporary placeholder; initialize_from_prior derives shape from conditioning.
-        temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
-        x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
+        if true_atom_array is not None and len(true_atom_array) == num_atoms:
+            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
+            x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
+        else:
+            # Fallback to noise if atom counts don't match
+            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
+            x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 

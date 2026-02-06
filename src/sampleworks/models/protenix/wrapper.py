@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from logging import getLogger, Logger
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,6 +9,7 @@ from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
 from configs.configs_model_type import model_configs
 from jaxtyping import Float
+from loguru import logger
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
 from protenix.data.data_pipeline import DataPipeline
@@ -168,7 +168,6 @@ class ProtenixWrapper:
         device: torch.device, optional
             Device to run the model on, by default CUDA if available.
         """
-        logger: Logger = getLogger(__name__)
         self.checkpoint_path = checkpoint_path
         self.device = torch.device(device)
 
@@ -419,7 +418,19 @@ class ProtenixWrapper:
             true_atom_array=atom_array if "asym_unit" in structure else None,
         )
 
-        x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms_protenix, 3))
+        # x_init should be the reference coordinates for alignment purposes.
+        if "asym_unit" in structure:
+            x_init = torch.tensor(atom_array.coord, device=self.device, dtype=torch.float32)
+            x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
+        else:
+            logger.warning(
+                "True structure not available or atom count mismatch; initializing "
+                "x_init from prior. This means align_to_input will not work properly,"
+                " and reward functions dependent on this won't be accurate."
+            )
+            x_init = self.initialize_from_prior(
+                batch_size=ensemble_size, shape=(num_atoms_protenix, 3)
+            )
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
 
@@ -561,17 +572,27 @@ class ProtenixWrapper:
             elif t_tensor.shape[0] == 1 and x_t.shape[0] > 1:
                 t_tensor = t_tensor.expand(x_t.shape[0])
 
+        # When gradients are enabled, detach cached pairformer outputs so gradients
+        # only flow through the diffusion module (not back through the pairformer).
+        # The pairformer was computed with grad_needed=False, so its graph isn't retained.
+        grad_needed = torch.is_grad_enabled()
+        s_inputs = cond.s_inputs.detach() if grad_needed else cond.s_inputs
+        s_trunk = cond.s_trunk.detach() if grad_needed else cond.s_trunk
+        z_trunk = cond.z_trunk.detach() if grad_needed else cond.z_trunk
+        pair_z = cond.pair_z.detach() if grad_needed and cond.pair_z is not None else cond.pair_z
+        p_lm = cond.p_lm.detach() if grad_needed and cond.p_lm is not None else cond.p_lm
+        c_l = cond.c_l.detach() if grad_needed and cond.c_l is not None else cond.c_l
+
         atom_coords_denoised = self.model.diffusion_module.forward(
             x_noisy=x_t,
             t_hat_noise_level=t_tensor,
             input_feature_dict=cond.features,
-            s_inputs=cond.s_inputs,
-            s_trunk=cond.s_trunk,
-            z_trunk=cond.z_trunk,
-            # These are for the protenix caching, Pyright doesn't see that None is ok
-            pair_z=cond.pair_z,  # pyright: ignore[reportArgumentType]
-            p_lm=cond.p_lm,  # pyright: ignore[reportArgumentType]
-            c_l=cond.c_l,  # pyright: ignore[reportArgumentType]
+            s_inputs=s_inputs,
+            s_trunk=s_trunk,
+            z_trunk=z_trunk,
+            pair_z=pair_z,  # pyright: ignore[reportArgumentType]
+            p_lm=p_lm,  # pyright: ignore[reportArgumentType]
+            c_l=c_l,  # pyright: ignore[reportArgumentType]
         )
 
         # TODO: is there a way to handle this more cleanly?
