@@ -15,6 +15,21 @@ from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.models.protocol import GenerativeModelInput
 
 
+try:
+    from sampleworks.models.protenix.structure_processing import (
+        add_terminal_oxt_atoms as _add_terminal_oxt_atoms,
+        ensure_atom_array as _ensure_atom_array,
+        filter_zero_occupancy as _filter_zero_occupancy,
+    )
+
+    _HAS_PROTENIX = True
+except ImportError:
+    _HAS_PROTENIX = False
+    _add_terminal_oxt_atoms = None  # pyright: ignore[reportConstantRedefinition]
+    _ensure_atom_array = None  # pyright: ignore[reportConstantRedefinition]
+    _filter_zero_occupancy = None  # pyright: ignore[reportConstantRedefinition]
+
+
 # TODO: standardize this more! This needs to have a specified output dataclass that
 # we deal with, and define how we couple the data here to the structure we output at the end
 # of sampling.
@@ -38,6 +53,7 @@ def process_structure_to_trajectory_input(
     features: GenerativeModelInput,
     ensemble_size: int,
 ) -> SampleworksProcessedStructure:
+    needs_protenix_preprocessing = False
     if features.conditioning:
         cond_class = features.conditioning.__class__.__name__
         if cond_class in ("ProtenixConditioning", "BoltzConditioning") and hasattr(
@@ -46,22 +62,35 @@ def process_structure_to_trajectory_input(
             atom_array = features.conditioning.true_atom_array
             if atom_array is None:
                 atom_array = structure["asym_unit"][0]
+                needs_protenix_preprocessing = cond_class == "ProtenixConditioning"
         else:
             atom_array = structure["asym_unit"][0]
     else:
         atom_array = structure["asym_unit"][0]
-    occupancy_mask = atom_array.occupancy > 0
-    nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
+
+    # Add OXT atoms for Protenix to match the model's internal representation.
+    # Only needed when falling back to structure's asym_unit (true_atom_array was None).
+    if _HAS_PROTENIX and needs_protenix_preprocessing:
+        assert _ensure_atom_array is not None
+        assert _filter_zero_occupancy is not None
+        assert _add_terminal_oxt_atoms is not None
+        atom_array = _ensure_atom_array(atom_array)
+        atom_array = _filter_zero_occupancy(atom_array)
+        atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
+
+    occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+    nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
     reward_param_mask = occupancy_mask & nan_mask
 
     # TODO: jank way to get atomic numbers, fix this in real space density
     elements = [
-        ATOMIC_NUM_TO_ELEMENT.index(e.title()) for e in atom_array.element[reward_param_mask]
+        ATOMIC_NUM_TO_ELEMENT.index(e.title())
+        for e in atom_array.element[reward_param_mask]  # pyright: ignore[reportOptionalSubscript]
     ]
     elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
     b_factors = einx.rearrange(
         "n -> b n",
-        torch.Tensor(atom_array.b_factor[reward_param_mask]),
+        torch.Tensor(atom_array.b_factor[reward_param_mask]),  # pyright: ignore[reportOptionalSubscript]
         b=ensemble_size,
     )
     # TODO: properly handle occupancy values in structure processing
@@ -85,6 +114,8 @@ def process_structure_to_trajectory_input(
 
     # TODO: account for missing residues in mask
     mask_like = torch.ones_like(input_coords[..., 0])
+
+    structure["asym_unit"] = atom_array[reward_param_mask]
 
     return SampleworksProcessedStructure(
         structure=structure,
