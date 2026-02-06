@@ -262,7 +262,9 @@ class AF3EDMSampler:
         guidance_direction, loss = scaler.scale(
             x_hat_0_working_frame, scaler_context, model=model_wrapper
         )
-        guidance_direction = torch.as_tensor(guidance_direction)
+
+        # make sure device matches
+        guidance_direction = torch.as_tensor(guidance_direction, device=noisy_state.device)
         loss = torch.as_tensor(loss)
         guidance_weight = scaler.guidance_strength(context)
 
