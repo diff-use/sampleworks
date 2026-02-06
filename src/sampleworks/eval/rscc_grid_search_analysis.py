@@ -560,7 +560,7 @@ def _(np, setup_scattering_params, torch):
             XMap_torch,
         )
         from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
-            ATOMIC_NUM_TO_ELEMENT,
+            ELEMENT_TO_ATOMIC_NUM,
         )
 
         if device is None:
@@ -592,9 +592,9 @@ def _(np, setup_scattering_params, torch):
 
         # Prepare input tensors
         elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(
+            ELEMENT_TO_ATOMIC_NUM[
                 elem.upper() if len(elem) == 1 else elem[0].upper() + elem[1:].lower()
-            )
+            ]
             for elem in atom_array.element
         ]
         elements = torch.tensor(elements, device=device).unsqueeze(0)

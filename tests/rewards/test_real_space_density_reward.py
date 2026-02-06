@@ -16,8 +16,10 @@ from typing import cast
 import einx
 import pytest
 import torch
+from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
+    ELEMENT_TO_ATOMIC_NUM,
+)
 from sampleworks.core.rewards.real_space_density import (
-    ATOMIC_NUM_TO_ELEMENT,
     RealSpaceRewardFunction,
 )
 
@@ -37,9 +39,7 @@ class TestRewardFunctionBasics:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -77,9 +77,7 @@ class TestRewardFunctionBasics:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -107,9 +105,7 @@ class TestRewardFunctionBasics:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -147,9 +143,7 @@ class TestDensityCorrelation:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -175,9 +169,7 @@ class TestDensityCorrelation:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -214,9 +206,7 @@ class TestDensityCorrelation:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -252,9 +242,7 @@ class TestDensityCorrelation:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -294,9 +282,7 @@ class TestVmapCompatibility:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -348,9 +334,7 @@ class TestVmapCompatibility:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -387,9 +371,7 @@ class TestVmapCompatibility:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -434,9 +416,7 @@ class TestVmapCompatibility:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -496,9 +476,7 @@ class TestGradientFlow:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -528,9 +506,7 @@ class TestGradientFlow:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -561,9 +537,7 @@ class TestGradientFlow:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -613,9 +587,7 @@ class TestGradientFlow:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -662,9 +634,7 @@ class TestBatchHandling:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -697,9 +667,7 @@ class TestEdgeCases:
         """Test with just one atom."""
         coords, atom_array = test_coordinates_1vme
 
-        elements = torch.tensor(
-            [ATOMIC_NUM_TO_ELEMENT.index("C")], device=device, dtype=torch.float32
-        )
+        elements = torch.tensor([ELEMENT_TO_ATOMIC_NUM["C"]], device=device, dtype=torch.float32)
         b_factors = torch.tensor([20.0], device=device, dtype=torch.float32)
         occupancies = torch.tensor([1.0], device=device, dtype=torch.float32)
         coords_single = coords[:1]
@@ -719,9 +687,7 @@ class TestEdgeCases:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,
@@ -751,9 +717,7 @@ class TestEdgeCases:
 
         elements = torch.tensor(
             [
-                ATOMIC_NUM_TO_ELEMENT.index(
-                    e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()
-                )
+                ELEMENT_TO_ATOMIC_NUM[e.upper() if len(e) == 1 else e[0].upper() + e[1:].lower()]
                 for e in atom_array.element
             ],
             device=device,

@@ -11,8 +11,8 @@ from sampleworks.core.forward_models.xray.real_space_density import (
 )
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
     ATOM_STRUCTURE_FACTORS,
-    ATOMIC_NUM_TO_ELEMENT,
     ELECTRON_SCATTERING_FACTORS,
+    ELEMENT_TO_ATOMIC_NUM,
 )
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
@@ -44,7 +44,7 @@ def setup_scattering_params(
     """
     elements = atom_array.element
     unique_elements = sorted(set(normalize_element(e) for e in elements))  # pyright:ignore[reportOptionalIterable]
-    atomic_num_dict = {elem: ATOMIC_NUM_TO_ELEMENT.index(elem) for elem in unique_elements}
+    atomic_num_dict = {elem: ELEMENT_TO_ATOMIC_NUM[elem] for elem in unique_elements}
 
     structure_factors = ELECTRON_SCATTERING_FACTORS if em_mode else ATOM_STRUCTURE_FACTORS
 
@@ -110,7 +110,7 @@ def extract_density_inputs_from_atomarray(
 
     coords_tensor = torch.from_numpy(coords[valid_mask]).to(device, dtype=torch.float32)
     elements_tensor = torch.tensor(
-        [ATOMIC_NUM_TO_ELEMENT.index(normalize_element(e)) for e in elements[valid_mask]],
+        [ELEMENT_TO_ATOMIC_NUM[normalize_element(e)] for e in elements[valid_mask]],
         device=device,
         dtype=torch.long,
     )
@@ -212,9 +212,7 @@ class RealSpaceRewardFunction:
     def structure_to_reward_input(self, structure: dict) -> dict[str, Float[torch.Tensor, "..."]]:
         atom_array = structure["asym_unit"]
         atom_array = atom_array[:, atom_array.occupancy > 0]
-        elements = [
-            ATOMIC_NUM_TO_ELEMENT.index(normalize_element(elem)) for elem in atom_array.element
-        ]
+        elements = [ELEMENT_TO_ATOMIC_NUM[normalize_element(elem)] for elem in atom_array.element]
 
         elements = torch.tensor(elements, device=self.device).unsqueeze(0)
         b_factors = torch.from_numpy(atom_array.b_factor).to(self.device).unsqueeze(0)
