@@ -4,7 +4,7 @@ from sampleworks.core.samplers.edm import AF3EDMSampler
 from sampleworks.core.samplers.protocol import (
     Sampler,
     SamplerSchedule,
-    StepContext,
+    StepParams,
     TrajectorySampler,
 )
 
@@ -13,6 +13,6 @@ __all__ = [
     "Sampler",
     "TrajectorySampler",
     "SamplerSchedule",
-    "StepContext",
+    "StepParams",
     "AF3EDMSampler",
 ]

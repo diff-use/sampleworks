@@ -132,14 +132,14 @@ class FlowModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
         *,
         features: GenerativeModelInput[C] | None = None,
     ) -> FlowOrEnergyBasedModelOutputT:
-        """
+        r"""
         Perform denoising at given timestep/noise level.
-        Returns predicted clean sample (x̂₀).
+        Returns predicted clean sample :math:`\hat{x}_\theta`.
 
         Parameters
         ----------
         x_t: FlowOrEquilibriumModelOutputT
-            Noisy structure at timestep t.
+            Noisy structure at timestep :math:`t`.
         t: Float[Array, "*batch"]
             Current timestep/noise level.
         features: GenerativeModelInput | None, optional

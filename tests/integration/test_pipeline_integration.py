@@ -18,7 +18,7 @@ import pytest
 import torch
 from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.core.samplers.edm import AF3EDMSampler
-from sampleworks.core.samplers.protocol import SamplerStepOutput, StepContext
+from sampleworks.core.samplers.protocol import SamplerStepOutput, StepParams
 from sampleworks.core.scalers.protocol import GuidanceOutput
 from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
@@ -60,8 +60,8 @@ def create_step_context_with_reward(
     dt: float = -0.1,
     noise_scale: float = 0.1,
     include_x_t: bool = False,
-) -> StepContext:
-    """Create StepContext with reward for testing DPS scalers.
+) -> StepParams:
+    """Create StepParams with reward for testing DPS scalers.
 
     Parameters
     ----------
@@ -84,7 +84,7 @@ def create_step_context_with_reward(
 
     Returns
     -------
-    StepContext
+    StepParams
         Context with reward and reward_inputs populated.
     """
     batch_size, num_atoms, _ = state.shape
@@ -103,7 +103,7 @@ def create_step_context_with_reward(
         x_t = state.clone().detach().requires_grad_(True)
         metadata = {"x_t": x_t}
 
-    return StepContext(
+    return StepParams(
         step_index=step_index,
         total_steps=total_steps,
         t=torch.tensor([t] * batch_size, device=device),
@@ -201,7 +201,7 @@ class TestStepScalerMatrix:
         num_atoms = 10
         state = torch.randn(batch_size, num_atoms, 3, device=device)
 
-        context = StepContext(
+        context = StepParams(
             step_index=0,
             total_steps=10,
             t=torch.tensor([0.5] * batch_size, device=device),
@@ -221,7 +221,7 @@ class TestStepScalerMatrix:
         scaler = NoScalingScaler()
         batch_size = 2
 
-        context = StepContext(
+        context = StepParams(
             step_index=0,
             total_steps=10,
             t=torch.tensor([0.5] * batch_size, device=device),
@@ -264,7 +264,7 @@ class TestStepScalerMatrix:
         scaler = DataSpaceDPSScaler(step_size=step_size)
         batch_size = 3
 
-        context = StepContext(
+        context = StepParams(
             step_index=0,
             total_steps=10,
             t=torch.tensor([0.5] * batch_size, device=device),
@@ -282,7 +282,7 @@ class TestStepScalerMatrix:
         scaler = DataSpaceDPSScaler(step_size=0.1)
         state = torch.randn(2, 10, 3, device=device)
 
-        context = StepContext(
+        context = StepParams(
             step_index=0,
             total_steps=10,
             t=torch.tensor([0.5, 0.5], device=device),
@@ -327,7 +327,7 @@ class TestStepScalerMatrix:
             reward_param_mask=np.ones(num_atoms, dtype=bool),
             mask_like=torch.ones(batch_size, num_atoms, device=device),
         )
-        context = StepContext(
+        context = StepParams(
             step_index=0,
             total_steps=10,
             t=torch.tensor([0.5] * batch_size, device=device),
@@ -371,7 +371,7 @@ class TestStepScalerMatrix:
                 reward_param_mask=np.ones(num_atoms, dtype=bool),
                 mask_like=torch.ones(batch_size, num_atoms, device=device),
             )
-            context = StepContext(
+            context = StepParams(
                 step_index=0,
                 total_steps=10,
                 t=torch.tensor([0.5] * batch_size, device=device),
@@ -386,7 +386,7 @@ class TestStepScalerMatrix:
             if info.requires_reward:
                 context = create_step_context_with_reward(0, state, device)
             else:
-                context = StepContext(
+                context = StepParams(
                     step_index=0,
                     total_steps=10,
                     t=torch.tensor([0.5] * batch_size, device=device),
@@ -408,7 +408,7 @@ class TestStepScalerMatrix:
         scaler = create_step_scaler_from_type(scaler_type)
         batch_size = 3
 
-        context = StepContext(
+        context = StepParams(
             step_index=0,
             total_steps=10,
             t=torch.tensor([0.5] * batch_size, device=device),

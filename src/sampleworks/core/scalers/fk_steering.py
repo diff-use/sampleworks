@@ -17,7 +17,7 @@ from tqdm import tqdm
 from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
 from sampleworks.core.samplers.protocol import (
     SamplerStepOutput,
-    StepContext,
+    StepParams,
     TrajectorySampler,
 )
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
@@ -217,7 +217,7 @@ class FKSteering:
         model: FlowModelWrapper,
         sampler: TrajectorySampler,
         features: GenerativeModelInput,
-        context: StepContext,
+        context: StepParams,
         step_scaler: StepScalerProtocol | None,
         num_particles: int,
     ) -> tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]:
@@ -237,7 +237,7 @@ class FKSteering:
             Sampler that handles the step mechanics.
         features : GenerativeModelInput
             Model features/inputs.
-        context : StepContext
+        context : StepParams
             Step context with time info and optionally reward.
         step_scaler : StepScalerProtocol | None
             Step scaler for guidance (None if guidance not active).
@@ -335,7 +335,7 @@ class FKSteering:
 
         return combined_output, denoised_4d, state_4d
 
-    def _should_resample(self, step: int, context: StepContext) -> bool:
+    def _should_resample(self, step: int, context: StepParams) -> bool:
         """Determine if FK resampling should occur at this step."""
         noise_scale = context.noise_scale
 
@@ -343,7 +343,7 @@ class FKSteering:
             is_resampling_step = step % self.resampling_interval == 0 and float(noise_scale) > 0  # pyright: ignore[reportArgumentType]
         except ValueError:
             logger.exception(
-                "Cannot determine FK resampling step due to None noise_scale in StepContext."
+                "Cannot determine FK resampling step due to None noise_scale in StepParams."
             )
             raise
 

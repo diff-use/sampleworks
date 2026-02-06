@@ -7,7 +7,7 @@ from typing import cast, TYPE_CHECKING
 import einx
 import torch
 from jaxtyping import Float
-from sampleworks.core.samplers.protocol import SamplerSchedule, SamplerStepOutput, StepContext
+from sampleworks.core.samplers.protocol import SamplerSchedule, SamplerStepOutput, StepParams
 from torch import Tensor
 
 
@@ -46,8 +46,8 @@ class MockTrajectorySampler:
 
     def get_context_for_step(
         self, step_index: int, schedule: SamplerSchedule, total_steps: int | None = None
-    ) -> StepContext:
-        """Build StepContext from schedule for given step."""
+    ) -> StepParams:
+        """Build StepParams from schedule for given step."""
         mock_schedule = cast(MockSchedule, schedule)
         if total_steps is None:
             total_steps = mock_schedule.num_steps
@@ -56,7 +56,7 @@ class MockTrajectorySampler:
         t_next = mock_schedule.timesteps[step_index + 1]
         dt = t_next - t
 
-        return StepContext(
+        return StepParams(
             step_index=step_index,
             total_steps=total_steps,
             t=t,
@@ -69,16 +69,16 @@ class MockTrajectorySampler:
         if not hasattr(schedule, "timesteps"):
             raise ValueError("MockTrajectorySampler requires schedule with timesteps")
 
-    def check_context(self, context: StepContext) -> None:
-        """Validate StepContext for this sampler."""
+    def check_context(self, context: StepParams) -> None:
+        """Validate StepParams for this sampler."""
         if not context.is_trajectory:
-            raise ValueError("MockTrajectorySampler requires trajectory-based StepContext")
+            raise ValueError("MockTrajectorySampler requires trajectory-based StepParams")
 
     def step(
         self,
         state: Float[Tensor, "*batch atoms 3"],
         model_wrapper: FlowModelWrapper,
-        context: StepContext,
+        context: StepParams,
         *,
         scaler: StepScalerProtocol | None = None,
         features: GenerativeModelInput | None = None,
@@ -112,7 +112,7 @@ class MockTrajectorySampler:
             if context.metadata:
                 scaler_metadata = {**context.metadata, "x_t": noisy_state}
 
-            scaler_context = StepContext(
+            scaler_context = StepParams(
                 step_index=context.step_index,
                 total_steps=context.total_steps,
                 t=context.t,
