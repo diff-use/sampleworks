@@ -538,18 +538,18 @@ class ProtenixWrapper:
         *,
         features: GenerativeModelInput[ProtenixConditioning] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
-        """Perform denoising at given timestep/noise level.
+        r"""Perform denoising at given timestep/noise level.
 
-        Returns predicted clean sample (x̂₀).
+        Returns predicted clean sample :math:`\hat{x}_\theta`.
 
         Parameters
         ----------
         x_t : Float[Tensor, "batch atoms 3"]
-            Noisy structure at timestep t.
+            Noisy structure at timestep :math:`t`.
         t : Float[Tensor, "*batch"] | float
-            Current timestep/noise level (t_hat from noise schedule).
+            Current timestep/noise level (:math:`\hat{t}` from noise schedule).
         features : GenerativeModelInput[ProtenixConditioning] | None
-            Model features as returned by `featurize`.
+            Model features as returned by ``featurize``.
 
         Returns
         -------

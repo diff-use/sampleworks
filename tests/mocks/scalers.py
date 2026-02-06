@@ -10,7 +10,7 @@ from torch import Tensor
 
 
 if TYPE_CHECKING:
-    from sampleworks.core.samplers.protocol import StepContext
+    from sampleworks.core.samplers.protocol import StepParams
     from sampleworks.models.protocol import FlowModelWrapper
 
 
@@ -28,7 +28,7 @@ class MockStepScaler:
     def scale(
         self,
         state: Float[Tensor, "*batch atoms 3"],
-        context: StepContext,
+        context: StepParams,
         *,
         model: FlowModelWrapper | None = None,
     ) -> tuple[Float[Tensor, "*batch atoms 3"], Float[Tensor, " batch"]]:
@@ -41,7 +41,7 @@ class MockStepScaler:
         loss = torch.zeros(state.shape[0], device=state.device)
         return direction, loss
 
-    def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
+    def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
         t = context.t_effective
         if isinstance(t, Tensor):
             result = torch.ones_like(t) * self.step_size

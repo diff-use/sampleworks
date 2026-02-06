@@ -10,7 +10,7 @@ import einx
 import torch
 from jaxtyping import Float
 
-from sampleworks.core.samplers.protocol import SamplerSchedule, SamplerStepOutput, StepContext
+from sampleworks.core.samplers.protocol import SamplerSchedule, SamplerStepOutput, StepParams
 from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
 from sampleworks.utils.frame_transforms import (
     align_to_reference_frame,
@@ -116,8 +116,8 @@ class AF3EDMSampler:
     scale_guidance_to_diffusion: bool = True
     device: str | torch.device = "cpu"
 
-    def check_context(self, context: StepContext) -> None:
-        """Validate that the provided StepContext is ready for step.
+    def check_context(self, context: StepParams) -> None:
+        """Validate that the provided StepParams is ready for step.
 
         Raises
         ------
@@ -125,16 +125,16 @@ class AF3EDMSampler:
             If the context is incompatible with this sampler.
         """
         if not context.is_trajectory:
-            raise ValueError("AF3EDMSampler requires trajectory-based StepContext with time info")
+            raise ValueError("AF3EDMSampler requires trajectory-based StepParams with time info")
         if (
             context.t is None
             or context.dt is None
             or context.noise_scale is None
             or context.total_steps is None
         ):
-            raise ValueError("AF3EDMSampler requires t, dt, and noise_scale in StepContext")
+            raise ValueError("AF3EDMSampler requires t, dt, and noise_scale in StepParams")
         if context.step_index >= context.total_steps:
-            raise ValueError("StepContext step_index exceeds total_steps")
+            raise ValueError("StepParams step_index exceeds total_steps")
 
     def check_schedule(self, schedule: SamplerSchedule) -> None:
         """Validate that the provided schedule is compatible with this sampler.
@@ -154,12 +154,16 @@ class AF3EDMSampler:
             )
 
     def compute_schedule(self, num_steps: int) -> EDMSchedule:
-        """Compute sigma-based schedule using RF3's EDM formula.
+        r"""Compute sigma-based schedule using RF3's EDM formula.
 
         Uses the formula:
-        sigma = sigma_data * (s_max^(1/p) + t*(s_min^(1/p) - s_max^(1/p)))^p
 
-        where t goes from 0 to 1 over num_steps.
+        .. math::
+
+            \sigma = \sigma_{\text{data}} \cdot
+            \left(s_{\max}^{1/p} + t \cdot (s_{\min}^{1/p} - s_{\max}^{1/p})\right)^p
+
+        where :math:`t` goes from 0 to 1 over ``num_steps``.
 
         Parameters
         ----------
@@ -196,8 +200,8 @@ class AF3EDMSampler:
 
     def get_context_for_step(
         self, step_index: int, schedule: SamplerSchedule, total_steps: int | None = None
-    ) -> StepContext:
-        """Build StepContext from schedule for given step.
+    ) -> StepParams:
+        """Build StepParams from schedule for given step.
 
         Parameters
         ----------
@@ -210,7 +214,7 @@ class AF3EDMSampler:
 
         Returns
         -------
-        StepContext
+        StepParams
             Context with t, dt, noise_scale populated for this step.
         """
 
@@ -227,7 +231,7 @@ class AF3EDMSampler:
         if total_steps is None:
             total_steps = len(schedule.sigma_t)  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
 
-        return StepContext(
+        return StepParams(
             step_index=step_index,
             total_steps=total_steps,
             t=t_hat,
@@ -241,7 +245,7 @@ class AF3EDMSampler:
         x_hat_0_working_frame: Float[torch.Tensor, "*batch n 3"],
         noisy_state: Float[torch.Tensor, "*batch n 3"],
         delta: torch.Tensor,
-        context: StepContext,
+        context: StepParams,
         model_wrapper: FlowModelWrapper,
         align_transform: Mapping[str, torch.Tensor] | None,
         allow_gradients: bool,
@@ -300,12 +304,12 @@ class AF3EDMSampler:
         self,
         state: Float[torch.Tensor, "*batch num_points 3"],
         model_wrapper: FlowModelWrapper,
-        context: StepContext,
+        context: StepParams,
         *,
         scaler: StepScalerProtocol | None = None,
         features: GenerativeModelInput | None = None,
     ) -> SamplerStepOutput:
-        """Take EDM diffusion step with optional guidance.
+        r"""Take EDM diffusion step with optional guidance.
 
         Based on Supplemental Algorithm 18 from the AlphaFold3 paper.
 
@@ -314,7 +318,7 @@ class AF3EDMSampler:
         state
             Current noisy coordinates.
         model_wrapper
-            Model wrapper for x̂₀ prediction.
+            Model wrapper for :math:`\hat{x}_\theta` prediction.
         context
             Step context with t, dt, noise_scale, and optionally reward info.
         scaler
@@ -325,7 +329,7 @@ class AF3EDMSampler:
         Returns
         -------
         SamplerStepOutput
-            Output containing updated state, denoised prediction (x̂₀), and loss.
+            Output containing updated state, denoised prediction :math:`\hat{x}_\theta`, and loss.
         """
         self.check_context(context)
 

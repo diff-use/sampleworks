@@ -28,7 +28,7 @@ class SamplerSchedule:
     """Base schedule object returned by trajectory-based Sampler implementations.
 
     A schedule is created once via `compute_schedule(num_steps)` and then passed
-    to `get_context_for_step(timestep, schedule)` to build StepContext.
+    to `get_context_for_step(timestep, schedule)` to build StepParams.
 
     Implementations should:
     - be immutable dataclasses (frozen=True)
@@ -41,8 +41,8 @@ class SamplerSchedule:
 
 
 @dataclass(frozen=True, slots=True)
-class StepContext:
-    """Universal step context passed to all samplers.
+class StepParams:
+    """Universal step parameters passed to all samplers.
 
     Contains metadata needed to execute a single sampling step.
     Different sampler types use different fields.
@@ -75,7 +75,7 @@ class StepContext:
         Raises ValueError for optimization samplers.
         """
         if self.t is None:
-            raise ValueError("StepContext has no time information (optimization sampler)")
+            raise ValueError("StepParams has no time information (optimization sampler)")
         return self.t
 
     @property
@@ -87,9 +87,9 @@ class StepContext:
         self,
         reward: RewardFunctionProtocol,
         reward_inputs: RewardInputs,
-    ) -> StepContext:
-        """Return a new context with reward information for guided sampling."""
-        return StepContext(
+    ) -> StepParams:
+        """Return new StepParams with reward information for guided sampling."""
+        return StepParams(
             step_index=self.step_index,
             total_steps=self.total_steps,
             t=self.t,
@@ -104,9 +104,9 @@ class StepContext:
     def with_metadata(
         self,
         metadata: dict[str, Any],
-    ) -> StepContext:
-        """Return a new context with updated metadata."""
-        return StepContext(
+    ) -> StepParams:
+        """Return new StepParams with updated metadata."""
+        return StepParams(
             step_index=self.step_index,
             total_steps=self.total_steps,
             t=self.t,
@@ -142,14 +142,14 @@ class SamplerStepOutput(Generic[StateT]):  # noqa: UP046
     """Updated coordinates after the sampling step."""
 
     denoised: StateT | None = None
-    """Denoised prediction (x̂₀) from this step, if available."""
+    r"""Denoised prediction :math:`\hat{x}_\theta` from this step, if available."""
 
     loss: Float[Array, " batch"] | None = None
     """Loss/reward value from scaler, if guidance was applied."""
 
     log_proposal_correction: Float[Array, " batch"] | None = None
-    """Log-ratio of base to guided proposal densities for trajectory-based resampling:
-    log q_base(x_{t+1}|x_t) - log q_guided(x_{t+1}|x_t).
+    r"""Log-ratio of base to guided proposal densities for trajectory-based resampling:
+    :math:`\log q_{\text{base}}(x_{t+1}|x_t) - \log q_{\text{guided}}(x_{t+1}|x_t)`.
 
     None if: deterministic step, no guidance applied, or correction not computable."""
 
@@ -166,8 +166,8 @@ class Sampler(Protocol[StateT, ModelWrapperT]):
     - Optimization-based methods (gradient descent, equilibrium sampling)
     """
 
-    def check_context(self, context: StepContext) -> None:
-        """Validate that the provided StepContext is ready for step.
+    def check_context(self, context: StepParams) -> None:
+        """Validate that the provided StepParams is ready for step.
 
         Raises
         ------
@@ -180,7 +180,7 @@ class Sampler(Protocol[StateT, ModelWrapperT]):
         self,
         state: StateT,
         model_wrapper: ModelWrapperT,
-        context: StepContext,
+        context: StepParams,
         *,
         scaler: StepScalerProtocol | None = None,
         features: GenerativeModelInput | None = None,
@@ -193,7 +193,7 @@ class Sampler(Protocol[StateT, ModelWrapperT]):
             Current state (coordinates, model inputs, latents, etc.)
         model_wrapper : FlowModelWrapper | EnergyBasedModelWrapper | StructureModelWrapper
             Model wrapper for performing model evaluations.
-        context : StepContext
+        context : StepParams
             Step metadata (time, learning rate, reward/reward_inputs, etc.)
         scaler : StepScalerProtocol | None
             Optional step scaler to modify sampler step using reward from context.
@@ -241,8 +241,8 @@ class TrajectorySampler(Sampler[StateT, FlowModelWrapper], Protocol):
         """
         ...
 
-    def get_context_for_step(self, step_index: int, schedule: SamplerSchedule) -> StepContext:
-        """Build StepContext from schedule for given step.
+    def get_context_for_step(self, step_index: int, schedule: SamplerSchedule) -> StepParams:
+        """Build StepParams from schedule for given step.
 
         Parameters
         ----------
@@ -253,7 +253,7 @@ class TrajectorySampler(Sampler[StateT, FlowModelWrapper], Protocol):
 
         Returns
         -------
-        StepContext
-            Context with t, dt populated for this step.
+        StepParams
+            Step parameters with t, dt populated for this step.
         """
         ...

@@ -25,7 +25,7 @@ from sampleworks.utils.framework_utils import Array
 
 if TYPE_CHECKING:
     from sampleworks.core.rewards.protocol import RewardFunctionProtocol
-    from sampleworks.core.samplers.protocol import StepContext, TrajectorySampler
+    from sampleworks.core.samplers.protocol import StepParams, TrajectorySampler
 
 
 ModelOutputT = FlowOrEnergyBasedModelOutputT | StructureModelOutputT
@@ -57,22 +57,22 @@ class StepScalerProtocol(Protocol[ModelWrapperT]):
 
     StepScalers operate on a per-step basis, computing guidance directions
     from the reward function gradient. Reward function and inputs are
-    obtained from StepContext.
+    obtained from StepParams.
     """
 
     def scale(
         self,
         state: ModelOutputT,
-        context: StepContext,
+        context: StepParams,
         *,
         model: ModelWrapperT | None = None,
     ) -> tuple[ModelOutputT, Float[Array, " batch"]]:
-        """Compute guidance direction and reward value.
+        r"""Compute guidance direction and reward value.
 
         Parameters
         ----------
         state
-            Current model output (e.g., x̂₀ prediction).
+            Current model output (e.g., :math:`\hat{x}_\theta` prediction).
         context
             Step context containing t, dt, and reward/reward_inputs.
         model
@@ -86,7 +86,7 @@ class StepScalerProtocol(Protocol[ModelWrapperT]):
         """
         ...
 
-    def guidance_strength(self, context: StepContext) -> Float[Array, " batch"]:
+    def guidance_strength(self, context: StepParams) -> Float[Array, " batch"]:
         """Timestep-dependent guidance weight."""
         ...
 

@@ -10,7 +10,7 @@ from torch import Tensor
 
 
 if TYPE_CHECKING:
-    from sampleworks.core.samplers.protocol import StepContext
+    from sampleworks.core.samplers.protocol import StepParams
     from sampleworks.models.protocol import FlowModelWrapper
 
 
@@ -20,7 +20,7 @@ class NoScalingScaler:
     def scale(
         self,
         state: Float[Tensor, "*batch atoms 3"],
-        context: StepContext,
+        context: StepParams,
         *,
         model: FlowModelWrapper | None = None,
     ) -> tuple[Float[Tensor, "*batch atoms 3"], Float[Tensor, " batch"]]:
@@ -28,15 +28,15 @@ class NoScalingScaler:
         loss = torch.zeros(state.shape[0], device=state.device)
         return zeros, loss
 
-    def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
+    def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
         t = context.t_effective
         return torch.zeros_like(torch.as_tensor(t))
 
 
 class DataSpaceDPSScaler:
-    """Step scaler that operates in the data space.
+    r"""Step scaler that operates in the data space.
 
-    Computes gradients only on the denoised prediction (x̂₀), avoiding backprop
+    Computes gradients only on the denoised prediction :math:`\hat{x}_\theta`, avoiding backprop
     through the model. This is faster but may be less accurate than full backprop.
     """
 
@@ -47,13 +47,13 @@ class DataSpaceDPSScaler:
     def scale(
         self,
         state: Float[Tensor, "*batch atoms 3"],
-        context: StepContext,
+        context: StepParams,
         *,
         model: FlowModelWrapper | None = None,
     ) -> tuple[Float[Tensor, "*batch atoms 3"], Float[Tensor, " batch"]]:
         if context.reward is None or context.reward_inputs is None:
             raise ValueError(
-                "StepContext missing reward/reward_inputs. "
+                "StepParams missing reward/reward_inputs. "
                 "Use context.with_reward() before calling scale()."
             )
 
@@ -76,7 +76,7 @@ class DataSpaceDPSScaler:
 
         return grad, loss.detach()
 
-    def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
+    def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
         t = context.t_effective
         return torch.ones_like(torch.as_tensor(t)) * self.step_size
 
@@ -100,12 +100,12 @@ class NoiseSpaceDPSScaler:
     def scale(
         self,
         state: Float[Tensor, "*batch atoms 3"],
-        context: StepContext,
+        context: StepParams,
         *,
         model: FlowModelWrapper | None = None,
     ) -> tuple[Float[Tensor, "*batch atoms 3"], Float[Tensor, " batch"]]:
         if context.reward is None or context.reward_inputs is None:
-            raise ValueError("StepContext missing reward/reward_inputs")
+            raise ValueError("StepParams missing reward/reward_inputs")
 
         if context.metadata is None or "x_t" not in context.metadata:
             raise ValueError(
@@ -142,6 +142,6 @@ class NoiseSpaceDPSScaler:
 
         return grad, loss.detach()
 
-    def guidance_strength(self, context: StepContext) -> Float[Tensor, " batch"]:
+    def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
         t = context.t_effective
         return torch.ones_like(torch.as_tensor(t)) * self.step_size

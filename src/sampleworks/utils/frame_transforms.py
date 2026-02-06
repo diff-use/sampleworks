@@ -507,7 +507,7 @@ def align_to_reference_frame(
     weights: Tensor | None = None,
     allow_gradients: bool = False,
 ) -> tuple[Tensor, Mapping[str, Tensor]]:
-    """Align coordinates to a reference frame (torch-only).
+    r"""Align coordinates to a reference frame (torch-only).
 
     Wrapper around weighted_rigid_align_differentiable with sensible defaults.
     Always returns the transform for downstream use.
@@ -515,9 +515,10 @@ def align_to_reference_frame(
     Parameters
     ----------
     coords
-        Coordinates to align (e.g., denoised prediction x̂₀), shape (batch, n, 3)
+        Coordinates to align (e.g., denoised prediction :math:`\hat{x}_\theta`), shape (batch, n, 3)
     reference
-        Target reference coordinates (e.g., input structure x_init), shape (batch, n, 3)
+        Target reference coordinates (e.g., input structure :math:`x_{\text{init}}`),
+        shape (batch, n, 3)
     mask
         Optional atom mask. If None, uses all atoms (ones).
     weights
