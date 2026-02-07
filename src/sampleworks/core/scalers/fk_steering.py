@@ -94,6 +94,8 @@ class FKSteering:
         """
 
         features = model.featurize(structure)
+
+        # Each particle is independently sampled from the prior to start
         coords = torch.as_tensor(
             model.initialize_from_prior(
                 batch_size=self.ensemble_size * num_particles, features=features
@@ -130,7 +132,6 @@ class FKSteering:
                 "e a c, (p e) a c -> (p e) a c",
                 processed.input_coords,
                 coords * torch.as_tensor(starting_context.noise_scale),
-                e=self.ensemble_size,
             )
 
         pbar = tqdm(range(self.starting_step, self.num_steps), desc="FK Steering")
@@ -186,7 +187,10 @@ class FKSteering:
             coords = step_output.state
             trajectory_next_step.append(coords.clone().cpu())
 
-        # compute lowest loss particle
+        # Select the particle (ensemble) with the best final reward.
+        # coords_4d: (particles, ensemble, atoms, 3) from the last _run_step call.
+        # lowest_loss_coords: (ensemble, atoms, 3) — the winning ensemble's
+        # denoised coordinates.
         lowest_loss_index = torch.argmin(loss_history[-1]) if loss_history else 0
         lowest_loss_coords = coords_4d[lowest_loss_index]  # pyright: ignore[reportPossiblyUnboundVariable]
 
@@ -210,7 +214,7 @@ class FKSteering:
         step_scaler: StepScalerProtocol | None,
         num_particles: int,
     ) -> tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]:
-        """Run single step with per-particle guidance via loop.
+        r"""Run a single denoising step, optionally with per-particle guidance.
 
         In FK steering, each "particle" is an ensemble of structures/trajectories.
         The particle dimension indexes independent
@@ -223,7 +227,9 @@ class FKSteering:
         Parameters
         ----------
         coords : torch.Tensor
-            Current coordinates with shape (particles * ensemble, atoms, 3).
+            Current coordinates, shape ``(particles * ensemble, atoms, 3)``.
+            Comes from the previous step's output (or ``initialize_from_prior``
+            on the first step).
         model : FlowModelWrapper
             Model wrapper for denoising.
         sampler : TrajectorySampler
@@ -239,11 +245,11 @@ class FKSteering:
 
         Returns
         -------
-        tuple
-            (step_output, denoised_4d, coords_4d)
-            - step_output: Full SamplerStepOutput from sampler
-            - denoised_4d: Denoised coords reshaped to (particles, ensemble, atoms, 3)
-            - coords_4d: Next coords reshaped to (particles, ensemble, atoms, 3)
+        tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]
+            ``(step_output, denoised_4d, coords_4d)`` where
+            - ``step_output.state`` has shape ``(particles * ensemble, atoms, 3)``
+            - ``denoised_4d`` has shape ``(particles, ensemble, atoms, 3)``
+            - ``coords_4d`` has shape ``(particles, ensemble, atoms, 3)``
         """
         coords_4d = coords.reshape(num_particles, self.ensemble_size, -1, 3)
 
@@ -329,7 +335,11 @@ class FKSteering:
         return combined_output, denoised_4d, state_4d
 
     def _should_resample(self, step: int, context: StepParams) -> bool:
-        """Determine if FK resampling should occur at this step."""
+        """Determine if FK resampling should occur at this step.
+
+        Called once per step with the StepParams produced by the sampler's
+        schedule.  The noise_scale check guards against misconfigured schedules.
+        """
         if context.noise_scale is None:
             message = "Cannot determine FK resampling step due to None noise_scale in StepParams."
             logger.error(message)
@@ -347,25 +357,30 @@ class FKSteering:
         log_proposal_correction: torch.Tensor | None,
         num_particles: int,
     ) -> torch.Tensor:
-        """Resample particles using FK weights before the next step.
+        r"""Resample particles using FK weights before the next step.
+
+        Each *particle* is an ensemble of ``self.ensemble_size`` structures.
+        Resampling duplicates or drops entire ensembles — individual structures
+        within a particle are never split across particles.
 
         Parameters
         ----------
         coords : torch.Tensor
-            Coordinates with shape (particles * ensemble, atoms, 3).
+            Coordinates, shape ``(particles * ensemble, atoms, 3)``.
         loss_curr : torch.Tensor
-            Loss per particle from current step, shape (particles,).
+            Loss per particle from the current step, shape ``(particles,)``.
         loss_history : list[torch.Tensor]
-            History of loss tensors from previous steps.
+            History of per-particle loss tensors from previous steps.
         log_proposal_correction : torch.Tensor | None
-            Log-ratio of base to guided proposal, shape (particles,) or None.
+            Log-ratio of base to guided proposal, shape ``(particles,)``, or
+            ``None`` when the sampler does not produce a correction term.
         num_particles : int
-            Number of particles.
+            Number of FK particles.
 
         Returns
         -------
         torch.Tensor
-            Resampled coordinates, shape (particles * ensemble, atoms, 3).
+            Resampled coordinates, shape ``(particles * ensemble, atoms, 3)``.
         """
         if len(loss_history) < 2:
             log_G = -self.fk_lambda * loss_curr
