@@ -1,6 +1,6 @@
 """Tests for real-space density reward function.
 
-This module tests the RewardFunction class from
+This module tests the RealSpaceRewardFunction class from
 sampleworks.core.rewards.real_space_density, validating that it:
 1. Produces outputs with high correlation with underlying electron density
 2. Is properly vmappable and usable in guidance scalers (FK steering)
@@ -26,10 +26,10 @@ from sampleworks.core.rewards.real_space_density import (
 
 @pytest.mark.slow
 class TestRewardFunctionBasics:
-    """Test basic functionality of the RewardFunction class."""
+    """Test basic functionality of the RealSpaceRewardFunction class."""
 
     def test_reward_function_initialization(self, reward_function_1vme):
-        """Test that RewardFunction can be instantiated."""
+        """Test that RealSpaceRewardFunction can be instantiated."""
         assert reward_function_1vme is not None
         assert isinstance(reward_function_1vme, RealSpaceRewardFunction)
 
