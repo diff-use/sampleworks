@@ -48,8 +48,6 @@ class GuidanceOutput:
     losses: list[float | None] | None = None
     metadata: dict[str, Any] | None = field(default_factory=dict)
 
-    # TODO: allow saving this data to CIF?
-
 
 @runtime_checkable
 class StepScalerProtocol(Protocol[ModelWrapperT]):

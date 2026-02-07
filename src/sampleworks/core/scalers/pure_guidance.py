@@ -2,13 +2,11 @@
 Pure diffusion guidance, as described in [DriftLite](http://arxiv.org/abs/2509.21655)
 """
 
-from typing import cast
-
 import torch
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
+from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
@@ -75,8 +73,7 @@ class PureGuidance:
         """
         features = model.featurize(structure)
 
-        coords = cast(
-            torch.Tensor,
+        coords = torch.as_tensor(
             model.initialize_from_prior(
                 batch_size=self.ensemble_size,
                 features=features,
@@ -90,14 +87,7 @@ class PureGuidance:
             ensemble_size=self.ensemble_size,
         )
 
-        reward_inputs = RewardInputs(
-            elements=cast(torch.Tensor, processed_structure.elements),
-            b_factors=cast(torch.Tensor, processed_structure.b_factors),
-            occupancies=cast(torch.Tensor, processed_structure.occupancies),
-            input_coords=cast(torch.Tensor, processed_structure.input_coords),
-            reward_param_mask=processed_structure.mask,
-            mask_like=cast(torch.Tensor, processed_structure.mask),
-        )
+        reward_inputs = processed_structure.to_reward_inputs(device=coords.device)
 
         trajectory_denoised: list[torch.Tensor] = []
         trajectory_next_step: list[torch.Tensor] = []

@@ -6,15 +6,13 @@ using Feynman-Kaç steering. All per-step guidance comes from a given StepScaler
 Per Singhal et al. (arXiv 2501.06848) and Boltz-1x (doi:10.1101/2024.11.19.624167)
 """
 
-from typing import cast
-
 import einx
 import torch
 import torch.nn.functional as F
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
+from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import (
     SamplerStepOutput,
     StepParams,
@@ -23,14 +21,13 @@ from sampleworks.core.samplers.protocol import (
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
-from sampleworks.utils.framework_utils import Array
 
 
 class FKSteering:
     """Feynman-Kac Steering trajectory scaler.
 
     The key difference from the standard FKSteering implementation is that "particles"
-    are ensembles of structures
+    are ensembles of structures, rather than individual structures.
 
     Parameters
     ----------
@@ -97,8 +94,7 @@ class FKSteering:
         """
 
         features = model.featurize(structure)
-        coords = cast(
-            torch.Tensor,
+        coords = torch.as_tensor(
             model.initialize_from_prior(
                 batch_size=self.ensemble_size * num_particles, features=features
             ),
@@ -111,14 +107,7 @@ class FKSteering:
             ensemble_size=self.ensemble_size,
         )
 
-        reward_inputs = RewardInputs(
-            elements=cast(torch.Tensor, processed.elements),
-            b_factors=cast(torch.Tensor, processed.b_factors),
-            occupancies=cast(torch.Tensor, processed.occupancies),
-            input_coords=cast(torch.Tensor, processed.input_coords),
-            reward_param_mask=processed.mask,
-            mask_like=torch.as_tensor(processed.mask, dtype=coords.dtype, device=coords.device),
-        )
+        reward_inputs = processed.to_reward_inputs(device=coords.device)
 
         schedule = sampler.compute_schedule(self.num_steps)
         loss_history: list[torch.Tensor] = []
@@ -223,6 +212,10 @@ class FKSteering:
     ) -> tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]:
         """Run single step with per-particle guidance via loop.
 
+        In FK steering, each "particle" is an ensemble of structures/trajectories.
+        The particle dimension indexes independent
+        populations that are resampled according to FK weights.
+
         When step_scaler is provided, loops over particles to ensure each particle
         receives independent guidance. This gives correct FK semantics where each
         particle's loss gradient is computed only from its own state.
@@ -272,10 +265,10 @@ class FKSteering:
 
             return step_output, denoised_4d, coords_4d
 
-        states_per_particle: list[Array] = []
-        denoised_per_particle: list[Array] = []
-        losses_per_particle: list[Array] = []
-        log_proposal_corrections_per_particle: list[Array] = []
+        states_per_particle: list[torch.Tensor] = []
+        denoised_per_particle: list[torch.Tensor] = []
+        losses_per_particle: list[torch.Tensor] = []
+        log_proposal_corrections_per_particle: list[torch.Tensor] = []
 
         for p in range(num_particles):
             particle_coords = coords_4d[p]  # (ensemble, atoms, 3)
@@ -297,30 +290,30 @@ class FKSteering:
                 loss = particle_output.loss
                 if loss.ndim > 0:
                     loss = loss.mean()
-                losses_per_particle.append(loss)
+                losses_per_particle.append(torch.as_tensor(loss))
 
             if particle_output.log_proposal_correction is not None:
                 log_proposal_correction = particle_output.log_proposal_correction
                 if log_proposal_correction.ndim > 0:
                     log_proposal_correction = log_proposal_correction.mean()
-                log_proposal_corrections_per_particle.append(log_proposal_correction)
+                log_proposal_corrections_per_particle.append(
+                    torch.as_tensor(log_proposal_correction)
+                )
 
         # Stack results back to 4D: (particles, ensemble, atoms, 3)
-        state_4d = torch.stack(cast(list[torch.Tensor], states_per_particle), dim=0)
+        state_4d = torch.stack(states_per_particle, dim=0)
 
         denoised_4d = None
         if denoised_per_particle:
-            denoised_4d = torch.stack(cast(list[torch.Tensor], denoised_per_particle), dim=0)
+            denoised_4d = torch.stack(denoised_per_particle, dim=0)
 
         loss_per_particle = None
         if losses_per_particle:
-            loss_per_particle = torch.stack(cast(list[torch.Tensor], losses_per_particle), dim=0)
+            loss_per_particle = torch.stack(losses_per_particle, dim=0)
 
         log_proposal_per_particle = None
         if log_proposal_corrections_per_particle:
-            log_proposal_per_particle = torch.stack(
-                cast(list[torch.Tensor], log_proposal_corrections_per_particle), dim=0
-            )
+            log_proposal_per_particle = torch.stack(log_proposal_corrections_per_particle, dim=0)
 
         combined_output = SamplerStepOutput(
             state=state_4d.reshape(-1, state_4d.shape[-2], 3),
@@ -337,16 +330,12 @@ class FKSteering:
 
     def _should_resample(self, step: int, context: StepParams) -> bool:
         """Determine if FK resampling should occur at this step."""
-        noise_scale = context.noise_scale
+        if context.noise_scale is None:
+            message = "Cannot determine FK resampling step due to None noise_scale in StepParams."
+            logger.error(message)
+            raise ValueError(message)
 
-        try:
-            is_resampling_step = step % self.resampling_interval == 0 and float(noise_scale) > 0  # pyright: ignore[reportArgumentType]
-        except ValueError:
-            logger.exception(
-                "Cannot determine FK resampling step due to None noise_scale in StepParams."
-            )
-            raise
-
+        is_resampling_step = step % self.resampling_interval == 0 and float(context.noise_scale) > 0
         is_final_step = step == self.num_steps - 1
         return is_resampling_step or is_final_step
 

@@ -996,14 +996,17 @@ def mock_processed_structure(mock_wrapper: MockFlowModelWrapper) -> SampleworksP
     """Mock SampleworksProcessedStructure for trajectory scaler tests."""
     num_atoms = mock_wrapper.num_atoms
     features = mock_wrapper.featurize({})
+    atom_array = AtomArray(num_atoms)
+    atom_array.coord = np.random.randn(num_atoms, 3).astype(np.float32)
+    atom_array.set_annotation("element", np.array(["C"] * num_atoms))
+    atom_array.set_annotation("b_factor", np.full(num_atoms, 20.0))
+    atom_array.set_annotation("occupancy", np.ones(num_atoms))
     return SampleworksProcessedStructure(
         structure={},
         model_input=features,
         input_coords=torch.randn(1, num_atoms, 3),
-        mask=np.ones(num_atoms, dtype=bool),
-        occupancies=torch.ones(1, num_atoms),
-        b_factors=torch.ones(1, num_atoms) * 20.0,
-        elements=torch.ones(1, num_atoms),
+        atom_array=atom_array,
+        ensemble_size=1,
     )
 
 
