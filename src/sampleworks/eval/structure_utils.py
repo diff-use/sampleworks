@@ -7,12 +7,11 @@ from typing import cast
 import einx
 import numpy as np
 import torch
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
-    ELEMENT_TO_ATOMIC_NUM,
-)
+from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.models.protocol import GenerativeModelInput
 
@@ -42,10 +41,29 @@ class SampleworksProcessedStructure:
     structure: dict
     model_input: GenerativeModelInput
     input_coords: torch.Tensor
-    mask: np.ndarray
-    occupancies: torch.Tensor
-    b_factors: torch.Tensor
-    elements: torch.Tensor
+    atom_array: AtomArray
+    ensemble_size: int
+
+    def to_reward_inputs(self, device: torch.device | str = "cpu") -> RewardInputs:
+        """Build RewardInputs from the processed atom array.
+
+        Delegates to :meth:`RewardInputs.from_atom_array` so that element
+        lookup, masking, and batching logic lives in one place.
+
+        Parameters
+        ----------
+        device
+            PyTorch device to place tensors on.
+
+        Returns
+        -------
+        RewardInputs
+        """
+        return RewardInputs.from_atom_array(
+            atom_array=self.atom_array,
+            ensemble_size=self.ensemble_size,
+            device=device,
+        )
 
 
 # TODO: this function could maybe be an atomworks transform/use those?
@@ -55,20 +73,19 @@ def process_structure_to_trajectory_input(
     features: GenerativeModelInput,
     ensemble_size: int,
 ) -> SampleworksProcessedStructure:
+    atom_array = None
     needs_protenix_preprocessing = False
-    if features.conditioning:
-        cond_class = features.conditioning.__class__.__name__
-        if cond_class in ("ProtenixConditioning", "BoltzConditioning") and hasattr(
-            features.conditioning, "true_atom_array"
-        ):
-            atom_array = features.conditioning.true_atom_array
-            if atom_array is None:
-                atom_array = structure["asym_unit"][0]
-                needs_protenix_preprocessing = cond_class == "ProtenixConditioning"
-        else:
-            atom_array = structure["asym_unit"][0]
-    else:
-        atom_array = structure["asym_unit"][0]
+
+    if features.conditioning and hasattr(features.conditioning, "true_atom_array"):
+        atom_array = features.conditioning.true_atom_array
+
+    if atom_array is None:
+        if "asym_unit" not in structure:
+            raise ValueError("structure must contain 'asym_unit' key")
+        atom_array = ensure_atom_array_stack(structure["asym_unit"])[0]
+        if features.conditioning:
+            cond_class = features.conditioning.__class__.__name__
+            needs_protenix_preprocessing = cond_class == "ProtenixConditioning"
 
     # Add OXT atoms for Protenix to match the model's internal representation.
     # Only needed when falling back to structure's asym_unit (true_atom_array was None).
@@ -76,35 +93,17 @@ def process_structure_to_trajectory_input(
         assert _ensure_atom_array is not None
         assert _filter_zero_occupancy is not None
         assert _add_terminal_oxt_atoms is not None
-        atom_array = _ensure_atom_array(atom_array)
+        atom_array = _ensure_atom_array(atom_array)  # pyright: ignore[reportArgumentType]
         atom_array = _filter_zero_occupancy(atom_array)
         atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
 
+    # Mask to valid atoms (nonzero occupancy, no NaN coords)
     occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
     nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
     reward_param_mask = occupancy_mask & nan_mask
+    atom_array = atom_array[reward_param_mask]  # pyright: ignore[reportIndexIssue]
 
-    # TODO: jank way to get atomic numbers, fix this in real space density
-    elements = [
-        ELEMENT_TO_ATOMIC_NUM[e.title()]
-        for e in atom_array.element[reward_param_mask]  # pyright: ignore[reportOptionalSubscript]
-    ]
-    elements = einx.rearrange("n -> b n", torch.Tensor(elements), b=ensemble_size)
-    b_factors = einx.rearrange(
-        "n -> b n",
-        torch.Tensor(atom_array.b_factor[reward_param_mask]),  # pyright: ignore[reportOptionalSubscript]
-        b=ensemble_size,
-    )
-    # TODO: properly handle occupancy values in structure processing
-    # occupancies = einx.rearrange(
-    #     "n -> b n",
-    #     torch.Tensor(atom_array.occupancy[reward_param_mask]),
-    #     b=ensemble_size,
-    # )
-    occupancies = torch.ones_like(cast(torch.Tensor, b_factors)) / ensemble_size
-
-    input_coords = cast(
-        torch.Tensor,
+    input_coords = torch.as_tensor(
         einx.rearrange(
             "... -> e ...",
             torch.from_numpy(atom_array.coord).to(
@@ -112,23 +111,16 @@ def process_structure_to_trajectory_input(
             ),
             e=ensemble_size,
         ),
-    )[..., reward_param_mask, :]
+    )
 
-    # TODO: account for missing residues in mask
-    mask_like = torch.ones_like(input_coords[..., 0])
-
-    structure["asym_unit"] = atom_array[reward_param_mask]
+    structure["asym_unit"] = atom_array
 
     return SampleworksProcessedStructure(
         structure=structure,
         model_input=features,
         input_coords=input_coords,
-        mask=cast(np.ndarray, mask_like.cpu().numpy()),
-        occupancies=occupancies,
-        # (both of these are because einx.rearrange(graph=True) returns a tuple[Tensor, Tensor] not
-        # Tensor, and pyright doesn't infer it)
-        b_factors=b_factors,  # pyright: ignore[reportArgumentType]
-        elements=elements,  # pyright: ignore[reportArgumentType]
+        atom_array=atom_array,  # pyright: ignore[reportArgumentType]
+        ensemble_size=ensemble_size,
     )
 
 
