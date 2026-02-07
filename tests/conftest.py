@@ -904,17 +904,17 @@ def mock_wrapper(device: torch.device) -> MockFlowModelWrapper:
 @pytest.fixture
 def mock_structure() -> dict:
     """Mock structure dict for testing without real PDB files."""
-    atom_array = type(
-        "MockAtomArray",
-        (),
-        {
-            "occupancy": np.ones(50),
-            "coord": np.random.randn(50, 3).astype(np.float32),
-            "element": np.array(["C"] * 50),
-            "b_factor": np.ones(50) * 20.0,
-        },
-    )()
-    return {"asym_unit": [atom_array], "metadata": {"id": "mock"}}
+    n_atoms = 50
+    atom_array = AtomArray(n_atoms)
+    atom_array.coord = np.random.randn(n_atoms, 3).astype(np.float32)
+    atom_array.element = np.array(["C"] * n_atoms)
+    atom_array.atom_name = np.array(["CA"] * n_atoms)
+    atom_array.res_name = np.array(["ALA"] * n_atoms)
+    atom_array.res_id = np.arange(1, n_atoms + 1)
+    atom_array.chain_id = np.array(["A"] * n_atoms)
+    atom_array.set_annotation("occupancy", np.ones(n_atoms))
+    atom_array.set_annotation("b_factor", np.ones(n_atoms) * 20.0)
+    return {"asym_unit": atom_array, "metadata": {"id": "mock"}}
 
 
 @pytest.fixture

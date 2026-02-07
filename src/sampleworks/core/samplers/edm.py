@@ -27,25 +27,86 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class EDMSchedule(SamplerSchedule):
-    """EDM noise schedule arrays."""
+    """EDM noise schedule arrays.
+
+    All arrays are indexed by step (length ``num_steps``).  Derived quantities
+    ``t_hat`` and ``dt`` are precomputed at construction time so that
+    ``get_context_for_step`` is a simple lookup.
+    """
 
     sigma_tm: Float[torch.Tensor, " steps"]
     sigma_t: Float[torch.Tensor, " steps"]
     gamma: Float[torch.Tensor, " steps"]
+    t_hat: Float[torch.Tensor, " steps"]
+    dt: Float[torch.Tensor, " steps"]
 
     def as_dict(self) -> dict[str, Float[torch.Tensor, ...]]:
         return {
             "sigma_tm": self.sigma_tm,
             "sigma_t": self.sigma_t,
             "gamma": self.gamma,
+            "t_hat": self.t_hat,
+            "dt": self.dt,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class EDMSamplerConfig:
-    """Config to initialize an EDM sampler plus common step defaults."""
+    r"""Config for an EDM sampler.
 
-    # Schedule parameters (AF3 defaults)
+    Default values match the AF3 parameterization of the EDM framework
+    (Karras et al., 2022).
+
+    Parameters
+    ----------
+    sigma_data
+        Assumed standard deviation of the training data distribution.
+        Used to scale the noise schedule:
+        :math:`\sigma(t) = \sigma_\text{data} \cdot
+        (s_\max^{1/\rho} + t(s_\min^{1/\rho} - s_\max^{1/\rho}))^\rho`.
+    s_max
+        Upper bound of the noise schedule in units of :math:`\sigma_\text{data}`.
+        Controls the starting (maximum) noise level.
+    s_min
+        Lower bound of the noise schedule in units of :math:`\sigma_\text{data}`.
+        Controls the ending (minimum) noise level.
+    p
+        Exponent :math:`\rho` controlling the shape of the noise schedule
+        interpolation between ``s_max`` and ``s_min``.  Higher values
+        concentrate more steps at lower noise levels.  Called ``rho`` in
+        Karras et al., Table 5.
+    gamma_min
+        Minimum sigma threshold below which stochastic noise inflation
+        (:math:`\gamma`) is disabled (set to 0).  Prevents adding noise
+        at near-clean noise levels where it would dominate the signal.
+    gamma_0
+        Stochastic noise inflation factor :math:`\gamma` applied at each
+        step when :math:`\sigma > \gamma_\min`.  Called ``S_churn``
+        (divided by num_steps) in Karras et al., Table 5.
+    noise_scale
+        Multiplier on the stochastic noise magnitude, corresponding to
+        :math:`S_\text{noise}` in Karras et al., Table 5.  Values slightly
+        above 1.0 compensate for discretization error.
+    step_scale
+        Multiplier on the Euler step size :math:`\Delta t`.  Values > 1
+        take larger steps (AF3 uses 1.5).
+    augmentation
+        Whether to apply random SO(3) rotation augmentation + small translation before each
+        denoising step.
+    align_to_input
+        Whether to rigidly align the denoised prediction :math:`\hat{x}_0`
+        back to the input reference frame after each step.
+    alignment_reverse_diffusion
+        Whether to also align the noisy state to the denoised prediction
+        before computing the denoising direction. This is from Boltz-1, and doesn't work
+        well during inference for non-Boltz models.
+    scale_guidance_to_diffusion
+        Whether to rescale the guidance direction to match the magnitude
+        of the diffusion denoising update.
+    device
+        Torch device for schedule tensor allocation.
+    """
+
     sigma_data: float = 16.0
     s_max: float = 160.0
     s_min: float = 4e-4
@@ -53,14 +114,22 @@ class EDMSamplerConfig:
     gamma_min: float = 0.2
     gamma_0: float = 0.8
     noise_scale: float = 1.003
+    step_scale: float = 1.5
     augmentation: bool = True
     align_to_input: bool = True
     alignment_reverse_diffusion: bool = False
     scale_guidance_to_diffusion: bool = True
     device: str | torch.device = "cpu"
 
-    # Default per-step scale (AF3 default)
-    step_scale: float = 1.5
+    def __post_init__(self) -> None:
+        if self.p == 0:
+            raise ValueError("p must be nonzero (used as exponent denominator in schedule formula)")
+        if self.s_max <= 0 or self.s_min <= 0:
+            raise ValueError(f"s_max ({self.s_max}) and s_min ({self.s_min}) must be positive")
+        if self.s_min >= self.s_max:
+            raise ValueError(f"s_min ({self.s_min}) must be less than s_max ({self.s_max})")
+        if self.sigma_data <= 0:
+            raise ValueError(f"sigma_data ({self.sigma_data}) must be positive")
 
     def create_sampler(self) -> AF3EDMSampler:
         """Create EDM sampler instance from this config."""
@@ -101,19 +170,18 @@ class AF3EDMSampler:
     https://www.nature.com/articles/s41586-024-07487-w
     """
 
-    # Schedule parameters (with defaults from AF3 and the like)
-    sigma_data: float = 16.0
-    s_max: float = 160.0
-    s_min: float = 4e-4
-    p: float = 7.0
-    gamma_min: float = 0.2
-    gamma_0: float = 0.8
-    noise_scale: float = 1.003
-    step_scale: float = 1.5
-    augmentation: bool = True
-    align_to_input: bool = True
-    alignment_reverse_diffusion: bool = False
-    scale_guidance_to_diffusion: bool = True
+    sigma_data: float = 16.0  # assumed std dev of data distribution
+    s_max: float = 160.0  # upper noise schedule bound (in sigma_data units)
+    s_min: float = 4e-4  # lower noise schedule bound (in sigma_data units)
+    p: float = 7.0  # schedule exponent (rho in Karras et al.)
+    gamma_min: float = 0.2  # sigma threshold below which noise inflation is disabled
+    gamma_0: float = 0.8  # noise inflation factor (S_churn / num_steps)
+    noise_scale: float = 1.003  # stochastic noise multiplier (S_noise)
+    step_scale: float = 1.5  # Euler step size multiplier
+    augmentation: bool = True  # random SO(3) rotation + small translation before denoising
+    align_to_input: bool = True  # align to input reference frame
+    alignment_reverse_diffusion: bool = False  # also align noisy state to denoised
+    scale_guidance_to_diffusion: bool = True  # rescale guidance to match diffusion update magnitude
     device: str | torch.device = "cpu"
 
     def check_context(self, context: StepParams) -> None:
@@ -173,7 +241,7 @@ class AF3EDMSampler:
         Returns
         -------
         EDMSchedule
-            Schedule object with sigma_tm, sigma_t, and gamma arrays.
+            Schedule object with `sigma_tm`, `sigma_t`, `gamma`, `t_hat`, and `dt` arrays.
         """
         t_values = torch.linspace(0, 1, num_steps + 1, device=self.device)
 
@@ -192,15 +260,21 @@ class AF3EDMSampler:
             torch.tensor(0.0, device=self.device),
         )
 
+        sigma_tm = sigmas[:-1]
+        sigma_t = sigmas[1:]
+        gamma = gammas[1:]
+        t_hat = sigma_tm * (1 + gamma)
+        dt = sigma_t - t_hat
+
         return EDMSchedule(
-            sigma_tm=sigmas[:-1],
-            sigma_t=sigmas[1:],
-            gamma=gammas[1:],
+            sigma_tm=sigma_tm,
+            sigma_t=sigma_t,
+            gamma=gamma,
+            t_hat=t_hat,
+            dt=dt,
         )
 
-    def get_context_for_step(
-        self, step_index: int, schedule: SamplerSchedule, total_steps: int | None = None
-    ) -> StepParams:
+    def get_context_for_step(self, step_index: int, schedule: SamplerSchedule) -> StepParams:
         """Build StepParams from schedule for given step.
 
         Parameters
@@ -208,9 +282,8 @@ class AF3EDMSampler:
         step_index: int
             Current timestep index (0-indexed).
         schedule: SamplerSchedule
-            The schedule returned by compute_schedule() (must be EDMSchedule).
-        total_steps: int | None
-            Total number of steps (optional, inferred from schedule if not provided).
+            The schedule returned by compute_schedule() (must be SamplerSchedule with `sigma_tm`,
+            `sigma_t`, `gamma`, `t_hat`, `dt`).
 
         Returns
         -------
@@ -220,16 +293,12 @@ class AF3EDMSampler:
 
         self.check_schedule(schedule)
 
-        sigma_tm = schedule.sigma_tm[step_index]  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
-        sigma_t = schedule.sigma_t[step_index]  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
-        gamma = schedule.gamma[step_index]  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
-
-        t_hat = sigma_tm * (1 + gamma)
+        t_hat = schedule.t_hat[step_index]  # pyright: ignore[reportAttributeAccessIssue] (accessible after check_schedule)
+        dt = schedule.dt[step_index]  # pyright: ignore[reportAttributeAccessIssue]
+        sigma_tm = schedule.sigma_tm[step_index]  # pyright: ignore[reportAttributeAccessIssue]
         eps_scale = self.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
-        dt = sigma_t - t_hat
 
-        if total_steps is None:
-            total_steps = len(schedule.sigma_t)  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
+        total_steps = len(schedule.sigma_t)  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
 
         return StepParams(
             step_index=step_index,
@@ -242,6 +311,7 @@ class AF3EDMSampler:
     def _apply_scaler_guidance(
         self,
         scaler: StepScalerProtocol,
+        # Denoised prediction in the working frame (after optional augmentation and alignment)
         x_hat_0_working_frame: Float[torch.Tensor, "*batch n 3"],
         noisy_state: Float[torch.Tensor, "*batch n 3"],
         delta: torch.Tensor,
@@ -258,9 +328,6 @@ class AF3EDMSampler:
             (modified_delta, loss, proposal_shift)
         """
         scaler_metadata: dict[str, object] = {"x_t": noisy_state}
-        if context.metadata:
-            scaler_metadata = {**context.metadata, "x_t": noisy_state}
-
         scaler_context = context.with_metadata(scaler_metadata)
 
         guidance_direction, loss = scaler.scale(
@@ -295,7 +362,7 @@ class AF3EDMSampler:
             einx.multiply("b, b n c -> b n c", guidance_weight, guidance_direction)
             / context.t_effective
         )
-        proposal_shift = self.step_scale * context.dt * scaled_delta_contribution  # pyright: ignore[reportOperatorIssue] (dt will be Array if check_context passed)
+        proposal_shift = self.step_scale * context.dt * scaled_delta_contribution  # pyright: ignore[reportOperatorIssue] (dt will be Array if check_context didn't raise)
 
         result = delta + scaled_delta_contribution
         return torch.as_tensor(result), loss, torch.as_tensor(proposal_shift)
@@ -354,12 +421,12 @@ class AF3EDMSampler:
         )
 
         # Store eps separately for proper frame transformation
-        # eps_scale will be float if check_context passed
+        # eps_scale will be float if check_context didn't raise
         eps = torch.randn_like(maybe_augmented_state) * eps_scale  # pyright: ignore[reportOperatorIssue]
         noisy_state = maybe_augmented_state + eps
         noisy_state = torch.as_tensor(noisy_state).detach().requires_grad_(allow_gradients)
 
-        # t_hat will be float if check_context passed
+        # t_hat will be float if check_context didn't raise
         # Use no_grad when gradients aren't needed to avoid memory overhead from
         # gradient checkpointing holding intermediate activations
         with torch.set_grad_enabled(allow_gradients):
@@ -379,7 +446,7 @@ class AF3EDMSampler:
             )
             x_hat_0_working_frame, align_transform = align_to_reference_frame(
                 torch.as_tensor(x_hat_0),
-                torch.as_tensor(features.x_init),
+                torch.as_tensor(features.x_init),  # <-- this is what is being aligned to
                 mask=align_mask,
                 weights=align_mask,
                 allow_gradients=allow_gradients,
@@ -391,7 +458,7 @@ class AF3EDMSampler:
         if self.alignment_reverse_diffusion:
             noisy_state_working_frame = weighted_rigid_align_differentiable(
                 torch.as_tensor(noisy_state_working_frame),
-                torch.as_tensor(x_hat_0_working_frame),
+                torch.as_tensor(x_hat_0_working_frame),  # <-- this is what is being aligned to
                 weights=torch.ones_like(torch.as_tensor(x_hat_0_working_frame)[..., 0]),
                 mask=torch.ones_like(torch.as_tensor(x_hat_0_working_frame)[..., 0]),
                 allow_gradients=False,
@@ -429,7 +496,7 @@ class AF3EDMSampler:
                 ) / (2 * noise_var)
 
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
-        # pyright sees dt as float | None, but it will be float if check_context passed
+        # pyright sees dt as float | None, but it will be float if check_context didn't raise
         next_state = noisy_state_working_frame_t + self.step_scale * dt * delta  # pyright: ignore[reportOperatorIssue]
 
         return SamplerStepOutput(

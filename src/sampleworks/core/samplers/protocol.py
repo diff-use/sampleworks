@@ -105,7 +105,10 @@ class StepParams:
         self,
         metadata: dict[str, Any],
     ) -> StepParams:
-        """Return new StepParams with updated metadata."""
+        """Return new StepParams with updated metadata.
+        Will merge with existing metadata if present."""
+        merged_metadata = self.metadata if self.metadata is not None else {}
+        merged_metadata.update(metadata)
         return StepParams(
             step_index=self.step_index,
             total_steps=self.total_steps,
@@ -115,7 +118,7 @@ class StepParams:
             learning_rate=self.learning_rate,
             reward=self.reward,
             reward_inputs=self.reward_inputs,
-            metadata=metadata,
+            metadata=merged_metadata,
         )
 
 
