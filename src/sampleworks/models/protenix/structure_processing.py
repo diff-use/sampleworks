@@ -553,6 +553,8 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
     atom_array = add_terminal_oxt_atoms(atom_array, chain_info)
 
+    # label_entity_id groups chains into biological entities; ligands get a "_lig" suffix
+    # to keep them distinct from polymer entities sharing the same base ID.
     if not hasattr(atom_array, "label_entity_id"):
         chain_to_entity = {}
         for chain_id, info in chain_info.items():
@@ -572,9 +574,13 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     if not hasattr(atom_array, "label_asym_id"):
         atom_array.set_annotation("label_asym_id", atom_array.chain_id)
 
+    # entity_seq: {label_entity_id -> amino-acid / nucleotide sequence string}
+    # copy_id annotation: distinguishes homo-multimer copies of the same entity
     entity_seq = get_sequences(atom_array, chain_info, valid_positions)
     atom_array = add_unique_chain_and_copy_ids(atom_array)
 
+    # label_entity_id_to_sequences: ligand CCD residue-name lists (e.g. ["ATP"])
+    # lig_chain_ids: chain IDs belonging to non-polymer (ligand/ion) entities
     label_entity_id_to_sequences = {}
     lig_chain_ids = []
 
@@ -603,6 +609,12 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
     entity_id_to_mod_list = detect_modifications(atom_array, chain_info, valid_positions)
 
+    # Build the "sequences" list in Protenix JSON format
+    # Each entry is {entity_type: entity_dict} where entity_type is one of
+    # "proteinChain", "dnaSequence", "rnaSequence", or "ligand".
+    # Also builds two side-maps used later for covalent bond serialization:
+    #   label_entity_id_to_entity_id_in_json: internal entity ID -> 1-based JSON entity index
+    #   all_entity_counts: JSON entity index -> number of symmetric copies
     json_dict = {"sequences": []}
 
     unique_label_entity_id = np.unique(cast(np.ndarray, atom_array.label_entity_id))
@@ -673,6 +685,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
         json_dict["sequences"].append({entity_type: entity_dict})
 
+    # Filter atom array to only atoms belonging to recognized entities
     atom_array = cast(
         AtomArray,
         atom_array[
@@ -683,6 +696,9 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
         ],
     )
 
+    # Build entity_poly_type: {label_entity_id -> mmCIF polymer type string}
+    # Used below to distinguish polymer vs ligand atoms for mol_type annotations
+    # and to determine how bond positions are computed (1-based offset vs fixed 1).
     entity_poly_type = {}
     for chain_id, info in chain_info.items():
         chain_atom = cast(AtomArray, atom_array[atom_array.chain_id == chain_id])
@@ -700,6 +716,8 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 elif chain_type == ChainType.RNA:
                     entity_poly_type[label_entity_id] = "polyribonucleotide"
 
+    # token_mol_type: uppercase "PROTEIN"/"LIGAND" (used by Protenix tokenizer)
+    # mol_type: lowercase "protein"/"ligand" (used by Protenix data pipeline)
     if not hasattr(atom_array, "token_mol_type"):
         token_mol_types = []
         for i in range(len(atom_array)):
@@ -720,6 +738,10 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 mol_types.append("ligand")
         atom_array.set_annotation("mol_type", np.array(mol_types))
 
+    # Protenix needs explicit covalent bonds for ligand attachments and modified
+    # residues. Bonds are described in a JSON format that references atoms
+    # by (entity index, 1-based residue position, atom name, copy number) rather
+    # than raw atom indices.
     has_modifications = len(entity_id_to_mod_list) > 0
 
     lig_polymer_bonds = get_ligand_polymer_bond_mask(atom_array, lig_include_ions=False)
@@ -728,9 +750,11 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     has_ligand_bonds = lig_polymer_bonds.size > 0 or lig_lig_bonds.size > 0
 
     if has_modifications or has_ligand_bonds:
+        # Per-entity minimum res_id, used as offset to convert raw res_id values
+        # into 1-based positions within each entity's sequence.
         entity_min_res_id: dict[str, int] = {}
         for label_entity_id in np.unique(cast(np.ndarray, atom_array.label_entity_id)):
-            for chain_id, info in chain_info.items():
+            for chain_id in chain_info:
                 chain_atom = atom_array[atom_array.chain_id == chain_id]
                 if len(chain_atom) > 0 and chain_atom[0].label_entity_id == label_entity_id:  # pyright: ignore[reportArgumentType, reportIndexIssue]
                     if chain_id in valid_positions and valid_positions[chain_id]:
@@ -740,10 +764,15 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                         entity_min_res_id[str(label_entity_id)] = int(np.min(chain_res_ids))
                     break
 
+        # Collect all bond atom-index pairs from two sources:
+        # 1) ligand bonds (lig-polymer + lig-lig), filtered to only those involving
+        #    a ligand chain atom
+        # 2) polymer-polymer bonds from modified residues (e.g. disulfides)
         token_bonds_list = []
 
         if has_ligand_bonds:
             ligand_bonds = np.vstack((lig_polymer_bonds, lig_lig_bonds))
+            # Keep only bonds where at least one partner belongs to a ligand chain
             lig_indices = np.where(np.isin(cast(np.ndarray, atom_array.chain_id), lig_chain_ids))[0]
             lig_bond_mask = np.any(np.isin(ligand_bonds[:, :2], lig_indices), axis=1)
             ligand_bonds = ligand_bonds[lig_bond_mask]
@@ -755,6 +784,12 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
             if polymer_polymer_bond.size > 0:
                 token_bonds_list.append(polymer_polymer_bond)
 
+        # Convert atom-index bond pairs into Protenix's JSON bond format.
+        # Each bond partner is identified by:
+        #   entity  – 1-based JSON entity index
+        #   position – 1-based residue position within the entity (polymer) or 1 (ligand)
+        #   atom    – PDB atom name (e.g. "SG", "C1")
+        #   copy    – which symmetric copy of this entity the atom belongs to
         if token_bonds_list:
             token_bonds = np.vstack(token_bonds_list)
             covalent_bonds = []
@@ -763,6 +798,9 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 for i in range(2):
                     raw_res_id = int(cast(np.ndarray, atom_array.res_id)[atoms[i]])
                     label_entity_id = atom_array.get_annotation("label_entity_id")[atoms[i]]
+                    # For polymers, convert raw res_id to 1-based position relative
+                    # to the entity's first residue. Non-polymer entities are single-residue
+                    # entities so position is always 1.
                     if label_entity_id in entity_poly_type:
                         min_res_id = entity_min_res_id.get(str(label_entity_id), 1)
                         position = raw_res_id - min_res_id + 1
@@ -777,6 +815,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
 
                 covalent_bonds.append(bond_dict)
 
+            # Deduplicate and normalize bond dicts across symmetric copies
             merged_covalent_bonds = merge_covalent_bonds(covalent_bonds, all_entity_counts)
             json_dict["covalent_bonds"] = merged_covalent_bonds
 
