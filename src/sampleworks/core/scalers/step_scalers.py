@@ -29,8 +29,7 @@ class NoScalingScaler:
         return zeros, loss
 
     def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
-        t = context.t_effective
-        return torch.zeros_like(torch.as_tensor(t))
+        return torch.zeros_like(torch.as_tensor(context.t_effective))
 
 
 class DataSpaceDPSScaler:
@@ -77,8 +76,7 @@ class DataSpaceDPSScaler:
         return grad, loss.detach()
 
     def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
-        t = context.t_effective
-        return torch.ones_like(torch.as_tensor(t)) * self.step_size
+        return torch.ones_like(torch.as_tensor(context.t_effective)) * self.step_size
 
 
 class NoiseSpaceDPSScaler:

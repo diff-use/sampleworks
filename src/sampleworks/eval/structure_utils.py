@@ -73,6 +73,40 @@ def process_structure_to_trajectory_input(
     features: GenerativeModelInput,
     ensemble_size: int,
 ) -> SampleworksProcessedStructure:
+    """Convert a structure dict and model features into a ready-to-sample bundle.
+
+    CURRENTLY: Resolves the ground-truth ``AtomArray`` from either the conditioning
+    attached to *features* or the ``"asym_unit"`` key of *structure*,
+    applies Protenix-specific preprocessing when needed (OXT atoms,
+    zero-occupancy filtering), masks invalid atoms, and tiles the
+    coordinates to *ensemble_size*.
+
+    IDEALLY: This function should not need to be aware of the model, and should
+    produce a cleaned and masked AtomArray and coordinates usable for any model.
+    The model-specific logic should be handled in the model.
+
+    Parameters
+    ----------
+    structure : dict
+        Structure dictionary; must contain ``"asym_unit"`` if the model
+        conditioning does not carry a ``true_atom_array``.  Mutated
+        in-place: ``"asym_unit"`` is replaced with the cleaned array.
+    coords_from_prior : torch.Tensor
+        Prior sample used only to infer dtype and device for the output
+        coordinate tensor. (in future this should be useful for more than that)
+    features : GenerativeModelInput
+        Featurized model input.  If ``features.conditioning`` exposes a
+        ``true_atom_array`` attribute it is used as the reference array.
+    ensemble_size : int
+        Number of ensemble members; the reference coordinates are
+        broadcast along a leading ``e`` dimension.
+
+    Returns
+    -------
+    SampleworksProcessedStructure
+        Frozen dataclass bundling the cleaned structure, model input,
+        tiled coordinates, atom array, and ensemble size.
+    """
     atom_array = None
     needs_protenix_preprocessing = False
 
@@ -98,9 +132,8 @@ def process_structure_to_trajectory_input(
         atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
 
     # Mask to valid atoms (nonzero occupancy, no NaN coords)
-    occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
-    nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
-    reward_param_mask = occupancy_mask & nan_mask
+    reward_param_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+    reward_param_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
     atom_array = atom_array[reward_param_mask]  # pyright: ignore[reportIndexIssue]
 
     input_coords = torch.as_tensor(
