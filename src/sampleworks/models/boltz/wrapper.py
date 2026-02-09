@@ -95,7 +95,7 @@ class BoltzConfig:
     recycling_steps: int = 3
 
 
-def annotate_structure_for_boltz(
+def process_structure_for_boltz(
     structure: dict,
     *,
     out_dir: str | Path | None = None,
@@ -335,6 +335,8 @@ class Boltz2Wrapper:
     ):
         """Create the Lightning data module used by Boltz to serve data to the model.
 
+        NOTE: This will create processed .npz files, etc. in the out_dir.
+
         Parameters
         ----------
         input_path: str | Path
@@ -357,7 +359,7 @@ class Boltz2Wrapper:
         else:
             msa_server_url = "https://api.colabfold.com"
 
-        process_inputs(
+        process_inputs(  # <-- writes processed files to out_dir
             data=data,
             out_dir=out_dir,
             ccd_path=ccd_path,
@@ -402,11 +404,14 @@ class Boltz2Wrapper:
 
         Runs Pairformer pass and initializes x_init from prior distribution.
 
+        NOTE: Has side effect of creating Boltz input YAML and initial processed files with
+        create_boltz_input_from_structure() and the data module setup.
+
         Parameters
         ----------
         structure: dict
             Atomworks structure dictionary. Can be annotated with Boltz config
-            via `annotate_structure_for_boltz()`. Config is read from
+            via `process_structure_for_boltz()`. Config is read from
             `structure["_boltz_config"]` if present, otherwise default BoltzConfig
             values are used.
 
@@ -431,13 +436,14 @@ class Boltz2Wrapper:
         num_workers = config.num_workers
         ensemble_size = config.ensemble_size
 
-        input_path = create_boltz_input_from_structure(
+        input_path = create_boltz_input_from_structure(  # side effect of creating Boltz input YAML
             structure,
             out_dir,
             msa_manager=self.msa_manager,
             msa_pairing_strategy=self.msa_pairing_strategy,
         )
 
+        # side effect of creating "processed" files in out_dir
         self._setup_data_module(input_path, out_dir, num_workers=num_workers)
 
         batch = self.data_module.transfer_batch_to_device(
@@ -468,8 +474,8 @@ class Boltz2Wrapper:
         # below. Protenix has these issues too, and Boltz works a bit cleaner but I'm sure there's
         # still a way to make this much better.
 
-        # Use atom count from Boltz featurization (via conditioning) to ensure consistency
-        # between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
+        # Use atom count from Boltz featurization in atom_pad_mask (via conditioning) to ensure
+        # consistency between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
         # a temporary placeholder; initialize_from_prior derives shape from conditioning.
         feats = pairformer_out["feats"]
         atom_mask = cast(Tensor, feats.get("atom_pad_mask"))
@@ -493,10 +499,13 @@ class Boltz2Wrapper:
     def _pairformer_pass(
         self, features: dict[str, Any], recycling_steps: int = 3
     ) -> dict[str, Any]:
-        """Perform a pass through the Pairformer module.
+        """Perform a pass through the Pairformer module. Refer to AlphaFold 3 paper for details.
 
         Internal method that computes Pairformer representations. Called by
         `featurize()` and cached for reuse across denoising steps.
+
+        Basically copies Boltz code from [here](https://github.com/jwohlwend/boltz/blob/cb04aeccdd480fd4db707f0bbafde538397fa2ac/src/boltz/model/models/boltz2.py#L411-L530)
+        without distogram and checkpointing logic.
 
         Parameters
         ----------
@@ -509,11 +518,14 @@ class Boltz2Wrapper:
         -------
         dict[str, Any]
             Pairformer outputs (s, z, s_inputs, relative_position_encoding, feats).
+            s refers to single representation (shape something like [batch, tokens, dim]) and z
+            refers to pair representation (shape something like [batch, tokens, tokens, dim]).
         """
         mask: Tensor = features["token_pad_mask"]
         pair_mask = mask[:, :, None] * mask[:, None, :]
         s_inputs = self.model.input_embedder(features)
 
+        # Initialize single and pair representations
         s_init = self.model.s_init(s_inputs)
         z_init = (
             self.model.z_init_1(s_inputs)[:, :, None] + self.model.z_init_2(s_inputs)[:, None, :]
@@ -626,9 +638,9 @@ class Boltz2Wrapper:
             t = t.to(device=self.device, dtype=torch.float32)
 
         feats = cond.feats
-        atom_mask = feats.get("atom_pad_mask")
+        atom_mask = feats.get("atom_pad_mask")  # shape [1, N_padded]
         atom_mask = cast(Tensor, atom_mask)
-        atom_mask = atom_mask.repeat_interleave(x_t.shape[0], dim=0)
+        atom_mask = atom_mask.repeat_interleave(x_t.shape[0], dim=0)  # shape [batch_size, N_padded]
 
         pad_len = atom_mask.shape[1] - x_t.shape[1]
         if pad_len >= 0:
@@ -661,7 +673,7 @@ class Boltz2Wrapper:
         *,
         shape: tuple[int, ...] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
-        """Create a noisy version of a state at given noise level.
+        """Create a state drawn from the prior distribution. In the case of Boltz, this is Gaussian.
 
         Parameters
         ----------
@@ -844,11 +856,14 @@ class Boltz1Wrapper:
 
         Runs Pairformer pass and initializes x_init from prior distribution.
 
+        NOTE: Has side effect of creating Boltz input YAML and initial processed files with
+        create_boltz_input_from_structure() and the data module setup.
+
         Parameters
         ----------
         structure: dict
             Atomworks structure dictionary. Can be annotated with Boltz config
-            via `annotate_structure_for_boltz()`. Config is read from
+            via `process_structure_for_boltz()`. Config is read from
             `structure["_boltz_config"]` if present, otherwise default BoltzConfig
             values are used.
 
@@ -1001,7 +1016,7 @@ class Boltz1Wrapper:
         *,
         shape: tuple[int, ...] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
-        """Create a noisy version of a state at given noise level.
+        """Create a state drawn from the prior distribution. In the case of Boltz, this is Gaussian.
 
         Parameters
         ----------
@@ -1050,6 +1065,8 @@ class Boltz1Wrapper:
 
         Internal method that computes Pairformer representations. Called by
         `featurize()` and cached for reuse across denoising steps.
+
+        Basically copies Boltz code from [here](https://github.com/jwohlwend/boltz/blob/cb04aeccdd480fd4db707f0bbafde538397fa2ac/src/boltz/model/models/boltz1.py#L285-340).
 
         Parameters
         ----------
