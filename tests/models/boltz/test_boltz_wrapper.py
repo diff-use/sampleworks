@@ -14,10 +14,10 @@ import torch
 pytest.importorskip("boltz", reason="Boltz not installed")
 
 from sampleworks.models.boltz.wrapper import (
-    annotate_structure_for_boltz,
     BoltzConditioning,
     BoltzConfig,
     create_boltz_input_from_structure,
+    process_structure_for_boltz,
 )
 from sampleworks.utils.guidance_constants import StructurePredictor
 from tests.conftest import get_fixture_name_for_wrapper_type, STRUCTURES
@@ -91,30 +91,30 @@ class TestCreateBoltzInputFromStructure:
 
 
 class TestAnnotateStructureForBoltz:
-    """Test the annotate_structure_for_boltz helper function."""
+    """Test the process_structure_for_boltz helper function."""
 
     def test_annotate_adds_boltz_config(self, structure_6b8x: dict, temp_output_dir: Path):
-        result = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        result = process_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
         assert "_boltz_config" in result
         assert isinstance(result["_boltz_config"], BoltzConfig)
 
     def test_annotate_preserves_original_structure(
         self, structure_6b8x: dict, temp_output_dir: Path
     ):
-        result = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        result = process_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
         for key in structure_6b8x:
             assert key in result
             assert result[key] is structure_6b8x[key]
 
     def test_annotate_default_values(self, structure_6b8x: dict, temp_output_dir: Path):
-        result = annotate_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
+        result = process_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
         config = result["_boltz_config"]
         assert config.num_workers == 8
         assert config.ensemble_size == 1
         assert config.recycling_steps == 3
 
     def test_annotate_custom_values(self, structure_6b8x: dict, temp_output_dir: Path):
-        result = annotate_structure_for_boltz(
+        result = process_structure_for_boltz(
             structure_6b8x,
             out_dir=temp_output_dir,
             num_workers=4,
@@ -127,7 +127,7 @@ class TestAnnotateStructureForBoltz:
         assert config.recycling_steps == 5
 
     def test_annotate_out_dir_from_metadata(self, structure_6b8x: dict):
-        result = annotate_structure_for_boltz(structure_6b8x)
+        result = process_structure_for_boltz(structure_6b8x)
         config = result["_boltz_config"]
         expected_id = structure_6b8x.get("metadata", {}).get("id", "boltz_output")
         assert config.out_dir == expected_id
@@ -190,7 +190,7 @@ class TestBoltzWrapperFeaturize:
 
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         assert isinstance(features, GenerativeModelInput)
         assert features.x_init is not None
@@ -206,7 +206,7 @@ class TestBoltzWrapperFeaturize:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         wrapper.featurize(annotated)
         assert hasattr(wrapper, "data_module")
         assert wrapper.data_module is not None
@@ -221,7 +221,7 @@ class TestBoltzWrapperFeaturize:
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
         ensemble_size = 3
-        annotated = annotate_structure_for_boltz(
+        annotated = process_structure_for_boltz(
             structure, out_dir=temp_output_dir, ensemble_size=ensemble_size
         )
         features = wrapper.featurize(annotated)
@@ -243,7 +243,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -261,7 +261,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -280,7 +280,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -299,7 +299,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -318,7 +318,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -335,7 +335,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -352,7 +352,7 @@ class TestBoltzWrapperStep:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         x_init = cast(Tensor, features.x_init)
 
@@ -380,7 +380,7 @@ class TestBoltzWrapperInitializeFromPrior:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
 
         result = wrapper.initialize_from_prior(batch_size=2, features=features)
@@ -396,7 +396,7 @@ class TestBoltzWrapperInitializeFromPrior:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
 
         batch_size = 3
@@ -414,7 +414,7 @@ class TestBoltzWrapperInitializeFromPrior:
     ):
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
 
         for batch_size in [1, 2, 5]:
@@ -473,7 +473,7 @@ class TestBoltzWrappersEndToEnd:
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
 
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         assert isinstance(features, GenerativeModelInput)
         assert isinstance(features.conditioning, BoltzConditioning)
@@ -499,7 +499,7 @@ class TestBoltzWrappersEndToEnd:
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
 
-        annotated = annotate_structure_for_boltz(structure, out_dir=temp_output_dir)
+        annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
 
         x_t = wrapper.initialize_from_prior(batch_size=1, features=features)
