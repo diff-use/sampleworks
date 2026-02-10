@@ -732,8 +732,6 @@ class Boltz2Wrapper:
             )
 
         # Filter atoms with zero occupancy or NaN coordinates
-        import numpy as np
-
         asym_unit = structure["asym_unit"]
         occupancy_mask = asym_unit.occupancy > 0
         coord_array = np.asarray(asym_unit.coord)
@@ -1279,8 +1277,6 @@ class Boltz1Wrapper:
             )
 
         # Filter atoms with zero occupancy or NaN coordinates
-        import numpy as np
-
         asym_unit = structure["asym_unit"]
         occupancy_mask = asym_unit.occupancy > 0
         coord_array = np.asarray(asym_unit.coord)
