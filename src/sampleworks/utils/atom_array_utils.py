@@ -436,7 +436,7 @@ def _make_normalized_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
     atom_name = cast(np.ndarray, arr.atom_name)
 
     # Map (chain, res_id) to sequential position per chain
-    unique_chains = list(dict.fromkeys(chain_id))
+    unique_chains = dict.fromkeys(chain_id)
     chain_to_idx = {c: i for i, c in enumerate(unique_chains)}
     chain_res_to_seq: dict[tuple[str, int], int] = {}
     for chain in unique_chains:
@@ -562,8 +562,9 @@ def filter_to_common_atoms(
         # Filter array
         filtered_array = array[:, mask]
 
-        # Sort by the same id function to ensure matching order across arrays
-        sort_idx = np.argsort(id_fn(filtered_array))  # pyright: ignore[reportArgumentType]
+        # Sort by atom id to ensure matching order across arrays
+        filtered_ids = ids[mask]
+        sort_idx = np.argsort(filtered_ids)
         filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # pyright: ignore[reportIndexIssue]
 
         filtered_arrays.append(filtered_array)
