@@ -1,17 +1,19 @@
 # utility script to put all header information from original PDB entry into our CIF files
 import fnmatch
-import joblib
 import re
+import shutil
 from argparse import ArgumentParser
 from pathlib import Path
-from shutil import copy
 
+import einx
+import joblib
 import numpy as np
-from atomworks.io.parser import parse
-from biotite.structure import AtomArrayStack
-from biotite.structure.io.pdbx import CIFFile, set_structure, CIFColumn
+from atomworks.io.utils.io_utils import load_any
 from biotite.database.rcsb import fetch
+from biotite.structure import AtomArrayStack
+from biotite.structure.io.pdbx import CIFColumn, CIFFile, set_structure
 from loguru import logger
+
 
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 
@@ -97,15 +99,19 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
         return cif_file
 
     # write a backup version of the input cif file
-    copy(cif_path, cif_path.parent / (cif_path.name + ".bak"))
+    shutil.copy(cif_path, cif_path.parent / (cif_path.name + ".bak"))
 
     # fetch only downloads the file if it isn't already present.
     rcsb_path = fetch(rcsb_id, format="cif", target_path=str(SAMPLEWORKS_CACHE))
 
     # load the copy, and the new coordinates for it.
     template = CIFFile.read(rcsb_path)
-    cif_to_patch = parse(cif_file)
-    asym_unit: AtomArrayStack = cif_to_patch["asym_unit"]
+    asym_unit = load_any(cif_file)
+
+    # remove any atoms with nan coordinates--these seem to come in because we sometimes use parse
+    # (from AtomWorks) which creates them. Still we'll do this here just in case.
+    flat_coords = einx.rearrange("a b c -> b (a c)", asym_unit.coord)
+    asym_unit = asym_unit[:, ~np.isnan(flat_coords).any(axis=1)]  # pyright: ignore
 
     # make sure entity ids match in atom_site and entity_poly
     if "entity_poly" in template.block:
@@ -116,12 +122,13 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
             entity_id = ep["entity_id"].as_item()
             if "label_entity_id" not in asym_unit.get_annotation_categories():
                 asym_unit.add_annotation("label_entity_id", int)
-            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)
+            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)  # pyright: ignore
     else:
         logger.warning("No entity_poly block found in template CIF file. Cannot patch entity ids")
 
     # now set the structure with correct entity ids
     set_structure(template, asym_unit)
+
 
     # If there's a pdbx_poly_seq_scheme, make sure the seq nums all agree, as
     # the numbers in our outputs will all agree. We appear to use the one called ndb_seq_num
