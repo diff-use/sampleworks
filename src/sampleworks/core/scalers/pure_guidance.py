@@ -19,6 +19,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
     create_random_transform,
@@ -192,6 +193,33 @@ class PureGuidance:
                 f" initialized coordinates {coords.shape} shape."
             )
 
+        # Detect model to structure atom count mismatch
+        # s_ refers to structure indices, m_ refers to model indices.
+        model_atom_array = features.get("model_atom_array")
+        m_idx_t: torch.Tensor | None = None
+        s_idx_t: torch.Tensor | None = None
+        common_weights: torch.Tensor | None = None
+        if model_atom_array is not None:
+            struct_masked = atom_array[reward_param_mask]
+            if len(model_atom_array) != len(struct_masked):
+                (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+                    model_atom_array,
+                    struct_masked,
+                    normalize_ids=True,
+                    return_indices=True,
+                )
+                m_idx_t = torch.from_numpy(m_idx).to(coords.device)
+                s_idx_t = torch.from_numpy(s_idx).to(coords.device)
+                common_weights = torch.ones(ensemble_size, len(m_idx), device=coords.device)
+                logger.info(
+                    f"Atom count mismatch: model={len(model_atom_array)}, "
+                    f"structure={len(struct_masked)}, common={len(m_idx)}"
+                )
+
+        # Pre-allocate structure buffer for mismatch mapping
+        denoised_struct_buf = input_coords.clone() if m_idx_t is not None else None
+        last_denoised_model: torch.Tensor | None = None
+
         trajectory_denoised = []
         trajectory_next_step = []
         losses = []
@@ -228,7 +256,7 @@ class PureGuidance:
                 # noisy_coords.
                 maybe_augmented_coords.detach_().requires_grad_(True)
 
-            denoised = self.model_wrapper.denoise_step(
+            denoised_raw = self.model_wrapper.denoise_step(
                 features,
                 maybe_augmented_coords,
                 timestep=i,
@@ -240,16 +268,40 @@ class PureGuidance:
             )["atom_coords_denoised"]
 
             align_transform = None
-            denoised_working_frame = denoised
-            if align_to_input:
+            if m_idx_t is not None:
+                # s_idx_t, common_weights, denoised_struct_buf always set with m_idx_t
+                _s_idx = cast(torch.Tensor, s_idx_t)
+                _cw = cast(torch.Tensor, common_weights)
+                if align_to_input:
+                    _, align_transform = weighted_rigid_align_differentiable(
+                        denoised_raw[:, m_idx_t],
+                        input_coords[:, _s_idx],
+                        weights=_cw,
+                        mask=_cw,
+                        return_transforms=True,
+                        allow_gradients=allow_alignment_gradients,
+                    )
+                    denoised_model = apply_forward_transform(
+                        denoised_raw,
+                        align_transform,
+                        rotation_only=False,
+                    )
+                else:
+                    denoised_model = denoised_raw
+                last_denoised_model = denoised_model
+                denoised_working_frame = cast(torch.Tensor, denoised_struct_buf).clone()
+                denoised_working_frame[:, _s_idx] = denoised_model[:, m_idx_t]
+            elif align_to_input:
                 denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
-                    denoised,
+                    denoised_raw,
                     input_coords,
                     weights=mask_like,
                     mask=mask_like,
                     return_transforms=True,
                     allow_gradients=allow_alignment_gradients,
                 )
+            else:
+                denoised_working_frame = denoised_raw
 
             # To align with FK steering, store denoised in working frame (aligned with the
             # input coords if align_to_input is True)
@@ -348,11 +400,17 @@ class PureGuidance:
 
             trajectory_next_step.append(coords.clone().cpu())
 
-        # Concatenate atom array to match ensemble size
-        atom_array = stack([atom_array] * ensemble_size)
-        atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
-
-        structure["asym_unit"] = atom_array
+        # Save final structure
+        if m_idx_t is not None and last_denoised_model is not None:
+            # Concatenate atom array to match ensemble size
+            final_aa = stack([model_atom_array] * ensemble_size)
+            final_aa.coord = last_denoised_model.detach().cpu().numpy()  # type: ignore
+            structure["asym_unit"] = final_aa
+        else:
+            # Concatenate atom array to match ensemble size
+            atom_array = stack([atom_array] * ensemble_size)
+            atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
+            structure["asym_unit"] = atom_array
 
         return structure, (trajectory_denoised, trajectory_next_step), losses
 

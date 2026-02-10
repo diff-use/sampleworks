@@ -9,8 +9,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import torch
 from atomworks.enums import ChainType
+from biotite.structure import AtomArray, infer_elements
 from boltz.data.module.inference import BoltzInferenceDataModule
 from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
 from boltz.data.pad import pad_dim
@@ -34,6 +36,51 @@ from loguru import logger
 from torch import Tensor
 
 from sampleworks.utils.msa import MSAManager
+
+
+def _decode_boltz_atom_name(raw_name: np.ndarray | str) -> str:
+    """Decode atom name from Boltz NPZ.
+
+    Boltz2 stores names as unicode strings, Boltz1 as int8 arrays
+    encoded via ``chr(byte + 32)``.
+    """
+    if isinstance(raw_name, str):
+        return raw_name
+    return "".join(chr(int(c) + 32) for c in raw_name if c != 0)
+
+
+def _atom_array_from_boltz_npz(npz_path: Path) -> AtomArray:
+    """Build a biotite AtomArray from a Boltz processed ``.npz`` file.
+
+    Handles both Boltz1 (int8-encoded atom names) and Boltz2 (string names).
+
+    Parameters
+    ----------
+    npz_path
+        Path to the ``.npz`` in ``<out_dir>/processed/structures/``.
+
+    Returns
+    -------
+    AtomArray
+        One atom per model atom with chain_id, res_id, atom_name, res_name.
+    """
+    data = np.load(npz_path, allow_pickle=True)
+    atoms, residues, chains = data["atoms"], data["residues"], data["chains"]
+
+    n_atoms = len(atoms)
+    arr = AtomArray(n_atoms)
+    arr.coord = atoms["coords"].astype(np.float32)
+
+    # Map each atom to residue to chain via searchsorted on start indices
+    atom_res_idx = np.searchsorted(residues["atom_idx"], np.arange(n_atoms), side="right") - 1
+    res_chain_idx = np.searchsorted(chains["res_idx"], atom_res_idx, side="right") - 1
+
+    arr.chain_id = np.array([str(chains["name"][c]) for c in res_chain_idx])
+    arr.res_id = residues["res_idx"][atom_res_idx]
+    arr.res_name = np.array([str(residues["name"][r]) for r in atom_res_idx])
+    arr.atom_name = np.array([_decode_boltz_atom_name(atoms["name"][i]) for i in range(n_atoms)])
+    arr.element = infer_elements(arr)
+    return arr
 
 
 @dataclass
@@ -290,6 +337,8 @@ class Boltz2Wrapper:
             extra_mols_dir=processed_dir / "mols" if (processed_dir / "mols").exists() else None,
         )
 
+        self._structures_dir = processed.targets_dir
+
         self.data_module = Boltz2InferenceDataModule(
             manifest=processed.manifest,
             target_dir=processed.targets_dir,
@@ -348,6 +397,12 @@ class Boltz2Wrapper:
         batch = self.data_module.transfer_batch_to_device(
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
+
+        # Expose the model's atom array so scalers can reconcile atom counts
+        npz_files = list(self._structures_dir.glob("*.npz"))
+        if len(npz_files) == 1:
+            batch["model_atom_array"] = _atom_array_from_boltz_npz(npz_files[0])
+
         return batch
 
     def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
@@ -865,6 +920,8 @@ class Boltz1Wrapper:
             extra_mols_dir=processed_dir / "mols" if (processed_dir / "mols").exists() else None,
         )
 
+        self._structures_dir = processed.targets_dir
+
         self.data_module = BoltzInferenceDataModule(
             manifest=processed.manifest,
             target_dir=processed.targets_dir,
@@ -918,6 +975,11 @@ class Boltz1Wrapper:
         batch = self.data_module.transfer_batch_to_device(
             next(iter(self.data_module.predict_dataloader())), self.device, 0
         )
+
+        # Expose the model's atom array so scalers can reconcile atom counts
+        npz_files = list(self._structures_dir.glob("*.npz"))
+        if len(npz_files) == 1:
+            batch["model_atom_array"] = _atom_array_from_boltz_npz(npz_files[0])
 
         return batch
 
