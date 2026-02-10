@@ -1,7 +1,7 @@
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, Literal, overload
 
 import numpy as np
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
@@ -264,8 +264,8 @@ def map_altlocs_to_stack(
 
     # remove those annotations or we cannot stack arrays.
     for array in atom_arrays:
-        array.del_annotation("occupancy")
-        array.del_annotation("altloc_id")
+        array.del_annotation("occupancy")  # pyright: ignore[reportAttributeAccessIssue]
+        array.del_annotation("altloc_id")  # pyright: ignore[reportAttributeAccessIssue]
 
     # filter_to_common_atoms() returns a tuple of AtomArrayStack, so we need to take the first
     # (there will only be one structure in each)
@@ -425,43 +425,107 @@ def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
     )
 
 
+def _make_normalized_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
+    """Like ``make_atom_id`` but with sequential 0-based residue numbering per chain.
+
+    Handles numbering differences between representations (Boltz 0-based,
+    PDB author numbering, etc.). Returns ``"chainidx_seqpos_atomname"`` strings.
+    """
+    chain_id = cast(np.ndarray, arr.chain_id)
+    res_id = cast(np.ndarray, arr.res_id)
+    atom_name = cast(np.ndarray, arr.atom_name)
+
+    # Map (chain, res_id) to sequential position per chain
+    unique_chains = list(dict.fromkeys(chain_id))
+    chain_to_idx = {c: i for i, c in enumerate(unique_chains)}
+    chain_res_to_seq: dict[tuple[str, int], int] = {}
+    for chain in unique_chains:
+        chain_mask = chain_id == chain
+        chain_res_ids = res_id[chain_mask]
+        _, first_idx = np.unique(chain_res_ids, return_index=True)
+        ordered_unique = chain_res_ids[np.sort(first_idx)]
+        for seq_pos, rid in enumerate(ordered_unique):
+            chain_res_to_seq[(chain, int(rid))] = seq_pos
+
+    return np.array(
+        [
+            f"{chain_to_idx[c]}_{chain_res_to_seq[(c, int(r))]}_{a}"
+            for c, r, a in zip(chain_id, res_id, atom_name)
+        ]
+    )
+
+
+# add overloads for pyright and autocomplete
+@overload
 def filter_to_common_atoms(
     *arrays: AtomArray | AtomArrayStack,
-) -> tuple[AtomArrayStack, ...]:
+    normalize_ids: bool = ...,
+    return_indices: Literal[False] = ...,
+) -> tuple[AtomArrayStack, ...]: ...
+
+
+@overload
+def filter_to_common_atoms(
+    *arrays: AtomArray | AtomArrayStack,
+    normalize_ids: bool = ...,
+    return_indices: Literal[True],
+) -> tuple[tuple[AtomArrayStack, ...], tuple[np.ndarray[Any, np.dtype[np.intp]], ...]]: ...
+
+
+def filter_to_common_atoms(
+    *arrays: AtomArray | AtomArrayStack,
+    normalize_ids: bool = False,
+    return_indices: bool = False,
+) -> (
+    tuple[AtomArrayStack, ...]
+    | tuple[tuple[AtomArrayStack, ...], tuple[np.ndarray[Any, np.dtype[np.intp]], ...]]
+):
     """Filter multiple AtomArrays/AtomArrayStacks to only include common atoms.
 
     Creates unique identifiers for each atom based on chain_id, res_id, and
     atom_name, then filters all structures to include only atoms present in all.
     The returned arrays are sorted to ensure atoms are in matching order.
 
-    Parameters:
-        *arrays (AtomArray | AtomArrayStack): Two or more atom arrays or stacks
-            to filter.
+    Parameters
+    ----------
+    *arrays
+        Two or more atom arrays or stacks to filter.
+    normalize_ids
+        If True, use sequential per-chain residue numbering instead of raw
+        ``res_id``.  This handles numbering differences between representations
+        (e.g. Boltz 0-based vs PDB numbering).
+    return_indices
+        If True, also return integer index arrays that map each filtered
+        (sorted) position back to the corresponding original array position.
 
-    Returns:
-        tuple[AtomArray | AtomArrayStack, ...]:
-            Filtered versions of all input arrays containing only common atoms
-            in matching order. The tuple length matches the number of inputs.
+    Returns
+    -------
+    tuple[AtomArrayStack, ...]
+        Filtered versions of all input arrays containing only common atoms
+        in matching order The tuple length matches the number of inputs.
+        (when ``return_indices`` is False).
+    tuple[tuple[AtomArrayStack, ...], tuple[np.ndarray, ...]]
+        ``(filtered_arrays, index_arrays)`` when ``return_indices`` is True.
+        Each ``index_array[k]`` contains the integer indices into the
+        *k*-th original array such that
+        ``original[k][index_array[k]]`` gives the common atoms in sorted
+        order.
 
-    Raises:
-        TypeError: If inputs are not AtomArray or AtomArrayStack.
-        ValueError: If fewer than two arrays are provided.
-        RuntimeError: If no common atoms are found across all structures.
+    Raises
+    ------
+    TypeError
+        If inputs are not AtomArray or AtomArrayStack.
+    ValueError
+        If fewer than two arrays are provided.
+    RuntimeError
+        If no common atoms are found across all structures.
 
-    Examples:
-        >>> # Two arrays (original behavior)
-        >>> array1 = AtomArray(...)  # 100 atoms
-        >>> array2 = AtomArray(...)  # 95 atoms, 90 overlap with array1
-        >>> filtered1, filtered2 = filter_to_common_atoms(array1, array2)
-        >>> len(filtered1)  # 90
-        >>> len(filtered2)  # 90
-
-        >>> # Three or more arrays
-        >>> arr1 = AtomArray(...)  # 100 atoms
-        >>> arr2 = AtomArray(...)  # 95 atoms
-        >>> arr3 = AtomArray(...)  # 98 atoms
-        >>> f1, f2, f3 = filter_to_common_atoms(arr1, arr2, arr3)
-        >>> # All have the same atoms present in all three
+    Examples
+    --------
+    >>> filtered1, filtered2 = filter_to_common_atoms(array1, array2)
+    >>> (f1, f2), (idx1, idx2) = filter_to_common_atoms(
+    ...     model_atoms, struct_atoms, normalize_ids=True, return_indices=True
+    ... )
     """
     if len(arrays) < 2:
         raise ValueError(f"At least two arrays must be provided, got {len(arrays)}")
@@ -473,8 +537,8 @@ def filter_to_common_atoms(
                 f"Array at position {i} must be AtomArray or AtomArrayStack, got {type(array)}"
             )
 
-    # Get atom identifiers for all structures
-    all_ids = [make_atom_id(array) for array in arrays]
+    id_fn = _make_normalized_atom_id if normalize_ids else make_atom_id
+    all_ids = [id_fn(array) for array in arrays]
 
     # Find common atom IDs across all structures
     common_ids = all_ids[0]
@@ -486,19 +550,26 @@ def filter_to_common_atoms(
 
     # Filter and sort each array
     filtered_arrays: list[AtomArrayStack] = []
+    index_arrays: list[np.ndarray[Any, np.dtype[np.intp]]] = []
 
     for array, ids in zip(arrays, all_ids):
         # Create mask for common atoms
         mask = np.isin(ids, common_ids)
+        original_indices = np.where(mask)[0]
+
         array = ensure_atom_array_stack(array)
 
         # Filter array
         filtered_array = array[:, mask]
 
-        # Sort by atom ID to ensure matching order
-        sort_idx = np.argsort(make_atom_id(filtered_array))  # pyright: ignore (reportArgumentType)
-        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # pyright: ignore
+        # Sort by the same id function to ensure matching order across arrays
+        sort_idx = np.argsort(id_fn(filtered_array))  # pyright: ignore[reportArgumentType]
+        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # pyright: ignore[reportIndexIssue]
 
         filtered_arrays.append(filtered_array)
+        index_arrays.append(original_indices[sort_idx])
 
-    return tuple(filtered_arrays)
+    result_arrays = tuple(filtered_arrays)
+    if return_indices:
+        return result_arrays, tuple(index_arrays)
+    return result_arrays
