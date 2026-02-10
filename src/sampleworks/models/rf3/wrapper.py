@@ -338,7 +338,8 @@ class RF3Wrapper:
         Parameters
         ----------
         features: dict[str, Any]
-            Model features dict (raw features, not GenerativeModelInput).
+            Model features dict that is computed internally in featurize
+            (raw features, not GenerativeModelInput).
         grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
         **kwargs: dict, optional

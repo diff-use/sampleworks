@@ -107,7 +107,7 @@ class StepParams:
     ) -> StepParams:
         """Return new StepParams with updated metadata.
         Will merge with existing metadata if present."""
-        merged_metadata = self.metadata if self.metadata is not None else {}
+        merged_metadata = dict(self.metadata) if self.metadata is not None else {}
         merged_metadata.update(metadata)
         return StepParams(
             step_index=self.step_index,
