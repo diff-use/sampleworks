@@ -20,6 +20,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
     create_random_transform,
@@ -238,6 +239,33 @@ class FKSteering:
         # TODO: account for missing residues in mask
         mask_like = torch.ones_like(input_coords[..., 0])
 
+        # Detect model to structure atom count mismatch
+        # s_ refers to structure indices, m_ refers to model indices.
+        model_atom_array = features.get("model_atom_array")
+        m_idx_t: torch.Tensor | None = None
+        s_idx_t: torch.Tensor | None = None
+        common_weights: torch.Tensor | None = None
+        if model_atom_array is not None:
+            struct_masked = atom_array[reward_param_mask]
+            if len(model_atom_array) != len(struct_masked):
+                (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+                    model_atom_array,
+                    struct_masked,
+                    normalize_ids=True,
+                    return_indices=True,
+                )
+                m_idx_t = torch.from_numpy(m_idx).to(coords.device)
+                s_idx_t = torch.from_numpy(s_idx).to(coords.device)
+                common_weights = torch.ones(
+                    num_particles * ensemble_size,
+                    len(m_idx),
+                    device=coords.device,
+                )
+
+        # Track last model-space denoised per particle
+        # shape: (num_particles, ensemble_size, N_model, 3)
+        last_denoised_model: torch.Tensor | None = None
+
         # FK State variables
         energy_traj = torch.empty((num_particles, 0), device=coords.device)
         scaled_guidance_update = torch.zeros_like(coords)
@@ -287,7 +315,7 @@ class FKSteering:
                     else scaled_guidance_update
                 )
 
-            denoised = cast(
+            denoised_raw = cast(
                 torch.Tensor,
                 self.model_wrapper.denoise_step(
                     features,
@@ -304,16 +332,40 @@ class FKSteering:
             # do alignment before reshaping
             # align_transform will have shape (num_particles * ensemble_size, ...)
             align_transform = None
-            denoised_working_frame = denoised
-            if align_to_input:
+            denoised_model_flat: torch.Tensor | None = None
+            if m_idx_t is not None:
+                # s_idx_t, common_weights always set with m_idx_t
+                _s_idx = cast(torch.Tensor, s_idx_t)
+                _cw = cast(torch.Tensor, common_weights)
+                if align_to_input:
+                    _, align_transform = weighted_rigid_align_differentiable(
+                        denoised_raw[:, m_idx_t],
+                        input_coords[:, _s_idx],
+                        weights=_cw,
+                        mask=_cw,
+                        return_transforms=True,
+                        allow_gradients=False,
+                    )
+                    denoised_model_flat = apply_forward_transform(
+                        denoised_raw,
+                        align_transform,
+                        rotation_only=False,
+                    )
+                else:
+                    denoised_model_flat = denoised_raw
+                denoised_working_frame = input_coords.clone()
+                denoised_working_frame[:, _s_idx] = denoised_model_flat[:, m_idx_t]
+            elif align_to_input:
                 denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
-                    denoised,
+                    denoised_raw,
                     input_coords,
                     weights=mask_like,
                     mask=mask_like,
                     return_transforms=True,
                     allow_gradients=False,
                 )
+            else:
+                denoised_working_frame = denoised_raw
 
             # we need coords and eps and scaled_guidance_update in working frame
             coords_in_working_frame = (
@@ -347,6 +399,11 @@ class FKSteering:
                 num_particles, ensemble_size, -1, 3
             )
             eps_in_working_frame = eps_in_working_frame.reshape(num_particles, ensemble_size, -1, 3)
+
+            if m_idx_t is not None and denoised_model_flat is not None:
+                last_denoised_model = denoised_model_flat.reshape(
+                    num_particles, ensemble_size, -1, 3
+                )
 
             ### FK Resampling
             noise_var = eps_scale**2
@@ -405,6 +462,8 @@ class FKSteering:
                 eps_in_working_frame = eps_in_working_frame[indices]
                 energy_traj = energy_traj[indices]
                 scaled_guidance_update = scaled_guidance_update[indices]
+                if last_denoised_model is not None:
+                    last_denoised_model = last_denoised_model[indices]
 
             ### Guidance on x̂_0
             if num_gd_steps > 0 and i < n_steps - 1 and i >= guidance_start:
@@ -481,15 +540,21 @@ class FKSteering:
 
             trajectory_next_step.append(coords.clone().cpu())
 
-        # Stack atom array to match ensemble size
-        final_atom_array = stack([atom_array] * ensemble_size)
-
         # Get lowest energy particle
         min_energy_index = torch.argmin(energy_traj[:, -1])
-        final_atom_array.coord[..., reward_param_mask, :] = (  # type: ignore[reportOptionalSubscript] coords will be subscriptable
-            coords[min_energy_index].cpu().numpy()
-        )
 
+        # Save final structure
+        if m_idx_t is not None and last_denoised_model is not None:
+            # Stack atom array to match ensemble size
+            final_atom_array = stack([model_atom_array] * ensemble_size)
+            final_atom_array.coord = (  # type: ignore
+                last_denoised_model[min_energy_index].detach().cpu().numpy()
+            )
+        else:
+            final_atom_array = stack([atom_array] * ensemble_size)
+            final_atom_array.coord[..., reward_param_mask, :] = (  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+                coords[min_energy_index].cpu().numpy()
+            )
         structure["asym_unit"] = final_atom_array
 
         return structure, (trajectory_denoised, trajectory_next_step), losses
