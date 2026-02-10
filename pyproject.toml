@@ -4,15 +4,15 @@ requires = ["hatchling"]
 
 [dependency-groups]
 analysis = [
-  "polars",
-  "mdtraj",
+  "ipython",
   "marimo",
   "matplotlib",
-  "seaborn",
+  "mdtraj",
   "pandas",
+  "polars",
   "pyzmq",
-  "ipython",
-  "scikit-learn"
+  "scikit-learn",
+  "seaborn"
 ]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "pre-commit", "pyright", "ruff", "pytest-loguru"]
