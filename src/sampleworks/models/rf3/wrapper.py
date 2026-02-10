@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
+from biotite.structure import AtomArray
 from einx import rearrange
 from jaxtyping import ArrayLike, Float
 from loguru import logger as log
@@ -47,7 +48,7 @@ def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) 
     if msa_path is None:
         return updated_chain_info
 
-        # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
+    # If msa_path is a JSON file, read it to get chain_id -> msa_path mapping
     if isinstance(msa_path, (str, Path)):
         msa_path_obj = Path(msa_path)
         if msa_path_obj.suffix == ".json" and msa_path_obj.exists():
@@ -274,6 +275,18 @@ class RF3Wrapper:
             features,
             msg=f"network_input for example_id: {pipeline_output['example_id']}",
         )
+
+        # Build model atom array from the InferenceInput
+        model_aa = cast(
+            AtomArray, inference_input.atom_array[inference_input.atom_array.element != "H"]
+        )
+        n_model = int(features["f"]["ref_mask"].shape[0])
+
+        # The non H array may be off by 1 from features (e.g. an OXT)
+        # so trim it here
+        if len(model_aa) > n_model:
+            model_aa = cast(AtomArray, model_aa[:n_model])
+        features["model_atom_array"] = model_aa
 
         return features
 
