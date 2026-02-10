@@ -75,6 +75,10 @@ def ensure_torch(*arg_names: str, device: torch.device | None = None):
             ...
     """
 
+    # NOTE: Callable[P, T] -> Callable[P, T] is technically inexact. It
+    # accepts jax.Array where fn's signature expects torch.Tensor. ParamSpec can't
+    # express this broadened input in current Python typing, so we keep this for
+    # IDE autocomplete/return type propagation and accept the input-type imprecision.
     def decorator(fn: Callable[P, T]) -> Callable[P, T]:
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -102,6 +106,7 @@ def ensure_jax(*arg_names: str):
     Decorator that converts specified PyTorch tensor arguments to JAX arrays.
     """
 
+    # NOTE: Same ParamSpec caveat as ensure_torch.
     def decorator(fn: Callable[P, T]) -> Callable[P, T]:
         @wraps(fn)
         def wrapper(*args, **kwargs):

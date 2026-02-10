@@ -138,7 +138,7 @@ class FlowModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
 
         Parameters
         ----------
-        x_t: FlowOrEquilibriumModelOutputT
+        x_t: FlowOrEnergyBasedModelOutputT
             Noisy structure at timestep :math:`t`.
         t: Float[Array, "*batch"]
             Current timestep/noise level.
@@ -147,7 +147,7 @@ class FlowModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
 
         Returns
         -------
-        FlowOrEquilibriumModelOutputT
+        FlowOrEnergyBasedModelOutputT
             Predicted clean sample or predicted noise.
         """
         ...
@@ -174,7 +174,7 @@ class FlowModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
 
         Returns
         -------
-        FlowOrEquilibriumModelOutputT
+        FlowOrEnergyBasedModelOutputT
             Noisy output.
         """
         ...

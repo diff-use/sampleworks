@@ -237,6 +237,33 @@ def save_everything(
     scaler_type: str,
     final_state: torch.Tensor | None = None,
 ) -> None:
+    """Save everything: refined structure/ensemble CIF, trajectories, and losses.
+
+    When `final_state` is provided, its coordinates are written into the
+    `refined_structure` atom array (respecting the occupancy/NaN validity mask) before
+    saving.  Both the denoised and next-step trajectories are saved as
+    multi-model CIF files (subsampled every 10 steps via ``save_trajectory``).
+
+    Parameters
+    ----------
+    output_dir : str | Path
+        Directory to write all output files into. Created if it doesn't exist.
+    losses : list[Any]
+        Per-step loss values (may contain ``None`` entries for unguided steps).
+    refined_structure : dict
+        Atomworks structure dict whose ``"asym_unit"`` is used as the template
+        for saving.
+    traj_denoised : list[Any]
+        Denoised-prediction trajectory tensors, one per diffusion step.
+    traj_next_step : list[Any]
+        Next-step (noisy) trajectory tensors, one per diffusion step.
+    scaler_type : str
+        Scaler/guidance identifier, forwarded to ``save_trajectory`` for
+        scaler-specific handling. # TODO: handle more gracefully
+    final_state : torch.Tensor | None
+        Final coordinates with shape ``(ensemble, atoms, 3)``.  If ``None``,
+        the `refined_structure`'s existing coordinates are saved as-is.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -244,15 +271,14 @@ def save_everything(
     from biotite.structure.io.pdbx import CIFFile, set_structure
 
     atom_array = refined_structure["asym_unit"]
-    if isinstance(atom_array, AtomArrayStack):
-        atom_array = atom_array[0]
+    atom_array_for_masking = atom_array[0] if isinstance(atom_array, AtomArrayStack) else atom_array
 
     if final_state is not None:
         ensemble_size = final_state.shape[0]
-        occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
-        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
-        reward_param_mask = occupancy_mask & nan_mask
-        ensemble_array = stack([atom_array.copy() for _ in range(ensemble_size)])
+        reward_param_mask = atom_array_for_masking.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+        reward_param_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+
+        ensemble_array = stack([atom_array_for_masking.copy() for _ in range(ensemble_size)])
         ensemble_array.coord[:, reward_param_mask] = final_state.detach().cpu().numpy()  # pyright: ignore[reportOptionalSubscript]
         atom_array = ensemble_array
 
@@ -461,11 +487,11 @@ def get_job_result(
     start_time = epoch_seconds(started_at)
     end_time = epoch_seconds(ended_at)
     result = JobResult(
-        protein=getattr(args, "protein", "unknown"),
-        model=getattr(args, "model", "unknown"),
-        method=getattr(args, "method", "None"),
-        scaler=getattr(args, "guidance_type", "unknown"),
-        ensemble_size=getattr(args, "ensemble_size", 1),
+        protein=args.protein,
+        model=args.model,
+        method=getattr(args, "method", None),
+        scaler=args.guidance_type,
+        ensemble_size=args.ensemble_size,
         gradient_weight=getattr(args, "guidance_weight", -1.0),
         gd_steps=getattr(args, "num_gd_steps", -1),
         status=status,
