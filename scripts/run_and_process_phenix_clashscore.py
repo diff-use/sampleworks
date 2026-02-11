@@ -35,7 +35,18 @@ def parse_args(description: str | None = None) -> argparse.Namespace:
 
 
 def main(args) -> None:
-    # TODO check that phenix is installed and commands are available, bail early if not.
+    # check that phenix is installed and available, bail early if not.
+    fp = open("/dev/null", "w")
+    try:
+        subprocess.call("phenix.clashscore", stdout=fp)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "phenix.clashscore is not available, make sure phenix is installed "
+            " and that you have activated it, e.g. `source phenix-dir/phenix_env.sh`"
+        )
+    finally:
+        fp.close()
+
     workspace_root = Path(args.workspace_root)
     grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
     all_experiments = scan_grid_search_results(grid_search_dir)
@@ -75,6 +86,8 @@ def process_one_experiment(experiment: Experiment) -> pd.DataFrame:
     # phenix needs to be installed and on path for this to work. Also sh won't work with
     # phenix.clashscore because of that pesky period in the name.
     with logfile.open("w") as fn:
+        # phenix.clashscore generates a JSON file with both per-model scores as well as per-model
+        # lists of clashes.
         retcode = subprocess.call(
             ["phenix.clashscore", str(file_with_no_nans), " --json-filename", str(json_output)],
             stderr=fn,
@@ -95,6 +108,8 @@ def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
         json_data = json.load(f)
 
     model_name = json_data.get("model_name")
+    # For now we're only collecting model-level summary statistics, but
+    # there are lists of specific clashes in each model too.
     summary_results = json_data.get("summary_results", {})
 
     rows = []
