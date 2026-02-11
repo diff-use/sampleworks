@@ -57,6 +57,7 @@ pyarrow = "==17.0.0"
 
 [tool.pixi.environments]
 analysis = {features = ["analysis"]}
+analysis-dev = {features = ["analysis", "dev"]}
 boltz = {features = ["boltz"]}
 boltz-analysis = {features = ["boltz", "analysis"]}
 boltz-dev = {features = ["boltz", "dev"]}
