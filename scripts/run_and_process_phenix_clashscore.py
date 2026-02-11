@@ -33,6 +33,7 @@ def parse_args(description: str | None = None) -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
 def main(args) -> None:
     # TODO check that phenix is installed and commands are available, bail early if not.
     workspace_root = Path(args.workspace_root)
@@ -42,34 +43,42 @@ def main(args) -> None:
 
     # Now loop over experiments with joblib and get back tuples of experiment level metrics
     clashscore_metrics = joblib.Parallel(n_jobs=args.n_jobs)(
-        joblib.delayed(process_one_experiment)(experiment)
-        for experiment in all_experiments
+        joblib.delayed(process_one_experiment)(experiment) for experiment in all_experiments
     )
+    if not clashscore_metrics:
+        logger.error(
+            "No experiments successfully processed, check that result files are available."
+        )
+        return
+
     clashscore_df = pd.concat(clashscore_metrics)  # pyright: ignore
     clashscore_df.to_csv(
-        workspace_root / "grid_search_results"/ "clashscore_metrics.csv", index=False
+        workspace_root / "grid_search_results" / "clashscore_metrics.csv", index=False
     )
 
 
 def process_one_experiment(experiment: Experiment) -> pd.DataFrame:
-    # make sure there are no nan lines in the CIF file  # TODO fix this elsewhere!
+    # make sure there are no nan lines in the CIF file; this is an extra
+    # precaution, even though our CIF writers should now avoid writing nans
     file_with_no_nans = experiment.refined_cif_path.parent / "nonan.cif"
     json_output = experiment.refined_cif_path.parent / "clashscore.json"
     logfile = experiment.refined_cif_path.parent / "clashscore.log"
     logger.info(f"Removing nans from {experiment.refined_cif_path}")
-    retcode = subprocess.call(
-        f"grep -v nan {experiment.refined_cif_path}".split(),
-        stdout=file_with_no_nans.open("w")
-    )
+
+    with file_with_no_nans.open("w") as fn:
+        retcode = subprocess.call(
+            ["grep", "-viP" r"\bnan\b", str(experiment.refined_cif_path)], stdout=fn
+        )
     if retcode != 0:
-        raise RuntimeError(f"grep failed, see {logfile} for details")
+        raise RuntimeError(f"grep failed with code {retcode}, see {logfile} for details")
 
     # phenix needs to be installed and on path for this to work. Also sh won't work with
     # phenix.clashscore because of that pesky period in the name.
-    retcode = subprocess.call(
-        f"phenix.clashscore {str(file_with_no_nans)} --json-filename {str(json_output)}".split(),
-        stderr=logfile.open("w")
-    )
+    with logfile.open("w") as fn:
+        retcode = subprocess.call(
+            ["phenix.clashscore", str(file_with_no_nans), " --json-filename", str(json_output)],
+            stderr=fn,
+        )
     if retcode != 0:
         logger.error(f"phenix.clashscore failed, see {logfile} for details")
         return pd.DataFrame()
@@ -94,13 +103,13 @@ def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
             "model_name": model_name,
             "model_id": model_id,
             "clashscore": results.get("clashscore"),
-            "num_clashes": results.get("num_clashes")
+            "num_clashes": results.get("num_clashes"),
         }
         rows.append(row)
 
     return pd.DataFrame(rows)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = parse_args()
     main(args)
