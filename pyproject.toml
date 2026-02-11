@@ -9,6 +9,7 @@ analysis = [
   "matplotlib",
   "mdtraj",
   "pandas",
+  "peppr",
   "polars",
   "pyzmq",
   "scikit-learn",
