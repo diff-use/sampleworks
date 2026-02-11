@@ -505,8 +505,15 @@ class FKSteering:
                 guidance_update = torch.zeros_like(denoised_working_frame)
                 delta_norm = guidance_update.clone()
                 if gradient_normalization:
+                    # original_delta must be computed on the same set as
+                    # coords_in_working_frame (model set when has_mismatch)
+                    denoised_for_delta = (
+                        cast(torch.Tensor, last_denoised_model)
+                        if coords_in_model_space
+                        else denoised_working_frame
+                    )
                     original_delta = (
-                        coords_in_working_frame + eps_in_working_frame - denoised_working_frame
+                        coords_in_working_frame + eps_in_working_frame - denoised_for_delta
                     ) / t_hat
                     delta_norm = torch.linalg.norm(original_delta, dim=(-1, -2), keepdim=True)
 
@@ -543,9 +550,24 @@ class FKSteering:
                 denoised_working_frame = current_x0
 
                 dt = sigma_t - t_hat
-                scaled_guidance_update = guidance_update * -1 * step_scale * dt / t_hat
 
-            trajectory_denoised.append(denoised_working_frame.clone().cpu())
+                # scaled_guidance_update must be in model set so it can
+                # combine with eps_in_working_frame in the FK resampling
+                # log-likelihood calculation
+                if coords_in_model_space:
+                    guidance_update_model = torch.zeros_like(coords_in_working_frame)
+                    guidance_update_model[:, :, m_idx_t] = guidance_update[:, :, s_idx_t]
+                    scaled_guidance_update = guidance_update_model * -1 * step_scale * dt / t_hat
+                else:
+                    scaled_guidance_update = guidance_update * -1 * step_scale * dt / t_hat
+
+            # Store denoised trajectory.  When there is a mismatch the
+            # final atom array is the model atom array, so the trajectory
+            # must also have the same number of atoms as that array for saving
+            if has_mismatch and last_denoised_model is not None:
+                trajectory_denoised.append(last_denoised_model.clone().cpu())
+            else:
+                trajectory_denoised.append(denoised_working_frame.clone().cpu())
             losses.append(energy_traj[:, -1].mean().item() if energy_traj.shape[1] > 0 else 0.0)
             pbar.set_postfix({"loss": losses[-1]})
 

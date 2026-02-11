@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from atomworks import parse
 from biotite.structure import AtomArray, AtomArrayStack, stack
@@ -18,6 +19,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
+from sampleworks.eval.structure_utils import get_asym_unit_from_structure
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -237,22 +239,31 @@ def save_everything(
     set_structure(final_structure, refined_structure["asym_unit"])
     final_structure.write(str(output_dir / "refined.cif"))
 
+    # Build the occupancy mask from the first array in the stack
+    # Model atom arrays will lack occupancy annotation, in which case all atoms are considered valid
+    asym_unit = get_asym_unit_from_structure(refined_structure)
+    first_array: AtomArray = asym_unit[0] if isinstance(asym_unit, AtomArrayStack) else asym_unit  # pyright: ignore[reportAssignmentType]
+    if hasattr(first_array, "occupancy"):
+        reward_param_mask = first_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+    else:
+        reward_param_mask = np.ones(len(first_array), dtype=bool)
+
     # Two calls to save_trajectory, very similar, but saving different trajectories!
     save_trajectory(
         scaler_type,
         traj_denoised,  # <--- the difference is here!
-        refined_structure["asym_unit"],  # this is just used as a dummy structure
+        asym_unit,  # this is just used as a dummy structure
         output_dir,
-        refined_structure["asym_unit"].occupancy > 0,
+        reward_param_mask,
         "denoised",
         save_every=10,
     )
     save_trajectory(
         scaler_type,
         traj_next_step,  # <--- and here!
-        refined_structure["asym_unit"],
+        asym_unit,
         output_dir,
-        refined_structure["asym_unit"].occupancy > 0,
+        reward_param_mask,
         "next_step",
         save_every=10,
     )

@@ -330,9 +330,13 @@ class PureGuidance:
             else:
                 denoised_working_frame = denoised_raw
 
-            # To align with FK steering, store denoised in working frame (aligned with the
-            # input coords if align_to_input is True)
-            trajectory_denoised.append(denoised_working_frame.clone().cpu())
+            # Store denoised trajectory.  When there is a mismatch the
+            # final atom array is the model atom array, so the trajectory
+            # must also have the same number of atoms as that array for saving
+            if has_mismatch and last_denoised_model is not None:
+                trajectory_denoised.append(last_denoised_model.clone().cpu())
+            else:
+                trajectory_denoised.append(denoised_working_frame.clone().cpu())
 
             guidance_direction = None
             if apply_guidance:
