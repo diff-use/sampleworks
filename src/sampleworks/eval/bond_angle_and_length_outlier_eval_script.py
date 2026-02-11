@@ -243,13 +243,17 @@ def main(args: argparse.Namespace):
                 }
             )
 
-    pd.concat(all_bond_length_outliers).to_csv("bond_length_outliers.csv", index=False)
-    pd.concat(all_bond_angle_outliers).to_csv("bond_angle_outliers.csv", index=False)
+    pd.concat(all_bond_length_outliers).to_csv(
+        grid_search_dir / "bond_length_outliers.csv", index=False
+    )
+    pd.concat(all_bond_angle_outliers).to_csv(
+        grid_search_dir / "bond_angle_outliers.csv", index=False
+    )
     pd.DataFrame(all_bond_length_violation_fractions).to_csv(
-        "bond_length_violation_fractions.csv", index=False
+        grid_search_dir / "bond_length_violation_fractions.csv", index=False
     )
     pd.DataFrame(all_bond_angle_violation_fractions).to_csv(
-        "bond_angle_violation_fractions.csv", index=False
+        grid_search_dir / "bond_angle_violation_fractions.csv", index=False
     )
 
 
