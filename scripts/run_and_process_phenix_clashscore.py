@@ -36,16 +36,13 @@ def parse_args(description: str | None = None) -> argparse.Namespace:
 
 def main(args) -> None:
     # check that phenix is installed and available, bail early if not.
-    fp = open("/dev/null", "w")
     try:
-        subprocess.call("phenix.clashscore", stdout=fp)
+        subprocess.call("phenix.clashscore", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         raise RuntimeError(
             "phenix.clashscore is not available, make sure phenix is installed "
             " and that you have activated it, e.g. `source phenix-dir/phenix_env.sh`"
         )
-    finally:
-        fp.close()
 
     workspace_root = Path(args.workspace_root)
     grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
@@ -78,7 +75,7 @@ def process_one_experiment(experiment: Experiment) -> pd.DataFrame:
 
     with file_with_no_nans.open("w") as fn:
         retcode = subprocess.call(
-            ["grep", "-viP" r"\bnan\b", str(experiment.refined_cif_path)], stdout=fn
+            ["grep", "-viP", r"\bnan\b", str(experiment.refined_cif_path)], stdout=fn
         )
     if retcode != 0:
         raise RuntimeError(f"grep failed with code {retcode}, see {logfile} for details")
@@ -89,7 +86,7 @@ def process_one_experiment(experiment: Experiment) -> pd.DataFrame:
         # phenix.clashscore generates a JSON file with both per-model scores as well as per-model
         # lists of clashes.
         retcode = subprocess.call(
-            ["phenix.clashscore", str(file_with_no_nans), " --json-filename", str(json_output)],
+            ["phenix.clashscore", str(file_with_no_nans), "--json-filename", str(json_output)],
             stderr=fn,
         )
     if retcode != 0:
