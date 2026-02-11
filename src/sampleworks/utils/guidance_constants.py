@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class GuidanceType(str, Enum):
+class GuidanceType(StrEnum):
     """
     Enum for guidance/scaler types used in diffusion model guidance.
 
@@ -16,7 +16,7 @@ class GuidanceType(str, Enum):
     PURE_GUIDANCE = "pure_guidance"
 
 
-class StructurePredictor(str, Enum):
+class StructurePredictor(StrEnum):
     """
     Enum for supported structure prediction models.
     """
@@ -27,7 +27,7 @@ class StructurePredictor(str, Enum):
     RF3 = "rf3"
 
 
-class Boltz2Method(str, Enum):
+class Boltz2Method(StrEnum):
     """Enum for Boltz2 sampling methods.
 
     See https://github.com/jwohlwend/boltz/blob/cb04aeccdd480fd4db707f0bbafde538397fa2ac/src/boltz/data/const.py#L440

@@ -126,7 +126,7 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
             entity_id = ep["entity_id"].as_item()
             if "label_entity_id" not in asym_unit.get_annotation_categories():
                 asym_unit.add_annotation("label_entity_id", int)
-            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)  # pyright: ignore
+            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)  # pyright: ignore[reportArgumentType]
     else:
         logger.warning("No entity_poly block found in template CIF file. Cannot patch entity ids")
 
