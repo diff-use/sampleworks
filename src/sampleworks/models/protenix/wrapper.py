@@ -1,21 +1,17 @@
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast, TYPE_CHECKING
+from typing import Any, cast
 
 import numpy as np
 import torch
-from loguru import logger
-
-
-if TYPE_CHECKING:
-    from biotite.structure import AtomArray
-
+from biotite.structure import AtomArray
 from configs.configs_base import configs as configs_base
 from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
 from configs.configs_model_type import model_configs
 from einx import rearrange
 from jaxtyping import Array, ArrayLike, Float
+from loguru import logger
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
 from protenix.data.data_pipeline import DataPipeline
