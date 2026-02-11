@@ -1,18 +1,13 @@
-default_language_version:
-  python: python3.12
-minimum_pre_commit_version: "3.5.0"
-
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+  - repo: builtin
     hooks:
       - id: check-added-large-files
-        exclude: \.(cif|pdb|ccp4|mtz)$
+        exclude: \.(cif|pdb|ccp4|mtz|mrc)$
       - id: check-merge-conflict
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
-        exclude: \.(cif|pdb|ccp4|mtz)$
+        exclude: \.(cif|pdb|ccp4|mtz|mrc)$
 
   - repo: local
     hooks:
@@ -23,8 +18,20 @@ repos:
         language: python
         files: ^pyproject\.toml$
         additional_dependencies:
-          - toml-sort==0.23.1
+          - toml-sort==0.24.3
 
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      # Run the linter.
+      - id: ruff-check
+        args: [--verbose]
+      # Run the formatter.
+      - id: ruff-format
+        args: [--verbose]
+
+  - repo: local
+    hooks:
       - id: pyright-boltz
         name: pyright (boltz environment)
         entry: bash -c 'pixi run -e boltz-dev pyright "$@"' --
@@ -32,6 +39,7 @@ repos:
         types: [python]
         pass_filenames: true
         exclude: (real_space_density|protenix|rf3)
+        priority: 50
 
       - id: pyright-rf3
         name: pyright (rf3 environment)
@@ -40,6 +48,7 @@ repos:
         types: [python]
         pass_filenames: true
         files: rf3
+        priority: 50
 
       - id: pyright-protenix
         name: pyright (protenix environment)
@@ -48,14 +57,4 @@ repos:
         types: [python]
         pass_filenames: true
         files: protenix
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.14.10
-    hooks:
-      # Run the linter.
-      - id: ruff-check
-        args: [ --verbose]
-      # Run the formatter.
-      - id: ruff-format
-        args: [ --verbose]
+        priority: 50
