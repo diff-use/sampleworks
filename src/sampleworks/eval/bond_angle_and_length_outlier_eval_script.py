@@ -49,7 +49,7 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
     if not pose.bonds:
         logger.error(
             "Models must have bonds, use "
-            "`biotite.structure.io.pdx.get_structure(..., include_bonds=True"
+            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True"
         )
         return np.nan, pd.DataFrame()
         
@@ -124,13 +124,13 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
     if not pose.bonds:
         logger.error(
             "Models must have bonds, use "
-            "`biotite.structure.io.pdx.get_structure(..., include_bonds=True"
+            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True"
         )
         return np.nan, pd.DataFrame()
 
     # in the original, bonds were fetched from the reference structure, but we don't have one here.
     all_bonds, _ = pose.bonds.get_all_bonds()
-    # For a bond angle 'ABC', this lost contains the atom indices for 'A' and 'C'
+    # For a bond angle 'ABC', this list contains the atom indices for 'A' and 'C'
     bond_indices = []  # type: ignore[var-annotated]
     center_indices = []
     for center_index, bonded_indices in enumerate(all_bonds):
@@ -195,13 +195,7 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
     grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
-
-    # Protein configurations: base map paths, structure selections, and resolutions
-    protein_inputs_dir = args.grid_search_inputs_path or workspace_root
-    protein_configs = ProteinConfig.from_csv(protein_inputs_dir, args.protein_configs_csv)
-
     logger.info(f"Grid search directory: {grid_search_dir}")
-    logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
     # Scan for experiments (look for refined.cif files)
     all_experiments = scan_grid_search_results(grid_search_dir)
