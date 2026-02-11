@@ -8,9 +8,9 @@ from pathlib import Path
 import einx
 import joblib
 import numpy as np
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.database.rcsb import fetch
-from biotite.structure import AtomArrayStack
 from biotite.structure.io.pdbx import CIFColumn, CIFFile, set_structure
 from loguru import logger
 
@@ -19,9 +19,9 @@ SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 
 
 def crawl_dir_by_depth(
-        root_dir: str | Path,
-        target_pattern: str,
-        n_levels: int,
+    root_dir: str | Path,
+    target_pattern: str,
+    n_levels: int,
 ) -> list[Path]:
     """
     Recursively crawl `root_dir` up to `n_levels` directory levels deep and return
@@ -57,22 +57,25 @@ def crawl_dir_by_depth(
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--input-dir", required=True)
-    parser.add_argument("--cif-pattern", default='refined.cif')
+    parser.add_argument("--cif-pattern", default="refined.cif")
     parser.add_argument(
-        "--rcsb-pattern", default='grid_search_results/(.{4})',
+        "--rcsb-pattern",
+        default="grid_search_results/(.{4})",
         help="Regex pattern for rcsb ids in file paths. "
-             "Must have only one group, surrounding the id"
+        "Must have only one group, surrounding the id",
     )
-    parser.add_argument("--depth", type=int, default=4,
-                        help="Depth to search the directory tree below input-dir")
+    parser.add_argument(
+        "--depth", type=int, default=4, help="Depth to search the directory tree below input-dir"
+    )
     args = parser.parse_args()
     return args
 
+
 def main(
-        input_dir: str | Path,
-        target_pattern: str,
-        rcsb_regex: str = r"grid_search_results/(.{4})",
-        depth: int = 4
+    input_dir: str | Path,
+    target_pattern: str,
+    rcsb_regex: str = r"grid_search_results/(.{4})",
+    depth: int = 4,
 ) -> None:
     # make sure the cache exists
     SAMPLEWORKS_CACHE.mkdir(parents=True, exist_ok=True)
@@ -107,6 +110,7 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
     # load the copy, and the new coordinates for it.
     template = CIFFile.read(rcsb_path)
     asym_unit = load_any(cif_file)
+    asym_unit = ensure_atom_array_stack(asym_unit)
 
     # remove any atoms with nan coordinates--these seem to come in because we sometimes use parse
     # (from AtomWorks) which creates them. Still we'll do this here just in case.
@@ -129,7 +133,6 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
     # now set the structure with correct entity ids
     set_structure(template, asym_unit)
 
-
     # If there's a pdbx_poly_seq_scheme, make sure the seq nums all agree, as
     # the numbers in our outputs will all agree. We appear to use the one called ndb_seq_num
     nsm = template.block["pdbx_poly_seq_scheme"]["ndb_seq_num"]
@@ -146,6 +149,5 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
 
 
 if __name__ == "__main__":
-
     args = parse_args()
     main(args.input_dir, args.cif_pattern, args.rcsb_pattern, args.depth)
