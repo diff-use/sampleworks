@@ -97,15 +97,15 @@ def compute_density_from_atomarray(
 
     Parameters
     ----------
-    atom_array
+    atom_array : AtomArray | AtomArrayStack
         Structure to compute density for
-    xmap
+    xmap : XMap | None
         Optional XMap with existing grid parameters. If provided, resolution is ignored.
-    resolution
+    resolution : float | None
         Map resolution in Angstroms. Used to create synthetic grid if xmap is not provided.
-    em_mode
+    em_mode : bool
         If True, use electron scattering factors. If False, use X-ray factors.
-    device
+    device : torch.device | None
         PyTorch device for computation. If None, will try to use GPU.
 
     Returns
