@@ -57,6 +57,21 @@ def save_trajectory(
     subdir_name,
     save_every=10,
 ):
+    """
+    Save a trajectory to disk using the format appropriate for the provided scaler type.
+    
+    Parameters:
+        scaler_type (GuidanceType): The guidance/scaler type determining the trajectory format and saving behavior.
+        trajectory: Sequence or array of trajectory coordinate frames produced by the guidance process.
+        atom_array: An AtomArray or AtomArrayStack describing the base structure used to create per-step ensembles.
+        output_dir (str | Path): Directory where trajectory CIF files will be written.
+        reward_param_mask: Boolean mask or index array selecting atoms whose coordinates are present in each trajectory frame.
+        subdir_name (str): Name of the subdirectory under `output_dir/trajectory` where files will be saved.
+        save_every (int): Interval of steps between saved frames (save one file every `save_every` steps).
+    
+    Raises:
+        ValueError: If `scaler_type` is not a recognized GuidanceType.
+    """
     if scaler_type == GuidanceType.PURE_GUIDANCE:
         _save_trajectory(
             trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
@@ -74,12 +89,16 @@ def _assign_coords_to_array(
     coords: np.ndarray,
     reward_param_mask: np.ndarray,
 ) -> None:
-    """Assign trajectory coords into an AtomArrayStack, handling shape mismatches.
-
-    When the trajectory spans all atoms in the array (e.g. model
-    trajectories saved during a has_mismatch run (see pure_guidance.py or fk_steering.py)), coords
-    are assigned directly to ``.coord``.  Otherwise the ``reward_param_mask``
-    is used to index into the correct atom subset.
+    """
+    Assign trajectory coordinates into an AtomArrayStack, writing either to the full atom set or to a masked subset.
+    
+    Parameters:
+        array_copy (AtomArrayStack): Target atom array stack whose `.coord` will be updated.
+        coords (np.ndarray): Coordinates to assign; expected shape ends with (n_atoms, 3) or (ensemble, n_atoms, 3).
+        reward_param_mask (np.ndarray): Boolean mask selecting the subset of atoms corresponding to `coords` when `coords` does not cover the full array.
+    
+    Raises:
+        ValueError: If the number of atoms in `coords` matches neither the full atom count of `array_copy` nor the number selected by `reward_param_mask`.
     """
     n_atoms_array = array_copy.coord.shape[-2]  # pyright: ignore[reportOptionalMemberAccess]
     n_atoms_coords = coords.shape[-2]
@@ -99,6 +118,20 @@ def _assign_coords_to_array(
 def _save_trajectory(
     trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
 ):
+    """
+    Save selected frames of a trajectory as CIF ensemble files under output_dir/trajectory/<subdir_name>.
+    
+    Parameters:
+        trajectory: Iterable of coordinate arrays/tensors, each with shape (ensemble_size, num_coordinates_per_structure).
+        atom_array: An AtomArray or AtomArrayStack used as a template for saved ensembles; if an AtomArrayStack is provided its first element is used.
+        output_dir: Path or path-like base directory where the "trajectory/<subdir_name>" folder will be created.
+        reward_param_mask: Boolean mask or index array selecting which atoms' coordinates in the template should be replaced from each trajectory frame.
+        subdir_name (str): Name of the subdirectory under "trajectory" where CIF files will be written.
+        save_every (int): Interval of frames to save (only frames where index % save_every == 0 are written).
+    
+    Raises:
+        TypeError: If atom_array is not an AtomArray or AtomArrayStack.
+    """
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -123,6 +156,20 @@ def _save_trajectory(
 def _save_fk_steering_trajectory(
     trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
 ):
+    """
+    Save FK-steering trajectory frames as CIF files using the first ensemble member for each saved step.
+    
+    Parameters:
+        trajectory: Iterable of coordinate tensors/arrays where each element contains coordinates for all ensemble members; the function uses the first ensemble member (coords[0]) when writing a frame.
+        atom_array: An AtomArray or AtomArrayStack providing the reference structure; if an AtomArrayStack is provided the first entry is used and duplicated to match the ensemble size.
+        output_dir: Path-like base directory under which files are written to <output_dir>/trajectory/<subdir_name>.
+        reward_param_mask: Boolean mask selecting which atom coordinates are updated from the trajectory coordinates.
+        subdir_name: Subdirectory name under "trajectory" where CIF files will be saved.
+        save_every: Integer step interval; only steps whose index is divisible by this value are written to disk.
+    
+    Raises:
+        TypeError: If atom_array is not an AtomArray or AtomArrayStack.
+    """
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -256,6 +303,24 @@ def save_everything(
     traj_next_step: list[Any],
     scaler_type: str,
 ) -> None:
+    """
+    Save model outputs to disk: writes the refined structure, two trajectory sets, and training losses.
+    
+    Parameters:
+        output_dir (str | Path): Directory where results will be written; created if missing.
+        losses (list[Any]): Sequence of loss values per step; entries may be None and will be recorded as "NA".
+        refined_structure (dict): Structure dictionary containing an `"asym_unit"` used to write `refined.cif`.
+        traj_denoised (list[Any]): Trajectory frames for the denoised run; saved under output_dir/denoised/.
+        traj_next_step (list[Any]): Trajectory frames for the next-step run; saved under output_dir/next_step/.
+        scaler_type (str): Scaler type used to select the trajectory save format.
+    
+    Behavior:
+        - Writes the refined structure to output_dir/refined.cif.
+        - Builds an occupancy-based mask from the first atom array in the structure; if occupancy is absent, all atoms are included.
+        - Saves traj_denoised and traj_next_step into `denoised` and `next_step` subdirectories respectively (trajectory files are written every 10 steps).
+        - Writes a losses text file in output_dir recording step and loss ("NA" for None).
+        - Logs initial, final, and reduction in loss when available.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

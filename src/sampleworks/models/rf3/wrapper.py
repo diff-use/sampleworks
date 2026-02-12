@@ -182,25 +182,30 @@ class RF3Wrapper:
     def featurize(
         self, structure: dict, msa_path: str | Path | dict | None = None, **kwargs: dict
     ) -> dict[str, Any]:
-        """From an Atomworks structure, calculate RF3 input features.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary.
-        msa_path: dict | str | Path | None
-            MSA specification. Can be:
-            - dict: chain_id -> MSA file path mapping
-            - str/Path to .json: JSON file with chain_id -> MSA path mapping
-            - str/Path to .a3m: Single MSA file applied to all protein chains
-            - None: No MSA information is used
-        **kwargs: dict, optional
-            Additional arguments for feature generation.
-
-        Returns
-        -------
-        dict[str, Any]
-            RF3 input features.
+        """
+        Create RF3 model input features from an Atomworks structure.
+        
+        Clears any cached model representations, applies optional MSA specification to chain metadata,
+        and builds the full feature dictionary consumed by the RF3 model. The returned features
+        include a "model_atom_array" entry containing the non-hydrogen AtomArray trimmed or padded
+        to align with the network's reference mask when possible.
+        
+        Parameters:
+            structure (dict): Atomworks structure dictionary. Must contain the key "asym_unit" and may
+                include "chain_info".
+            msa_path (str | Path | dict | None): MSA specification. Accepted forms:
+                - dict mapping chain_id -> MSA file path
+                - str/Path to a JSON file with chain_id -> MSA path mapping
+                - str/Path to a single MSA file (applied to all protein chains)
+                - None to omit MSA information
+            **kwargs: Additional backend-specific options (passed through to feature generation).
+        
+        Returns:
+            dict[str, Any]: RF3 input features dictionary suitable for model inference. Contains network
+            feature tensors and a "model_atom_array" AtomArray aligned with the feature ref_mask.
+        
+        Raises:
+            ValueError: If `structure` does not contain the required "asym_unit" key.
         """
 
         # If featurize is called again, we should clear cached representations
@@ -297,25 +302,21 @@ class RF3Wrapper:
         return features
 
     def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
-        """Perform a pass through the RF3 Pairformer to obtain representations.
-
-        Parameters
-        ----------
-        features: dict[str, Any]
-            Model features as returned by featurize.
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional arguments.
-
-            - recycling_steps: int
-                Number of recycling steps to perform. Defaults to n_recycles.
-
-        Returns
-        -------
-        dict[str, Any]
-            RF3 model outputs including trunk representations (s_inputs, s_trunk,
-            z_trunk).
+        """
+        Run the RF3 trunk with optional recycling to produce trunk representations.
+        
+        Parameters:
+            features (dict): Feature bundle produced by featurize; must contain the key "f" with model input tensors.
+            grad_needed (bool, optional): If True, enable gradient computation for this pass. Defaults to False.
+            **kwargs: Optional parameters.
+                recycling_steps (int): Number of recycling iterations to run. Defaults to the instance's num_recycles.
+        
+        Returns:
+            dict: Mapping with keys:
+                - "s_inputs": Trunk input representations.
+                - "s_trunk": Final protein trunk representations.
+                - "z_trunk": Final pair/triple-site trunk representations.
+                - "features": The input feature tensor (`features["f"]`) passed to the trunk.
         """
         recycling_steps = kwargs.get("recycling_steps", self.num_recycles)
 

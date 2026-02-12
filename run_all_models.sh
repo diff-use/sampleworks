@@ -31,7 +31,7 @@ declare -a PIDS=()
 declare -a PID_NAMES=()
 
 # Function to run a model with specific GPUs
-# Usage: run_model <model> <env> <gpus> [extra_args...]
+# run_model launches a Docker container that executes the grid search for the given model and environment on the specified GPUs, streams combined stdout/stderr to "$RESULTS_DIR/<model>_run.log", and records the background PID in PIDS and PID_NAMES.
 run_model() {
     local model=$1
     local env=$2

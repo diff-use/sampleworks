@@ -28,19 +28,38 @@ def _build_atom_array(
 
 @pytest.fixture
 def backbone_two_residues() -> AtomArray:
-    """Chain A, 2 residues with backbone atoms: res 1 is [N, CA], res 2 is [N]."""
+    """
+    Return an AtomArray representing two sequential residues on chain "A" with backbone atoms.
+    
+    The first residue has res_id 1 and atoms "N" and "CA"; the second residue has res_id 2 and atom "N".
+    
+    Returns:
+        AtomArray: An AtomArray with three atoms on chain "A" with res_ids [1, 1, 2] and atom_names ["N", "CA", "N"].
+    """
     return _build_atom_array(["A", "A", "A"], [1, 1, 2], ["N", "CA", "N"])
 
 
 @pytest.fixture
 def backbone_two_residues_offset() -> AtomArray:
-    """Same atom layout as backbone_two_residues, res_ids offset to 100 and 101."""
+    """
+    Construct an AtomArray with a two-residue backbone layout using residue IDs 100 and 101 on chain "A".
+    
+    Returns:
+        AtomArray: Three-atom array with chain_ids ["A", "A", "A"], res_ids [100, 100, 101], and atom_names ["N", "CA", "N"].
+    """
     return _build_atom_array(["A", "A", "A"], [100, 100, 101], ["N", "CA", "N"])
 
 
 @pytest.fixture
 def negative_zero_res_id_pair() -> tuple[AtomArray, AtomArray]:
-    """Two 2-atom arrays: one with negative res_ids [-5, -4], one 0 indexed [0, 1]."""
+    """
+    Create two AtomArray instances that differ only by residue numbering.
+    
+    Both arrays contain two atoms on chain "A" with atom names ["N", "N"]. The first array has residue IDs -5 and -4; the second has residue IDs 0 and 1.
+    
+    Returns:
+        pair (tuple[AtomArray, AtomArray]): A tuple where the first element is the AtomArray with residue IDs -5 and -4, and the second element is the AtomArray with residue IDs 0 and 1.
+    """
     return (
         _build_atom_array(["A", "A"], [-5, -4], ["N", "N"]),
         _build_atom_array(["A", "A"], [0, 1], ["N", "N"]),
@@ -49,16 +68,24 @@ def negative_zero_res_id_pair() -> tuple[AtomArray, AtomArray]:
 
 @pytest.fixture
 def two_chain_array() -> AtomArray:
-    """Single N atom on chain A and chain B at the same res_id."""
+    """
+    Return an AtomArray containing one 'N' atom on chain 'A' and one 'N' atom on chain 'B' with the same residue id.
+    
+    Returns:
+        AtomArray: Two-atom AtomArray with chain_ids ["A", "B"], res_ids [1, 1], and atom_names ["N", "N"].
+    """
     return _build_atom_array(["A", "B"], [1, 1], ["N", "N"])
 
 
 @pytest.fixture
 def model_struct_numbering_offset() -> tuple[AtomArray, AtomArray]:
-    """Model with backbone + sidechain (0-based) and structure with backbone only (offset).
-
-    Model: res 0 is [N, CA, CB], res 1 is [N, CA]
-    Struct: res 5 is [N, CA], res 6 is [N]
+    """
+    Model and structure AtomArrays that illustrate a residue-numbering offset between model and structure.
+    
+    Model contains two residues (0 and 1) with backbone and a sidechain atom: residue 0 has atoms N, CA, CB; residue 1 has N, CA. Struct contains backbone-only residues with an offset in numbering: residue 5 has N, CA; residue 6 has N.
+    
+    Returns:
+        tuple[AtomArray, AtomArray]: (model, struct) where `model` is the AtomArray described above and `struct` is the backbone-only AtomArray with offset residue numbering.
     """
     model = _build_atom_array(
         ["A", "A", "A", "A", "A"],
@@ -75,7 +102,12 @@ def model_struct_numbering_offset() -> tuple[AtomArray, AtomArray]:
 
 @pytest.fixture
 def single_atom_numbering_offset() -> tuple[AtomArray, AtomArray]:
-    """Two single atom arrays with different res_ids (0 vs 5)."""
+    """
+    Provide two single-atom AtomArray instances that differ only by residue numbering.
+    
+    Returns:
+        pair (tuple[AtomArray, AtomArray]): A tuple of two AtomArray objects. The first contains a single atom on chain "A" with res_id 0 and atom_name "N". The second contains a single atom on chain "A" with res_id 5 and atom_name "N".
+    """
     return (
         _build_atom_array(["A"], [0], ["N"]),
         _build_atom_array(["A"], [5], ["N"]),
@@ -84,9 +116,13 @@ def single_atom_numbering_offset() -> tuple[AtomArray, AtomArray]:
 
 @pytest.fixture
 def model_struct_extra_element() -> tuple[AtomArray, AtomArray]:
-    """Model [N, CA] and struct [N, CA, SE] where struct has an extra atom type.
-
-    Model: res 0.  Struct: res 1 (different numbering).
+    """
+    Builds a pair of AtomArray objects where the structure contains an extra atom ('SE') and uses a different residue numbering.
+    
+    Returns:
+        tuple[AtomArray, AtomArray]: (model, struct) where
+            - model: chain "A", residues [0, 0], atom_names ["N", "CA"]
+            - struct: chain "A", residues [1, 1, 1], atom_names ["N", "CA", "SE"]
     """
     return (
         _build_atom_array(["A", "A"], [0, 0], ["N", "CA"]),
@@ -96,10 +132,15 @@ def model_struct_extra_element() -> tuple[AtomArray, AtomArray]:
 
 @pytest.fixture
 def multi_chain_numbering_offset() -> tuple[AtomArray, AtomArray]:
-    """Multi-chain offsets.
-
-    Model: A is [N, CA], B is [N, CA]
-    Struct: A is [N, CA], B is [N]
+    """
+    Create a model/structure pair demonstrating per-chain residue numbering offsets.
+    
+    The returned tuple contains two AtomArray objects:
+    - model: chains "A" and "B" each contain backbone atoms "N" and "CA" with residue IDs [0, 0, 0, 0].
+    - struct: chain "A" contains "N" and "CA" with residue ID 1, and chain "B" contains only "N" with residue ID 1.
+    
+    Returns:
+        tuple[AtomArray, AtomArray]: (model, struct) pair illustrating multi-chain numbering offsets.
     """
     return (
         _build_atom_array(["A", "A", "B", "B"], [0, 0, 0, 0], ["N", "CA", "N", "CA"]),

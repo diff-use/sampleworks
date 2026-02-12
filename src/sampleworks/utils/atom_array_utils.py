@@ -236,18 +236,21 @@ def map_altlocs_to_stack(
     atom_array: AtomArray | AtomArrayStack,
 ) -> tuple[AtomArrayStack, np.ndarray, np.ndarray]:
     """
-    Map alternate location indicators (altloc) to separate structures in a new AtomArrayStack.
-
-    Note: this will take _only_ the first structure if you pass an AtomArrayStack. It will raise
-    an error if there is more than one structure in the input AtomArrayStack.
-
+    Create a new AtomArrayStack with one frame per alternate location (altloc), aligning atoms common to all altlocs.
+    
+    If a single-frame AtomArrayStack is provided, its first frame is used; a multi-frame AtomArrayStack raises ValueError. The returned stack contains only atoms present in every altloc (atom order is aligned across frames).
+    
+    Parameters:
+        atom_array (AtomArray | AtomArrayStack): Input structure containing altloc annotations.
+    
     Returns:
-        Tuple containing:
-            - AtomArrayStack: The new stack with separate structures for each altloc.
-            - np.ndarray: Array of altloc IDs, corresponding to the order
-                 of the structures in the stack.
-            - np.ndarray: Array of occupancies for each atom in each stack,
-                 corresponding to the order of structures in the stack
+        tuple:
+            - AtomArrayStack: Stack with one frame per altloc, atoms filtered to the intersection across altlocs.
+            - np.ndarray: 2D array of altloc IDs with shape (n_altlocs, n_atoms) giving the altloc identifier for each atom in each frame.
+            - np.ndarray: 2D array of occupancies with shape (n_altlocs, n_atoms) giving the occupancy value for each atom in each frame.
+    
+    Raises:
+        ValueError: If a multi-frame AtomArrayStack (length > 1) is passed.
     """
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
@@ -416,7 +419,12 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
 
 
 def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
-    """Create a unique identifier for each atom."""
+    """
+    Builds a per-atom identifier by combining chain ID, residue ID, and atom name.
+    
+    Returns:
+        np.ndarray: 1D array of strings where each element is formatted as "chain_res_atom" for the corresponding atom.
+    """
     chain_id = cast(np.ndarray, arr.chain_id)
     res_id = cast(np.ndarray, arr.res_id)
     atom_name = cast(np.ndarray, arr.atom_name)
@@ -426,10 +434,13 @@ def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
 
 
 def _make_normalized_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
-    """Like ``make_atom_id`` but with sequential 0-based residue numbering per chain.
-
-    Handles numbering differences between representations (Boltz 0-based,
-    PDB author numbering, etc.). Returns ``"chainidx_seqpos_atomname"`` strings.
+    """
+    Create normalized atom identifiers using sequential 0-based chain and residue indices.
+    
+    Each identifier has the form "chainidx_seqpos_atomname", where `chainidx` is the zero-based index of the atom's chain among chains present in the array, `seqpos` is the zero-based sequential residue position within that chain (ordered by first occurrence), and `atomname` is the atom's name.
+    
+    Returns:
+        np.ndarray: 1D array of identifier strings in the form "chainidx_seqpos_atomname" for each atom.
     """
     chain_id = cast(np.ndarray, arr.chain_id)
     res_id = cast(np.ndarray, arr.res_id)
@@ -461,7 +472,30 @@ def filter_to_common_atoms(
     *arrays: AtomArray | AtomArrayStack,
     normalize_ids: bool = ...,
     return_indices: Literal[False] = ...,
-) -> tuple[AtomArrayStack, ...]: ...
+) -> tuple[AtomArrayStack, ...]: """
+    Return copies of the input atom arrays that contain only atoms present in every input, aligned in the same order.
+    
+    Parameters:
+        *arrays: AtomArray | AtomArrayStack
+            Two or more atom arrays or stacks to compare; each must contain atomic identifiers (chain, residue, atom name).
+        normalize_ids (bool): 
+            If True, use per-chain sequential residue numbering when matching atoms; otherwise use raw chain/residue identifiers.
+        return_indices (bool):
+            If True, also return integer index arrays mapping each output atom position back to the original array's indices.
+    
+    Returns:
+        tuple[AtomArrayStack, ...]
+            A tuple of AtomArrayStack objects, one per input, each filtered to the common atoms and ordered identically.
+        When `return_indices` is True the function returns a two-tuple:
+            (tuple[AtomArrayStack, ...], tuple[np.ndarray, ...])
+            where the second element contains integer arrays that map positions in each filtered output back to the original input indices.
+    
+    Raises:
+        ValueError: If fewer than two input arrays are provided.
+        TypeError: If any input is not an AtomArray or AtomArrayStack.
+        RuntimeError: If there are no atoms common to all inputs.
+    """
+    ...
 
 
 @overload
@@ -469,7 +503,28 @@ def filter_to_common_atoms(
     *arrays: AtomArray | AtomArrayStack,
     normalize_ids: bool = ...,
     return_indices: Literal[True],
-) -> tuple[tuple[AtomArrayStack, ...], tuple[np.ndarray[Any, np.dtype[np.intp]], ...]]: ...
+) -> tuple[tuple[AtomArrayStack, ...], tuple[np.ndarray[Any, np.dtype[np.intp]], ...]]: """
+    Filter multiple AtomArray/AtomArrayStack inputs to keep only atoms present in every input and return aligned stacks plus index mappings.
+    
+    When `normalize_ids` is False, atom identity is determined by `chain_id`, `res_id`, and `atom_name`. When `normalize_ids` is True, per-chain residue numbering is normalized (sequential per chain) before forming identities. All returned AtomArrayStack objects contain the same atoms in the same order.
+    
+    Parameters:
+        *arrays: One or more AtomArray or AtomArrayStack objects to compare. At least two arrays must be provided.
+        normalize_ids (bool): If True, use per-chain sequential residue numbering when building atom identifiers; otherwise use raw `res_id` values.
+        return_indices (Literal[True]): Must be True for this overload; causes the function to return index arrays mapping filtered positions back to each original input.
+    
+    Returns:
+        tuple[
+            tuple[AtomArrayStack, ...],
+            tuple[np.ndarray[Any, np.dtype[np.intp]], ...]
+        ]: A pair where the first element is a tuple of filtered AtomArrayStack objects (one per input, with atoms aligned and ordered identically), and the second element is a tuple of integer arrays. Each integer array maps indices in the corresponding filtered stack back to the original input's atom indices.
+    
+    Raises:
+        TypeError: If any input is not an AtomArray or AtomArrayStack.
+        ValueError: If fewer than two inputs are provided.
+        RuntimeError: If no common atoms are found across all inputs.
+    """
+    ...
 
 
 def filter_to_common_atoms(

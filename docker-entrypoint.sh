@@ -23,6 +23,7 @@
 
 set -e
 
+# show_help displays the script usage, supported environments, examples, and a detailed grid-search argument reference to stdout.
 show_help() {
     cat << 'EOF'
 Sampleworks - Protein structure prediction with diffusion model guidance

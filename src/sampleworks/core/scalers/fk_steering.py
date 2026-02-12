@@ -58,83 +58,21 @@ class FKSteering:
     def run_guidance(
         self, structure: dict, **kwargs: Any
     ) -> tuple[dict, tuple[list[Any], list[Any]], list[Any]]:
-        """Run Feynman-Kac steering guidance using the provided ModelWrapper.
-
-        NOTE: Because we are interested in sampling ensembles, not individual
-        structures, from the guidance, our "particles" are ensembles of ensemble_size
-        structures. Of course, if ensemble_size=1, then each particle is a single
-        structure.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks parsed structure.
-        **kwargs: dict
-            Additional keyword arguments for FK steering:
-
-            - num_particles: int, optional
-                Number of particles (replicas) for FK steering (default: 10)
-
-            - fk_resampling_interval: int, optional
-                How often to apply resampling (default: 1, every step)
-
-            - fk_lambda: float, optional
-                Weighting factor for resampling (default: 1.0)
-
-            - num_gd_steps: int, optional
-                Number of gradient descent steps on x0 (default: 0)
-
-            - guidance_weight: float, optional
-                Weight for gradient descent guidance (default: 0.0)
-
-            - gradient_normalization: bool, optional
-                Whether to normalize/clip gradients during guidance (default: False)
-                NOTE: This is done BEFORE applying the guidance weight.
-
-            - guidance_interval: int, optional
-                How often to apply guidance (default: 1, every step)
-
-            - guidance_start: int, optional
-                Diffusion step to start applying guidance (default: -1, meaning
-                    guidance is applied from the beginning)
-
-            Inference arguments:
-
-            - step_scale: float, optional
-                Scale for the model's step size (default: 1.5)
-
-            - ensemble_size: int, optional
-                Size of ensemble to generate (default: 1)
-
-            - augmentation: bool, optional
-                Enable data augmentation in denoise step (default: True)
-
-            - align_to_input: bool, optional
-                Enable alignment to input in denoise step (default: False)
-
-            - partial_diffusion_step: int, optional
-                If provided, start diffusion from this timestep instead of 0.
-                    (default: None). Will use the provided coordinates in structure
-                    to initialize the noise at this timestep.
-
-            - msa_path: dict | str | Path | None, optional
-                MSA specification to be passed to model wrapper for featurization.
-                Currently only used by RF3. # TODO: use kwargs better!!
-
-            - out_dir: str, optional
-                Output directory for any featurization intermediate files
-                (default: "test")
-
-            - alignment_reverse_diffusion: bool, optional
-                Whether to perform alignment of noisy coords to denoised coords
-                during reverse diffusion steps. This is relevant for doing Boltz-2-like
-                alignment during diffusion. (default: False)
-
-        Returns
-        -------
-        tuple[dict[str, Any], tuple[list[torch.Tensor], list[torch.Tensor]],
-        list[float | None]]
-            Structure dict with updated coordinates (ensemble), trajectories, losses
+        """
+        Run Feynman–Kac steering to guide a diffusion model using a RewardFunction and produce an ensemble of candidate structures.
+        
+        This performs FK-resampling and optional gradient-based guidance across multiple particles (replicas), handling possible atom-count mismatches between the input structure and the model, optional alignment/augmentation, and returns per-step denoised and next-step trajectories plus scalar losses. Many steering and inference behaviors are controlled via keyword arguments (e.g., num_particles, ensemble_size, num_gd_steps, guidance_weight, fk_resampling_interval, partial_diffusion_step, align_to_input, alignment_reverse_diffusion).
+        
+        Parameters:
+            structure (dict): Atomworks-parsed structure to featurize and steer. The function updates structure["asym_unit"] with an ensemble of coordinates.
+        
+        Returns:
+            tuple[dict, tuple[list[torch.Tensor], list[torch.Tensor]], list[float]]:
+                - Updated structure dict with "asym_unit" set to an ensemble of final coordinates (selected particle shown across ensemble members).
+                - A pair of trajectories:
+                    1) trajectory_denoised: list of per-step denoised coordinates (CPU tensors) for each particle/ensemble.
+                    2) trajectory_next_step: list of per-step coordinates used as the starting point for the next reverse-diffusion step (CPU tensors).
+                - losses: list of scalar losses (mean energy across particles) recorded per denoising step.
         """
         # FK Parameters
         num_particles = kwargs.get("num_particles", 10)

@@ -39,10 +39,14 @@ from sampleworks.utils.msa import MSAManager
 
 
 def _decode_boltz_atom_name(raw_name: np.ndarray | str) -> str:
-    """Decode atom name from Boltz NPZ.
-
-    Boltz2 stores names as unicode strings, Boltz1 as int8 arrays
-    encoded via ``chr(byte + 32)``.
+    """
+    Decode an atom name stored by Boltz (supports both Boltz1 and Boltz2 formats).
+    
+    Parameters:
+        raw_name (np.ndarray | str): A Boltz atom name, either a unicode string (Boltz2) or a numpy array of integer byte codes (Boltz1). For the array form, zero values are treated as padding and ignored.
+    
+    Returns:
+        str: The decoded atom name.
     """
     if isinstance(raw_name, str):
         return raw_name
@@ -287,16 +291,15 @@ class Boltz2Wrapper:
         out_dir: str | Path,
         num_workers: int = 8,
     ):
-        """Create the Lightning data module used by Boltz to serve data to the model.
-
-        Parameters
-        ----------
-        input_path: str | Path
-            Path to the input Boltz YAML file.
-        out_dir: str | Path
-            Directory to output processed input.
-        num_workers: int, optional
-            Number of parallel workers for input data processing, by default 8
+        """
+        Create and configure the Lightning data module for Boltz using a Boltz YAML input.
+        
+        This prepares and processes inputs into a `processed` directory under `out_dir`, builds a BoltzProcessedInput manifest, and constructs a Boltz2InferenceDataModule for model inference. Side effects: writes processed files under `out_dir/processed`, sets `self._structures_dir` to the processed structures directory, and assigns the created data module to `self.data_module`.
+        
+        Parameters:
+            input_path (str | Path): Path to the Boltz YAML input file.
+            out_dir (str | Path): Directory where processed inputs and auxiliary files will be written and read.
+            num_workers (int, optional): Number of worker processes for the inference data module; defaults to 8.
         """
         input_path = Path(input_path) if isinstance(input_path, str) else input_path
         out_dir = Path(out_dir) if isinstance(out_dir, str) else out_dir
@@ -354,26 +357,21 @@ class Boltz2Wrapper:
         )
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
-        """From an Atomworks structure, calculate Boltz-2 input features.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-2 featurization.
-
-            - out_dir: str | Path
-                Output directory for processed Boltz intermediate files. Defaults first
-                to the structure ID from metadata, then to "boltz2_output" in the
-                current working directory.
-            - num_workers: int
-                Number of parallel workers for input data processing. Defaults to 8.
-
-        Returns
-        -------
-        dict[str, Any]
-            Boltz-2 input features (from dataloader).
+        """
+        Produce Boltz-2 input features from an Atomworks-parsed structure.
+        
+        Creates a Boltz YAML input and processes it into a dataloader batch; this writes intermediate files under the chosen output directory and may add a "model_atom_array" entry when a single processed `.npz` exists.
+        
+        Parameters:
+            structure (dict): Atomworks structure dictionary (see Atomworks parser for schema).
+            **kwargs: Optional keyword arguments.
+                out_dir (str | Path): Output directory for Boltz intermediate files. Defaults to
+                    structure.metadata.id if present, otherwise "boltz2_output" in the CWD.
+                num_workers (int): Number of workers to use for input processing. Defaults to 8.
+        
+        Returns:
+            dict[str, Any]: A dataloader batch containing Boltz-2 input features. May include
+            a "model_atom_array" (Biotite AtomArray) when a single processed `.npz` file is present.
         """
         # If featurize is called again, we should clear cached representations
         # to avoid using stale data
@@ -407,29 +405,25 @@ class Boltz2Wrapper:
 
     def step(self, features: dict[str, Any], grad_needed: bool = False, **kwargs) -> dict[str, Any]:
         """
-        Perform a pass through the Pairformer module to obtain output, which can then be
-        passed into the diffusion module. Pretty much only here to match the protocol
-        and be used in featurize, but could be useful for doing exploration in
-        the Boltz embedding space.
-
-        Parameters
-        ----------
-        features: dict[str, Any]
-            Model features as returned by `featurize`.
-        grad_needed: bool, optional
-            Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-2 Pairformer step.
-
-            - recycling_steps: int
-                Number of recycling steps to perform. Defaults to the value in
-                predict_args.
-
-
-        Returns
-        -------
-        dict[str, Any]
-            Boltz-2 Pairformer outputs.
+        Compute Pairformer trunk outputs and diffusion-conditioning tensors from featurized inputs.
+        
+        Parameters:
+            features (dict[str, Any]):
+                Feature batch as returned by `featurize`.
+            grad_needed (bool):
+                Whether gradients are required for this pass.
+            **kwargs:
+                recycling_steps (int, optional): Number of recycling iterations to perform; defaults to predict_args.recycling_steps.
+        
+        Returns:
+            dict[str, Any]:
+                A dictionary containing:
+                - `s`: trunk node features tensor after recycling.
+                - `z`: pairwise features tensor after recycling and conditioning.
+                - `s_inputs`: input embeddings produced by the model's input embedder.
+                - `relative_position_encoding`: relative position encoding tensor used in pair features.
+                - `feats`: the original `features` dict passed through.
+                - `diffusion_conditioning`: dict with keys `q`, `c`, `to_keys`, `atom_enc_bias`, `atom_dec_bias`, and `token_trans_bias` containing diffusion-conditioning tensors.
         """
         with torch.set_grad_enabled(grad_needed):
             mask: Tensor = features["token_pad_mask"]
@@ -699,25 +693,17 @@ class Boltz2Wrapper:
         ensemble_size: int = 1,
         **kwargs,
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
-        """Create a noisy version of structure's coordinates at given noise level.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level: float | int
-            Timestep/noise level - for Boltz, this is the reverse timestep.
-            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
-            is the "reverse" diffusion time.
-        ensemble_size: int, optional
-            Number of noisy samples to generate per input structure (default 1).
-        **kwargs: dict, optional
-            Additional keyword arguments needed for classes that implement this Protocol
-
-        Returns
-        -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates for atoms that have nonzero occupancy.
+        """
+        Create a noisy copy of the input structure's atomic coordinates at a specified noise level.
+        
+        Parameters:
+            structure (dict): Atomworks structure dictionary; must contain an "asym_unit" key with atom coordinates and occupancy.
+            noise_level (float | int): Reverse diffusion timestep in [0, sampling_steps - 1] used to scale added noise.
+            ensemble_size (int, optional): Number of independent noisy samples to produce per input structure (default 1).
+            **kwargs: Additional keyword arguments accepted for compatibility with the protocol.
+        
+        Returns:
+            Float[ArrayLike | Tensor, "*batch _num_atoms 3"]: A tensor of shape (ensemble_size, N_atoms, 3) containing noisy coordinates for atoms with occupancy > 0 and finite coordinates. The noise magnitude is determined by the wrapper's noise schedule for the given noise_level.
         """
         if "asym_unit" not in structure:
             raise ValueError(
@@ -868,16 +854,15 @@ class Boltz1Wrapper:
         out_dir: str | Path,
         num_workers: int = 2,
     ):
-        """Create the Lightning data module used by Boltz to serve data to the model.
-
-        Parameters
-        ----------
-        input_path: str | Path
-            Path to the input Boltz YAML file.
-        out_dir: str | Path
-            Directory to output processed input.
-        num_workers: int, optional
-            Number of parallel workers for input data processing, by default 2
+        """
+        Create and configure the Lightning data module for Boltz (Boltz1) inference.
+        
+        Processes the given Boltz YAML input into the expected on-disk processed layout and builds a BoltzInferenceDataModule. Sets self.data_module and self._structures_dir to point to the processed targets directory.
+        
+        Parameters:
+            input_path (str | Path): Path to the input Boltz YAML file.
+            out_dir (str | Path): Directory where processed inputs will be written.
+            num_workers (int, optional): Number of worker processes for data loading and processing. Defaults to 2.
         """
         input_path = Path(input_path) if isinstance(input_path, str) else input_path
         out_dir = Path(out_dir) if isinstance(out_dir, str) else out_dir
@@ -929,26 +914,18 @@ class Boltz1Wrapper:
         )
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
-        """From an Atomworks structure, calculate model features.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        **kwargs: dict, optional
-            Additional keyword arguments for Boltz-1 featurization.
-
-            - out_dir: str | Path
-                Output directory for processed Boltz intermediate files. Defaults first
-                to the structure ID from metadata, then to "boltz1_output" in the
-                current working directory.
-            - num_workers: int
-                Number of parallel workers for input data processing. Defaults to 2.
-
-        Returns
-        -------
-        dict[str, Any]
-            Boltz-1 input features (raw batch from dataloader).
+        """
+        Produce Boltz-1 model input features from an Atomworks-parsed structure.
+        
+        Parameters:
+            structure (dict): Atomworks structure dictionary. See Atomworks parser docs for format.
+            **kwargs: Optional keyword arguments:
+                out_dir (str | Path): Output directory for processed Boltz intermediate files.
+                    Defaults to the structure metadata id or "boltz1_output".
+                num_workers (int): Number of workers for input processing. Defaults to 2.
+        
+        Returns:
+            dict[str, Any]: Raw feature batch produced by the dataloader, ready for Boltz-1.
         """
 
         # If featurize is called again, we should clear cached representations
@@ -983,15 +960,13 @@ class Boltz1Wrapper:
 
     def get_noise_schedule(self) -> Mapping[str, Float[ArrayLike | Tensor, "..."]]:
         """
-        Return the full noise schedule with semantic keys.
-
-        Returns
-        -------
-        Mapping[str, Float[ArrayLike | Tensor, "..."]]
-            Noise schedule arrays.
-            Sigma at time t-1: "sigma_tm"
-            Sigma at time t: "sigma_t"
-            Gamma at time t: "gamma"
+        Retrieve the model's full noise schedule keyed by "sigma_tm", "sigma_t", and "gamma".
+        
+        Returns:
+            Mapping[str, Float[ArrayLike | Tensor, "..."]]: Mapping from schedule component names to arrays:
+                - "sigma_tm": sigma at time t-1
+                - "sigma_t": sigma at time t
+                - "gamma": gamma at time t
         """
         return self.noise_schedule
 
@@ -1244,25 +1219,17 @@ class Boltz1Wrapper:
         ensemble_size: int = 1,
         **kwargs,
     ) -> Float[ArrayLike | Tensor, "*batch _num_atoms 3"]:
-        """Create a noisy version of structure's coordinates at given noise level.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary. [See Atomworks documentation](https://baker-laboratory.github.io/atomworks-dev/latest/io/parser.html#atomworks.io.parser.parse)
-        noise_level: float | int
-            Timestep/noise level - for Boltz, this is the reverse timestep.
-            This means that it starts from 0 and goes up to (sampling_steps - 1), so it
-            is the "reverse" diffusion time.
-        ensemble_size: int, optional
-            Number of noisy samples to generate per input structure (default 1).
-        **kwargs: dict, optional
-            Additional keyword arguments needed for classes that implement this Protocol
-
-        Returns
-        -------
-        Float[ArrayLike | Tensor, "*batch _num_atoms 3"]
-            Noisy structure coordinates for atoms that have nonzero occupancy.
+        """
+        Create a noisy copy of the input structure's atomic coordinates at a specified noise level.
+        
+        Parameters:
+            structure (dict): Atomworks structure dictionary; must contain an "asym_unit" key with atom coordinates and occupancy.
+            noise_level (float | int): Reverse diffusion timestep in [0, sampling_steps - 1] used to scale added noise.
+            ensemble_size (int, optional): Number of independent noisy samples to produce per input structure (default 1).
+            **kwargs: Additional keyword arguments accepted for compatibility with the protocol.
+        
+        Returns:
+            Float[ArrayLike | Tensor, "*batch _num_atoms 3"]: A tensor of shape (ensemble_size, N_atoms, 3) containing noisy coordinates for atoms with occupancy > 0 and finite coordinates. The noise magnitude is determined by the wrapper's noise schedule for the given noise_level.
         """
         if "asym_unit" not in structure:
             raise ValueError(

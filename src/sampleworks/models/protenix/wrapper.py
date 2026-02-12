@@ -52,14 +52,21 @@ class ProtenixWrapper:
         model: Protenix | None = None,
     ):
         """
-        Parameters
-        ----------
-        checkpoint_path: str | Path
-            Filesystem path to the Protenix checkpoint containing trained weights.
-        args_str: str, optional
-            Command-line style argument string to override default configurations.
-        device: torch.device, optional
-            Device to run the model on, by default CUDA if available.
+        Initialize the ProtenixWrapper by parsing configs, loading the model checkpoint, preparing inference utilities, and computing the diffusion noise schedule.
+        
+        This sets up:
+        - an MSAManager for external MSA lookups,
+        - a filesystem cache directory,
+        - merged configuration values (including model-specific overrides) and downloads any inference cache,
+        - the torch device and the Protenix model instance (constructed or provided) with weights loaded from the checkpoint (handles DataParallel "module." prefixes),
+        - optional ESM featurizer when enabled in configs,
+        - the diffusion noise schedule stored on self.noise_schedule.
+        
+        Parameters:
+            checkpoint_path (str | Path): Filesystem path to the Protenix checkpoint (used to derive model name and cache directory).
+            args_str (str): Command-line style argument string to override default configurations.
+            device (torch.device): Device to run the model on (defaults to CUDA if available).
+            model (Protenix | None): Optional preconstructed Protenix model instance; if provided it will be moved to `device` instead of constructing a new one.
         """
         self.checkpoint_path = checkpoint_path
         self.device = torch.device(device)
@@ -173,21 +180,19 @@ class ProtenixWrapper:
         return self.model.inference_noise_scheduler(N_step=num_steps, device=self.device)
 
     def featurize(self, structure: dict, **kwargs) -> dict[str, Any]:
-        """From an Atomworks structure, calculate Protenix input features.
-
-        Parameters
-        ----------
-        structure: dict
-            Atomworks structure dictionary.
-        **kwargs: dict, optional
-            Additional arguments for feature generation.
-            - out_dir: Directory for saving intermediate JSON file
-            - use_msa: Whether to generate MSA features (default True)
-
-        Returns
-        -------
-        dict[str, Any]
-            Protenix input features.
+        """
+        Prepare Protenix-compatible input features from an Atomworks structure for model inference and diffusion.
+        
+        Parameters:
+            structure (dict): Atomworks structure dictionary containing at least an "asym_unit" entry and optional "metadata".
+            **kwargs: Additional options.
+                out_dir (str): Directory or basename used when writing intermediate JSON (defaults to structure.metadata.id or "protenix_output").
+                use_msa (bool): If True, attempt to generate and include MSA features (default True).
+        
+        Returns:
+            dict[str, Any]: Feature dictionary ready for Protenix inference. Contains tensorized model inputs and auxiliary fields such as
+            `true_coords` (coordinates aligned to Protenix atom representation), `true_atom_array` (AtomArray used for reward/scaler computations),
+            and `model_atom_array` (AtomArray matching Protenix atom ordering and annotated with occupancy/b_factor when missing).
         """
 
         # If featurize is called again, we should clear cached representations

@@ -433,6 +433,21 @@ def save_results(
 
 
 def parse_args() -> argparse.Namespace:
+    """
+    Parse command-line arguments for the grid search script.
+    
+    The returned namespace contains configuration for dataset, model selection, grid parameters,
+    checkpoints, FK-steering options, diffusion/guidance settings, parallelism, and run-control flags.
+    Key attributes include:
+    - proteins, models, scalers, ensemble_sizes, gradient_weights, num_gd_steps, output_dir
+    - boltz1_checkpoint, boltz2_checkpoint, protenix_checkpoint, rf3_checkpoint, methods
+    - num_particles, fk_lambda, fk_resampling_interval
+    - partial_diffusion_step, loss_order, use_tweedie, gradient_normalization, augmentation, align_to_input
+    - max_parallel, dry_run, force_all, only_failed, only_missing
+    
+    Returns:
+        argparse.Namespace: Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Run grid search across models, scalers, and parameters."
     )
