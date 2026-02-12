@@ -465,12 +465,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--boltz1-checkpoint",
         default=os.environ.get("BOLTZ1_CHECKPOINT", "/checkpoints/boltz1_conf.ckpt"),
-        help="Boltz1 checkpoint path (default: /checkpoints/boltz1_conf.ckpt or $BOLTZ1_CHECKPOINT)",
+        help="Boltz1 checkpoint path (default: $BOLTZ1_CHECKPOINT or"
+        " /checkpoints/boltz1_conf.ckpt)",
     )
     parser.add_argument(
         "--boltz2-checkpoint",
         default=os.environ.get("BOLTZ2_CHECKPOINT", "/checkpoints/boltz2_conf.ckpt"),
-        help="Boltz2 checkpoint path (default: /checkpoints/boltz2_conf.ckpt or $BOLTZ2_CHECKPOINT)",
+        help="Boltz2 checkpoint path (default: $BOLTZ2_CHECKPOINT or "
+        "/checkpoints/boltz2_conf.ckpt)",
     )
     parser.add_argument(
         "--protenix-checkpoint",

@@ -26,15 +26,21 @@ echo "Results: $RESULTS_DIR"
 echo "Checkpoints: BAKED INTO IMAGE"
 echo "=========================================="
 
+# Track background job PIDs
+declare -a PIDS=()
+declare -a PID_NAMES=()
+
 # Function to run a model with specific GPUs
+# Usage: run_model <model> <env> <gpus> [extra_args...]
 run_model() {
     local model=$1
     local env=$2
     local gpus=$3
-    local extra_args=${4:-}
-    
+    shift 3
+    local extra_args=("$@")
+
     echo "[$(date)] Starting $model on GPUs $gpus"
-    
+
     docker run $DOCKER_OPTS \
         --gpus "\"device=$gpus\"" \
         -v /mnt/diffuse-private:/mnt/diffuse-private:ro \
@@ -49,9 +55,11 @@ run_model() {
         --gradient-normalization --augmentation --align-to-input \
         --use-tweedie \
         --output-dir /data/results \
-        $extra_args \
+        "${extra_args[@]}" \
         2>&1 | tee "$RESULTS_DIR/${model}_run.log" &
-    
+
+    PIDS+=($!)
+    PID_NAMES+=("$model")
     echo "[$(date)] $model job started (PID: $!)"
 }
 
@@ -63,7 +71,7 @@ run_model() {
 run_model "boltz1" "boltz" "0,1,2,3"
 
 # Boltz2 (GPUs 4-7) - needs --methods flag
-run_model "boltz2" "boltz" "4,5,6,7" "--methods \"X-RAY DIFFRACTION\""
+run_model "boltz2" "boltz" "4,5,6,7" --methods "X-RAY DIFFRACTION"
 
 echo ""
 echo "=========================================="
@@ -76,10 +84,23 @@ echo "Monitor GPU usage: nvidia-smi -l 1"
 echo "Waiting for all jobs to complete..."
 echo "=========================================="
 
-# Wait for all background jobs
-wait
+# Wait for all background jobs and check exit codes
+overall_exit=0
+for i in "${!PIDS[@]}"; do
+    if wait "${PIDS[$i]}"; then
+        echo "[$(date)] ${PID_NAMES[$i]} completed successfully"
+    else
+        echo "[$(date)] ${PID_NAMES[$i]} FAILED (exit code: $?)"
+        overall_exit=1
+    fi
+done
 
 echo ""
 echo "=========================================="
-echo "[$(date)] All jobs completed!"
+if [ $overall_exit -eq 0 ]; then
+    echo "[$(date)] All jobs completed successfully!"
+else
+    echo "[$(date)] Some jobs FAILED — check logs above"
+fi
 echo "=========================================="
+exit $overall_exit
