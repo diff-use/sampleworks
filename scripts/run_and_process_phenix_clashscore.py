@@ -45,7 +45,9 @@ def main(args) -> None:
         )
 
     workspace_root = Path(args.workspace_root)
-    grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
+
+    # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
+    grid_search_dir = workspace_root / "grid_search_results"
     all_experiments = scan_grid_search_results(grid_search_dir)
     logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
 
