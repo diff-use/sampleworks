@@ -285,7 +285,13 @@ class RF3Wrapper:
         # The non H array may be off by 1 from features (e.g. an OXT)
         # so trim it here
         if len(model_aa) > n_model:
+            log.debug(f"Trimming model_atom_array from {len(model_aa)} to {n_model} atoms")
             model_aa = cast(AtomArray, model_aa[:n_model])
+        elif len(model_aa) < n_model:
+            log.warning(
+                f"model_atom_array ({len(model_aa)}) has fewer atoms than "
+                f"ref_mask ({n_model}). Downstream alignment may be affected."
+            )
         features["model_atom_array"] = model_aa
 
         return features

@@ -502,7 +502,7 @@ def filter_to_common_atoms(
     -------
     tuple[AtomArrayStack, ...]
         Filtered versions of all input arrays containing only common atoms
-        in matching order The tuple length matches the number of inputs.
+        in matching order. The tuple length matches the number of inputs.
         (when ``return_indices`` is False).
     tuple[tuple[AtomArrayStack, ...], tuple[np.ndarray, ...]]
         ``(filtered_arrays, index_arrays)`` when ``return_indices`` is True.
