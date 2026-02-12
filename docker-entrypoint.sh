@@ -136,11 +136,17 @@ GRID SEARCH ARGUMENTS (run_grid_search.py):
       --max-parallel N            Max parallel jobs (default: auto = number of GPUs)
 
     Model-specific options:
-      --boltz1-checkpoint PATH    Path to Boltz1 checkpoint
-      --boltz2-checkpoint PATH    Path to Boltz2 checkpoint
+      --boltz1-checkpoint PATH    Path to Boltz1 checkpoint (default: /checkpoints/boltz1_conf.ckpt - BAKED IN)
+      --boltz2-checkpoint PATH    Path to Boltz2 checkpoint (default: /checkpoints/boltz2_conf.ckpt - BAKED IN)
       --protenix-checkpoint PATH  Path to Protenix checkpoint
       --rf3-checkpoint PATH       Path to RF3 checkpoint
       --methods METHOD            Boltz2 sampling method (default: "X-RAY DIFFRACTION")
+
+BAKED-IN CHECKPOINTS:
+    The following checkpoints are pre-installed in the image:
+      /checkpoints/boltz1_conf.ckpt  - Boltz1 model (~3.5GB)
+      /checkpoints/boltz2_conf.ckpt  - Boltz2 model (~2.3GB)
+      /checkpoints/ccd.pkl           - Chemical Component Dictionary (~345MB)
 
     FK steering options:
       --num-gd-steps "N M..."     Space-separated GD steps (FK steering only)

@@ -2,6 +2,7 @@
 # Sampleworks - Protein structure prediction with diffusion model guidance
 #
 # This container includes all three model environments: boltz, protenix, rf3
+# Checkpoints are baked into the image at /checkpoints/
 #
 # Build:
 #   docker build -t sampleworks .
@@ -10,11 +11,11 @@
 #   # Show help
 #   docker run sampleworks --help
 #
-#   # Run grid search with RF3
+#   # Run grid search with Boltz1 (checkpoint baked in)
 #   docker run --gpus all -v /data:/data sampleworks \
-#     -e rf3 run_grid_search.py \
+#     -e boltz run_grid_search.py \
 #     --proteins /data/proteins.csv \
-#     --models rf3 \
+#     --models boltz1 \
 #     --scalers pure_guidance \
 #     --ensemble-sizes "1 4" \
 #     --gradient-weights "0.1 0.2" \
@@ -22,10 +23,9 @@
 #     --use-tweedie \
 #     --gradient-normalization \
 #     --augmentation \
-#     --align-to-input \
-#     --rf3-checkpoint /data/checkpoints/rf3.ckpt
+#     --align-to-input
 #
-#   # Run grid search with Boltz2
+#   # Run grid search with Boltz2 (checkpoint baked in)
 #   docker run --gpus all -v /data:/data sampleworks \
 #     -e boltz run_grid_search.py \
 #     --proteins /data/proteins.csv \
@@ -35,23 +35,15 @@
 #     --ensemble-sizes "1 4" \
 #     --gradient-weights "0.1 0.2" \
 #     --output-dir /data/results \
-#     --use-tweedie \
-#     --boltz2-checkpoint /data/checkpoints/boltz2.ckpt
-#
-#   # Run grid search with Protenix
-#   docker run --gpus all -v /data:/data sampleworks \
-#     -e protenix run_grid_search.py \
-#     --proteins /data/proteins.csv \
-#     --models protenix \
-#     --scalers pure_guidance \
-#     --ensemble-sizes "1 4" \
-#     --gradient-weights "0.1 0.2" \
-#     --output-dir /data/results \
-#     --use-tweedie \
-#     --protenix-checkpoint /data/checkpoints/protenix.pt
+#     --use-tweedie
 #
 #   # Interactive shell
 #   docker run --gpus all -it sampleworks bash
+#
+# Baked-in checkpoints:
+#   /checkpoints/boltz1_conf.ckpt  - Boltz1 model
+#   /checkpoints/boltz2_conf.ckpt  - Boltz2 model  
+#   /checkpoints/ccd.pkl           - Chemical Component Dictionary (required for Boltz)
 
 # ============================================================================
 # Base stage: CUDA + Pixi + common system dependencies
@@ -111,6 +103,31 @@ RUN pixi install -e boltz --frozen && \
 RUN pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
+
+# ============================================================================
+# Download and bake in model checkpoints
+# ============================================================================
+RUN mkdir -p /checkpoints && \
+    echo "Downloading Boltz1 checkpoint..." && \
+    curl -L -o /checkpoints/boltz1_conf.ckpt \
+        "https://huggingface.co/boltz-community/boltz-1/resolve/main/boltz1_conf.ckpt" && \
+    echo "Downloading Boltz2 checkpoint..." && \
+    curl -L -o /checkpoints/boltz2_conf.ckpt \
+        "https://huggingface.co/boltz-community/boltz-2/resolve/main/boltz2_conf.ckpt" && \
+    echo "Downloading CCD (Chemical Component Dictionary)..." && \
+    curl -L -o /checkpoints/ccd.pkl \
+        "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl" && \
+    echo "Downloading Boltz2 molecules data..." && \
+    curl -L -o /checkpoints/mols.tar \
+        "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar" && \
+    cd /checkpoints && tar -xf mols.tar && rm mols.tar && \
+    echo "All checkpoints downloaded!" && \
+    ls -lh /checkpoints/
+
+# Set default checkpoint paths via environment variables
+ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \
+    BOLTZ2_CHECKPOINT=/checkpoints/boltz2_conf.ckpt \
+    CCD_PATH=/checkpoints/ccd.pkl
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["--help"]
