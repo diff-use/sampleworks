@@ -464,18 +464,24 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--boltz1-checkpoint",
-        default=os.path.expanduser("~/.boltz/boltz1_conf.ckpt"),
-        help="Boltz1 checkpoint path",
+        default=os.environ.get("BOLTZ1_CHECKPOINT", "/checkpoints/boltz1_conf.ckpt"),
+        help="Boltz1 checkpoint path (default: $BOLTZ1_CHECKPOINT or"
+        " /checkpoints/boltz1_conf.ckpt)",
     )
     parser.add_argument(
         "--boltz2-checkpoint",
-        default=os.path.expanduser("~/.boltz/boltz2_conf.ckpt"),
-        help="Boltz2 checkpoint path",
+        default=os.environ.get("BOLTZ2_CHECKPOINT", "/checkpoints/boltz2_conf.ckpt"),
+        help="Boltz2 checkpoint path (default: $BOLTZ2_CHECKPOINT or "
+        "/checkpoints/boltz2_conf.ckpt)",
     )
-    parser.add_argument("--protenix-checkpoint", default="", help="Protenix checkpoint path")
+    parser.add_argument(
+        "--protenix-checkpoint",
+        default=os.environ.get("PROTENIX_CHECKPOINT", ""),
+        help="Protenix checkpoint path",
+    )
     parser.add_argument(
         "--rf3-checkpoint",
-        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt",
+        default=os.environ.get("RF3_CHECKPOINT", ""),
         help="RF3 checkpoint path",
     )
     parser.add_argument(

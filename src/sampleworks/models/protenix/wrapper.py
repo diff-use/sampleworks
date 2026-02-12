@@ -1,15 +1,17 @@
 from collections.abc import Mapping
-from logging import getLogger, Logger
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import torch
+from biotite.structure import AtomArray
 from configs.configs_base import configs as configs_base
 from configs.configs_data import data_configs
 from configs.configs_inference import inference_configs
 from configs.configs_model_type import model_configs
 from einx import rearrange
 from jaxtyping import Array, ArrayLike, Float
+from loguru import logger
 from ml_collections import ConfigDict
 from protenix.config import parse_configs
 from protenix.data.data_pipeline import DataPipeline
@@ -31,7 +33,6 @@ from sampleworks.models.protenix.structure_processing import (
     create_protenix_input_from_structure,
     ensure_atom_array,
     filter_zero_occupancy,
-    reconcile_atom_arrays,
 )
 from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
@@ -60,7 +61,6 @@ class ProtenixWrapper:
         device: torch.device, optional
             Device to run the model on, by default CUDA if available.
         """
-        logger: Logger = getLogger(__name__)
         self.checkpoint_path = checkpoint_path
         self.device = torch.device(device)
 
@@ -287,27 +287,32 @@ class ProtenixWrapper:
 
         atom_array = ensure_atom_array(structure["asym_unit"])
         atom_array = filter_zero_occupancy(atom_array)
-        atom_array = add_terminal_oxt_atoms(
-            atom_array=atom_array, chain_info=structure.get("chain_info", {})
-        )
-        atom_array = reconcile_atom_arrays(atom_array, atom_array_protenix)
-
-        if "asym_unit" in structure:
-            n_atoms_protenix = len(atom_array_protenix)
-            n_atoms_atomworks = len(atom_array)
-            assert n_atoms_protenix == n_atoms_atomworks, (
-                f"Atom count mismatch after reconciliation: Protenix has "
-                f"{n_atoms_protenix} atoms, Atomworks has {n_atoms_atomworks} atoms."
-            )
 
         features = cast(dict[str, Any], input_feature_dict)
 
         if "asym_unit" in structure:
-            true_coords = cast(Array, atom_array.coord)
+            # true_coords feeds into the model and must match the Protenix
+            # feature dimensions (N_protenix atoms).
+            true_coords = cast(Array, atom_array_protenix.coord)
             if not isinstance(true_coords, torch.Tensor):
                 true_coords = torch.tensor(true_coords, device=self.device, dtype=torch.float32)
             features["true_coords"] = true_coords
+
+            # true_atom_array is used by the scalers for reward computation
+            # and matches what initialize_from_noise returns.
             features["true_atom_array"] = atom_array
+
+            # model_atom_array enables common atom alignment when the
+            # Protenix atom count differs from the structure atom count
+            model_aa = cast(AtomArray, atom_array_protenix)
+            if not hasattr(model_aa, "occupancy"):
+                model_aa.set_annotation("occupancy", np.ones(len(model_aa), dtype=np.float32))
+            if not hasattr(model_aa, "b_factor"):
+                model_aa.set_annotation(
+                    "b_factor",
+                    np.full(len(model_aa), 20.0, dtype=np.float32),
+                )
+            features["model_atom_array"] = model_aa
 
         features = self.model.relative_position_encoding.generate_relp(features)
         features = update_input_feature_dict(features)

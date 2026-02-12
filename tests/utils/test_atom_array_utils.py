@@ -5,7 +5,11 @@ from typing import cast
 import numpy as np
 import pytest
 from biotite.structure import AtomArray, AtomArrayStack
-from sampleworks.utils.atom_array_utils import filter_to_common_atoms, select_altloc
+from sampleworks.utils.atom_array_utils import (
+    _make_normalized_atom_id,
+    filter_to_common_atoms,
+    select_altloc,
+)
 
 
 class TestSelectAltlocBasic:
@@ -305,3 +309,117 @@ class TestFilterToCommonAtoms:
         # which are indices 2, 3, 4 in array1 and 0, 1, 2 in array2
         np.testing.assert_array_equal(filtered1.coord[0, 0], original_coords1[2])
         np.testing.assert_array_equal(filtered2.coord[0, 0], original_coords2[0])
+
+
+class TestNormalizedAtomId:
+    """Tests for _make_normalized_atom_id."""
+
+    def test_different_numbering_same_result(
+        self, backbone_two_residues, backbone_two_residues_offset
+    ):
+        """Two arrays with identical atoms but offset res_id produce the same IDs."""
+        np.testing.assert_array_equal(
+            _make_normalized_atom_id(backbone_two_residues),
+            _make_normalized_atom_id(backbone_two_residues_offset),
+        )
+
+    def test_negative_res_ids(self, negative_zero_res_id_pair):
+        """Negative res_ids are normalized to the same result as 0-based."""
+        negative, zero_based = negative_zero_res_id_pair
+        np.testing.assert_array_equal(
+            _make_normalized_atom_id(negative),
+            _make_normalized_atom_id(zero_based),
+        )
+
+    def test_different_chains_differ(self, two_chain_array):
+        """Atoms on different chains get distinct normalized IDs."""
+        # TODO: maybe this won't be desirable in the long term e.g. handling symmetry, etc.?
+        ids = _make_normalized_atom_id(two_chain_array)
+        assert ids[0] != ids[1]
+
+
+class TestFilterToCommonAtomsNormalized:
+    """Tests for filter_to_common_atoms with normalize_ids=True."""
+
+    def test_identical(self, backbone_two_residues):
+        """Identical arrays return all atoms."""
+        (f1, f2) = filter_to_common_atoms(
+            backbone_two_residues, backbone_two_residues, normalize_ids=True
+        )
+        assert f1.array_length() == 3
+        assert f2.array_length() == 3
+
+    def test_different_numbering(self, model_struct_numbering_offset):
+        """Same atoms with different res_id schemes are matched correctly."""
+        model, struct = model_struct_numbering_offset
+        (fm, fs) = filter_to_common_atoms(model, struct, normalize_ids=True)
+        assert fm.array_length() == 3
+        assert fs.array_length() == 3
+        fm_arr, fs_arr = cast(AtomArray, fm[0]), cast(AtomArray, fs[0])
+        fm_names = cast(np.ndarray, fm_arr.atom_name)
+        fs_names = cast(np.ndarray, fs_arr.atom_name)
+        for i in range(len(fm_arr)):
+            assert fm_names[i] == fs_names[i]
+
+    def test_without_normalize_fails_on_different_numbering(self, single_atom_numbering_offset):
+        """Without normalize_ids, different res_id numbering finds no overlap."""
+        model, struct = single_atom_numbering_offset
+        with pytest.raises(RuntimeError, match="No common atoms"):
+            filter_to_common_atoms(model, struct, normalize_ids=False)
+
+    def test_struct_extra_atoms(self, model_struct_extra_element):
+        """Extra atoms in one structure are excluded from the result."""
+        model, struct = model_struct_extra_element
+        (fm, fs) = filter_to_common_atoms(model, struct, normalize_ids=True)
+        assert fm.array_length() == 2
+        assert fs.array_length() == 2
+
+    def test_multi_chain(self, multi_chain_numbering_offset):
+        """Normalized matching works across multiple chains."""
+        model, struct = multi_chain_numbering_offset
+        (fm, fs) = filter_to_common_atoms(model, struct, normalize_ids=True)
+        assert fm.array_length() == 3
+
+
+class TestReturnIndices:
+    """Tests for filter_to_common_atoms with return_indices=True."""
+
+    def test_indices_identity(self, backbone_two_residues):
+        """Identical arrays produce matching index arrays."""
+        (_, _), (idx1, idx2) = filter_to_common_atoms(
+            backbone_two_residues,
+            backbone_two_residues,
+            normalize_ids=True,
+            return_indices=True,
+        )
+        assert len(idx1) == 3
+        assert len(idx2) == 3
+        np.testing.assert_array_equal(idx1, idx2)
+
+    def test_indices_point_to_correct_atoms(self, model_struct_partial_atom_names):
+        """Returned indices map back to the correct atoms in the originals."""
+        model, struct = model_struct_partial_atom_names
+        (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+            model, struct, normalize_ids=True, return_indices=True
+        )
+        assert len(m_idx) == 2
+        for mi, si in zip(m_idx, s_idx):
+            assert model.atom_name[mi] == struct.atom_name[si]
+
+    def test_indices_with_extra_model_atoms(self, model_struct_numbering_offset):
+        """Model-only atoms are skipped in the returned indices."""
+        model, struct = model_struct_numbering_offset
+        (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+            model, struct, normalize_ids=True, return_indices=True
+        )
+        assert len(m_idx) == 3
+        assert 2 not in m_idx  # model[2] = CB should be excluded
+        for mi, si in zip(m_idx, s_idx):
+            assert model.atom_name[mi] == struct.atom_name[si]
+
+    def test_backward_compat_without_return_indices(self, backbone_two_residues):
+        """Default call (return_indices=False) returns only filtered arrays."""
+        result = filter_to_common_atoms(backbone_two_residues, backbone_two_residues)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert hasattr(result[0], "coord")

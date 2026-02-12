@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from atomworks import parse
 from biotite.structure import AtomArray, AtomArrayStack, stack
@@ -18,6 +19,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
 from sampleworks.core.rewards.real_space_density import RewardFunction, setup_scattering_params
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
+from sampleworks.eval.structure_utils import get_asym_unit_from_structure
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -67,6 +69,33 @@ def save_trajectory(
         raise ValueError(f"Invalid scaler type: {scaler_type}")
 
 
+def _assign_coords_to_array(
+    array_copy: AtomArrayStack,
+    coords: np.ndarray,
+    reward_param_mask: np.ndarray,
+) -> None:
+    """Assign trajectory coords into an AtomArrayStack, handling shape mismatches.
+
+    When the trajectory spans all atoms in the array (e.g. model
+    trajectories saved during a has_mismatch run (see pure_guidance.py or fk_steering.py)), coords
+    are assigned directly to ``.coord``.  Otherwise the ``reward_param_mask``
+    is used to index into the correct atom subset.
+    """
+    n_atoms_array = array_copy.coord.shape[-2]  # pyright: ignore[reportOptionalMemberAccess]
+    n_atoms_coords = coords.shape[-2]
+
+    if n_atoms_coords == n_atoms_array:
+        array_copy.coord = coords
+    elif n_atoms_coords == int(reward_param_mask.sum()):
+        array_copy.coord[:, reward_param_mask] = coords  # pyright: ignore[reportOptionalSubscript]
+    else:
+        raise ValueError(
+            f"Trajectory coords ({n_atoms_coords} atoms) match neither "
+            f"the full atom array ({n_atoms_array}) nor the masked subset "
+            f"({int(reward_param_mask.sum())})"
+        )
+
+
 def _save_trajectory(
     trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
 ):
@@ -87,7 +116,7 @@ def _save_trajectory(
             continue
         array_copy = atom_array.copy()
         array_copy = stack([array_copy] * ensemble_size)
-        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+        _assign_coords_to_array(array_copy, coords.detach().numpy(), reward_param_mask)
         save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
@@ -113,7 +142,7 @@ def _save_fk_steering_trajectory(
         array_copy = stack([array_copy] * ensemble_size)
         # we save only the first ensemble out of n_particles, since saving
         # each particle at every step would clog trajectory saving
-        array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+        _assign_coords_to_array(array_copy, coords[0].detach().numpy(), reward_param_mask)
         save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
@@ -237,22 +266,31 @@ def save_everything(
     set_structure(final_structure, refined_structure["asym_unit"])
     final_structure.write(str(output_dir / "refined.cif"))
 
+    # Build the occupancy mask from the first array in the stack
+    # Model atom arrays will lack occupancy annotation, in which case all atoms are considered valid
+    asym_unit = get_asym_unit_from_structure(refined_structure)
+    first_array: AtomArray = asym_unit[0] if isinstance(asym_unit, AtomArrayStack) else asym_unit  # pyright: ignore[reportAssignmentType]
+    if hasattr(first_array, "occupancy"):
+        reward_param_mask = first_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+    else:
+        reward_param_mask = np.ones(len(first_array), dtype=bool)
+
     # Two calls to save_trajectory, very similar, but saving different trajectories!
     save_trajectory(
         scaler_type,
         traj_denoised,  # <--- the difference is here!
-        refined_structure["asym_unit"],  # this is just used as a dummy structure
+        asym_unit,  # this is just used as a dummy structure
         output_dir,
-        refined_structure["asym_unit"].occupancy > 0,
+        reward_param_mask,
         "denoised",
         save_every=10,
     )
     save_trajectory(
         scaler_type,
         traj_next_step,  # <--- and here!
-        refined_structure["asym_unit"],
+        asym_unit,
         output_dir,
-        refined_structure["asym_unit"].occupancy > 0,
+        reward_param_mask,
         "next_step",
         save_every=10,
     )

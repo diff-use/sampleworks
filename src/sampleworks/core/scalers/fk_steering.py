@@ -20,6 +20,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
     create_random_transform,
@@ -238,6 +239,70 @@ class FKSteering:
         # TODO: account for missing residues in mask
         mask_like = torch.ones_like(input_coords[..., 0])
 
+        # Detect model to structure atom count mismatch
+        # s_ refers to structure indices, m_ refers to model indices.
+        model_atom_array = features.get("model_atom_array")
+        has_mismatch = False
+        m_idx_t = torch.empty(0)
+        s_idx_t = torch.empty(0)
+        common_weights = torch.empty(0)
+        if model_atom_array is not None:
+            struct_masked = atom_array[reward_param_mask]
+            if len(model_atom_array) != len(struct_masked):
+                has_mismatch = True
+                (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+                    model_atom_array,
+                    struct_masked,
+                    normalize_ids=True,
+                    return_indices=True,
+                )
+                m_idx_t = torch.from_numpy(m_idx).to(coords.device)
+                s_idx_t = torch.from_numpy(s_idx).to(coords.device)
+                common_weights = torch.ones(
+                    num_particles * ensemble_size,
+                    len(m_idx),
+                    device=coords.device,
+                )
+
+        # When the model operates on a different atom count than the
+        # structure re-initialize coords with the correct shape
+        if has_mismatch:
+            n_model = len(model_atom_array)  # pyright: ignore[reportArgumentType]
+            # coords is (num_particles, ensemble_size, N, 3) at this point
+            if coords.shape[-2] != n_model:
+                sigma = cast(
+                    torch.Tensor,
+                    self.model_wrapper.get_noise_schedule()["sigma_tm"],
+                )[partial_diffusion_step]
+                coords = sigma * torch.randn(
+                    num_particles,
+                    ensemble_size,
+                    n_model,
+                    3,
+                    device=coords.device,
+                    dtype=coords.dtype,
+                )
+                if partial_diffusion_step > 0:
+                    # TODO: make sure post-refactor this situation is also handled
+                    # input_coords is (num_particles * ensemble_size, N_struct, 3)
+                    seed = input_coords[:ensemble_size, s_idx_t]
+                    coords[:, :, m_idx_t] = seed.unsqueeze(0) + sigma * torch.randn(
+                        num_particles,
+                        ensemble_size,
+                        len(m_idx_t),
+                        3,
+                        device=coords.device,
+                        dtype=coords.dtype,
+                    )
+
+        # When coords lives in model space the EDM update
+        # must use model space denoised rather than the structure mapping.
+        coords_in_model_space = has_mismatch and coords.shape[-2] != input_coords.shape[-2]
+
+        # Track last model space denoised per particle
+        # shape: (num_particles, ensemble_size, N_model, 3)
+        last_denoised_model: torch.Tensor | None = None
+
         # FK State variables
         energy_traj = torch.empty((num_particles, 0), device=coords.device)
         scaled_guidance_update = torch.zeros_like(coords)
@@ -287,7 +352,7 @@ class FKSteering:
                     else scaled_guidance_update
                 )
 
-            denoised = cast(
+            denoised_raw = cast(
                 torch.Tensor,
                 self.model_wrapper.denoise_step(
                     features,
@@ -304,16 +369,38 @@ class FKSteering:
             # do alignment before reshaping
             # align_transform will have shape (num_particles * ensemble_size, ...)
             align_transform = None
-            denoised_working_frame = denoised
-            if align_to_input:
+            denoised_model_flat: torch.Tensor | None = None
+            if has_mismatch:
+                if align_to_input:
+                    _, align_transform = weighted_rigid_align_differentiable(
+                        denoised_raw[:, m_idx_t],
+                        input_coords[:, s_idx_t],
+                        weights=common_weights,
+                        mask=common_weights,
+                        return_transforms=True,
+                        allow_gradients=False,
+                    )
+                    denoised_model_flat = apply_forward_transform(
+                        denoised_raw,
+                        align_transform,
+                        rotation_only=False,
+                    )
+                else:
+                    denoised_model_flat = denoised_raw
+                # Map model atoms back into structure coordinate frame
+                denoised_working_frame = input_coords.clone()
+                denoised_working_frame[:, s_idx_t] = denoised_model_flat[:, m_idx_t]
+            elif align_to_input:
                 denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
-                    denoised,
+                    denoised_raw,
                     input_coords,
                     weights=mask_like,
                     mask=mask_like,
                     return_transforms=True,
                     allow_gradients=False,
                 )
+            else:
+                denoised_working_frame = denoised_raw
 
             # we need coords and eps and scaled_guidance_update in working frame
             coords_in_working_frame = (
@@ -347,6 +434,11 @@ class FKSteering:
                 num_particles, ensemble_size, -1, 3
             )
             eps_in_working_frame = eps_in_working_frame.reshape(num_particles, ensemble_size, -1, 3)
+
+            if has_mismatch and denoised_model_flat is not None:
+                last_denoised_model = denoised_model_flat.reshape(
+                    num_particles, ensemble_size, -1, 3
+                )
 
             ### FK Resampling
             noise_var = eps_scale**2
@@ -405,14 +497,23 @@ class FKSteering:
                 eps_in_working_frame = eps_in_working_frame[indices]
                 energy_traj = energy_traj[indices]
                 scaled_guidance_update = scaled_guidance_update[indices]
+                if last_denoised_model is not None:
+                    last_denoised_model = last_denoised_model[indices]
 
             ### Guidance on x̂_0
             if num_gd_steps > 0 and i < n_steps - 1 and i >= guidance_start:
                 guidance_update = torch.zeros_like(denoised_working_frame)
                 delta_norm = guidance_update.clone()
                 if gradient_normalization:
+                    # original_delta must be computed on the same set as
+                    # coords_in_working_frame (model set when has_mismatch)
+                    denoised_for_delta = (
+                        cast(torch.Tensor, last_denoised_model)
+                        if coords_in_model_space
+                        else denoised_working_frame
+                    )
                     original_delta = (
-                        coords_in_working_frame + eps_in_working_frame - denoised_working_frame
+                        coords_in_working_frame + eps_in_working_frame - denoised_for_delta
                     ) / t_hat
                     delta_norm = torch.linalg.norm(original_delta, dim=(-1, -2), keepdim=True)
 
@@ -449,14 +550,37 @@ class FKSteering:
                 denoised_working_frame = current_x0
 
                 dt = sigma_t - t_hat
-                scaled_guidance_update = guidance_update * -1 * step_scale * dt / t_hat
 
-            trajectory_denoised.append(denoised_working_frame.clone().cpu())
+                # scaled_guidance_update must be in model set so it can
+                # combine with eps_in_working_frame in the FK resampling
+                # log-likelihood calculation
+                if coords_in_model_space:
+                    guidance_update_model = torch.zeros_like(coords_in_working_frame)
+                    guidance_update_model[:, :, m_idx_t] = guidance_update[:, :, s_idx_t]
+                    scaled_guidance_update = guidance_update_model * -1 * step_scale * dt / t_hat
+                else:
+                    scaled_guidance_update = guidance_update * -1 * step_scale * dt / t_hat
+
+            # Store denoised trajectory.  When there is a mismatch the
+            # final atom array is the model atom array, so the trajectory
+            # must also have the same number of atoms as that array for saving
+            if has_mismatch and last_denoised_model is not None:
+                trajectory_denoised.append(last_denoised_model.clone().cpu())
+            else:
+                trajectory_denoised.append(denoised_working_frame.clone().cpu())
             losses.append(energy_traj[:, -1].mean().item() if energy_traj.shape[1] > 0 else 0.0)
             pbar.set_postfix({"loss": losses[-1]})
 
             with torch.no_grad():
                 noisy_coords = coords_in_working_frame + eps_in_working_frame
+
+                # When coords is in model space the EDM target must also
+                # be in model space
+                edm_target = (
+                    cast(torch.Tensor, last_denoised_model)
+                    if coords_in_model_space
+                    else denoised_working_frame
+                )
 
                 if alignment_reverse_diffusion:
                     # Boltz aligns the noisy coords to the denoised coords at each step
@@ -464,16 +588,19 @@ class FKSteering:
 
                     # TODO: need all this reshaping since
                     # weighted_rigid_align_differentiable only supports 1 batch dim
+                    edm_mask = torch.ones_like(
+                        noisy_coords.reshape(num_particles * ensemble_size, -1, 3)[..., 0]
+                    )
                     noisy_coords = weighted_rigid_align_differentiable(
                         noisy_coords.reshape(num_particles * ensemble_size, -1, 3),
-                        denoised_working_frame.reshape(num_particles * ensemble_size, -1, 3),
-                        weights=mask_like,
-                        mask=mask_like,
+                        edm_target.reshape(num_particles * ensemble_size, -1, 3),
+                        weights=edm_mask,
+                        mask=edm_mask,
                         allow_gradients=False,
                     ).reshape(num_particles, ensemble_size, -1, 3)
 
                 dt = sigma_t - t_hat
-                denoised_over_sigma = (noisy_coords - denoised_working_frame) / t_hat
+                denoised_over_sigma = (noisy_coords - edm_target) / t_hat
 
                 coords_next = noisy_coords + step_scale * dt * denoised_over_sigma
 
@@ -481,15 +608,21 @@ class FKSteering:
 
             trajectory_next_step.append(coords.clone().cpu())
 
-        # Stack atom array to match ensemble size
-        final_atom_array = stack([atom_array] * ensemble_size)
-
         # Get lowest energy particle
         min_energy_index = torch.argmin(energy_traj[:, -1])
-        final_atom_array.coord[..., reward_param_mask, :] = (  # type: ignore[reportOptionalSubscript] coords will be subscriptable
-            coords[min_energy_index].cpu().numpy()
-        )
 
+        # Save final structure
+        if has_mismatch and last_denoised_model is not None:
+            # Stack atom array to match ensemble size
+            final_atom_array = stack([model_atom_array] * ensemble_size)
+            final_atom_array.coord = (  # type: ignore
+                last_denoised_model[min_energy_index].detach().cpu().numpy()
+            )
+        else:
+            final_atom_array = stack([atom_array] * ensemble_size)
+            final_atom_array.coord[..., reward_param_mask, :] = (  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+                coords[min_energy_index].cpu().numpy()
+            )
         structure["asym_unit"] = final_atom_array
 
         return structure, (trajectory_denoised, trajectory_next_step), losses

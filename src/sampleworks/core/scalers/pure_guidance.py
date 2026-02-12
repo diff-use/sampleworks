@@ -19,6 +19,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
 )
 from sampleworks.core.rewards.real_space_density import RewardFunction
 from sampleworks.models.model_wrapper_protocol import DiffusionModelWrapper
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
     create_random_transform,
@@ -186,11 +187,67 @@ class PureGuidance:
         # TODO: account for missing residues in mask
         mask_like = torch.ones_like(input_coords[..., 0])
 
-        if input_coords.shape != coords.shape:
+        # Detect model to structure atom count mismatch
+        # s_ refers to structure indices, m_ refers to model indices.
+        model_atom_array = features.get("model_atom_array")
+        has_mismatch = False
+        m_idx_t = torch.empty(0)
+        s_idx_t = torch.empty(0)
+        common_weights = torch.empty(0)
+        if model_atom_array is not None:
+            struct_masked = atom_array[reward_param_mask]
+            if len(model_atom_array) != len(struct_masked):
+                has_mismatch = True
+                (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+                    model_atom_array,
+                    struct_masked,
+                    normalize_ids=True,
+                    return_indices=True,
+                )
+                m_idx_t = torch.from_numpy(m_idx).to(coords.device)
+                s_idx_t = torch.from_numpy(s_idx).to(coords.device)
+                common_weights = torch.ones(ensemble_size, len(m_idx), device=coords.device)
+                logger.info(
+                    f"Atom count mismatch: model={len(model_atom_array)}, "
+                    f"structure={len(struct_masked)}, common={len(m_idx)}"
+                )
+
+        # When the model operates on a different atom count than the
+        # structure, re-initialize coords with the correct shape
+        if has_mismatch:
+            n_model = len(model_atom_array)  # pyright: ignore[reportArgumentType]
+            if coords.shape[-2] != n_model:
+                sigma = cast(
+                    torch.Tensor,
+                    self.model_wrapper.get_noise_schedule()["sigma_tm"],
+                )[partial_diffusion_step]
+                coords = sigma * torch.randn(
+                    ensemble_size,
+                    n_model,
+                    3,
+                    device=coords.device,
+                    dtype=coords.dtype,
+                )
+                if partial_diffusion_step > 0:
+                    # TODO: make sure post-refactor this situation is also handled
+                    coords[:, m_idx_t] = input_coords[:, s_idx_t] + sigma * torch.randn(
+                        ensemble_size,
+                        len(m_idx_t),
+                        3,
+                        device=coords.device,
+                        dtype=coords.dtype,
+                    )
+        elif input_coords.shape != coords.shape:
             raise ValueError(
                 f"Input coordinates shape {input_coords.shape} does not match"
                 f" initialized coordinates {coords.shape} shape."
             )
+
+        # When coords lives in model space, the EDM update
+        # must use model space denoised rather than the structure mapping.
+        coords_in_model_space = has_mismatch and coords.shape[-2] != input_coords.shape[-2]
+
+        last_denoised_model: torch.Tensor | None = None
 
         trajectory_denoised = []
         trajectory_next_step = []
@@ -228,7 +285,7 @@ class PureGuidance:
                 # noisy_coords.
                 maybe_augmented_coords.detach_().requires_grad_(True)
 
-            denoised = self.model_wrapper.denoise_step(
+            denoised_raw = self.model_wrapper.denoise_step(
                 features,
                 maybe_augmented_coords,
                 timestep=i,
@@ -240,20 +297,46 @@ class PureGuidance:
             )["atom_coords_denoised"]
 
             align_transform = None
-            denoised_working_frame = denoised
-            if align_to_input:
+            if has_mismatch:
+                if align_to_input:
+                    _, align_transform = weighted_rigid_align_differentiable(
+                        denoised_raw[:, m_idx_t],
+                        input_coords[:, s_idx_t],
+                        weights=common_weights,
+                        mask=common_weights,
+                        return_transforms=True,
+                        allow_gradients=allow_alignment_gradients,
+                    )
+                    denoised_model = apply_forward_transform(
+                        denoised_raw,
+                        align_transform,
+                        rotation_only=False,
+                    )
+                else:
+                    denoised_model = denoised_raw
+                last_denoised_model = denoised_model
+                # Map model atoms back into structure coordinate frame
+                denoised_working_frame = input_coords.clone()
+                denoised_working_frame[:, s_idx_t] = denoised_model[:, m_idx_t]
+            elif align_to_input:
                 denoised_working_frame, align_transform = weighted_rigid_align_differentiable(
-                    denoised,
+                    denoised_raw,
                     input_coords,
                     weights=mask_like,
                     mask=mask_like,
                     return_transforms=True,
                     allow_gradients=allow_alignment_gradients,
                 )
+            else:
+                denoised_working_frame = denoised_raw
 
-            # To align with FK steering, store denoised in working frame (aligned with the
-            # input coords if align_to_input is True)
-            trajectory_denoised.append(denoised_working_frame.clone().cpu())
+            # Store denoised trajectory.  When there is a mismatch the
+            # final atom array is the model atom array, so the trajectory
+            # must also have the same number of atoms as that array for saving
+            if has_mismatch and last_denoised_model is not None:
+                trajectory_denoised.append(last_denoised_model.clone().cpu())
+            else:
+                trajectory_denoised.append(denoised_working_frame.clone().cpu())
 
             guidance_direction = None
             if apply_guidance:
@@ -309,20 +392,29 @@ class PureGuidance:
                 )
                 noisy_coords = coords_in_working_frame + eps_in_working_frame
 
+                # When coords is in model space the EDM target must also
+                # be in model space
+                edm_target = (
+                    cast(torch.Tensor, last_denoised_model)
+                    if coords_in_model_space
+                    else denoised_working_frame
+                )
+
                 if alignment_reverse_diffusion:
                     # Boltz aligns the noisy coords to the denoised coords at each step
                     # to improve stability.
+                    edm_mask = torch.ones_like(noisy_coords[..., 0])
                     noisy_coords = weighted_rigid_align_differentiable(
                         noisy_coords,
-                        denoised_working_frame,
-                        weights=mask_like,
-                        mask=mask_like,
+                        edm_target,
+                        weights=edm_mask,
+                        mask=edm_mask,
                         allow_gradients=False,
                     )
 
                 dt = sigma_t - t_hat
 
-                delta = (noisy_coords - denoised_working_frame) / t_hat
+                delta = (noisy_coords - edm_target) / t_hat
 
                 if guidance_direction is not None:
                     # Make sure guidance direction is in working frame, since denoised
@@ -336,6 +428,11 @@ class PureGuidance:
                             if align_transform is not None
                             else guidance_direction
                         )
+                    # Tweedie grad is in structure index, map to model for delta
+                    if coords_in_model_space and use_tweedie:
+                        grad_model = torch.zeros_like(noisy_coords)
+                        grad_model[:, m_idx_t] = guidance_direction[:, s_idx_t]
+                        guidance_direction = grad_model
                     if gradient_normalization:
                         grad_norm = guidance_direction.norm(dim=(1, 2), keepdim=True)
                         delta_norm = delta.norm(dim=(1, 2), keepdim=True)
@@ -348,11 +445,17 @@ class PureGuidance:
 
             trajectory_next_step.append(coords.clone().cpu())
 
-        # Concatenate atom array to match ensemble size
-        atom_array = stack([atom_array] * ensemble_size)
-        atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
-
-        structure["asym_unit"] = atom_array
+        # Save final structure
+        if has_mismatch and last_denoised_model is not None:
+            # Concatenate atom array to match ensemble size
+            final_aa = stack([model_atom_array] * ensemble_size)
+            final_aa.coord = last_denoised_model.detach().cpu().numpy()  # type: ignore
+            structure["asym_unit"] = final_aa
+        else:
+            # Concatenate atom array to match ensemble size
+            atom_array = stack([atom_array] * ensemble_size)
+            atom_array.coord[..., reward_param_mask, :] = coords.cpu().numpy()  # type: ignore (coord is NDArray)
+            structure["asym_unit"] = atom_array
 
         return structure, (trajectory_denoised, trajectory_next_step), losses
 
