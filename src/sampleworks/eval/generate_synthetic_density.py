@@ -310,17 +310,6 @@ def _process_single_row(
         logger.error(f"Invalid occupancy mode '{occ_mode}' for {row.filename}")
         raise ValueError(f"Invalid occupancy mode '{occ_mode}'")
 
-    if save_structure:
-        structure_output_path = structure_path.parent / f"{structure_path.stem}_density_input.cif"
-        try:
-            save_structure_to_cif(atom_array, structure_output_path)
-            logger.info(f"Saved processed structure to {structure_output_path}")
-        except Exception as e:
-            logger.error(
-                f"Failed to save structure for {row.filename} ({type(e).__name__}): {e}\n"
-                f"{''.join(traceback.format_tb(e.__traceback__))}"
-            )
-
     try:
         density, xmap_torch = compute_density_from_atomarray(
             atom_array, resolution=resolution, em_mode=em_mode, device=device
@@ -331,6 +320,21 @@ def _process_single_row(
             f"{''.join(traceback.format_tb(e.__traceback__))}"
         )
         return
+
+    if save_structure:
+        # Shift coordinates into the grid frame so the saved CIF aligns with
+        # the CCP4 map. CCP4 format (unlike MRC) cannot encode an arbitrary Cartesian
+        # origin, so we move the atoms instead. Possible the better way is to resample the map?
+        atom_array.coord = atom_array.coord - xmap_torch.origin  # pyright: ignore[reportOptionalOperand]
+        structure_output_path = structure_path.parent / f"{structure_path.stem}_density_input.cif"
+        try:
+            save_structure_to_cif(atom_array, structure_output_path)
+            logger.info(f"Saved processed structure to {structure_output_path}")
+        except Exception as e:
+            logger.error(
+                f"Failed to save structure for {row.filename} ({type(e).__name__}): {e}\n"
+                f"{''.join(traceback.format_tb(e.__traceback__))}"
+            )
 
     if row.mapfile:
         output_path = output_dir / row.mapfile
@@ -530,16 +534,20 @@ def main() -> None:
         )
         atom_array = assign_occupancies(atom_array, altloc_info, args.occ_mode, occ_values)
 
+        density, xmap_torch = compute_density_from_atomarray(
+            atom_array, resolution=args.resolution, em_mode=args.em_mode, device=device
+        )
+
         if args.save_structure:
+            # Shift coordinates into the grid frame so the saved CIF aligns with
+            # the CCP4 map. CCP4 format (unlike MRC) cannot encode an arbitrary Cartesian
+            # origin, so we move the atoms instead. Possible the better way is to resample the map?
+            atom_array.coord = atom_array.coord - xmap_torch.origin  # pyright: ignore[reportOptionalOperand]
             structure_output_path = (
                 args.structure.parent / f"{args.structure.stem}_density_input.cif"
             )
             save_structure_to_cif(atom_array, structure_output_path)
             logger.info(f"Saved processed structure to {structure_output_path}")
-
-        density, xmap_torch = compute_density_from_atomarray(
-            atom_array, resolution=args.resolution, em_mode=args.em_mode, device=device
-        )
 
         output_path = (
             args.output or args.output_dir / f"{args.structure.stem}_{args.resolution:.2f}A.ccp4"
