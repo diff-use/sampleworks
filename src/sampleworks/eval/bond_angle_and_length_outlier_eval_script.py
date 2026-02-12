@@ -35,8 +35,10 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
 
     Returns
     -------
-    float
+    invalid fraction: float
         Percentage of bonds outside acceptable ranges (0.0 to 1.0).
+    outlier_info : pd.DataFrame
+        DataFrame containing information about the outliers, including atom indices and distances.
     """
     if pose.array_length() == 0:
         return np.nan, pd.DataFrame()
@@ -49,7 +51,7 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
     if not pose.bonds:
         logger.error(
             "Models must have bonds, use "
-            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True"
+            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
         )
         return np.nan, pd.DataFrame()
         
@@ -100,6 +102,12 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
 def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[float, pd.DataFrame]:
     """
     Calculate the percentage of bonds that are outside acceptable ranges.
+    Note that the method is actually to compute distance violations between two
+    most commonly unbonded atoms. That is, given an atom A which is bonded to two atoms B and C,
+    the method computes the distance between B and C and compares it to the ideal distance between
+    B and C. If the distance is outside the acceptable range, the angle is implicitly an outlier.
+    However, as a result, we don't report the bond angle, and it is possible that one or both of the
+    bond lengths is an outlier, without the angle itself being an outlier.
 
     Parameters
     ----------
@@ -110,8 +118,10 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
 
     Returns
     -------
-    float
-        Percentage of bonds outside acceptable ranges (0.0 to 1.0).
+    invalid_fraction : float
+        the fraction of bond angles outside the acceptable range (0.0 to 1.0)
+    outlier_info : pd.DataFrame
+        DataFrame containing information about the outliers, including atom indices and distances.
     """
     if pose.array_length() == 0:
         return np.nan, pd.DataFrame()
@@ -124,7 +134,7 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
     if not pose.bonds:
         logger.error(
             "Models must have bonds, use "
-            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True"
+            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
         )
         return np.nan, pd.DataFrame()
 
@@ -194,7 +204,8 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
 
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
-    grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
+    # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
+    grid_search_dir = workspace_root / "grid_search_results"
     logger.info(f"Grid search directory: {grid_search_dir}")
 
     # Scan for experiments (look for refined.cif files)

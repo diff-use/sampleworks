@@ -191,7 +191,9 @@ def translate_selection(selection: str) -> str:
 
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
-    grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
+
+    # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
+    grid_search_dir = workspace_root / "grid_search_results"
 
     # Protein configurations: base map paths, structure selections, and resolutions
     protein_inputs_dir = args.grid_search_inputs_path or workspace_root
