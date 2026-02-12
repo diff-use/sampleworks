@@ -132,6 +132,10 @@ ATOMIC_NUM_TO_ELEMENT = [
     # "Og",
 ]  # NOTE: Cannot be dict for TorchScript compilation. 0 is ? for unknown
 
+ELEMENT_TO_ATOMIC_NUM: dict[str, int] = {
+    elem: idx for idx, elem in enumerate(ATOMIC_NUM_TO_ELEMENT)
+}
+
 ATOM_STRUCTURE_FACTORS = {
     "H": [
         [0.413048, 0.294953, 0.187491, 0.080701, 0.023736, 0.000049],

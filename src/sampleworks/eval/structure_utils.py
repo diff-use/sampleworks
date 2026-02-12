@@ -1,13 +1,160 @@
 import re
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+import einx
 import numpy as np
+import torch
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
+from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.eval.eval_dataclasses import ProteinConfig
+from sampleworks.models.protocol import GenerativeModelInput
+
+
+try:
+    from sampleworks.models.protenix.structure_processing import (
+        add_terminal_oxt_atoms as _add_terminal_oxt_atoms,
+        ensure_atom_array as _ensure_atom_array,
+        filter_zero_occupancy as _filter_zero_occupancy,
+    )
+
+    _HAS_PROTENIX = True
+except ImportError:
+    _HAS_PROTENIX = False
+    _add_terminal_oxt_atoms = None  # pyright: ignore[reportConstantRedefinition]
+    _ensure_atom_array = None  # pyright: ignore[reportConstantRedefinition]
+    _filter_zero_occupancy = None  # pyright: ignore[reportConstantRedefinition]
+
+
+# TODO: standardize this more! This needs to have a specified output dataclass that
+# we deal with, and define how we couple the data here to the structure we output at the end
+# of sampling.
+@dataclass(frozen=True, slots=True)
+class SampleworksProcessedStructure:
+    """Processed structure and associated model and forward model info for sampling."""
+
+    structure: dict
+    model_input: GenerativeModelInput
+    input_coords: torch.Tensor
+    atom_array: AtomArray
+    ensemble_size: int
+
+    def to_reward_inputs(self, device: torch.device | str = "cpu") -> RewardInputs:
+        """Build RewardInputs from the processed atom array.
+
+        Delegates to :meth:`RewardInputs.from_atom_array` so that element
+        lookup, masking, and batching logic lives in one place.
+
+        Parameters
+        ----------
+        device
+            PyTorch device to place tensors on.
+
+        Returns
+        -------
+        RewardInputs
+        """
+        return RewardInputs.from_atom_array(
+            atom_array=self.atom_array,
+            ensemble_size=self.ensemble_size,
+            device=device,
+        )
+
+
+# TODO: this function could maybe be an atomworks transform/use those?
+def process_structure_to_trajectory_input(
+    structure: dict,
+    coords_from_prior: torch.Tensor,
+    features: GenerativeModelInput,
+    ensemble_size: int,
+) -> SampleworksProcessedStructure:
+    """Convert a structure dict and model features into a ready-to-sample bundle.
+
+    CURRENTLY: Resolves the ground-truth ``AtomArray`` from either the conditioning
+    attached to *features* or the ``"asym_unit"`` key of *structure*,
+    applies Protenix-specific preprocessing when needed (OXT atoms,
+    zero-occupancy filtering), masks invalid atoms, and tiles the
+    coordinates to *ensemble_size*.
+
+    IDEALLY: This function should not need to be aware of the model, and should
+    produce a cleaned and masked AtomArray and coordinates usable for any model.
+    The model-specific logic should be handled in the model.
+
+    Parameters
+    ----------
+    structure : dict
+        Structure dictionary; must contain ``"asym_unit"`` if the model
+        conditioning does not carry a ``true_atom_array``.  Mutated
+        in-place: ``"asym_unit"`` is replaced with the cleaned array.
+    coords_from_prior : torch.Tensor
+        Prior sample used only to infer dtype and device for the output
+        coordinate tensor. (in future this should be useful for more than that)
+    features : GenerativeModelInput
+        Featurized model input.  If ``features.conditioning`` exposes a
+        ``true_atom_array`` attribute it is used as the reference array.
+    ensemble_size : int
+        Number of ensemble members; the reference coordinates are
+        broadcast along a leading ``e`` dimension.
+
+    Returns
+    -------
+    SampleworksProcessedStructure
+        Frozen dataclass bundling the cleaned structure, model input,
+        tiled coordinates, atom array, and ensemble size.
+    """
+    atom_array = None
+    needs_protenix_preprocessing = False
+
+    if features.conditioning and hasattr(features.conditioning, "true_atom_array"):
+        atom_array = features.conditioning.true_atom_array
+
+    if atom_array is None:
+        if "asym_unit" not in structure:
+            raise ValueError("structure must contain 'asym_unit' key")
+        atom_array = ensure_atom_array_stack(structure["asym_unit"])[0]
+        if features.conditioning:
+            cond_class = features.conditioning.__class__.__name__
+            needs_protenix_preprocessing = cond_class == "ProtenixConditioning"
+
+    # Add OXT atoms for Protenix to match the model's internal representation.
+    # Only needed when falling back to structure's asym_unit (true_atom_array was None).
+    if _HAS_PROTENIX and needs_protenix_preprocessing:
+        assert _ensure_atom_array is not None
+        assert _filter_zero_occupancy is not None
+        assert _add_terminal_oxt_atoms is not None
+        atom_array = _ensure_atom_array(atom_array)  # pyright: ignore[reportArgumentType]
+        atom_array = _filter_zero_occupancy(atom_array)
+        atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
+
+    # Mask to valid atoms (nonzero occupancy, no NaN coords)
+    reward_param_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
+    reward_param_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+    atom_array = atom_array[reward_param_mask]  # pyright: ignore[reportIndexIssue]
+
+    input_coords = torch.as_tensor(
+        einx.rearrange(
+            "... -> e ...",
+            torch.from_numpy(atom_array.coord).to(
+                dtype=coords_from_prior.dtype, device=coords_from_prior.device
+            ),
+            e=ensemble_size,
+        ),
+    )
+
+    structure["asym_unit"] = atom_array
+
+    return SampleworksProcessedStructure(
+        structure=structure,
+        model_input=features,
+        input_coords=input_coords,
+        atom_array=atom_array,  # pyright: ignore[reportArgumentType]
+        ensemble_size=ensemble_size,
+    )
 
 
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:

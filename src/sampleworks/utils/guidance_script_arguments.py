@@ -85,6 +85,9 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--density", type=str, required=True, help="Input density map")
     parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
     parser.add_argument(
+        "--log-path", type=str, default=None, help="Log file path (default: output-dir/run.log)"
+    )
+    parser.add_argument(
         "--partial-diffusion-step",
         type=int,
         default=0,
