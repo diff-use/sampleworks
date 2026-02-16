@@ -14,7 +14,10 @@ def extract_protein_and_occupancy(dir_name):
     protein = parts[0]
 
     # Parse occupancy
-    if "1.0occa" in dir_name.lower() or "1occa" in dir_name.lower():
+    if "native" in dir_name.lower():
+        # this is a hack, it would be better to properly name the directory
+        occ_a = 0.5
+    elif "1.0occa" in dir_name.lower() or "1occa" in dir_name.lower():
         # Check it's not a mixed case like 0.1occA
         if not any(f"0.{i}occa" in dir_name.lower() for i in range(1, 10)):
             occ_a = 1.0

@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import re
 import sys
 import traceback
@@ -10,7 +11,6 @@ from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
-from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
@@ -215,8 +215,7 @@ def main(args: argparse.Namespace):
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     reference_atom_arrays = {}
     for protein_key, protein_config in protein_configs.items():
-        # TODO: should the reference occupancy should be specified in the config?
-        for occ in OCCUPANCY_LEVELS:
+        for occ, sel in itertools.product(args.occupancies, protein_config.selection):
             ref_path, reference_proteins = get_reference_atomarraystack(protein_config, occ)
             if reference_proteins is None:
                 logger.warning(
@@ -227,10 +226,9 @@ def main(args: argparse.Namespace):
                 logger.info(
                     f"Loaded ref structure for {protein_key} and occupancy {occ}: {ref_path}"
                 )
-                # ignoring the altloc_id and occupancy arrays
-                reference_protein_stack, _, _ = map_altlocs_to_stack(reference_proteins)
-                if reference_proteins is not None:
-                    reference_atom_arrays[(protein_key, occ)] = reference_protein_stack
+                reference_protein_stack, _, _ = map_altlocs_to_stack(
+                    reference_proteins, selection=translate_selection(sel), return_full_array=True)
+                reference_atom_arrays[(protein_key, occ, sel)] = reference_protein_stack
             except Exception as e:
                 logger.error(
                     f"Error loading ref structure for {protein_key} and occupancy {occ}: {e}"
@@ -238,47 +236,55 @@ def main(args: argparse.Namespace):
                 logger.error(f"  Traceback: {traceback.format_exc()}")
 
     all_results = []
+    # TODO parallelize this loop? It will require replicating `reference_atom_arrays`
+    #  https://github.com/diff-use/sampleworks/issues/98
     for _i, _exp in enumerate(all_experiments):
-        result = _exp.__dict__.copy()
-        if _exp.protein not in protein_configs:
+        if _exp.protein in protein_configs:
+            protein = _exp.protein
+        elif _exp.protein.upper() in protein_configs:
+            protein = _exp.protein.upper()
+        else:
             logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
             continue
 
-        protein_config = protein_configs[_exp.protein]
+        protein_config = protein_configs[protein]
 
-        atom_array_key = (_exp.protein, _exp.occ_a)
-        if atom_array_key not in reference_atom_arrays:
-            logger.warning(
-                f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
-                f"for {_exp.protein} and occupancy {_exp.occ_a}."
-            )
-            continue
+        for selection in protein_config.selection:
+            result = _exp.__dict__.copy()
+            result["selection"] = selection
+            atom_array_key = (protein, _exp.occ_a, selection)
+            if atom_array_key not in reference_atom_arrays:
+                logger.warning(
+                    f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
+                    f"for {_exp.protein}, occupancy {_exp.occ_a} and selection '{selection}'."
+                )
+                continue
 
-        try:
-            reference_atom_array_stack = reference_atom_arrays[atom_array_key]
-            # these shouldn't have altlocs, don't need altloc="all".
-            predicted_atom_array_stack = load_any(_exp.refined_cif_path)
-            clustering_results = nn_lddt_clustering(
-                reference_atom_array_stack,
-                ensure_atom_array_stack(predicted_atom_array_stack),
-                translate_selection(protein_config.selection),
-            )
+            try:
+                reference_atom_array_stack = reference_atom_arrays[atom_array_key]
+                # generated structures shouldn't have altlocs, don't need altloc="all".
+                predicted_atom_array_stack = load_any(_exp.refined_cif_path)
+                clustering_results = nn_lddt_clustering(
+                    reference_atom_array_stack,
+                    ensure_atom_array_stack(predicted_atom_array_stack),
+                    translate_selection(selection),
+                )
 
-            result.update(
-                {
-                    k: clustering_results[k]
-                    for k in ("occupancies", "avg_silhouette", "avg_silhouette_to_ref")
-                }
-            )
-        except Exception as e:
-            logger.error(f"Error processing experiment {_exp.exp_dir}: {e}")
-            logger.error(f"  Traceback: {traceback.format_exc()}")
-            result["error"] = str(e)
-            result["avg_silhouette"] = np.nan
-            result["avg_silhouette_to_ref"] = np.nan
-            result["occupancies"] = []
+                result.update(
+                    {
+                        k: clustering_results[k]
+                        for k in ("occupancies", "avg_silhouette", "avg_silhouette_to_ref")
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error processing experiment {_exp.exp_dir}: {e}")
+                logger.error(f"  Traceback: {traceback.format_exc()}")
+                result["error"] = str(e)
+                result["avg_silhouette"] = np.nan
+                result["avg_silhouette_to_ref"] = np.nan
+                result["occupancies"] = []
 
-        all_results.append(result)
+            all_results.append(result)
 
     df = pd.DataFrame(all_results)
     df.to_csv(grid_search_dir / "lddt_results.csv", index=False)

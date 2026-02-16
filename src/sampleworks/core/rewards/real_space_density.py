@@ -2,6 +2,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import ArrayLike, Float, Int
 from loguru import logger
@@ -87,13 +88,18 @@ def extract_density_inputs_from_atomarray(
         Tuple of (coordinates, elements, b_factors, occupancies) as PyTorch tensors.
         All tensors have shape (1, n_atoms) or (1, n_atoms, 3) for coordinates.
     """
+    atoms_array = ensure_atom_array_stack(atom_array)
+
     coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
     occupancy = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.occupancy)
     b_factor = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.b_factor)
     elements = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.element)
 
-    n_total = len(coords)
-    invalid_coords_mask = ~np.isfinite(coords).all(axis=1)
+    n_total = coords.shape[1]
+    #invalid_coords_mask = ~np.isfinite(coords).all(axis=1)
+    # TODO patch while debugging... the above doesn't work with AtomArrayStack, but this won't
+    #  work with AtomArray
+    invalid_coords_mask = np.isnan(coords).all(axis=-1).any(axis=0)
     zero_occ_mask = occupancy <= 0
     valid_mask = ~invalid_coords_mask & ~zero_occ_mask
 
@@ -108,7 +114,7 @@ def extract_density_inputs_from_atomarray(
             f"({n_valid}/{n_total} atoms remaining)"
         )
 
-    coords_tensor = torch.from_numpy(coords[valid_mask]).to(device, dtype=torch.float32)
+    coords_tensor = torch.from_numpy(coords[:, valid_mask]).to(device, dtype=torch.float32)
     elements_tensor = torch.tensor(
         [ELEMENT_TO_ATOMIC_NUM[normalize_element(e)] for e in elements[valid_mask]],
         device=device,

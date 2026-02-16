@@ -38,6 +38,8 @@ from sampleworks.eval.structure_utils import (
 from sampleworks.utils.density_utils import compute_density_from_atomarray
 
 
+# TODO: URGENT modify to be compatible with new selection scheme in ProteinConfig
+#  that uses lists of selections instead of a single string.
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
     grid_search_dir = workspace_root / "grid_search_results"  # TODO make more general
@@ -52,7 +54,7 @@ def main(args: argparse.Namespace):
     # Test base map path resolution
     logger.debug("Testing base map path resolution:")
     for _, config in protein_configs.items():
-        for _occ in OCCUPANCY_LEVELS:  # TODO make configurable
+        for _occ in args.occupancies:
             _path = config.get_base_map_path_for_occupancy(_occ)  # will warn if not found
             if _path:
                 logger.debug(f"  {config.protein} occ={_occ}: {_path}")
@@ -74,7 +76,8 @@ def main(args: argparse.Namespace):
         #  and then we can merge them here.
         protein_ref_coords = get_reference_structure_coords(protein_config, protein_key)
         if protein_ref_coords is not None:
-            ref_coords[protein_key] = protein_ref_coords
+            for selection in protein_ref_coords.keys():
+                ref_coords[(protein_key, selection)] = protein_ref_coords[selection]
 
     # Calculate RSCC for all experiments
     # (BIG) TODO: implement a sliding-window version (global can be achieved with diff't selections.
@@ -87,94 +90,105 @@ def main(args: argparse.Namespace):
     logger.info(f"Using device: {_device}")
 
     results = []
-    base_map_cache: dict[tuple[str, float], tuple[XMap, XMap]] = {}
+    base_map_cache: dict[tuple[str, float, str], tuple[XMap, XMap]] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
     for _i, _exp in enumerate(all_experiments):
-        if _exp.protein not in protein_configs:
+        if _exp.protein in protein_configs:
+            protein = _exp.protein
+        elif _exp.protein.upper() in protein_configs:
+            protein = _exp.protein.upper()
+        else:
             logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
             continue
 
-        protein_config = protein_configs[_exp.protein]
+        protein_config = protein_configs[protein]
+        for selection in protein_config.selection:
+            # Check if we have reference coordinates for region extraction
+            if (protein, selection) not in ref_coords:
+                logger.warning(
+                    f"Skipping {_exp.protein_dir_name}/{selection}: no reference structure available "
+                    f"for {_exp.protein}, this may be due to a selection with zero atoms "
+                    f"or NaN/Inf coordinates. Check logs above."
+                )
+                continue
 
-        # Check if we have reference coordinates for region extraction
-        if _exp.protein not in ref_coords:
-            logger.warning(
-                f"Skipping {_exp.protein_dir_name}: no reference structure available "
-                f"for {_exp.protein}, this may be due to a selection with zero atoms "
-                f"or NaN/Inf coordinates. Check logs above."
-            )
-            continue
+            _selection_coords = ref_coords[(protein, selection)]
+            _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
+            if _base_map_path is None:
+                logger.warning(
+                    f"Skipping {_exp.protein_dir_name}: base map for occupancy {_exp.occ_a} not found"
+                )
+                continue
 
-        _selection_coords = ref_coords[_exp.protein]
-        _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
-        if _base_map_path is None:
-            logger.warning(
-                f"Skipping {_exp.protein_dir_name}: base map for occupancy {_exp.occ_a} not found"
-            )
-            continue
+            try:
+                # TODO: this needs to be better unified with what's in generate_synthetic_density
+                # Load base map for canonical unit cell,
+                # don't extract selection as we'll use the full map later too.
+                if (protein, _exp.occ_a, selection) not in base_map_cache:
+                    _base_xmap = protein_config.load_map(_base_map_path)
+                    if _base_xmap is None:
+                        raise ValueError(f"Failed to load base map from {_base_map_path}")
 
-        try:
-            # Load base map for canonical unit cell,
-            # don't extract selection as we'll use the full map later too.
-            if (_exp.protein, _exp.occ_a) not in base_map_cache:
-                _base_xmap = protein_config.load_map(_base_map_path)
-                if _base_xmap is None:
-                    raise ValueError(f"Failed to load base map from {_base_map_path}")
+                    # Extract the region around altloc residues from the base map
+                    _extracted_base = _base_xmap.extract(
+                        _selection_coords, padding=DEFAULT_SELECTION_PADDING
+                    )
+                    logger.info(
+                        f"Caching base and subselected maps for {protein} occ_a={_exp.occ_a} selection={selection}"
+                    )
+                    base_map_cache[(protein, _exp.occ_a, selection)] = (_base_xmap, _extracted_base)
+                else:
+                    _base_xmap, _extracted_base = base_map_cache[(protein, _exp.occ_a, selection)]
 
-                # Extract the region around altloc residues from the base map
-                _extracted_base = _base_xmap.extract(
+                # Validate extraction
+                if _extracted_base is None or _extracted_base.array.size == 0:
+                    raise ValueError(f"Extracted base map from {_base_map_path} is empty")
+
+                # Load refined structure
+                _structure = parse(_exp.refined_cif_path, ccd_mirror_path=None)
+
+                # Compute density from refined structure
+                atom_array = get_asym_unit_from_structure(_structure)
+                if not hasattr(atom_array, "b_factor"):
+                    logger.warning(
+                        f"No b-factor array found in {_exp.refined_cif_path}, setting to 20."
+                    )
+                    atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
+
+                _computed_density, _ = compute_density_from_atomarray(
+                    atom_array, xmap=_base_xmap, em_mode=False, device=_device
+                )
+
+                # Create an XMap from the computed density by copying the base xmap
+                # and replacing its array with the computed density
+                _computed_xmap = copy.deepcopy(_base_xmap)
+                _computed_xmap.array = _computed_density.cpu().numpy().squeeze()
+                _extracted_computed = _computed_xmap.extract(
                     _selection_coords, padding=DEFAULT_SELECTION_PADDING
                 )
-                logger.info(
-                    f"Caching base and subselected maps for {_exp.protein} occ_a={_exp.occ_a}"
+
+                # Validate extraction
+                if _extracted_computed is None or _extracted_computed.array.size == 0:
+                    raise ValueError("Extracted computed map is empty")
+
+                # Calculate RSCC on extracted regions
+                _exp.rscc = rscc(_extracted_base.array, _extracted_computed.array)
+                _exp.base_map_path = _base_map_path
+
+            except Exception as _e:
+                logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")
+                logger.error(f"  Traceback: {traceback.format_exc()}")
+                _exp.error = _e
+                _exp.rscc = np.nan  # this is the default, but better to be explicit.
+                _exp.base_map_path = _base_map_path
+
+            results.append(_exp)
+            if (_i + 1) % 10 == 0 or _i == 0:
+                logger.debug(
+                    f"  [{_i + 1}/{len(all_experiments)}] {_exp.protein_dir_name} / '{selection}' "
+                    f"{_exp.model} / {_exp.scaler} / ens{_exp.ensemble_size}_"
+                    f"gw{_exp.guidance_weight}: RSCC = {_exp.rscc:.4f}"
                 )
-                base_map_cache[(_exp.protein, _exp.occ_a)] = (_base_xmap, _extracted_base)
-            else:
-                _base_xmap, _extracted_base = base_map_cache[(_exp.protein, _exp.occ_a)]
-
-            # Validate extraction
-            if _extracted_base is None or _extracted_base.array.size == 0:
-                raise ValueError(f"Extracted base map from {_base_map_path} is empty")
-
-            # Load refined structure
-            _structure = parse(_exp.refined_cif_path, ccd_mirror_path=None)
-
-            # Compute density from refined structure
-            atom_array = get_asym_unit_from_structure(_structure)
-            _computed_density, _ = compute_density_from_atomarray(
-                atom_array, xmap=_base_xmap, em_mode=False, device=_device
-            )
-
-            # Create an XMap from the computed density by copying the base xmap
-            # and replacing its array with the computed density
-            _computed_xmap = copy.deepcopy(_base_xmap)
-            _computed_xmap.array = _computed_density.cpu().numpy().squeeze()
-            _extracted_computed = _computed_xmap.extract(
-                _selection_coords, padding=DEFAULT_SELECTION_PADDING
-            )
-
-            # Validate extraction
-            if _extracted_computed is None or _extracted_computed.array.size == 0:
-                raise ValueError("Extracted computed map is empty")
-
-            # Calculate RSCC on extracted regions
-            _exp.rscc = rscc(_extracted_base.array, _extracted_computed.array)
-            _exp.base_map_path = _base_map_path
-
-        except Exception as _e:
-            logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")
-            logger.error(f"  Traceback: {traceback.format_exc()}")
-            _exp.error = _e
-            _exp.rscc = np.nan  # this is the default, but better to be explicit.
-            _exp.base_map_path = _base_map_path
-
-        results.append(_exp)
-        if (_i + 1) % 10 == 0 or _i == 0:
-            logger.debug(
-                f"  [{_i + 1}/{len(all_experiments)}] {_exp.protein_dir_name} / "
-                f"{_exp.model} / {_exp.scaler} / ens{_exp.ensemble_size}_"
-                f"gw{_exp.guidance_weight}: RSCC = {_exp.rscc:.4f}"
-            )
 
     logger.info(f"\nCompleted RSCC calculation for {len(results)} experiments")
 
@@ -203,6 +217,8 @@ def main(args: argparse.Namespace):
         )
         logger.info(summary)
 
+    # temporarily commenting out since we don't currently have pure conformer maps
+"""    
     # Calculate correlation between base maps and pure conformer maps
     logger.info("Calculating correlations between base maps and pure conformer maps...")
     logger.info("This shows how well single conformers explain occupancy-mixed data")
@@ -290,7 +306,7 @@ def main(args: argparse.Namespace):
         f"\nCalculated single conformer explanatory power for "
         f"{len(df_base_vs_pure)} occupancy points"
     )
-
+"""
 
 if __name__ == "__main__":
     args = parse_args("Evaluate RSCC on grid search results.")

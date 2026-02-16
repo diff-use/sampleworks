@@ -31,6 +31,8 @@ def parse_args(description: str | None = None) -> argparse.Namespace:
         help="Number of parallel jobs to run. -1 uses all CPUs.",
         default=16,
     )
+    parser.add_argument("--target-filename", default="refined.cif",
+                        help="Target filename for the CIF files to process")
     return parser.parse_args()
 
 
@@ -48,7 +50,7 @@ def main(args) -> None:
 
     # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
     grid_search_dir = workspace_root / "grid_search_results"
-    all_experiments = scan_grid_search_results(grid_search_dir)
+    all_experiments = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
     logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
 
     # Now loop over experiments with joblib and get back tuples of experiment level metrics

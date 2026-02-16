@@ -42,7 +42,7 @@ class ProteinConfig:
 
     protein: str
     base_map_dir: Path
-    selection: str
+    selection: list[str]
     resolution: float
     map_pattern: str
     structure_pattern: str = ""
@@ -186,11 +186,13 @@ class ProteinConfig:
                     # Structure pattern is optional
                     structure_pattern = row.get("structure_pattern", "").strip()
 
+
+
                     # Create ProteinConfig object
                     config = cls(
                         protein=protein,
                         base_map_dir=base_map_dir,
-                        selection=row["selection"].strip(),
+                        selection=row["selection"].strip().split(";"),
                         resolution=resolution,
                         map_pattern=row["map_pattern"].strip(),
                         structure_pattern=structure_pattern,

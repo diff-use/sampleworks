@@ -157,6 +157,8 @@ def process_structure_to_trajectory_input(
     )
 
 
+# TODO: migrate this to biotite's own selection algebra
+#   https://github.com/diff-use/sampleworks/issues/56
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
     """Parse a selection string like 'chain A and resi 326-339'.
 
@@ -343,47 +345,46 @@ def get_reference_atomarraystack(
     return ref_path, ref_struct
 
 
+# TODO: update tests of this method after we've expanded the selection logic
 def get_reference_structure_coords(
     protein_config: ProteinConfig, protein_key: str, occ_list: tuple[float, ...] = (0.0, 1.0)
-) -> np.ndarray | None:
+) -> dict[str, np.ndarray] | None:
     """
     This has a slightly odd function, which is to output an array of all possible coordinates
     of a structure, with altlocs mixed in. It returns NO information about which atom is which
     or whether there are duplicates. It's used for masking density maps.
     """
-    protein_ref_coords_list = []
+    protein_ref_coords_list = {selection: [] for selection in protein_config.selection}
     for occ in occ_list:
         ref_path, ref_struct = get_reference_atomarraystack(protein_config, occ)
         if ref_path and ref_struct:  # if not None, it is already a validated Path object
-            try:
-                # TODO: enumerate actual exceptions this can raise.
-                coords = extract_selection_coordinates(ref_struct, protein_config.selection)
-                if not len(coords):
-                    logger.warning(
-                        f"  No atoms in selection '{protein_config.selection}' for {protein_key}"
+            for selection in protein_config.selection:
+                try:
+                    # TODO: enumerate actual exceptions this can raise.
+                    coords = extract_selection_coordinates(ref_struct, selection)
+                    if not len(coords):
+                        logger.warning(
+                            f"  No atoms in selection '{selection}' for {protein_key}"
+                        )
+                    elif not np.isfinite(coords).all():
+                        logger.warning(
+                            f"  NaN/Inf coordinates in selection "
+                            f"'{selection}' for {protein_key}"
+                        )
+                    else:
+                        protein_ref_coords_list[selection].append(coords)
+                        logger.info(
+                            f"  Loaded reference structure for {protein_key}: "
+                            f"{len(coords)} atoms in selection '{selection}'"
+                        )
+                except Exception as _e:
+                    _selection = selection if selection else "(none)"
+                    logger.error(
+                        f"  ERROR: Failed to load reference structure for {protein_key}: {_e}\n"
+                        f"    Path: {ref_path}\n"
+                        f"    Selection: {_selection}\n"
+                        f"    Traceback: {traceback.format_exc()}"
                     )
-                elif not np.isfinite(coords).all():
-                    logger.warning(
-                        f"  NaN/Inf coordinates in selection "
-                        f"'{protein_config.selection}' for {protein_key}"
-                    )
-                else:
-                    protein_ref_coords_list.append(coords)
-                    logger.info(
-                        f"  Loaded reference structure for {protein_key}: "
-                        f"{len(coords)} atoms in selection '{protein_config.selection}'"
-                    )
-            except Exception as _e:
-                _selection = protein_config.selection if protein_config.selection else "(none)"
-                logger.error(
-                    f"  ERROR: Failed to load reference structure for {protein_key}: {_e}\n"
-                    f"    Path: {ref_path}\n"
-                    f"    Selection: {_selection}\n"
-                    f"    Traceback: {traceback.format_exc()}"
-                )
 
-    if not protein_ref_coords_list:
-        logger.error(f"No reference structures found for {protein_key}")
-        return None
-
-    return np.vstack(protein_ref_coords_list)
+    return {k: np.vstack(protein_ref_coords_list[k])
+            for k in protein_ref_coords_list if protein_ref_coords_list[k]}
