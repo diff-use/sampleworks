@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sampleworks-boltz2-xrd
+  labels:
+    app: sampleworks
+    model: boltz2-xrd
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: sampleworks
+        model: boltz2-xrd
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: sampleworks
+        image: sampleworks:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - "-e"
+        - "boltz"
+        - "run_grid_search.py"
+        - "--proteins"
+        - "/data/input/proteins.csv"
+        - "--models"
+        - "boltz2"
+        - "--methods"
+        - "X-RAY DIFFRACTION"
+        - "--scalers"
+        - "pure_guidance"
+        - "--partial-diffusion-step"
+        - "120"
+        - "--ensemble-sizes"
+        - "8"
+        - "--gradient-weights"
+        - "0.1 0.2 0.5"
+        - "--gradient-normalization"
+        - "--augmentation"
+        - "--align-to-input"
+        - "--output-dir"
+        - "/data/results"
+        resources:
+          limits:
+            nvidia.com/gpu: 2
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+        - name: data-input
+          mountPath: /data/input
+          readOnly: true
+        - name: data-results
+          mountPath: /data/results
+        - name: msa-cache
+          mountPath: /root/.sampleworks/msa
+        - name: checkpoints
+          mountPath: /mnt/diffuse-private
+          readOnly: true
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+      - name: data-input
+        hostPath:
+          path: /mnt/diffuse-private/raw/sampleworks/initial_dataset_40
+          type: Directory
+      - name: data-results
+        hostPath:
+          path: /home/ubuntu/sampleworks-exp/grid_search_results
+          type: DirectoryOrCreate
+      - name: msa-cache
+        hostPath:
+          path: /home/ubuntu/sampleworks-exp/msa_cache
+          type: DirectoryOrCreate
+      - name: checkpoints
+        hostPath:
+          path: /mnt/diffuse-private
+          type: Directory

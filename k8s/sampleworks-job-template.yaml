@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sampleworks-MODEL_NAME
+  labels:
+    app: sampleworks
+    model: MODEL_NAME
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: sampleworks
+        model: MODEL_NAME
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: sampleworks
+        image: sampleworks:latest
+        imagePullPolicy: Never
+        args:
+        - "-e"
+        - "PIXI_ENV"
+        - "run_grid_search.py"
+        - "--proteins"
+        - "/data/input/proteins.csv"
+        - "--models"
+        - "MODEL_TYPE"
+        - "--scalers"
+        - "pure_guidance"
+        - "--ensemble-sizes"
+        - "8"
+        - "--gradient-weights"
+        - "GRADIENT_WEIGHTS"
+        - "--gradient-normalization"
+        - "--augmentation"
+        - "--align-to-input"
+        - "--output-dir"
+        - "/data/results"
+        EXTRA_ARGS
+        resources:
+          limits:
+            nvidia.com/gpu: 2
+        volumeMounts:
+        - name: data-input
+          mountPath: /data/input
+          readOnly: true
+        - name: data-results
+          mountPath: /data/results
+        - name: msa-cache
+          mountPath: /root/.sampleworks/msa
+        - name: checkpoints
+          mountPath: /mnt/diffuse-private
+          readOnly: true
+      volumes:
+      - name: data-input
+        hostPath:
+          path: /mnt/diffuse-private/raw/sampleworks/initial_dataset_40
+          type: Directory
+      - name: data-results
+        hostPath:
+          path: /home/ubuntu/sampleworks-exp/grid_search_results
+          type: DirectoryOrCreate
+      - name: msa-cache
+        hostPath:
+          path: /home/ubuntu/sampleworks-exp/msa_cache
+          type: DirectoryOrCreate
+      - name: checkpoints
+        hostPath:
+          path: /mnt/diffuse-private
+          type: Directory
