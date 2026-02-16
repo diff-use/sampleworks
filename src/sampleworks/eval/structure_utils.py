@@ -345,7 +345,6 @@ def get_reference_atomarraystack(
     return ref_path, ref_struct
 
 
-# TODO: update tests of this method after we've expanded the selection logic
 def get_reference_structure_coords(
     protein_config: ProteinConfig, protein_key: str, occ_list: tuple[float, ...] = (0.0, 1.0)
 ) -> dict[str, np.ndarray] | None:

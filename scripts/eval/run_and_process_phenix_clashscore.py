@@ -56,6 +56,7 @@ def main(args) -> None:
 
     # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
     grid_search_dir = workspace_root / "grid_search_results"
+
     all_experiments = scan_grid_search_results(
         grid_search_dir, target_filename=args.target_filename
     )

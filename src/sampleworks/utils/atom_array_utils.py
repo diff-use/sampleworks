@@ -351,11 +351,7 @@ def select_altloc(
     if return_full_array:
         mask = np.isin(
             atom_array.altloc_id,  # ty: ignore[invalid-argument-type]
-            list(
-                {
-                    altloc_id,
-                }.union(BLANK_ALTLOC_IDS)
-            ),
+            list({altloc_id,}.union(BLANK_ALTLOC_IDS)),
         )
     else:
         mask = atom_array.altloc_id == altloc_id

@@ -116,7 +116,7 @@ def main(args: argparse.Namespace):
             _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
             if _base_map_path is None:
                 logger.warning(
-                    f"Skipping {_exp.protein_dir_name}: base map for "
+                    f"Skipping {_exp.protein_dir_name}: base map for selection {selection} and "
                     f"occupancy {_exp.occ_a} not found"
                 )
                 continue
@@ -124,7 +124,7 @@ def main(args: argparse.Namespace):
             try:
                 # TODO: this needs to be better unified with what's in generate_synthetic_density
                 # Load base map for canonical unit cell,
-                # don't overwrite the base map with selection map as we'll use the full map later too.
+                # don't overwrite the base map with selection map--we'll use the full map later too.
                 if (protein, _exp.occ_a, selection) not in base_map_cache:
                     _base_xmap = protein_config.load_map(_base_map_path)
                     if _base_xmap is None:
@@ -227,8 +227,6 @@ def main(args: argparse.Namespace):
         logger.info(summary)
 
     # temporarily commenting out since we don't currently have pure conformer maps
-
-
 """    
     # Calculate correlation between base maps and pure conformer maps
     logger.info("Calculating correlations between base maps and pure conformer maps...")
