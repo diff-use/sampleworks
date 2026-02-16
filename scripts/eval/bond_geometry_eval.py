@@ -238,7 +238,6 @@ def main(args: argparse.Namespace):
 
             all_bond_length_outliers.append(bond_length_outliers)
             all_bond_angle_outliers.append(bond_angle_outliers)
-
             all_bond_length_violation_fractions.append(
                 {
                     "outlier_fraction": bond_length_violation_fraction,
