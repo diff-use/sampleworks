@@ -227,7 +227,7 @@ def _process_single_row(
     strip_hydrogens: bool = False,
     strip_waters: bool = False,
     strip_ligands: bool = False,
-    save_structure: bool = False,
+    save_structure: bool = True,
 ) -> None:
     """Process a single structure row.
 
@@ -248,15 +248,17 @@ def _process_single_row(
     device
         PyTorch device for computation
     strip_hydrogens
-        If True, remove hydrogen atoms before computing density.
+        If True, remove hydrogen atoms before computing density. Default is False.
     strip_waters
-        If True, remove water molecules before computing density.
+        If True, remove water molecules before computing density. Default is False.
     strip_ligands
-        If True, remove ligand molecules (non-water heteroatoms) before computing density. This is
-        done by keeping only polymer atoms in the selection, which are typically not ligands.
+        If True, remove ligand molecules (non-water heteroatoms) before computing density. Default
+        is False.
+        This is done by keeping only polymer atoms in the selection, which are typically not
+        ligands.
         TODO: be more thorough with this? We could make this a transform
     save_structure
-        If True, save the processed structure to a CIF file in the input directory.
+        If True, save the processed structure to a CIF file in the input directory. Default is True.
     """
     structure_path = base_dir / row.filename
     if not structure_path.exists():
@@ -278,14 +280,11 @@ def _process_single_row(
         logger.error(f"Selection error for {row.filename}: {e}")
         return
 
-    if strip_hydrogens:
-        atom_array = remove_hydrogens(atom_array)
-
-    if strip_waters:
-        atom_array = remove_waters(atom_array)
-
-    if strip_ligands:
-        atom_array = keep_polymer(keep_amino_acids(atom_array))
+    atom_array = remove_hydrogens(atom_array) if strip_hydrogens else atom_array
+    atom_array = remove_waters(atom_array) if strip_waters else atom_array
+    # This is currently a sort of hacky way to remove ligands by keeping only polymer atoms
+    # TODO: there's probably a more robust way to do this
+    atom_array = keep_polymer(keep_amino_acids(atom_array)) if strip_ligands else atom_array
 
     altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
     if row.occ_values:
@@ -516,43 +515,27 @@ def main() -> None:
             save_structure=args.save_structure,
         )
     elif args.structure:
-        atom_array = load_structure_with_altlocs(args.structure)
-        atom_array = apply_selection(atom_array, args.selection)
-
-        if args.remove_hydrogens:
-            atom_array = remove_hydrogens(atom_array)
-
-        if args.remove_waters:
-            atom_array = remove_waters(atom_array)
-
-        if args.remove_ligands:
-            atom_array = keep_polymer(keep_amino_acids(atom_array))
-
-        altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
-        occ_values = (
-            [float(v.strip()) for v in args.occ_values.split(":")] if args.occ_values else None
+        row = BatchRow(
+            filename=str(args.structure),
+            selection=args.selection,
+            occ_values=[float(v.strip()) for v in args.occ_values.split(":")]
+            if args.occ_values
+            else [],
+            mapfile=args.output.name if args.output else None,
         )
-        atom_array = assign_occupancies(atom_array, altloc_info, args.occ_mode, occ_values)
-
-        density, xmap_torch = compute_density_from_atomarray(
-            atom_array, resolution=args.resolution, em_mode=args.em_mode, device=device
+        _process_single_row(
+            row=row,
+            occ_mode=args.occ_mode,
+            base_dir=args.structure.parent,
+            output_dir=args.output.parent if args.output else Path("."),
+            resolution=args.resolution,
+            em_mode=args.em_mode,
+            device=device,
+            strip_hydrogens=args.remove_hydrogens,
+            strip_waters=args.remove_waters,
+            strip_ligands=args.remove_ligands,
+            save_structure=args.save_structure,
         )
-
-        if args.save_structure:
-            # Shift coordinates into the grid frame so the saved CIF aligns with
-            # the CCP4 map. CCP4 format (unlike MRC) cannot encode an arbitrary Cartesian
-            # origin, so we move the atoms instead. Possible the better way is to resample the map?
-            atom_array.coord = atom_array.coord - xmap_torch.origin  # pyright: ignore[reportOptionalOperand]
-            structure_output_path = (
-                args.structure.parent / f"{args.structure.stem}_density_input.cif"
-            )
-            save_structure_to_cif(atom_array, structure_output_path)
-            logger.info(f"Saved processed structure to {structure_output_path}")
-
-        output_path = (
-            args.output or args.output_dir / f"{args.structure.stem}_{args.resolution:.2f}A.ccp4"
-        )
-        save_density(density, xmap_torch, output_path)
     else:
         logger.error("Please specify --structure or --batch-csv")
         sys.exit(1)
