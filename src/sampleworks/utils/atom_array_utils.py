@@ -286,13 +286,11 @@ def map_altlocs_to_stack(
         # sets, hence conversion to list.
         no_altloc_mask = np.isin(atom_array.altloc_id, list(BLANK_ALTLOC_IDS))
         altloc_mask = np.isin(atom_array.altloc_id, altloc_ids)
-        selection_mask = atom_array.mask(selection)  # pyright:ignore (reportOptionalCall)
+        selection_mask = atom_array.mask(selection)
         mask = np.logical_or(no_altloc_mask, np.logical_and(altloc_mask, selection_mask))
-
-        # theoretically this could be empty or an Atom; I am not going to worry about that case.
-        atom_array = atom_array[mask]  # pyright:ignore
+        atom_array = atom_array[mask]
     elif selection is not None:
-        atom_array = atom_array.query(selection)  # pyright:ignore (reportOptionalCall)
+        atom_array = atom_array.query(selection)
 
     # The available altloc ids might have changed if one or more are missing from the selection.
     altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
@@ -467,6 +465,7 @@ def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
 
 
 def filter_to_common_atoms(*arrays: AtomArray | AtomArrayStack) -> tuple[AtomArrayStack, ...]:
+
     """Filter multiple AtomArrays/AtomArrayStacks to only include common atoms.
 
     Creates unique identifiers for each atom based on chain_id, res_id, and

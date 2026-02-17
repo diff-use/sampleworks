@@ -186,8 +186,6 @@ class ProteinConfig:
                     # Structure pattern is optional
                     structure_pattern = row.get("structure_pattern", "").strip()
 
-
-
                     # Create ProteinConfig object
                     config = cls(
                         protein=protein,

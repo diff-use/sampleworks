@@ -146,7 +146,8 @@ def nn_lddt_clustering(
     else:
         lddt_distance = 1 - self_lddt_matrix
         ssamples = silhouette_samples(lddt_distance, closest_ref_indices, metric="precomputed")
-        sscore = float(np.mean(ssamples))
+        # ssamples should be array-like, pyright claims there's no defn of np.mean for that? 
+        sscore = float(np.mean(ssamples))  # pyright:ignore
 
     # Compute the occupancy of each cluster based on the number of structures in the cluster
     cluster_sizes = np.bincount(closest_ref_indices, minlength=len(ref_atom_array_stack))
