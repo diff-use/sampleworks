@@ -27,7 +27,7 @@ import torch
 from atomworks.io.parser import parse
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
-from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING, OCCUPANCY_LEVELS
+from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from sampleworks.eval.metrics import rscc
@@ -106,8 +106,8 @@ def main(args: argparse.Namespace):
             # Check if we have reference coordinates for region extraction
             if (protein, selection) not in ref_coords:
                 logger.warning(
-                    f"Skipping {_exp.protein_dir_name}/{selection}: no reference structure available "
-                    f"for {_exp.protein}, this may be due to a selection with zero atoms "
+                    f"Skipping {_exp.protein_dir_name}/{selection}: no reference structure "
+                    f"available for {_exp.protein}, this may be due to a selection with zero atoms "
                     f"or NaN/Inf coordinates. Check logs above."
                 )
                 continue
@@ -116,7 +116,8 @@ def main(args: argparse.Namespace):
             _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
             if _base_map_path is None:
                 logger.warning(
-                    f"Skipping {_exp.protein_dir_name}: base map for occupancy {_exp.occ_a} not found"
+                    f"Skipping {_exp.protein_dir_name}: base map for "
+                    f"occupancy {_exp.occ_a} not found"
                 )
                 continue
 
@@ -134,7 +135,8 @@ def main(args: argparse.Namespace):
                         _selection_coords, padding=DEFAULT_SELECTION_PADDING
                     )
                     logger.info(
-                        f"Caching base and subselected maps for {protein} occ_a={_exp.occ_a} selection={selection}"
+                        f"Caching base and subselected maps for {protein} "
+                        f"occ_a={_exp.occ_a} selection={selection}"
                     )
                     base_map_cache[(protein, _exp.occ_a, selection)] = (_base_xmap, _extracted_base)
                 else:
@@ -149,6 +151,9 @@ def main(args: argparse.Namespace):
 
                 # Compute density from refined structure
                 atom_array = get_asym_unit_from_structure(_structure)
+                if not hasattr(atom_array, "coord") or atom_array.coord is None:
+                    raise AttributeError("AtomArray | AtomArrayStack is missing coordinates")
+                
                 if not hasattr(atom_array, "b_factor"):
                     logger.warning(
                         f"No b-factor array found in {_exp.refined_cif_path}, setting to 20."
@@ -218,6 +223,8 @@ def main(args: argparse.Namespace):
         logger.info(summary)
 
     # temporarily commenting out since we don't currently have pure conformer maps
+
+
 """    
     # Calculate correlation between base maps and pure conformer maps
     logger.info("Calculating correlations between base maps and pure conformer maps...")

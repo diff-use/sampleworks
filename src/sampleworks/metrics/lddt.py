@@ -346,8 +346,10 @@ class AllAtomLDDT(Metric):
         if selection is not None:
             mask_fn = predicted_aa_stack.mask
             if mask_fn is None:
-                raise RuntimeError("predicted_aa_stack does not support mask() You should read in atom arrays"
-                                   "using `atomworks.io.utils.io_utils.load_any()` to access this method")
+                raise RuntimeError(
+                    "predicted_aa_stack does not support mask() You should read in atom arrays"
+                    "using `atomworks.io.utils.io_utils.load_any()` to access this method"
+                )
             mask = mask_fn(selection)
             selected_arr = cast(AtomArray, predicted_aa_stack[0, mask])
             selected_token_ids = selected_arr.token_id

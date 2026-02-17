@@ -54,8 +54,12 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input-csv", type=Path, required=True,
-                        help="Path to the input CSV config file used for grid search")
+    parser.add_argument(
+        "--input-csv",
+        type=Path,
+        required=True,
+        help="Path to the input CSV config file used for grid search",
+    )
     parser.add_argument("--output-file", type=Path, required=True)
     parser.add_argument("--min-span", type=int, default=5)
     parser.add_argument("--altloc-label", type=str, default="label_alt_id")

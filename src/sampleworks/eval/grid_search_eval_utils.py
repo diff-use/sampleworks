@@ -9,7 +9,6 @@ from importlib.resources import files
 from pathlib import Path
 
 from loguru import logger
-
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
@@ -178,7 +177,10 @@ def parse_args(description: str | None = None):
         default=files("sampleworks.data") / "protein_configs.csv",
     )
     parser.add_argument(
-        "--occupancies", nargs="+", type=float, help="Occupancies to evaluate",
+        "--occupancies",
+        nargs="+",
+        type=float,
+        help="Occupancies to evaluate",
         default=OCCUPANCY_LEVELS,
     )
     return parser.parse_args()

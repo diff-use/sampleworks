@@ -1,7 +1,7 @@
 import itertools
 from collections import OrderedDict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from atomworks.io.utils.io_utils import load_any
 from loguru import logger
@@ -10,13 +10,13 @@ from sampleworks.utils.atom_array_utils import find_all_altloc_ids, select_altlo
 
 
 def find_altloc_selections(
-        cif_file: Path, altloc_label: str = "label_alt_id", min_span: int = 5
+    cif_file: Path | str, altloc_label: str = "label_alt_id", min_span: int = 5
 ) -> Iterable[str]:
     """
     Find alternative location selections in a CIF file.
 
     Parameters:
-    - cif_file (Path): Path to the CIF file.
+    - cif_file (Path | str): Path to the CIF file.
     - altloc_label (str):
         Label for alternative location identifier. Default is 'label_alt_id'.
         If you don't know it, search for "_atom_site" in your CIF file to identify it.
@@ -27,6 +27,7 @@ def find_altloc_selections(
     Example: for RCSB PDB entry 5SOP, this should return
 
     """
+    cif_file = Path(cif_file)
     # TODO: we should really write these in C++
     logger.info(f"Finding altloc selections for {cif_file}")
     structure = load_any(cif_file, altloc="all", extra_fields=["occupancy", altloc_label])
@@ -37,7 +38,7 @@ def find_altloc_selections(
     altlocs = OrderedDict()
     for k in find_all_altloc_ids(structure):
         altk = select_altloc(structure, altloc_id=k)
-        unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))
+        unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))  # pyright:ignore (reportArgumentType)
         # probably unnecessary but making sure these are consistently ordered
         altlocs[k] = sorted(list(unique_altk))
 
@@ -47,7 +48,7 @@ def find_altloc_selections(
 
 
 def find_consecutive_residues(
-        altlocs: dict[str, list[tuple[str, int]]]
+    altlocs: dict[str, list[tuple[str, int]]],
 ) -> Iterable[tuple[str, int, int, set[str]]]:
     """
     Find and yield spans of consecutive residues with the same set of
@@ -103,9 +104,9 @@ def find_consecutive_residues(
             res_membership = {k for k in chain_altlocs if next_res_id in chain_altlocs[k]}
             if res_membership != current_membership or next_res_id - current_res_id > 1:
                 if start is not None:
-                    yield chain, start, current_res_id, current_membership
+                    yield chain, start, current_res_id, current_membership  # pyright:ignore
 
                 start = next_res_id if len(res_membership) > 1 else None
                 current_membership = res_membership if len(res_membership) > 1 else None
         if start is not None and next_res_id:
-            yield chain, start, next_res_id, current_membership
+            yield chain, start, next_res_id, current_membership  # pyright:ignore

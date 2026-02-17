@@ -363,13 +363,10 @@ def get_reference_structure_coords(
                     # TODO: enumerate actual exceptions this can raise.
                     coords = extract_selection_coordinates(ref_struct, selection)
                     if not len(coords):
-                        logger.warning(
-                            f"  No atoms in selection '{selection}' for {protein_key}"
-                        )
+                        logger.warning(f"  No atoms in selection '{selection}' for {protein_key}")
                     elif not np.isfinite(coords).all():
                         logger.warning(
-                            f"  NaN/Inf coordinates in selection "
-                            f"'{selection}' for {protein_key}"
+                            f"  NaN/Inf coordinates in selection '{selection}' for {protein_key}"
                         )
                     else:
                         protein_ref_coords_list[selection].append(coords)
@@ -386,5 +383,8 @@ def get_reference_structure_coords(
                         f"    Traceback: {traceback.format_exc()}"
                     )
 
-    return {k: np.vstack(protein_ref_coords_list[k])
-            for k in protein_ref_coords_list if protein_ref_coords_list[k]}
+    return {
+        k: np.vstack(protein_ref_coords_list[k])
+        for k in protein_ref_coords_list
+        if protein_ref_coords_list[k]
+    }

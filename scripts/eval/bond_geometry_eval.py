@@ -12,8 +12,7 @@ from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray, BadStructureError, index_distance
 from biotite.structure.io.pdbx import CIFFile, get_structure
 from loguru import logger
-from peppr.bounds import get_distance_bounds
-from sampleworks.eval.eval_dataclasses import ProteinConfig
+from peppr.bounds import get_distance_bounds  # pyright:ignore
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from scipy.special import comb
 from tqdm import tqdm
@@ -54,11 +53,11 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
             "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
         )
         return np.nan, pd.DataFrame()
-        
+
     bond_indices = np.sort(pose.bonds.as_array()[:, :2], axis=1)
     if len(bond_indices) == 0:
         return np.nan, pd.DataFrame()
-    
+
     bond_lengths = index_distance(pose, bond_indices)
     # The bounds matrix has the lower bounds in the lower triangle
     # and the upper bounds in the upper triangle
@@ -151,7 +150,7 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
 
     if len(bond_indices) == 0:
         return np.nan, pd.DataFrame()
-    
+
     bond_indices = np.sort(bond_indices, axis=1)
     center_indices = np.array(center_indices)
 

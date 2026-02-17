@@ -282,37 +282,41 @@ class TestGetReferenceAtomArrayStack:
 class TestGetReferenceStructureCoords:
     """Tests for get_reference_structure_coords function."""
 
-    def test_returns_none_when_no_valid(self, mock_protein_config):
+    def test_returns_empty_dict_when_no_valid(self, mock_protein_config):
         """Test that no valid structures returns None."""
         coords = get_reference_structure_coords(mock_protein_config, "test", occ_list=(0.0, 1.0))
-        assert coords is None
+        assert coords == {}
 
     def test_handles_exceptions_gracefully(self, tmp_path):
         """Test that exceptions are logged and function continues."""
         config = ProteinConfig(
             protein="test",
             base_map_dir=tmp_path,
-            selection="chain Z and resi 999",
+            selection=["chain Z and resi 999",],
             resolution=2.0,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="{occ_str}.cif",
         )
 
         coords = get_reference_structure_coords(config, "test", occ_list=(0.5,))
-        assert coords is None
+        assert coords == {}
 
     def test_with_real_structure(self, resources_dir):
         """Test loading coords from real structure."""
+
+        selections = ["chain A and resi 1-10", ]
         config = ProteinConfig(
             protein="6b8x",
             base_map_dir=resources_dir / "6b8x",
-            selection="chain A and resi 1-10",
+            selection=selections,
             resolution=1.74,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="6b8x_final.pdb",
         )
 
-        coords = get_reference_structure_coords(config, "6b8x", occ_list=(0.5,))
+        results = get_reference_structure_coords(config, "6b8x", occ_list=(0.5,))
+        assert set(results.keys()) == set(selections)
+        coords = results[selections[0]]
         if coords is not None:
             assert isinstance(coords, np.ndarray)
             assert coords.ndim == 2

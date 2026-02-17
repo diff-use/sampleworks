@@ -88,7 +88,7 @@ def extract_density_inputs_from_atomarray(
         Tuple of (coordinates, elements, b_factors, occupancies) as PyTorch tensors.
         All tensors have shape (1, n_atoms) or (1, n_atoms, 3) for coordinates.
     """
-    atoms_array = ensure_atom_array_stack(atom_array)
+    atom_array = ensure_atom_array_stack(atom_array)
 
     coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
     occupancy = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.occupancy)
@@ -96,7 +96,7 @@ def extract_density_inputs_from_atomarray(
     elements = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.element)
 
     n_total = coords.shape[1]
-    #invalid_coords_mask = ~np.isfinite(coords).all(axis=1)
+    # invalid_coords_mask = ~np.isfinite(coords).all(axis=1)
     # TODO patch while debugging... the above doesn't work with AtomArrayStack, but this won't
     #  work with AtomArray
     invalid_coords_mask = np.isnan(coords).all(axis=-1).any(axis=0)
