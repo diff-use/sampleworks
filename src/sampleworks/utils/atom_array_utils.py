@@ -316,9 +316,9 @@ def select_altloc(
         mask = atom_array.altloc_id == altloc_id
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -348,9 +348,9 @@ def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Ato
     mask = ~hetero
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def keep_polymer(
@@ -380,10 +380,10 @@ def keep_polymer(
     # TODO: fix once this is fixed: https://github.com/biotite-dev/biotite/issues/865
     if isinstance(atom_array, AtomArrayStack):
         polymer_mask = filter_polymer(atom_array[0], pol_type=pol_type)
-        return cast(AtomArrayStack, atom_array[:, polymer_mask])
+        return atom_array[:, polymer_mask]  # pyright: ignore[reportReturnType]
     else:
         polymer_mask = filter_polymer(atom_array, pol_type=pol_type)
-        return cast(AtomArray, atom_array[polymer_mask])
+        return atom_array[polymer_mask]  # pyright: ignore[reportReturnType]
 
 
 def keep_amino_acids(
@@ -410,9 +410,9 @@ def keep_amino_acids(
     amino_acid_mask = filter_amino_acids(atom_array)
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, amino_acid_mask])
+        return atom_array[:, amino_acid_mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[amino_acid_mask])
+        return atom_array[amino_acid_mask]  # pyright: ignore[reportReturnType]
 
 
 def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -440,9 +440,9 @@ def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Atom
     mask = (element != "H") & (element != "D")
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -472,9 +472,9 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
     mask = np.isin(atom_name, backbone_atoms)
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
