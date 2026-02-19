@@ -2,7 +2,7 @@ import re
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import cast, Any
 
 import einx
 import numpy as np
@@ -157,7 +157,7 @@ def process_structure_to_trajectory_input(
     )
 
 
-# TODO: migrate this to biotite's own selection algebra
+# TODO: migrate this to atomworks's selection algebra that is added to AtomArray/Stack
 #   https://github.com/diff-use/sampleworks/issues/56
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
     """Parse a selection string like 'chain A and resi 326-339'.
@@ -219,8 +219,22 @@ def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
     if selection is None:
         return atom_array
 
+    if not any(x in selection for x in ("==", ">", "<", "<=", ">=", " in ")):
+        mask = get_mask_from_old_selection_string(atom_array, selection)
+    else:
+        mask = atom_array.mask(selection)
+
+    return cast(AtomArray, atom_array[mask])
+
+
+def get_mask_from_old_selection_string(
+        atom_array: AtomArray, selection: str
+) -> np.ndarray[tuple[int], np.dtype[Any]]:
+    DeprecationWarning(f"Using old-style selection strings like {selection} is deprecated."
+                       f" Use atomworks/pandas style selection strings instead.")
     chain_id, resi_start, resi_end = parse_selection_string(selection)
-    mask = np.ones(len(atom_array), dtype=bool)
+    # use the length of any of the required non-coord attributes to get the mask shape
+    mask = np.ones(len(atom_array.res_id), dtype=bool)
 
     if chain_id is not None:
         mask &= atom_array.chain_id == chain_id
@@ -234,8 +248,7 @@ def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
 
     if mask.sum() == 0:
         raise ValueError(f"Selection '{selection}' matched no atoms")
-
-    return cast(AtomArray, atom_array[mask])
+    return mask
 
 
 def extract_selection_coordinates(
@@ -265,24 +278,10 @@ def extract_selection_coordinates(
     else:
         working_array = atom_array
 
-    chain_id, resi_start, resi_end = parse_selection_string(selection)
-
-    # Create the selection mask, don't rely on len(atom_array) in case it is the ensemble size
-    mask = np.ones(len(working_array), dtype=bool)
-
-    if chain_id is not None:
-        mask &= working_array.chain_id == chain_id
-
-    if resi_start is not None:
-        res_ids = cast(np.ndarray, working_array.res_id)
-        if resi_end is not None:
-            # Explicitly check for None to satisfy pyright
-            start: int = resi_start
-            end: int = resi_end
-            mask &= (res_ids >= start) & (res_ids <= end)
-        else:
-            start = resi_start
-            mask &= res_ids == start
+    if not any(x in selection for x in ("==", ">", "<", "<=", ">=")):
+        mask = get_mask_from_old_selection_string(atom_array, selection)
+    else:
+        mask = atom_array.mask(selection)
 
     selected_coords = cast(np.ndarray, working_array.coord)[mask]
 
@@ -290,7 +289,6 @@ def extract_selection_coordinates(
     if len(selected_coords) == 0:
         raise RuntimeError(
             f"No atoms matched selection: '{selection}'. "
-            f"Chain ID: {chain_id}, Residue range: {resi_start}-{resi_end}. "
             f"Total atoms in structure: {len(atom_array)}"
         )
 

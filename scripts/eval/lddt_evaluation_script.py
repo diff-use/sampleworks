@@ -176,7 +176,11 @@ def translate_selection(selection: str) -> str:
     # current selection strings are pymol like, and we want to convert to atomworks/pandas like
     # this should be a temporary measure only until we switch to atomworks style in the RSCC script
 
-    logger.warning(
+    if any(x in selection for x in ("==", ">", "<", "<=", ">=", " in ")):
+        # assume this is already atomworks/pandas style and ignore.
+        return selection
+
+    DeprecationWarning(
         "DEPRECATED: translate_selection converts from some pymol-like selection strings to "
         "AtomWorks selection strings, but is not guaranteed to be correct for all cases."
     )

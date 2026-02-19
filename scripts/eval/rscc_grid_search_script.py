@@ -178,6 +178,7 @@ def main(args: argparse.Namespace):
                     raise ValueError("Extracted computed map is empty")
 
                 # Calculate RSCC on extracted regions
+                # TODO: don't alter the input object _exp, just get a copy of it as a dict.
                 _exp.rscc = rscc(_extracted_base, _extracted_computed)
                 _exp.base_map_path = _base_map_path
 

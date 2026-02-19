@@ -129,7 +129,7 @@ def scan_grid_search_results(
     # Recurse into subdirectories
     for item in current_directory.iterdir():
         if item.is_dir() and not item.name.endswith(".json"):
-            experiments.extend(scan_grid_search_results(item, current_depth + 1, target_depth))
+            experiments.extend(scan_grid_search_results(item, current_depth + 1, target_depth, target_filename=target_filename))
 
     return experiments
 
