@@ -16,7 +16,7 @@ analysis = [
   "seaborn"
 ]
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
-dev = ["pytest", "pytest-cov", "mypy", "prek", "pyright", "ruff", "pytest-loguru"]
+dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
