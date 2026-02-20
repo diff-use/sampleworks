@@ -127,3 +127,9 @@ order-by-type = false
 
 [tool.ruff.lint.per-file-ignores]
 "*.mo.py" = ["ALL"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+unresolved-import = "ignore"
