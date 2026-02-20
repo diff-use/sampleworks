@@ -8,6 +8,7 @@ import torch
 from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
+from sampleworks.core.rewards.real_space_density import extract_density_inputs_from_atomarray
 from sampleworks.utils.density_utils import (
     compute_density_from_atomarray,
     create_synthetic_grid,
@@ -344,3 +345,127 @@ class TestComputeDensityErrors:
 
         with pytest.raises((ValueError, RuntimeError, IndexError)):
             compute_density_from_atomarray(atom_array, resolution=2.0, em_mode=False, device=device)
+
+
+class TestExtractDensityInputsFromAtomArrayStack:
+    """Tests for extract_density_inputs_from_atomarray with AtomArrayStack input."""
+
+    def test_stack_returns_correct_batch_dim(
+        self, simple_atom_array_stack: AtomArrayStack, device: torch.device
+    ):
+        """Output tensors should have n_models as the batch dimension."""
+        n_models = simple_atom_array_stack.stack_depth()
+        n_atoms = simple_atom_array_stack.array_length()
+
+        coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
+            simple_atom_array_stack, device
+        )
+        assert coords.shape == (n_models, n_atoms, 3)
+        assert elements.shape == (n_models, n_atoms)
+        assert b_factors.shape == (n_models, n_atoms)
+        assert occupancies.shape == (n_models, n_atoms)
+
+    def test_stack_coords_match_per_model(
+        self, simple_atom_array_stack: AtomArrayStack, device: torch.device
+    ):
+        """Coordinates in each batch entry should match the corresponding model."""
+        coords, _, _, _ = extract_density_inputs_from_atomarray(simple_atom_array_stack, device)
+        for i in range(simple_atom_array_stack.stack_depth()):
+            expected = torch.from_numpy(simple_atom_array_stack.coord[i].copy()).to(  # pyright: ignore[reportOptionalSubscript]
+                device, dtype=torch.float32
+            )
+            torch.testing.assert_close(coords[i], expected)
+
+    def test_stack_non_uniform_occupancy_preserved(
+        self, simple_atom_array_stack: AtomArrayStack, device: torch.device
+    ):
+        """Occupancy values are preserved as provided for stack inputs."""
+        n_models = simple_atom_array_stack.stack_depth()
+        n_atoms = simple_atom_array_stack.array_length()
+
+        _, _, _, occupancies = extract_density_inputs_from_atomarray(
+            simple_atom_array_stack, device
+        )
+        expected = torch.full((n_models, n_atoms), 1.0, device=device, dtype=torch.float32)
+        torch.testing.assert_close(occupancies, expected)
+
+    def test_stack_filters_invalid_coords_across_models(
+        self, atom_array_stack_with_nan_coords: AtomArrayStack, device: torch.device
+    ):
+        """An atom with NaN coords in any model should be filtered out entirely."""
+        n_models = atom_array_stack_with_nan_coords.stack_depth()
+
+        coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
+            atom_array_stack_with_nan_coords, device
+        )
+        # Atom at index 1 is NaN in model 2 -> filtered out, leaving 2 atoms
+        assert coords.shape == (n_models, 2, 3)
+        assert elements.shape == (n_models, 2)
+        assert b_factors.shape == (n_models, 2)
+        assert occupancies.shape == (n_models, 2)
+
+    def test_single_array_shapes_unchanged(
+        self, simple_atom_array: AtomArray, device: torch.device
+    ):
+        """Single AtomArray should still produce (1, n_atoms, ...) shapes."""
+        n_atoms = len(simple_atom_array)
+        coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
+            simple_atom_array, device
+        )
+        assert coords.shape == (1, n_atoms, 3)
+        assert elements.shape == (1, n_atoms)
+        assert b_factors.shape == (1, n_atoms)
+        assert occupancies.shape == (1, n_atoms)
+
+
+class TestComputeDensityFromAtomArrayStack:
+    """Tests for compute_density_from_atomarray with AtomArrayStack input."""
+
+    def test_stack_returns_finite_density(
+        self, simple_atom_array_stack: AtomArrayStack, device: torch.device
+    ):
+        """Density from an AtomArrayStack should be a finite tensor with positive values."""
+        density, _ = compute_density_from_atomarray(
+            simple_atom_array_stack, resolution=2.0, em_mode=False, device=device
+        )
+        assert isinstance(density, torch.Tensor)
+        assert torch.isfinite(density).all()
+        assert density.sum() > 0
+
+    def test_stack_density_shape_matches_grid(
+        self, simple_atom_array_stack: AtomArrayStack, device: torch.device
+    ):
+        """Density shape should match grid dimensions (batch dim is summed out)."""
+        density, xmap_torch = compute_density_from_atomarray(
+            simple_atom_array_stack, resolution=2.0, em_mode=False, device=device
+        )
+        assert density.shape == xmap_torch.array.shape
+
+    def test_stack_density_matches_manual_weighted_sum(
+        self, atom_array_stack_uniform_occ: AtomArrayStack, device: torch.device
+    ):
+        """Density from a 2 model stack should equal the sum of each model's density."""
+        s = atom_array_stack_uniform_occ
+        n_models = s.stack_depth()
+        occ = 1.0 / n_models
+
+        # Create a shared grid from the stack so all computations use the same grid
+        shared_xmap = create_synthetic_grid(s, resolution=2.0)
+
+        # Compute density from the stack
+        density_stack, _ = compute_density_from_atomarray(
+            s, xmap=shared_xmap, em_mode=False, device=device
+        )
+
+        # Compute density from each model individually with the same occupancy
+        per_model_densities = []
+        for i in range(n_models):
+            model_i = cast(AtomArray, s[i])
+            model_i.set_annotation("occupancy", np.full(s.array_length(), occ, dtype=np.float64))
+            density_i, _ = compute_density_from_atomarray(
+                model_i, xmap=shared_xmap, em_mode=False, device=device
+            )
+            per_model_densities.append(density_i)
+
+        expected = sum(per_model_densities)
+        torch.testing.assert_close(density_stack, expected, rtol=1e-4, atol=1e-6)
