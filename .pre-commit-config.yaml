@@ -32,27 +32,27 @@ repos:
 
   - repo: local
     hooks:
-      - id: pyright-boltz
-        name: pyright (boltz environment)
-        entry: bash -c 'pixi run -e boltz-dev pyright "$@"' --
+      - id: ty-boltz
+        name: ty (boltz environment)
+        entry: bash -c 'pixi run -e boltz-dev ty check "$@"' --
         language: system
         types: [python]
         pass_filenames: true
         exclude: (real_space_density|protenix|rf3|rfd3)
         priority: 50
 
-      - id: pyright-rf3
-        name: pyright (rf3 environment)
-        entry: bash -c 'pixi run -e rf3-dev pyright "$@"' --
+      - id: ty-rf3
+        name: ty (rf3 environment)
+        entry: bash -c 'pixi run -e rf3-dev ty check "$@"' --
         language: system
         types: [python]
         pass_filenames: true
         files: (rf3|rfd3)
         priority: 50
 
-      - id: pyright-protenix
-        name: pyright (protenix environment)
-        entry: bash -c 'pixi run -e protenix-dev pyright "$@"' --
+      - id: ty-protenix
+        name: ty (protenix environment)
+        entry: bash -c 'pixi run -e protenix-dev ty check "$@"' --
         language: system
         types: [python]
         pass_filenames: true
