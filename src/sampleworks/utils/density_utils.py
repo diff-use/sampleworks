@@ -95,6 +95,11 @@ def compute_density_from_atomarray(
     - If xmap is provided: uses existing grid parameters (for RSCC evaluation)
     - If resolution is provided: creates synthetic grid (for density generation)
 
+    For :class:`~biotite.structure.AtomArrayStack` inputs, density is computed
+    independently for each model's coordinates and then summed. Occupancy
+    values are taken directly from the structure annotations (shared across
+    models in :class:`~biotite.structure.AtomArrayStack`).
+
     Parameters
     ----------
     atom_array : AtomArray | AtomArrayStack

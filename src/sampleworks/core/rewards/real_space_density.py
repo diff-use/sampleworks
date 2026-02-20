@@ -67,33 +67,55 @@ def setup_scattering_params(
 
 
 def extract_density_inputs_from_atomarray(
-    atom_array: AtomArray | AtomArrayStack, device: torch.device
+    atom_array_or_stack: AtomArray | AtomArrayStack, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Extract and prepare atomic data for density calculation.
 
     Filters out atoms with invalid coordinates or zero occupancy, converts
     element names to atomic numbers, and handles NaN B-factors.
 
+    For :class:`~biotite.structure.AtomArrayStack` inputs, coordinates from all
+    models are used (one per batch entry) with shared element types,
+    B-factors, and occupancy annotations. Note that this does mean that the occupancy
+    values may sum to greater than 1 - we log a warning in this case but keep the provided
+    occupancies unchanged.
+
     Parameters
     ----------
-    atom_array
-        Structure to extract data from
-    device
+    atom_array_or_stack : AtomArray | AtomArrayStack
+        Structure to extract data from. May be a single
+        :class:`~biotite.structure.AtomArray` or a multi-model
+        :class:`~biotite.structure.AtomArrayStack`.
+    device : torch.device-like
         PyTorch device to place tensors on
 
     Returns
     -------
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-        Tuple of (coordinates, elements, b_factors, occupancies) as PyTorch tensors.
-        All tensors have shape (1, n_atoms) or (1, n_atoms, 3) for coordinates.
+        Tuple of (coordinates, elements, b_factors, occupancies) as PyTorch
+        tensors. For a single ``AtomArray`` the shapes are
+        ``(1, n_atoms, 3)``, ``(1, n_atoms)``, ``(1, n_atoms)``,
+        ``(1, n_atoms)``. For an ``AtomArrayStack`` with *M* models the batch
+        dimension is *M* instead of 1.
     """
-    coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.coord)
-    occupancy = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.occupancy)
-    b_factor = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array.b_factor)
-    elements = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array.element)
+    is_stack = isinstance(atom_array_or_stack, AtomArrayStack)
 
-    n_total = len(coords)
-    invalid_coords_mask = ~np.isfinite(coords).all(axis=1)
+    coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array_or_stack.coord)
+    occupancy = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array_or_stack.occupancy)
+    b_factor = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array_or_stack.b_factor)
+    elements = cast(np.ndarray[Any, np.dtype[np.str_]], atom_array_or_stack.element)
+
+    if is_stack:
+        # coords is (batch, n_atoms, 3), annotations are (n_atoms,)
+        n_models = coords.shape[0]
+        n_total = coords.shape[1]
+        # NOTE: an atom is invalid if ANY model has non-finite coordinates currently
+        invalid_coords_mask = ~np.isfinite(coords).all(axis=-1).all(axis=0)
+    else:
+        n_models = 1
+        n_total = len(coords)
+        invalid_coords_mask = ~np.isfinite(coords).all(axis=-1)
+
     zero_occ_mask = occupancy <= 0
     valid_mask = ~invalid_coords_mask & ~zero_occ_mask
 
@@ -108,13 +130,32 @@ def extract_density_inputs_from_atomarray(
             f"({n_valid}/{n_total} atoms remaining)"
         )
 
-    coords_tensor = torch.from_numpy(coords[valid_mask]).to(device, dtype=torch.float32)
+    if is_stack:
+        valid_coords = coords[:, valid_mask]
+    else:
+        valid_coords = coords[valid_mask]
+
+    valid_elements = elements[valid_mask]
+    valid_b_factor = b_factor[valid_mask]
+    valid_occupancy = occupancy[valid_mask]
+
+    if is_stack:
+        if not np.all(valid_occupancy * n_models <= 1.0):
+            logger.warning(
+                f"AtomArrayStack with {n_models} models: occupancy values sum to greater than 1 for"
+                "some atoms (max sum {valid_occupancy.max() * n_models:.4f}). This may lead to "
+                "higher density values than expected under "
+                f"uniform model weighting (expected {1 / n_models:.4f}). Keeping "
+                "provided occupancies unchanged."
+            )
+
+    coords_tensor = torch.from_numpy(valid_coords.copy()).to(device, dtype=torch.float32)
     elements_tensor = torch.tensor(
-        [ELEMENT_TO_ATOMIC_NUM[normalize_element(e)] for e in elements[valid_mask]],
+        [ELEMENT_TO_ATOMIC_NUM[normalize_element(e)] for e in valid_elements],
         device=device,
         dtype=torch.long,
     )
-    b_factors_tensor = torch.from_numpy(b_factor[valid_mask]).to(device, dtype=torch.float32)
+    b_factors_tensor = torch.from_numpy(valid_b_factor.copy()).to(device, dtype=torch.float32)
 
     nan_b_factor_mask = torch.isnan(b_factors_tensor)
     num_nan_b_factors = int(nan_b_factor_mask.sum().item())
@@ -127,15 +168,21 @@ def extract_density_inputs_from_atomarray(
         torch.tensor(20.0, device=device),
         b_factors_tensor,
     )
-    occupancies_tensor = torch.from_numpy(occupancy[valid_mask]).to(device, dtype=torch.float32)
+    occupancies_tensor = torch.from_numpy(valid_occupancy.copy()).to(device, dtype=torch.float32)
 
-    # batch dimension: (1, n_atoms, ...)
-    return (
-        coords_tensor.unsqueeze(0) if coords_tensor.ndim == 2 else coords_tensor,
-        elements_tensor.unsqueeze(0),
-        b_factors_tensor.unsqueeze(0),
-        occupancies_tensor.unsqueeze(0),
-    )
+    if is_stack:
+        # coords_tensor is already (n_models, n_valid, 3)
+        # Expand shared annotations to (n_models, n_valid)
+        elements_tensor = elements_tensor.unsqueeze(0).expand(n_models, -1)
+        b_factors_tensor = b_factors_tensor.unsqueeze(0).expand(n_models, -1)
+        occupancies_tensor = occupancies_tensor.unsqueeze(0).expand(n_models, -1)
+    else:
+        coords_tensor = coords_tensor.unsqueeze(0)
+        elements_tensor = elements_tensor.unsqueeze(0)
+        b_factors_tensor = b_factors_tensor.unsqueeze(0)
+        occupancies_tensor = occupancies_tensor.unsqueeze(0)
+
+    return coords_tensor, elements_tensor, b_factors_tensor, occupancies_tensor
 
 
 class RealSpaceRewardFunction:
