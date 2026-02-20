@@ -6,7 +6,7 @@ from typing import Any, cast
 import numpy as np
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
-from biotite.structure import AtomArray, AtomArrayStack, stack
+from biotite.structure import AtomArray, AtomArrayStack, filter_amino_acids, filter_polymer, stack
 from biotite.structure.io.pdbx import CIFFile, set_structure
 from loguru import logger
 
@@ -316,9 +316,9 @@ def select_altloc(
         mask = atom_array.altloc_id == altloc_id
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -348,15 +348,77 @@ def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Ato
     mask = ~hetero
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
+
+
+def keep_polymer(
+    atom_array: AtomArray | AtomArrayStack, pol_type: str = "peptide"
+) -> AtomArray | AtomArrayStack:
+    """Keep only polymer atoms from an AtomArray or AtomArrayStack.
+
+    Filters to return only atoms where the polymer flag is True.
+
+    Parameters:
+        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+        pol_type (str): The type of polymer to filter for. Default is "peptide".
+            Options are: "peptide", "nucleotide", or "carbohydrate".
+            Abbreviations are supported: "p", "pep", "n", etc.
+
+    Returns:
+        AtomArray | AtomArrayStack: A new array/stack with only polymer atoms.
+
+    Raises:
+        TypeError: If input is not an AtomArray or AtomArrayStack.
+    """
+    if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
+        raise TypeError(
+            f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
+        )
+
+    # TODO: fix once this is fixed: https://github.com/biotite-dev/biotite/issues/865
+    if isinstance(atom_array, AtomArrayStack):
+        polymer_mask = filter_polymer(atom_array[0], pol_type=pol_type)
+        return atom_array[:, polymer_mask]  # pyright: ignore[reportReturnType]
+    else:
+        polymer_mask = filter_polymer(atom_array, pol_type=pol_type)
+        return atom_array[polymer_mask]  # pyright: ignore[reportReturnType]
+
+
+def keep_amino_acids(
+    atom_array: AtomArray | AtomArrayStack,
+) -> AtomArray | AtomArrayStack:
+    """Keep only amino acid atoms from an AtomArray or AtomArrayStack.
+
+    Filters to return only atoms that are part of standard amino acids.
+
+    Parameters:
+        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+
+    Returns:
+        AtomArray | AtomArrayStack: A new array/stack with only amino acid atoms.
+
+    Raises:
+        TypeError: If input is not an AtomArray or AtomArrayStack.
+    """
+    if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
+        raise TypeError(
+            f"Unexpected type: {type(atom_array)}, can only accept AtomArray or AtomArrayStack"
+        )
+
+    amino_acid_mask = filter_amino_acids(atom_array)
+
+    if isinstance(atom_array, AtomArrayStack):
+        return atom_array[:, amino_acid_mask]  # pyright: ignore[reportReturnType]
+    else:
+        return atom_array[amino_acid_mask]  # pyright: ignore[reportReturnType]
 
 
 def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
     """Remove hydrogen atoms from an AtomArray or AtomArrayStack.
 
-    Filters out all atoms where the element annotation is "H" (hydrogen).
+    Filters out all atoms where the element annotation is "H" (hydrogen) or "D" (deuterium).
 
     Parameters:
         atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
@@ -375,12 +437,12 @@ def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Atom
     element = atom_array.element
     if element is None:
         raise AttributeError("atom_array must have 'element' annotation")
-    mask = element != "H"
+    mask = (element != "H") & (element != "D")
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:
@@ -410,9 +472,9 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
     mask = np.isin(atom_name, backbone_atoms)
 
     if isinstance(atom_array, AtomArrayStack):
-        return cast(AtomArrayStack, atom_array[:, mask])
+        return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
-        return cast(AtomArray, atom_array[mask])
+        return atom_array[mask]  # pyright: ignore[reportReturnType]
 
 
 def make_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:

@@ -4,8 +4,21 @@ from typing import cast
 
 import numpy as np
 import pytest
-from biotite.structure import AtomArray, AtomArrayStack
-from sampleworks.utils.atom_array_utils import filter_to_common_atoms, select_altloc
+from biotite.structure import AtomArray, AtomArrayStack, stack
+from biotite.structure.filter import filter_polymer
+from biotite.structure.info.groups import amino_acid_names
+from sampleworks.utils.atom_array_utils import (
+    filter_to_common_atoms,
+    keep_amino_acids,
+    keep_polymer,
+    remove_hydrogens,
+    select_altloc,
+)
+
+from tests.conftest import STRUCTURES
+
+
+STANDARD_AA_NAMES = frozenset(amino_acid_names())
 
 
 class TestSelectAltlocBasic:
@@ -305,3 +318,174 @@ class TestFilterToCommonAtoms:
         # which are indices 2, 3, 4 in array1 and 0, 1, 2 in array2
         np.testing.assert_array_equal(filtered1.coord[0, 0], original_coords1[2])
         np.testing.assert_array_equal(filtered2.coord[0, 0], original_coords2[0])
+
+
+def _get_atom_array(structure: dict) -> AtomArray:
+    arr = structure["asym_unit"]
+    if isinstance(arr, AtomArrayStack):
+        return cast(AtomArray, arr[0])
+    return cast(AtomArray, arr)
+
+
+def _get_atom_array_stack(structure: dict) -> AtomArrayStack:
+    arr = structure["asym_unit"]
+    if isinstance(arr, AtomArray):
+        return stack([arr, arr])
+    return cast(AtomArrayStack, arr)
+
+
+class TestRemoveHydrogens:
+    """Tests for remove_hydrogens function."""
+
+    @pytest.mark.parametrize(
+        "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
+    )
+    def test_no_hydrogen_or_deuterium_in_output(self, structure_fixture, request):
+        """Output must contain zero H or D and preserve all heavy atoms."""
+        structure = request.getfixturevalue(structure_fixture)
+        arr = _get_atom_array(structure)
+        result = remove_hydrogens(arr)
+        elements = cast(np.ndarray, result.element)
+        assert "H" not in elements
+        assert "D" not in elements
+        input_elements = cast(np.ndarray, arr.element)
+        expected_count = int(np.sum((input_elements != "H") & (input_elements != "D")))
+        assert len(result) == expected_count
+
+    @pytest.mark.parametrize(
+        "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
+    )
+    def test_atom_array_and_stack_give_same_atom_count(self, structure_fixture, request):
+        """AtomArray and AtomArrayStack paths must select the same atoms."""
+        structure = request.getfixturevalue(structure_fixture)
+        arr_result = remove_hydrogens(_get_atom_array(structure))
+        stack_result = remove_hydrogens(_get_atom_array_stack(structure))
+
+        assert isinstance(stack_result, AtomArrayStack)
+        stack_result = cast(AtomArrayStack, stack_result)
+        assert len(arr_result) == stack_result.array_length()
+        assert "H" not in cast(np.ndarray, stack_result.element)
+
+    @pytest.mark.parametrize(
+        "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
+    )
+    def test_is_idempotent(self, structure_fixture, request):
+        """Property: applying remove_hydrogens twice == applying once."""
+        structure = request.getfixturevalue(structure_fixture)
+        once = remove_hydrogens(_get_atom_array(structure))
+        twice = remove_hydrogens(once)
+        assert len(once) == len(twice)
+
+    def test_invalid_type_raises_error(self):
+        with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
+            remove_hydrogens("bad input")  # pyright: ignore[reportArgumentType]
+
+
+class TestKeepPolymer:
+    """Tests for keep_polymer function."""
+
+    def test_output_contains_only_polymer_atoms(self, test_structure):
+        """Every atom in the result must pass filter_polymer."""
+        arr = _get_atom_array(test_structure)
+        result = keep_polymer(arr)
+        assert len(result) > 0
+        polymer_mask = filter_polymer(result)
+        assert np.all(polymer_mask)
+
+    def test_atom_array_and_stack_give_same_atom_count(self, test_structure):
+        """Both AtomArray and AtomArrayStack should work."""
+        arr_result = keep_polymer(_get_atom_array(test_structure))
+        stack_result = keep_polymer(_get_atom_array_stack(test_structure))
+
+        assert isinstance(stack_result, AtomArrayStack)
+        stack_result = cast(AtomArrayStack, stack_result)
+        assert len(arr_result) == stack_result.array_length()
+
+    def test_invalid_type_raises_error(self):
+        with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
+            keep_polymer(42)  # pyright: ignore[reportArgumentType]
+
+
+class TestKeepAminoAcids:
+    """Tests for keep_amino_acids function."""
+
+    def test_output_contains_only_standard_amino_acid_residues(self, test_structure):
+        """Purity (only AA residues) and completeness (all AA atoms preserved)."""
+        arr = _get_atom_array(test_structure)
+        result = keep_amino_acids(arr)
+        result_names = set(cast(np.ndarray, result.res_name))
+        assert len(result) > 0
+        assert result_names <= STANDARD_AA_NAMES
+        input_names = cast(np.ndarray, arr.res_name)
+        expected_count = int(np.sum(np.isin(input_names, list(STANDARD_AA_NAMES))))
+        assert len(result) == expected_count
+
+    def test_atom_array_and_stack_give_same_atom_count(self, test_structure):
+        """AtomArray and AtomArrayStack paths must select the same atoms."""
+        arr_result = keep_amino_acids(_get_atom_array(test_structure))
+        stack_result = keep_amino_acids(_get_atom_array_stack(test_structure))
+
+        assert isinstance(stack_result, AtomArrayStack)
+        stack_result = cast(AtomArrayStack, stack_result)
+        assert len(arr_result) == stack_result.array_length()
+
+    def test_invalid_type_raises_error(self):
+        with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
+            keep_amino_acids(None)  # pyright: ignore[reportArgumentType]
+
+
+class TestFilterFunctionsIntegration:
+    """Property and composition tests across multiple filter functions."""
+
+    def test_remove_hydrogens_and_keep_amino_acids_commute(self, test_structure):
+        """These filters act on independent atom properties so order shouldn't matter."""
+        arr = _get_atom_array(test_structure)
+        path_a = keep_amino_acids(remove_hydrogens(arr))
+        path_b = remove_hydrogens(keep_amino_acids(arr))
+        assert len(path_a) == len(path_b)
+        np.testing.assert_array_equal(
+            cast(np.ndarray, path_a.res_id), cast(np.ndarray, path_b.res_id)
+        )
+        np.testing.assert_array_equal(
+            cast(np.ndarray, path_a.atom_name), cast(np.ndarray, path_b.atom_name)
+        )
+        np.testing.assert_array_equal(
+            cast(np.ndarray, path_a.element), cast(np.ndarray, path_b.element)
+        )
+
+    def test_polymer_and_remove_hydrogens_commute(self, test_structure):
+        """Filter order must not change the result:
+        polymer(dehydrogenate(array) == dehydrogenate(polymer(array))."""
+        arr = _get_atom_array(test_structure)
+        polymer_first = remove_hydrogens(keep_polymer(arr))
+        hydrogen_first = keep_polymer(remove_hydrogens(arr))
+
+        assert len(polymer_first) > 0
+        assert len(polymer_first) == len(hydrogen_first)
+
+        # Same atoms selected regardless of order
+        np.testing.assert_array_equal(
+            cast(np.ndarray, polymer_first.chain_id),
+            cast(np.ndarray, hydrogen_first.chain_id),
+        )
+        np.testing.assert_array_equal(
+            cast(np.ndarray, polymer_first.res_id),
+            cast(np.ndarray, hydrogen_first.res_id),
+        )
+        np.testing.assert_array_equal(
+            cast(np.ndarray, polymer_first.atom_name),
+            cast(np.ndarray, hydrogen_first.atom_name),
+        )
+        np.testing.assert_array_equal(
+            cast(np.ndarray, polymer_first.element),
+            cast(np.ndarray, hydrogen_first.element),
+        )
+
+        # Coordinates and atom order are identical
+        np.testing.assert_array_equal(polymer_first.coord, hydrogen_first.coord)  # pyright: ignore[reportArgumentType]
+
+        # Output satisfies both filters' postconditions
+        elements = cast(np.ndarray, polymer_first.element)
+        assert "H" not in elements
+        assert "D" not in elements
+        assert np.all(filter_polymer(polymer_first))

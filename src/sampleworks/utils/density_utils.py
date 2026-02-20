@@ -83,7 +83,7 @@ def create_synthetic_grid(
 
 
 def compute_density_from_atomarray(
-    atom_array: AtomArray | AtomArrayStack,
+    atom_array_or_stack: AtomArray | AtomArrayStack,
     xmap: XMap | None = None,
     resolution: float | None = None,
     em_mode: bool = False,
@@ -95,17 +95,24 @@ def compute_density_from_atomarray(
     - If xmap is provided: uses existing grid parameters (for RSCC evaluation)
     - If resolution is provided: creates synthetic grid (for density generation)
 
+    For :class:`~biotite.structure.AtomArrayStack` inputs, density is computed
+    independently for each model's coordinates and then summed. Occupancy
+    values are taken directly from the structure annotations (shared across
+    models in :class:`~biotite.structure.AtomArrayStack`).
+
     Parameters
     ----------
-    atom_array
-        Structure to compute density for
-    xmap
+    atom_array_or_stack : AtomArray | AtomArrayStack
+        Structure to compute density for. May be a single
+        :class:`~biotite.structure.AtomArray` or a multi-model
+        :class:`~biotite.structure.AtomArrayStack`.
+    xmap : XMap | None
         Optional XMap with existing grid parameters. If provided, resolution is ignored.
-    resolution
+    resolution : float | None
         Map resolution in Angstroms. Used to create synthetic grid if xmap is not provided.
-    em_mode
+    em_mode : bool
         If True, use electron scattering factors. If False, use X-ray factors.
-    device
+    device : torch.device | None
         PyTorch device for computation. If None, will try to use GPU.
 
     Returns
@@ -130,9 +137,9 @@ def compute_density_from_atomarray(
         raise ValueError("Cannot provide both xmap and resolution; choose one")
 
     if xmap is None:
-        xmap = create_synthetic_grid(atom_array, resolution, padding=5.0)  # pyright:ignore[reportArgumentType] (resolution will not be None here)
+        xmap = create_synthetic_grid(atom_array_or_stack, resolution, padding=5.0)  # pyright:ignore[reportArgumentType] (resolution will not be None here)
 
-    scattering_params = setup_scattering_params(atom_array, em_mode, device)
+    scattering_params = setup_scattering_params(atom_array_or_stack, em_mode, device)
 
     xmap_torch = XMap_torch(xmap, device=device)
     transformer = DifferentiableTransformer(
@@ -144,7 +151,7 @@ def compute_density_from_atomarray(
     )
 
     coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
-        atom_array, device
+        atom_array_or_stack, device
     )
 
     with torch.no_grad():

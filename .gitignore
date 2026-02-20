@@ -213,9 +213,9 @@ __marimo__/
 # AI
 .claude/
 CLAUDE.local.md
-CLAUDE.md
 .github/workflows/claude*.yml
 .github/agents/
+.pi/
 
 # Model checkpoints
 release_data/
@@ -223,3 +223,4 @@ release_data/
 # Large results from runs
 grid_search_results/
 outputs/
+initial_dataset_40/
