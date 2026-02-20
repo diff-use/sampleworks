@@ -698,6 +698,43 @@ def simple_atom_array_stack():
 
 
 @pytest.fixture(scope="module")
+def atom_array_stack_uniform_occ():
+    """AtomArrayStack with 2 models and occupancy 0.5"""
+
+    arrays = []
+    for i in range(2):
+        atom_array = AtomArray(3)
+        base_coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        atom_array.coord = base_coords + i * 0.1
+        atom_array.set_annotation("chain_id", np.array(["A"] * 3))
+        atom_array.set_annotation("res_id", np.array([1, 2, 3]))
+        atom_array.set_annotation("element", np.array(["C", "C", "C"]))
+        atom_array.set_annotation("b_factor", np.array([20.0, 20.0, 20.0]))
+        atom_array.set_annotation("occupancy", np.array([0.5, 0.5, 0.5]))
+        arrays.append(atom_array)
+
+    return stack(arrays)
+
+
+@pytest.fixture(scope="module")
+def atom_array_stack_with_nan_coords():
+    """AtomArrayStack with 2 models where one model has a NaN coordinate."""
+
+    a1 = AtomArray(3)
+    a1.coord = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    a1.set_annotation("chain_id", np.array(["A"] * 3))
+    a1.set_annotation("res_id", np.array([1, 2, 3]))
+    a1.set_annotation("element", np.array(["C", "C", "C"]))
+    a1.set_annotation("b_factor", np.array([20.0, 20.0, 20.0]))
+    a1.set_annotation("occupancy", np.array([0.5, 0.5, 0.5]))
+
+    a2 = a1.copy()
+    a2.coord = np.array([[0.0, 0.0, 0.0], [np.nan, 0.0, 0.0], [2.0, 0.0, 0.0]])
+
+    return stack([a1, a2])
+
+
+@pytest.fixture(scope="module")
 def basic_atom_array_altloc():
     """AtomArray with mixed altloc_ids."""
 
