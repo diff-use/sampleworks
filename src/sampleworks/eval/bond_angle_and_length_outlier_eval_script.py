@@ -1,6 +1,7 @@
-# pyright: reportOptionalMemberAccess=false
-# we access a bunch of attributes from atoms in AtomArrays which by construction exist
-# but pyright can't tell.
+# NOTE: ty uses pyproject overrides (see [tool.ty.overrides] in pyproject.toml)
+# for file-level suppression of optional attribute access diagnostics.
+# We access a bunch of attributes from atoms in AtomArrays which by construction exist,
+# but static analysis can't always prove that.
 import argparse
 import itertools
 import sys
@@ -54,11 +55,11 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
             "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
         )
         return np.nan, pd.DataFrame()
-        
+
     bond_indices = np.sort(pose.bonds.as_array()[:, :2], axis=1)
     if len(bond_indices) == 0:
         return np.nan, pd.DataFrame()
-    
+
     bond_lengths = index_distance(pose, bond_indices)
     # The bounds matrix has the lower bounds in the lower triangle
     # and the upper bounds in the upper triangle
@@ -151,7 +152,7 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
 
     if len(bond_indices) == 0:
         return np.nan, pd.DataFrame()
-    
+
     bond_indices = np.sort(bond_indices, axis=1)
     center_indices = np.array(center_indices)
 
@@ -226,8 +227,8 @@ def main(args: argparse.Namespace):
     for exp in tqdm(all_experiments):
         # get the refined cif file
         ciffile = CIFFile.read(exp.refined_cif_path)
-        structures = get_structure(ciffile, include_bonds=True)  # pyright: ignore
-        structures = ensure_atom_array_stack(structures)  # pyright: ignore [reportArgumentType]
+        structures = get_structure(ciffile, include_bonds=True)  # ty: ignore
+        structures = ensure_atom_array_stack(structures)  # ty: ignore[invalid-argument-type]
         for model_n, s in enumerate(structures):
             bond_angle_violation_fraction, bond_angle_outliers = bond_angle_violations(s)
             bond_length_violation_fraction, bond_length_outliers = bond_length_violations(s)

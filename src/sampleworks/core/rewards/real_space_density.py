@@ -43,7 +43,7 @@ def setup_scattering_params(
         containing scattering coefficients for each element type
     """
     elements = atom_array.element
-    unique_elements = sorted(set(normalize_element(e) for e in elements))  # pyright:ignore[reportOptionalIterable]
+    unique_elements = sorted(set(normalize_element(e) for e in elements))  # ty: ignore[not-iterable]
     atomic_num_dict = {elem: ELEMENT_TO_ATOMIC_NUM[elem] for elem in unique_elements}
 
     structure_factors = ELECTRON_SCATTERING_FACTORS if em_mode else ATOM_STRUCTURE_FACTORS

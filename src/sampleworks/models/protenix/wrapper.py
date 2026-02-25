@@ -296,7 +296,7 @@ class ProtenixWrapper:
                     if "proteinChain" in seq_data
                 }
                 msa_paths = self.msa_manager.get_msa(
-                    sequence_data,  # pyright: ignore
+                    sequence_data,  # ty: ignore
                     msa_pairing_strategy="complete",  # not actually passed through for Protenix
                     structure_predictor=StructurePredictor.PROTENIX,
                 )
@@ -590,9 +590,9 @@ class ProtenixWrapper:
             s_inputs=s_inputs,
             s_trunk=s_trunk,
             z_trunk=z_trunk,
-            pair_z=pair_z,  # pyright: ignore[reportArgumentType]
-            p_lm=p_lm,  # pyright: ignore[reportArgumentType]
-            c_l=c_l,  # pyright: ignore[reportArgumentType]
+            pair_z=pair_z,  # ty: ignore[invalid-argument-type]
+            p_lm=p_lm,  # ty: ignore[invalid-argument-type]
+            c_l=c_l,  # ty: ignore[invalid-argument-type]
         )
 
         # TODO: is there a way to handle this more cleanly?

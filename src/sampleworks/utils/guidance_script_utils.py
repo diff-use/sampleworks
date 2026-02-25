@@ -150,12 +150,12 @@ def get_model_and_device(
     logger.debug(f"Using device: {device}")
     if model_type == StructurePredictor.PROTENIX:
         logger.debug(f"Loading Protenix model from {model_checkpoint_path}")
-        model_wrapper = ProtenixWrapper(  # pyright: ignore
+        model_wrapper = ProtenixWrapper(  # ty: ignore
             checkpoint_path=model_checkpoint_path, device=device, model=model
         )
     elif model_type == StructurePredictor.BOLTZ_1:
         logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
-        model_wrapper = Boltz1Wrapper(  # pyright: ignore
+        model_wrapper = Boltz1Wrapper(  # ty: ignore
             checkpoint_path=model_checkpoint_path,
             use_msa_manager=True,
             device=device,
@@ -166,7 +166,7 @@ def get_model_and_device(
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
         logger.debug(f"Loading Boltz2 model from {model_checkpoint_path}")
-        model_wrapper = Boltz2Wrapper(  #  pyright: ignore
+        model_wrapper = Boltz2Wrapper(  #  ty: ignore
             checkpoint_path=model_checkpoint_path,
             use_msa_manager=True,
             device=device,
@@ -184,7 +184,7 @@ def get_model_and_device(
     device = getattr(model_wrapper, "device", device)
 
     # (pyright doesn't think Boltz1Wrapper etc are "Any")
-    return device, model_wrapper  # pyright: ignore
+    return device, model_wrapper  # ty: ignore
 
 
 # TODO: further atomize for easier testing.
@@ -198,7 +198,7 @@ def get_reward_function_and_structure(
 ) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
     logger.debug(f"Loading structure from {structure_path}")
     structure = parse(
-        structure_path,  # pyright: ignore  (doesn't like the type being passed)
+        structure_path,  # ty: ignore  (doesn't like the type being passed)
         hydrogen_policy="remove",
         add_missing_atoms=False,
         ccd_mirror_path=None,
@@ -209,7 +209,7 @@ def get_reward_function_and_structure(
 
     logger.debug("Setting up scattering parameters")
 
-    atom_array = structure["asym_unit"]  # pyright: ignore
+    atom_array = structure["asym_unit"]  # ty: ignore
     scattering_params = setup_scattering_params(atom_array=atom_array, em_mode=em, device=device)
 
     selection_mask = atom_array.occupancy > 0
@@ -275,11 +275,11 @@ def save_everything(
 
     if final_state is not None:
         ensemble_size = final_state.shape[0]
-        reward_param_mask = atom_array_for_masking.occupancy > 0  # pyright: ignore[reportOptionalOperand]
-        reward_param_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        reward_param_mask = atom_array_for_masking.occupancy > 0  # ty: ignore[unsupported-operator]
+        reward_param_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)  # ty: ignore[invalid-argument-type, no-matching-overload]
 
         ensemble_array = stack([atom_array_for_masking.copy() for _ in range(ensemble_size)])
-        ensemble_array.coord[:, reward_param_mask] = final_state.detach().cpu().numpy()  # pyright: ignore[reportOptionalSubscript]
+        ensemble_array.coord[:, reward_param_mask] = final_state.detach().cpu().numpy()  # ty: ignore[not-subscriptable]
         atom_array = ensemble_array
 
     final_structure = CIFFile()

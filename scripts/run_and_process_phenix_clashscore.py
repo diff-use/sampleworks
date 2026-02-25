@@ -61,7 +61,7 @@ def main(args) -> None:
         )
         return
 
-    clashscore_df = pd.concat(clashscore_metrics)  # pyright: ignore
+    clashscore_df = pd.concat(clashscore_metrics)  # ty: ignore
     clashscore_df.to_csv(
         workspace_root / "grid_search_results" / "clashscore_metrics.csv", index=False
     )

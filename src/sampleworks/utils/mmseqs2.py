@@ -50,7 +50,7 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
     # Set up authentication
     auth = None
     if has_basic_auth:
-        auth = HTTPBasicAuth(msa_server_username, msa_server_password)  # pyright: ignore [reportArgumentType]
+        auth = HTTPBasicAuth(msa_server_username, msa_server_password)  # ty: ignore[invalid-argument-type]
         logger.debug(
             f"MMSeqs2 server authentication: using basic auth for user '{msa_server_username}'"
         )
@@ -247,7 +247,7 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
                     raise Exception(msg)
 
             # Download results
-            download(ID, tar_gz_file)  # pyright: ignore [reportPossiblyUnboundVariable]
+            download(ID, tar_gz_file)  # ty: ignore[possibly-unresolved-reference]
 
     # prep list of a3m files
     # TODO: if calling protenix server, the expected files appear to be:

@@ -1,5 +1,5 @@
 # type: ignore
-# pyright: ignore
+# ty: ignore
 
 """Classes for handling unit cell transformation."""
 

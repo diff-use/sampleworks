@@ -143,7 +143,7 @@ def assign_occupancies(
         n_altlocs = len(altloc_info.altloc_ids)
         uniform_occ = 1.0 / n_altlocs
         for altloc in altloc_info.altloc_ids:
-            occupancy[altloc_info.atom_masks[altloc]] = uniform_occ  # pyright:ignore[reportOptionalSubscript]
+            occupancy[altloc_info.atom_masks[altloc]] = uniform_occ  # ty: ignore[not-subscriptable]
 
     elif mode == "custom":
         if occ_values is None:
@@ -160,7 +160,7 @@ def assign_occupancies(
             occ_values = occ_values + [0.0] * (len(altloc_info.altloc_ids) - len(occ_values))
 
         for altloc, occ in zip(sorted(altloc_info.altloc_ids), occ_values):
-            occupancy[altloc_info.atom_masks[altloc]] = occ  # pyright:ignore[reportOptionalSubscript]
+            occupancy[altloc_info.atom_masks[altloc]] = occ  # ty: ignore[not-subscriptable]
 
     return cast(AtomArray, result)
 
