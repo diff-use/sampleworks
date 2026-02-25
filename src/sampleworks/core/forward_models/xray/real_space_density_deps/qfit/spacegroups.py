@@ -1,5 +1,5 @@
 # ruff: noqa
-# pyright: ignore
+# ty: ignore
 
 """Symmetry operations as functions on vectors or arrays."""
 

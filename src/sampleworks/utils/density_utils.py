@@ -130,7 +130,7 @@ def compute_density_from_atomarray(
         raise ValueError("Cannot provide both xmap and resolution; choose one")
 
     if xmap is None:
-        xmap = create_synthetic_grid(atom_array, resolution, padding=5.0)  # pyright:ignore[reportArgumentType] (resolution will not be None here)
+        xmap = create_synthetic_grid(atom_array, resolution, padding=5.0)  # ty: ignore[invalid-argument-type] (resolution will not be None here)
 
     scattering_params = setup_scattering_params(atom_array, em_mode, device)
 

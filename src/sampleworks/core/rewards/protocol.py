@@ -58,13 +58,13 @@ class RewardInputs:
         RewardInputs
             Dataclass containing all inputs needed for reward function computation.
         """
-        occupancy_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
-        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        occupancy_mask = atom_array.occupancy > 0  # ty: ignore[unsupported-operator]
+        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)  # ty: ignore[invalid-argument-type, no-matching-overload]
         reward_param_mask = occupancy_mask & nan_mask
 
         elements_list = [
             ELEMENT_TO_ATOMIC_NUM[e.title()]
-            for e in atom_array.element[reward_param_mask]  # pyright: ignore[reportOptionalSubscript]
+            for e in atom_array.element[reward_param_mask]  # ty: ignore[not-subscriptable]
         ]
 
         total_batch_size = num_particles * ensemble_size if num_particles > 1 else ensemble_size
@@ -77,29 +77,29 @@ class RewardInputs:
             )
             b_factors = einx.rearrange(
                 "n -> p e n",
-                torch.Tensor(atom_array.b_factor[reward_param_mask]),  # pyright: ignore[reportOptionalSubscript]
+                torch.Tensor(atom_array.b_factor[reward_param_mask]),  # ty: ignore[not-subscriptable]
                 p=num_particles,
                 e=ensemble_size,
             )
-            occupancies = torch.ones_like(b_factors) / ensemble_size  # pyright: ignore[reportArgumentType]
+            occupancies = torch.ones_like(b_factors) / ensemble_size  # ty: ignore[invalid-argument-type]
             input_coords = einx.rearrange(
                 "... -> b ...",
                 torch.from_numpy(atom_array.coord).to(dtype=torch.float32),
                 b=total_batch_size,
-            )[..., reward_param_mask, :]  # pyright: ignore[reportArgumentType, reportCallIssue]
+            )[..., reward_param_mask, :]  # ty: ignore[invalid-argument-type, no-matching-overload]
         else:
             elements = einx.rearrange("n -> b n", torch.Tensor(elements_list), b=ensemble_size)
             b_factors = einx.rearrange(
                 "n -> b n",
-                torch.Tensor(atom_array.b_factor[reward_param_mask]),  # pyright: ignore[reportOptionalSubscript]
+                torch.Tensor(atom_array.b_factor[reward_param_mask]),  # ty: ignore[not-subscriptable]
                 b=ensemble_size,
             )
-            occupancies = torch.ones_like(b_factors) / ensemble_size  # pyright: ignore[reportArgumentType]
+            occupancies = torch.ones_like(b_factors) / ensemble_size  # ty: ignore[invalid-argument-type]
             input_coords = einx.rearrange(
                 "... -> e ...",
                 torch.from_numpy(atom_array.coord).to(dtype=torch.float32),
                 e=ensemble_size,
-            )[..., reward_param_mask, :]  # pyright: ignore[reportArgumentType, reportCallIssue]
+            )[..., reward_param_mask, :]  # ty: ignore[invalid-argument-type, no-matching-overload]
 
         mask_like = torch.ones_like(input_coords[..., 0])
 
@@ -107,8 +107,8 @@ class RewardInputs:
             device = torch.device(device)
 
         return cls(
-            elements=elements.to(device),  # pyright: ignore[reportAttributeAccessIssue]
-            b_factors=b_factors.to(device),  # pyright: ignore[reportAttributeAccessIssue]
+            elements=elements.to(device),  # ty: ignore[unresolved-attribute]
+            b_factors=b_factors.to(device),  # ty: ignore[unresolved-attribute]
             occupancies=occupancies.to(device),
             input_coords=input_coords.to(device),
             reward_param_mask=reward_param_mask,

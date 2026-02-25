@@ -121,12 +121,12 @@ class TestSelectAltlocErrors:
         invalid_input = "not an atom array"
 
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            select_altloc(invalid_input, "A")  # pyright: ignore[reportArgumentType]
+            select_altloc(invalid_input, "A")  # ty: ignore[invalid-argument-type]
 
     def test_none_input_raises_error(self):
         """Test that None input raises TypeError."""
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            select_altloc(None, "A")  # pyright: ignore[reportArgumentType]
+            select_altloc(None, "A")  # ty: ignore[invalid-argument-type]
 
 
 class TestSelectAltlocEdgeCases:
@@ -279,7 +279,7 @@ class TestFilterToCommonAtoms:
         array.coord = np.random.rand(3, 3)
 
         with pytest.raises(TypeError, match="must be AtomArray or AtomArrayStack"):
-            filter_to_common_atoms("not an array", array)  # pyright: ignore[reportArgumentType]
+            filter_to_common_atoms("not an array", array)  # ty: ignore[invalid-argument-type]
 
     def test_invalid_type_second_arg(self):
         """Test that invalid second argument raises TypeError."""
@@ -287,7 +287,7 @@ class TestFilterToCommonAtoms:
         array.coord = np.random.rand(3, 3)
 
         with pytest.raises(TypeError, match="must be AtomArray or AtomArrayStack"):
-            filter_to_common_atoms(array, None)  # pyright: ignore[reportArgumentType]
+            filter_to_common_atoms(array, None)  # ty: ignore[invalid-argument-type]
 
     def test_preserves_coordinates(self, atom_array_partial_overlap):
         """Test that coordinates are preserved for common atoms."""

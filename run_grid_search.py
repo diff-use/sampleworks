@@ -12,7 +12,7 @@ import pickle
 import shutil
 import subprocess
 import time
-from concurrent.futures import ProcessPoolExecutor  # pyright: ignore
+from concurrent.futures import ProcessPoolExecutor  # ty: ignore
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock
@@ -192,7 +192,7 @@ def run_grid_search(
             )
             futures[future] = job_queue_path
 
-        for completed in concurrent.futures.as_completed(futures):  # pyright: ignore
+        for completed in concurrent.futures.as_completed(futures):  # ty: ignore
             try:
                 with open(futures[completed].replace(".pkl", ".results.pkl"), "rb") as f:
                     result = pickle.load(f)

@@ -267,18 +267,18 @@ def map_altlocs_to_stack(
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
             raise ValueError("Cannot map altlocs with multiple structures each containing altlocs")
-        atom_array = atom_array[0]  # pyright: ignore (reportAssignmentType)
+        atom_array = atom_array[0]  # ty: ignore[invalid-assignment]
 
     if not hasattr(atom_array, "altloc_id") or atom_array.altloc_id is None:
         raise ValueError("The passed AtomArray | AtomArrayStack must have attribute 'altloc_id'")
-    
+
     if not hasattr(atom_array, "mask") or not hasattr(atom_array, "query"):
         raise ValueError(
             "map_altlocs_to_stack requires atom_arrays loaded with "
             "atomworks.io.utils.io_utils.load_any or a similar method that provides .mask, .query"
         )
 
-        
+
     altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
     if selection is not None and return_full_array:
         # in this case, we select atoms with no altlocs, and atoms in the selection
@@ -288,7 +288,7 @@ def map_altlocs_to_stack(
         altloc_mask = np.isin(atom_array.altloc_id, altloc_ids)
         selection_mask = atom_array.mask(selection)  # pyright:ignore (reportOptionalCall)
         mask = np.logical_or(no_altloc_mask, np.logical_and(altloc_mask, selection_mask))
-        
+
         # theoretically this could be empty or an Atom; I am not going to worry about that case.
         atom_array = atom_array[mask]  # pyright:ignore
     elif selection is not None:
@@ -304,8 +304,8 @@ def map_altlocs_to_stack(
     # it's critical that we've updated the altloc id list above, or this will return only
     # residues with no altlocs in case one or more altloc ids is/are missing from the selection.
     atom_arrays = filter_to_common_atoms(*altloc_list)
-    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])  # pyright: ignore
-    occupancies = np.vstack([r.occupancy for r in atom_arrays])  # pyright: ignore
+    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])  # ty: ignore
+    occupancies = np.vstack([r.occupancy for r in atom_arrays])  # ty: ignore
 
     # remove those annotations or we cannot stack arrays.
     for array in atom_arrays:
@@ -350,7 +350,7 @@ def select_altloc(
 
     if return_full_array:
         mask = np.isin(
-            atom_array.altloc_id,  # pyright: ignore (reportArgumentType)
+            atom_array.altloc_id,  # ty: ignore[invalid-argument-type]
             list(
                 {
                     altloc_id,
@@ -539,8 +539,8 @@ def filter_to_common_atoms(*arrays: AtomArray | AtomArrayStack) -> tuple[AtomArr
         filtered_array = array[:, mask]
 
         # Sort by atom ID to ensure matching order
-        sort_idx = np.argsort(make_atom_id(filtered_array))  # pyright: ignore (reportArgumentType)
-        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # pyright: ignore
+        sort_idx = np.argsort(make_atom_id(filtered_array))  # ty: ignore[invalid-argument-type]
+        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # ty: ignore
 
         filtered_arrays.append(filtered_array)
 

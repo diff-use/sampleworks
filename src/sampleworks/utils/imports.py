@@ -22,8 +22,8 @@ try:
     # that increases the likelihood of a circular import, and this
     # try/except construction makes those hard to debug, so just test
     # that the actual requirements are available.
-    from protenix.model.protenix import Protenix  # pyright: ignore[reportMissingImports]
-    from runner.msa_search import msa_search  # pyright: ignore[reportMissingImports]
+    from protenix.model.protenix import Protenix  # ty: ignore[unresolved-import]
+    from runner.msa_search import msa_search  # ty: ignore[unresolved-import]
 
     PROTENIX_AVAILABLE = True
     del Protenix, msa_search

@@ -69,8 +69,8 @@ def compute_cross_lddts(
     for i in range(n_ref):
         for j in range(n_pred):
             # Extract individual AtomArrays for this pair
-            ref_single: AtomArray = ref_filtered[i]  # pyright: ignore [reportAssignmentType]
-            pred_single: AtomArray = pred_filtered[j]  # pyright: ignore [reportAssignmentType]
+            ref_single: AtomArray = ref_filtered[i]  # ty: ignore[invalid-assignment]
+            pred_single: AtomArray = pred_filtered[j]  # ty: ignore[invalid-assignment]
 
             # Compute LDDT using AllAtomLDDT
             # Pass selection parameter if not "all"

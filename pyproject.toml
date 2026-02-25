@@ -131,5 +131,11 @@ order-by-type = false
 [tool.ty.environment]
 python-version = "3.11"
 
+[[tool.ty.overrides]]
+include = ["src/sampleworks/eval/bond_angle_and_length_outlier_eval_script.py"]
+
+[tool.ty.overrides.rules]
+possibly-missing-attribute = "ignore"
+
 [tool.ty.rules]
 unresolved-import = "ignore"

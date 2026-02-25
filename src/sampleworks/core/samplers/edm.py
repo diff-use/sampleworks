@@ -293,12 +293,12 @@ class AF3EDMSampler:
 
         self.check_schedule(schedule)
 
-        t_hat = schedule.t_hat[step_index]  # pyright: ignore[reportAttributeAccessIssue] (accessible after check_schedule)
-        dt = schedule.dt[step_index]  # pyright: ignore[reportAttributeAccessIssue]
-        sigma_tm = schedule.sigma_tm[step_index]  # pyright: ignore[reportAttributeAccessIssue]
+        t_hat = schedule.t_hat[step_index]  # ty: ignore[unresolved-attribute] (accessible after check_schedule)
+        dt = schedule.dt[step_index]  # ty: ignore[unresolved-attribute]
+        sigma_tm = schedule.sigma_tm[step_index]  # ty: ignore[unresolved-attribute]
         eps_scale = self.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
 
-        total_steps = len(schedule.sigma_t)  # pyright: ignore[reportAttributeAccessIssue] (this will be accessible due to the check above)
+        total_steps = len(schedule.sigma_t)  # ty: ignore[unresolved-attribute] (this will be accessible due to the check above)
 
         return StepParams(
             step_index=step_index,
@@ -362,7 +362,7 @@ class AF3EDMSampler:
             einx.multiply("b, b n c -> b n c", guidance_weight, guidance_direction)
             / context.t_effective
         )
-        proposal_shift = self.step_scale * context.dt * scaled_delta_contribution  # pyright: ignore[reportOperatorIssue] (dt will be Array if check_context didn't raise)
+        proposal_shift = self.step_scale * context.dt * scaled_delta_contribution  # ty: ignore[unsupported-operator] (dt will be Array if check_context didn't raise)
 
         result = delta + scaled_delta_contribution
         return torch.as_tensor(result), loss, torch.as_tensor(proposal_shift)
@@ -422,7 +422,7 @@ class AF3EDMSampler:
 
         # Store eps separately for proper frame transformation
         # eps_scale will be float if check_context didn't raise
-        eps = torch.randn_like(maybe_augmented_state) * eps_scale  # pyright: ignore[reportOperatorIssue]
+        eps = torch.randn_like(maybe_augmented_state) * eps_scale  # ty: ignore[unsupported-operator]
         noisy_state = maybe_augmented_state + eps
         noisy_state = torch.as_tensor(noisy_state).detach().requires_grad_(allow_gradients)
 
@@ -489,7 +489,7 @@ class AF3EDMSampler:
             # multiple particles.
             # Only compute when noise_var > 0 to avoid division by near-zero
             # (matching Boltz behavior)
-            noise_var = eps_scale**2  # pyright: ignore[reportOptionalOperand]
+            noise_var = eps_scale**2  # ty: ignore[unsupported-operator]
             if noise_var > 0:
                 log_proposal_correction = einx.sum(
                     "... [b n c]", eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
@@ -497,7 +497,7 @@ class AF3EDMSampler:
 
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
         # pyright sees dt as float | None, but it will be float if check_context didn't raise
-        next_state = noisy_state_working_frame_t + self.step_scale * dt * delta  # pyright: ignore[reportOperatorIssue]
+        next_state = noisy_state_working_frame_t + self.step_scale * dt * delta  # ty: ignore[unsupported-operator]
 
         return SamplerStepOutput(
             state=next_state,

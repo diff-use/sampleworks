@@ -214,7 +214,7 @@ def extract_lddt_features_from_atom_arrays(
 
     # For the remaining feature generation, we can directly use the
     # first model in the stack (only coordinates are different)
-    ground_truth_atom_array = ground_truth_atom_array_stack[0]  # pyright: ignore
+    ground_truth_atom_array = ground_truth_atom_array_stack[0]  # ty: ignore
 
     # Create the coordinate mask using occupancy if available, fallback to coordinate validity
     # Note (marcus.collins@astera.org) added `is not None` check, hopefully this does not
@@ -249,14 +249,14 @@ def extract_lddt_features_from_atom_arrays(
         tok_idx = data["atom_array"].token_id.astype(np.int32)
 
     # Compute chain identification at the token-level
-    token_starts = get_token_starts(ground_truth_atom_array)  # pyright: ignore
+    token_starts = get_token_starts(ground_truth_atom_array)  # ty: ignore
 
     if "chain_iid" in ground_truth_atom_array.get_annotation_categories():
-        chain_iid_token_lvl = ground_truth_atom_array.chain_iid[token_starts]  # pyright: ignore
+        chain_iid_token_lvl = ground_truth_atom_array.chain_iid[token_starts]  # ty: ignore
     else:
         # Use the chain_id annotation instead
         # (e.g., for AF-3 outputs, where the chain_id is ostensibly the chain_iid)
-        chain_iid_token_lvl = ground_truth_atom_array.chain_id[token_starts]  # pyright: ignore
+        chain_iid_token_lvl = ground_truth_atom_array.chain_id[token_starts]  # ty: ignore
 
     return {
         "X_L": X_L,
@@ -312,10 +312,10 @@ class AllAtomLDDT(Metric):
         # Note: add_global_token_id_annotation works with both AtomArray and
         # AtomArrayStack at runtime
         predicted_atom_array_stack = add_global_token_id_annotation(
-            predicted_atom_array_stack  # pyright: ignore[reportArgumentType]
+            predicted_atom_array_stack  # ty: ignore[invalid-argument-type]
         )
         ground_truth_atom_array_stack = add_global_token_id_annotation(
-            ground_truth_atom_array_stack  # pyright: ignore[reportArgumentType]
+            ground_truth_atom_array_stack  # ty: ignore[invalid-argument-type]
         )
 
         # restrict to atoms that are present in both structures
@@ -447,10 +447,10 @@ class SelectedLDDT(Metric):
             # set the token ids, to avoid any possible confusion later on
             # Note: add_global_token_id_annotation works with AtomArrayStack at runtime
             filtered_predicted = add_global_token_id_annotation(
-                filtered_predicted  # pyright: ignore[reportArgumentType]
+                filtered_predicted  # ty: ignore[invalid-argument-type]
             )
             filtered_ground_truth = add_global_token_id_annotation(
-                filtered_ground_truth  # pyright: ignore[reportArgumentType]
+                filtered_ground_truth  # ty: ignore[invalid-argument-type]
             )
 
             lddt_features = extract_lddt_features_from_atom_arrays(
