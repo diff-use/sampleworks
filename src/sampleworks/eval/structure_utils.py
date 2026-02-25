@@ -26,9 +26,9 @@ try:
     _HAS_PROTENIX = True
 except ImportError:
     _HAS_PROTENIX = False
-    _add_terminal_oxt_atoms = None  # pyright: ignore[reportConstantRedefinition]
-    _ensure_atom_array = None  # pyright: ignore[reportConstantRedefinition]
-    _filter_zero_occupancy = None  # pyright: ignore[reportConstantRedefinition]
+    _add_terminal_oxt_atoms = None  # ty: ignore[conflicting-declarations]
+    _ensure_atom_array = None  # ty: ignore[conflicting-declarations]
+    _filter_zero_occupancy = None  # ty: ignore[conflicting-declarations]
 
 
 # TODO: standardize this more! This needs to have a specified output dataclass that
@@ -127,14 +127,14 @@ def process_structure_to_trajectory_input(
         assert _ensure_atom_array is not None
         assert _filter_zero_occupancy is not None
         assert _add_terminal_oxt_atoms is not None
-        atom_array = _ensure_atom_array(atom_array)  # pyright: ignore[reportArgumentType]
+        atom_array = _ensure_atom_array(atom_array)  # ty: ignore[invalid-argument-type]
         atom_array = _filter_zero_occupancy(atom_array)
         atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
 
     # Mask to valid atoms (nonzero occupancy, no NaN coords)
-    reward_param_mask = atom_array.occupancy > 0  # pyright: ignore[reportOptionalOperand]
-    reward_param_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
-    atom_array = atom_array[reward_param_mask]  # pyright: ignore[reportIndexIssue]
+    reward_param_mask = atom_array.occupancy > 0  # ty: ignore[unsupported-operator]
+    reward_param_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)  # ty: ignore[invalid-argument-type, no-matching-overload]
+    atom_array = atom_array[reward_param_mask]  # ty: ignore[index-out-of-bounds]
 
     input_coords = torch.as_tensor(
         einx.rearrange(
@@ -152,7 +152,7 @@ def process_structure_to_trajectory_input(
         structure=structure,
         model_input=features,
         input_coords=input_coords,
-        atom_array=atom_array,  # pyright: ignore[reportArgumentType]
+        atom_array=atom_array,  # ty: ignore[invalid-argument-type]
         ensemble_size=ensemble_size,
     )
 

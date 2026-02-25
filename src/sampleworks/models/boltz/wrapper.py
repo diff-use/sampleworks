@@ -211,7 +211,7 @@ def create_boltz_input_from_structure(
             sequence_to_chains.setdefault(seq, []).append(chain_id)
 
         unique_chain_sequences = {chains[0]: seq for seq, chains in sequence_to_chains.items()}
-        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)  # pyright: ignore[reportArgumentType]
+        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)  # ty: ignore[invalid-argument-type]
 
         msa_paths = {}
         for seq, chains_with_seq in sequence_to_chains.items():
@@ -491,7 +491,7 @@ class Boltz2Wrapper:
                 "x_init from prior. This means align_to_input will not work properly,"
                 " and reward functions dependent on this won't be accurate."
             )
-            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
+            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # ty: ignore[invalid-argument-type]
             x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
@@ -933,7 +933,7 @@ class Boltz1Wrapper:
             x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
         else:
             # Fallback to noise if atom counts don't match
-            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # pyright: ignore[reportArgumentType]
+            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # ty: ignore[invalid-argument-type]
             x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)

@@ -9,7 +9,7 @@ from sampleworks.utils.mmseqs2 import run_mmseqs2
 
 
 if PROTENIX_AVAILABLE:
-    from runner.msa_search import msa_search as protenix_msa_search  # pyright:ignore [reportMissingImports] # noqa: I001
+    from runner.msa_search import msa_search as protenix_msa_search  # ty: ignore[unresolved-import] # noqa: I001
 
     logger.debug("Protenix MSA tools are available at top of msa.py")
 else:
@@ -304,7 +304,7 @@ class MSAManager:
                 (out_dir / str(idx) / fn).exists() for idx in data_keys for fn in reqd_files
             )
             if need_msas:
-                msa_directories = protenix_msa_search(  # pyright:ignore [reportPossiblyUnboundVariable]
+                msa_directories = protenix_msa_search(  # ty: ignore[possibly-unresolved-reference]
                     sequences, out_dir, mode="protenix"
                 )
                 self._api_calls += 1

@@ -1,5 +1,5 @@
 # ruff: noqa
-# pyright: ignore
+# ty: ignore
 import torch
 
 from . import CUDA_AVAILABLE, dilate_points_cuda

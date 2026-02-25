@@ -1,4 +1,4 @@
-# pyright: ignore
+# ty: ignore
 
 """Minimal components of qFit's transformer module necessary to implement
 qFit's volume.py

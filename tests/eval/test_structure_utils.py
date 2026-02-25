@@ -152,7 +152,7 @@ class TestExtractSelectionCoordinates:
         assert isinstance(coords, np.ndarray)
         assert coords.shape == (3, 3)
         first_model = cast(AtomArray, atom_array_stack_simple[0])
-        np.testing.assert_array_equal(coords, first_model.coord[:3])  # pyright: ignore[reportOptionalSubscript]
+        np.testing.assert_array_equal(coords, first_model.coord[:3])  # ty: ignore[not-subscriptable]
 
     def test_no_matching_atoms_raises_runtime_error(self, basic_atom_array_multichain):
         """Test that no matching atoms raises RuntimeError."""

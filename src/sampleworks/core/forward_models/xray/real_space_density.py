@@ -1,4 +1,4 @@
-# pyright: ignore
+# ty: ignore
 import warnings
 from copy import deepcopy
 from dataclasses import dataclass

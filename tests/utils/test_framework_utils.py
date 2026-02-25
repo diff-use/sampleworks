@@ -115,7 +115,7 @@ class TestConversionFunctions:
         assert x_torch.dtype == torch.float32
 
     @pytest.mark.skipif(
-        not jax.config.x64_enabled,  # pyright: ignore[reportAttributeAccessIssue]
+        not jax.config.x64_enabled,  # ty: ignore[unresolved-attribute]
         reason="JAX x64 not enabled",
     )
     def test_jax_to_torch_preserves_dtype_float64(self):
@@ -134,7 +134,7 @@ class TestConversionFunctions:
         assert x_jax.dtype == jnp.float32
 
     @pytest.mark.skipif(
-        not jax.config.x64_enabled,  # pyright: ignore[reportAttributeAccessIssue]
+        not jax.config.x64_enabled,  # ty: ignore[unresolved-attribute]
         reason="JAX x64 not enabled",
     )
     def test_torch_to_jax_preserves_dtype_float64(self):

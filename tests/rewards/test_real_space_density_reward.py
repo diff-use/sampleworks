@@ -388,8 +388,8 @@ class TestVmapCompatibility:
 
             unique_combinations, inverse_indices = (
                 reward_function_1vme.precompute_unique_combinations(
-                    elements_batch[0, 0],  # pyright: ignore[reportCallIssue,reportArgumentType]
-                    b_factors_batch[0, 0],  # pyright: ignore[reportCallIssue,reportArgumentType]
+                    elements_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
+                    b_factors_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
                 )
             )
 
@@ -408,7 +408,7 @@ class TestVmapCompatibility:
                 op=rf_partial,
             )
 
-            assert result.shape == torch.Size([num_particles])  # pyright: ignore[reportAttributeAccessIssue]
+            assert result.shape == torch.Size([num_particles])  # ty: ignore[unresolved-attribute]
 
     def test_vmap_consistency(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test vmap results match sequential calls."""
@@ -432,8 +432,8 @@ class TestVmapCompatibility:
         occupancies_batch = einx.rearrange("n -> p e n", occupancies, p=num_particles, e=1)
 
         unique_combinations, inverse_indices = reward_function_1vme.precompute_unique_combinations(
-            elements_batch[0, 0],  # pyright: ignore[reportCallIssue,reportArgumentType]
-            b_factors_batch[0, 0],  # pyright: ignore[reportCallIssue,reportArgumentType]
+            elements_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
+            b_factors_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
         )
 
         rf_partial = partial(
@@ -461,7 +461,7 @@ class TestVmapCompatibility:
             )
             result_sequential.append(loss.item())
 
-        result_sequential = torch.tensor(result_sequential, device=result_vmap.device)  # pyright: ignore[reportAttributeAccessIssue]
+        result_sequential = torch.tensor(result_sequential, device=result_vmap.device)  # ty: ignore[unresolved-attribute]
 
         torch.testing.assert_close(result_vmap, result_sequential, rtol=1e-5, atol=1e-6)
 

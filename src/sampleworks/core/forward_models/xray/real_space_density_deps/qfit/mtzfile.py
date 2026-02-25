@@ -1,4 +1,4 @@
-# pyright: ignore
+# ty: ignore
 import struct
 
 import numpy as np
