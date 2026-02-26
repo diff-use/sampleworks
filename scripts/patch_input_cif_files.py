@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--cif-pattern",
         default="refined.cif",
-        help="Regex pattern for cif files to patch, default: 'refined.cif'",
+        help="Pattern used by fnmatch/glob for cif files to patch, default: 'refined.cif'",
     )
     parser.add_argument(
         "--rcsb-pattern",
@@ -122,30 +122,37 @@ def patch_individual_cif_file(
 
     # Get the offset for residue numbering in the reference structure
     reference_path = reference_dir / input_pdb_pattern.format(pdb_id=rcsb_id)
-
+    
     # load the two CIF files.
-    reference = load_any(reference_path)
-    asym_unit = load_any(cif_file)
-    asym_unit = ensure_atom_array_stack(asym_unit)
+    try:
+        reference = load_any(reference_path)
+        asym_unit = load_any(cif_file)
+        asym_unit = ensure_atom_array_stack(asym_unit)
+    except Exception as e:
+        msg = f"Unable to read and parse either/both of {reference_path}, {cif_file}"
+        logger.warning(msg)
+        return msg
 
     # get the unique residue numbers for each file
     if reference.res_id is None or asym_unit.res_id is None:
         msg = f"Residue numbers for {cif_path} and/or {reference_path} are missing."
         logger.error(msg)
         return msg
-    
-    ref_resnums = np.sort(np.unique(reference.res_id))
-    cif_resnums = np.sort(np.unique(asym_unit.res_id))
 
+    # CodeRabbit improved this: we are now not chain agnostic, so we can handle multiple chains
+    ref_keys = list(dict.fromkeys(zip(reference.chain_id.tolist(), reference.res_id.tolist())))
+    cif_keys = list(dict.fromkeys(zip(asym_unit.chain_id.tolist(), asym_unit.res_id.tolist())))
+    
     # There should be a single, unique mapping between them. If not, something is wrong.
-    if len(ref_resnums) != len(cif_resnums):
+    if len(ref_keys) != len(cif_keys):
         msg = f"Residue numbers in {cif_path} cannot be mapped to those in {reference_path}"
         logger.error(msg)
         return msg
 
     # patch the residue numbers to match the original pdb
-    mapping = {k: v for k, v in zip(cif_resnums, ref_resnums, strict=True)}
-    asym_unit.res_id = [mapping[k] for k in asym_unit.res_id]
+    mapping = {cif_key: ref_key[1] for cif_key, ref_key in zip(cif_keys, ref_keys, strict=True)}
+    atom_keys = list(zip(asym_unit.chain_id.tolist(), asym_unit.res_id.tolist()))
+    asym_unit.res_id = np.array([mapping[k] for k in atom_keys], dtype=asym_unit.res_id.dtype)
 
     # load the actual PDB, we'll copy the new coordinates to it.
     template = CIFFile.read(rcsb_path)
