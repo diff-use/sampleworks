@@ -19,7 +19,7 @@ from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import DataSpaceDPSScaler, NoiseSpaceDPSScaler
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.utils.atom_array_utils import make_normalized_atom_id
-from sampleworks.utils.atom_space import AtomReconciler
+from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.frame_transforms import apply_forward_transform
 from sampleworks.utils.guidance_script_utils import save_everything
 
@@ -66,7 +66,7 @@ class RealPairExpectation:
     expected_n_struct
         Expected structure atom count after filtering.
     expected_n_common
-        Expected common atom count from :class:`sampleworks.utils.atom_space.AtomReconciler`.
+        Expected common atom count from :class:`sampleworks.utils.atom_reconciler.AtomReconciler`.
     """
 
     id: str

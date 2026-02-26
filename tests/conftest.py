@@ -24,7 +24,7 @@ from biotite.structure import AtomArray, AtomArrayStack, stack
 from sampleworks.core.samplers.edm import AF3EDMSampler
 from sampleworks.core.samplers.protocol import StepParams
 from sampleworks.eval.structure_utils import SampleworksProcessedStructure
-from sampleworks.utils.atom_space import AtomReconciler
+from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.guidance_constants import (
     Rewards,
     StepScalers,

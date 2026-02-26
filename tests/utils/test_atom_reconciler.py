@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from sampleworks.utils.atom_space import AtomReconciler
+from sampleworks.utils.atom_reconciler import AtomReconciler
 
 from tests.utils.atom_array_builders import build_test_atom_array
 
