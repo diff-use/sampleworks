@@ -68,6 +68,10 @@ class RewardInputs:
 
         total_batch_size = num_particles * ensemble_size if num_particles > 1 else ensemble_size
 
+        # ensure contiguous arrays for safe conversion to PyTorch tensors
+        coords_np = np.ascontiguousarray(np.asarray(atom_array.coord))
+        coords_t = torch.from_numpy(coords_np).to(dtype=torch.float32)
+
         # If we have multiple particles (e.g. in FK Steering), we need to tile the elements and
         # b_factors across the particle dimension.
         if num_particles > 1:
@@ -83,7 +87,7 @@ class RewardInputs:
             occupancies = torch.ones_like(b_factors) / ensemble_size
             input_coords = einx.rearrange(
                 "... -> b ...",
-                torch.from_numpy(atom_array.coord).to(dtype=torch.float32),
+                coords_t,
                 b=total_batch_size,
             )[..., reward_param_mask, :]
         else:
@@ -96,7 +100,7 @@ class RewardInputs:
             occupancies = torch.ones_like(b_factors) / ensemble_size
             input_coords = einx.rearrange(
                 "... -> e ...",
-                torch.from_numpy(atom_array.coord).to(dtype=torch.float32),
+                coords_t,
                 e=ensemble_size,
             )[..., reward_param_mask, :]
 
