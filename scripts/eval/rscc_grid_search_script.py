@@ -123,7 +123,7 @@ def main(args: argparse.Namespace):
 
                 # Extract the region around altloc residues from the base map, using the
                 # union of boxes around each atom. _extracted_base is no longer an XMap
-                _extracted_base = _base_xmap.extract_tight(
+                _, _extracted_base = _base_xmap.extract_tight(
                     _selection_coords, padding=DEFAULT_SELECTION_PADDING
                 )
                 logger.info(
@@ -150,7 +150,7 @@ def main(args: argparse.Namespace):
             # and replacing its array with the computed density
             _computed_xmap = copy.deepcopy(_base_xmap)
             _computed_xmap.array = _computed_density.cpu().numpy().squeeze()
-            _extracted_computed = _computed_xmap.extract_tight(
+            _, _extracted_computed = _computed_xmap.extract_tight(
                 _selection_coords, padding=DEFAULT_SELECTION_PADDING
             )
 
