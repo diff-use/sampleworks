@@ -56,7 +56,7 @@ def main(args) -> None:
     all_experiments = scan_grid_search_results(
         grid_search_dir, target_filename=args.target_filename
     )
-    logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
+    logger.info(f"Found {len(all_experiments)} experiments with {args.target_filename} files")
 
     # Now loop over experiments with joblib and get back tuples of experiment level metrics
     clashscore_metrics = joblib.Parallel(n_jobs=args.n_jobs)(
