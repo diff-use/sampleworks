@@ -224,7 +224,7 @@ def process_structure_to_trajectory_input(
     else:
         model_reference_coords = struct_coords
 
-    input_coords = torch.as_tensor(match_batch(model_reference_coords.unsqueeze(0), ensemble_size))
+    input_coords = match_batch(model_reference_coords.unsqueeze(0), ensemble_size)
 
     structure["asym_unit"] = atom_array
 

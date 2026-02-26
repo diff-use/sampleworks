@@ -697,10 +697,7 @@ class Boltz2Wrapper:
         # x_init should be the reference coordinates for alignment purposes.
         if true_atom_array is not None and len(true_atom_array) == num_atoms:
             x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = cast(
-                Tensor,
-                match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size),
-            ).clone()
+            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
         else:
             # TODO: The temp features situation is not ideal and I think we can do better probably
             # not sure exactly what the best way to handle x_init is, should define it a bit better
@@ -856,10 +853,7 @@ class Boltz2Wrapper:
             if isinstance(t_tensor, torch.Tensor) and t_tensor.ndim == 0:
                 t_tensor = t_tensor.unsqueeze(0)
 
-        t_tensor = cast(
-            Tensor,
-            match_batch(t_tensor, target_batch_size=x_t.shape[0]),
-        )
+        t_tensor = match_batch(t_tensor, target_batch_size=x_t.shape[0])
 
         feats = cond.feats
         atom_mask = feats.get("atom_pad_mask")  # shape [1, N_padded]
@@ -1160,10 +1154,7 @@ class Boltz1Wrapper:
 
         if true_atom_array is not None and len(true_atom_array) == num_atoms:
             x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = cast(
-                Tensor,
-                match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size),
-            ).clone()
+            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
         else:
             # TODO: The temp features situation is not ideal and I think we can do better probably
             # not sure exactly what the best way to handle x_init is, should define it a bit better
@@ -1218,10 +1209,7 @@ class Boltz1Wrapper:
             if isinstance(t_tensor, torch.Tensor) and t_tensor.ndim == 0:
                 t_tensor = t_tensor.unsqueeze(0)
 
-        t_tensor = cast(
-            Tensor,
-            match_batch(t_tensor, target_batch_size=x_t.shape[0]),
-        )
+        t_tensor = match_batch(t_tensor, target_batch_size=x_t.shape[0])
 
         feats = cond.feats
         atom_mask = feats.get("atom_pad_mask")

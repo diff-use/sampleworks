@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, ParamSpec, TYPE_CHECKING, TypeVar
+from typing import Any, overload, ParamSpec, TYPE_CHECKING, TypeVar
 
 import numpy as np
 
@@ -129,6 +129,12 @@ def ensure_jax(*arg_names: str):
     return decorator
 
 
+@overload
+def match_batch(array: "torch.Tensor", target_batch_size: int) -> "torch.Tensor": ...
+@overload
+def match_batch(array: "jax.Array", target_batch_size: int) -> "jax.Array": ...
+@overload
+def match_batch(array: Array, target_batch_size: int) -> Array: ...
 def match_batch(array: Array, target_batch_size: int) -> Array:
     """Match an array's leading batch dimension to a target size.
 
@@ -154,18 +160,23 @@ def match_batch(array: Array, target_batch_size: int) -> Array:
     TypeError
         If *array* is neither a PyTorch tensor nor a JAX array.
     """
+    # torch.broadcast_to / torch.tile mirror jnp.broadcast_to / jnp.tile exactly
+    if is_torch_tensor(array):
+        _broadcast_to, _tile = torch.broadcast_to, torch.tile
+    elif is_jax_array(array):
+        _broadcast_to, _tile = jnp.broadcast_to, jnp.tile
+    else:
+        raise TypeError(f"unsupported array type: {type(array)}")
+
     if array.ndim == 0:
         raise ValueError("match_batch requires ndim >= 1")
+    if target_batch_size < 1:
+        raise ValueError("target_batch_size must be positive")
+
     b, n = array.shape[0], target_batch_size
     if b == n:
         return array
-    # torch.broadcast_to / torch.tile mirror jnp.broadcast_to / jnp.tile exactly
-    if is_torch_tensor(array):
-        _broadcast_to, _tile = torch.broadcast_to, torch.tile  # pyright: ignore[reportAttributeAccessIssue]
-    elif is_jax_array(array):
-        _broadcast_to, _tile = jnp.broadcast_to, jnp.tile  # pyright: ignore[reportAttributeAccessIssue]
-    else:
-        raise TypeError(f"unsupported array type: {type(array)}")
+
     # singleton: lazy broadcast (no copy)
     if b == 1:
         return _broadcast_to(array, (n, *array.shape[1:]))  # ty: ignore[invalid-argument-type]

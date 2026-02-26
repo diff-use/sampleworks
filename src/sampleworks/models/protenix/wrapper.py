@@ -383,9 +383,6 @@ class ProtenixWrapper:
                 true_coords = torch.as_tensor(true_coords, device=self.device, dtype=torch.float32)
             features["true_coords"] = true_coords
 
-            # true_atom_array is used by the scalers for reward computation
-            features["true_atom_array"] = atom_array
-
         features = self.model.relative_position_encoding.generate_relp(features)
         features = update_input_feature_dict(features)
         features = send_tensors_in_dict_to_device(features, self.device, inplace=False)
@@ -424,15 +421,26 @@ class ProtenixWrapper:
         )
 
         # x_init should be the reference coordinates for alignment purposes.
+        # Must match num_atoms_protenix so downstream samplers/scalers see
+        # consistent shapes with the model representation.
         if "asym_unit" in structure:
-            x_init = torch.tensor(atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = cast(
-                torch.Tensor,
-                match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size),
-            ).clone()
+            n_input = len(atom_array)
+            if n_input != num_atoms_protenix:
+                logger.warning(
+                    f"Atom-count mismatch: atom_array has {n_input} atoms, "
+                    f"atom_array_protenix has {num_atoms_protenix} atoms. "
+                    "Using atom_array_protenix coords for x_init to match model "
+                    "atom count.",
+                )
+                x_init = torch.as_tensor(
+                    atom_array_protenix.coord, device=self.device, dtype=torch.float32
+                )
+            else:
+                x_init = torch.as_tensor(atom_array.coord, device=self.device, dtype=torch.float32)
+            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
         else:
             logger.warning(
-                "True structure not available or atom count mismatch; initializing "
+                "True structure not available, so initializing "
                 "x_init from prior. This means align_to_input will not work properly,"
                 " and reward functions dependent on this won't be accurate."
             )
@@ -578,10 +586,7 @@ class ProtenixWrapper:
             if t_tensor.ndim == 0:
                 t_tensor = t_tensor.unsqueeze(0)
 
-        t_tensor = cast(
-            torch.Tensor,
-            match_batch(t_tensor, target_batch_size=x_t.shape[0]),
-        )
+        t_tensor = match_batch(t_tensor, target_batch_size=x_t.shape[0])
 
         # When gradients are enabled, detach cached pairformer outputs so gradients
         # only flow through the diffusion module (not back through the pairformer).
