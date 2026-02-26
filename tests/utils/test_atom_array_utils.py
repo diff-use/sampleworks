@@ -11,6 +11,7 @@ from sampleworks.utils.atom_array_utils import (
     filter_to_common_atoms,
     keep_amino_acids,
     keep_polymer,
+    make_normalized_atom_id,
     remove_hydrogens,
     select_altloc,
 )
@@ -65,6 +66,58 @@ class TestSelectAltlocBasic:
         assert list(cast(np.ndarray, result.res_id)) == [1, 2]
         assert list(cast(np.ndarray, result.atom_name)) == ["CA", "CA"]
 
+    def test_6b8x_select_altloc_a(self, structure_6b8x_with_altlocs):
+        """PDB 6b8x has 695 atoms in altloc A."""
+        arr = structure_6b8x_with_altlocs
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        result = select_altloc(arr, "A", return_full_array=False)
+
+        assert len(result) == 695
+        assert all(result.altloc_id == "A")
+
+    def test_6b8x_select_rare_altloc_c(self, structure_6b8x_with_altlocs):
+        """PDB 6b8x altloc C is sparse: 46 atoms across residues 150-153 and 224."""
+        arr = structure_6b8x_with_altlocs
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        result = select_altloc(arr, "C", return_full_array=False)
+
+        assert len(result) == 46
+        assert set(cast(np.ndarray, result.res_id)) == {150, 151, 152, 153, 224}
+
+    def test_6b8x_full_array_includes_blank_altlocs(self, structure_6b8x_with_altlocs):
+        """return_full_array=True includes both target altloc and non-altloc atoms."""
+        arr = structure_6b8x_with_altlocs
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        result = select_altloc(arr, "A", return_full_array=True)
+
+        # 695 altloc-A atoms + 1906 blank-altloc atoms = 2601
+        assert len(result) == 2601
+        unique_altlocs = set(cast(np.ndarray, result.altloc_id))
+        assert "A" in unique_altlocs
+        assert "B" not in unique_altlocs
+        assert "C" not in unique_altlocs
+
+    def test_6b8x_occupancies_preserved(self, structure_6b8x_with_altlocs):
+        """Occupancy values are preserved after altloc selection on real data."""
+        arr = structure_6b8x_with_altlocs
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        result = select_altloc(arr, "A", return_full_array=False)
+        occupancies = cast(np.ndarray, result.occupancy)
+
+        assert occupancies.min() > 0.0
+        assert occupancies.max() <= 1.0
+        # 6b8x altloc A occupancies span 0.18–1.00
+        assert occupancies.min() == pytest.approx(0.18, abs=0.01)
+        assert occupancies.max() == pytest.approx(1.00, abs=0.01)
+
 
 class TestSelectAltlocWithStack:
     """Tests for AtomArrayStack inputs."""
@@ -100,6 +153,18 @@ class TestSelectAltlocWithStack:
             model = cast(AtomArray, result_stack[i])
             assert len(model) == 2
             assert all(model.altloc_id == "B")
+
+    def test_6b8x_stack_select(self, structure_6b8x_with_altlocs):
+        """select_altloc on a real AtomArrayStack preserves stack type and depth."""
+        arr = structure_6b8x_with_altlocs
+        if not isinstance(arr, AtomArrayStack):
+            pytest.skip("fixture is not a stack in this environment")
+
+        result = select_altloc(arr, "A", return_full_array=False)
+
+        assert isinstance(result, AtomArrayStack)
+        assert result.stack_depth() == arr.stack_depth()
+        assert result.array_length() == 695
 
 
 class TestSelectAltlocErrors:
@@ -362,7 +427,6 @@ class TestRemoveHydrogens:
         stack_result = remove_hydrogens(_get_atom_array_stack(structure))
 
         assert isinstance(stack_result, AtomArrayStack)
-        stack_result = cast(AtomArrayStack, stack_result)
         assert len(arr_result) == stack_result.array_length()
         assert "H" not in cast(np.ndarray, stack_result.element)
 
@@ -378,7 +442,7 @@ class TestRemoveHydrogens:
 
     def test_invalid_type_raises_error(self):
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            remove_hydrogens("bad input")  # pyright: ignore[reportArgumentType]
+            remove_hydrogens("bad input")  # ty:ignore[invalid-argument-type]
 
 
 class TestKeepPolymer:
@@ -398,12 +462,11 @@ class TestKeepPolymer:
         stack_result = keep_polymer(_get_atom_array_stack(test_structure))
 
         assert isinstance(stack_result, AtomArrayStack)
-        stack_result = cast(AtomArrayStack, stack_result)
         assert len(arr_result) == stack_result.array_length()
 
     def test_invalid_type_raises_error(self):
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            keep_polymer(42)  # pyright: ignore[reportArgumentType]
+            keep_polymer(42)  # ty:ignore[invalid-argument-type]
 
 
 class TestKeepAminoAcids:
@@ -426,12 +489,11 @@ class TestKeepAminoAcids:
         stack_result = keep_amino_acids(_get_atom_array_stack(test_structure))
 
         assert isinstance(stack_result, AtomArrayStack)
-        stack_result = cast(AtomArrayStack, stack_result)
         assert len(arr_result) == stack_result.array_length()
 
     def test_invalid_type_raises_error(self):
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            keep_amino_acids(None)  # pyright: ignore[reportArgumentType]
+            keep_amino_acids(None)  # ty:ignore[invalid-argument-type]
 
 
 class TestFilterFunctionsIntegration:
@@ -482,10 +544,167 @@ class TestFilterFunctionsIntegration:
         )
 
         # Coordinates and atom order are identical
-        np.testing.assert_array_equal(polymer_first.coord, hydrogen_first.coord)  # pyright: ignore[reportArgumentType]
+        np.testing.assert_array_equal(polymer_first.coord, hydrogen_first.coord)
 
         # Output satisfies both filters' postconditions
         elements = cast(np.ndarray, polymer_first.element)
         assert "H" not in elements
         assert "D" not in elements
         assert np.all(filter_polymer(polymer_first))
+    def test_6b8x_altloc_a_vs_b_common_atoms(self, structure_6b8x_with_altlocs):
+        """Full-array altloc A and B share atoms at positions with blank altlocs."""
+        arr = structure_6b8x_with_altlocs
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        full_a = select_altloc(arr, "A", return_full_array=True)
+        full_b = select_altloc(arr, "B", return_full_array=True)
+
+        f_a, f_b = filter_to_common_atoms(full_a, full_b)
+
+        # Both full arrays share the 1906 blank-altloc atoms plus overlapping
+        # altloc positions → 2447 common atoms (empirically verified)
+        assert f_a.array_length() == 2447
+        assert f_b.array_length() == 2447
+
+
+class TestNormalizedAtomId:
+    """Tests for make_normalized_atom_id."""
+
+    def test_different_numbering_same_result(
+        self, backbone_two_residues, backbone_two_residues_offset
+    ):
+        """Two arrays with identical atoms but offset res_id produce the same IDs."""
+        np.testing.assert_array_equal(
+            make_normalized_atom_id(backbone_two_residues),
+            make_normalized_atom_id(backbone_two_residues_offset),
+        )
+
+    def test_different_chains_differ(self, two_chain_array):
+        """Atoms on different chains get distinct normalized IDs."""
+        ids = make_normalized_atom_id(two_chain_array)
+        assert ids[0] != ids[1]
+
+    def test_reordered_chains_same_ids(self, reordered_chains):
+        """Chain ordering [B,A] vs [A,B] produces identical normalized IDs."""
+        model, struct = reordered_chains
+        model_ids = make_normalized_atom_id(model)
+        struct_ids = make_normalized_atom_id(struct)
+        np.testing.assert_array_equal(sorted(model_ids), sorted(struct_ids))
+
+    def test_1vme_symmetric_chains_produce_same_normalized_ids(self, structure_1vme):
+        """1vme chains A and B are symmetric homodimers with identical topology."""
+        arr = structure_1vme["asym_unit"]
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        chain_a = arr[arr.chain_id == "A"]
+        chain_b = arr[arr.chain_id == "B"]
+
+        ids_a = sorted(make_normalized_atom_id(chain_a))
+        ids_b = sorted(make_normalized_atom_id(chain_b))
+
+        np.testing.assert_array_equal(ids_a, ids_b)
+
+    def test_6b8x_unique_ids_per_atom(self, structure_6b8x):
+        """Every atom in 6b8x gets a unique normalized ID (single-chain, no duplication)."""
+        arr = structure_6b8x["asym_unit"]
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        ids = make_normalized_atom_id(arr)
+
+        assert len(ids) == len(set(ids))
+
+
+class TestFilterToCommonAtomsNormalized:
+    """Tests for filter_to_common_atoms with normalize_ids=True."""
+
+    def test_different_numbering(self, model_struct_numbering_offset):
+        """Same atoms with different res_id schemes are matched correctly."""
+        model, struct = model_struct_numbering_offset
+        (fm, fs) = filter_to_common_atoms(model, struct, normalize_ids=True)
+        assert fm.array_length() == 3
+        assert fs.array_length() == 3
+        fm_arr, fs_arr = cast(AtomArray, fm[0]), cast(AtomArray, fs[0])
+        fm_names = cast(np.ndarray, fm_arr.atom_name)
+        fs_names = cast(np.ndarray, fs_arr.atom_name)
+        for i in range(len(fm_arr)):
+            assert fm_names[i] == fs_names[i]
+
+    def test_without_normalize_fails_on_different_numbering(self, single_atom_numbering_offset):
+        """Without normalize_ids, different res_id numbering finds no overlap."""
+        model, struct = single_atom_numbering_offset
+        with pytest.raises(RuntimeError, match="No common atoms"):
+            filter_to_common_atoms(model, struct, normalize_ids=False)
+
+    def test_multi_chain(self, multi_chain_numbering_offset):
+        """Normalized matching works across multiple chains."""
+        model, struct = multi_chain_numbering_offset
+        (fm, fs) = filter_to_common_atoms(model, struct, normalize_ids=True)
+        assert fm.array_length() == 3
+
+    def test_reordered_chains(self, reordered_chains):
+        """Chain ordering [B,A] vs [A,B] still finds all common atoms."""
+        model, struct = reordered_chains
+        (fm, fs) = filter_to_common_atoms(model, struct, normalize_ids=True)
+        assert fm.array_length() == 2
+
+    def test_1vme_normalized_atom_names_align(self, structure_1vme):
+        """Normalized matching of 1vme chain A vs B produces atom-level alignment."""
+        arr = structure_1vme["asym_unit"]
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        chain_a = arr[arr.chain_id == "A"]
+        chain_b = arr[arr.chain_id == "B"]
+
+        (fa, fb) = filter_to_common_atoms(chain_a, chain_b, normalize_ids=True)
+        fa_arr = cast(AtomArray, fa[0])
+        fb_arr = cast(AtomArray, fb[0])
+
+        np.testing.assert_array_equal(
+            cast(np.ndarray, fa_arr.atom_name), cast(np.ndarray, fb_arr.atom_name)
+        )
+        np.testing.assert_array_equal(
+            cast(np.ndarray, fa_arr.res_name), cast(np.ndarray, fb_arr.res_name)
+        )
+
+
+class TestReturnIndices:
+    """Tests for filter_to_common_atoms with return_indices=True."""
+
+    def test_indices_point_to_correct_atoms(self, model_struct_partial_atom_names):
+        """Returned indices map back to the correct atoms in the originals."""
+        model, struct = model_struct_partial_atom_names
+        (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+            model, struct, normalize_ids=True, return_indices=True
+        )
+        assert len(m_idx) == 2
+        for mi, si in zip(m_idx, s_idx):
+            assert model.atom_name[mi] == struct.atom_name[si]
+
+    def test_backward_compat_without_return_indices(self, backbone_two_residues):
+        """Default call (return_indices=False) returns only filtered arrays."""
+        result = filter_to_common_atoms(backbone_two_residues, backbone_two_residues)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert hasattr(result[0], "coord")
+
+    def test_6b8x_indices_roundtrip(self, structure_6b8x):
+        """Returned indices reconstruct the filtered atoms from the original 6b8x array."""
+        arr = structure_6b8x["asym_unit"]
+        if isinstance(arr, AtomArrayStack):
+            arr = cast(AtomArray, arr[0])
+
+        # Overlapping slices: sub1=[0:200], sub2=[100:end] → overlap at [100:200]
+        sub1 = arr[:200]
+        sub2 = arr[100:]
+
+        (f1, f2), (idx1, idx2) = filter_to_common_atoms(sub1, sub2, return_indices=True)
+
+        assert len(idx1) == len(idx2)
+        for i1, i2 in zip(idx1, idx2):
+            assert sub1.chain_id[i1] == sub2.chain_id[i2]
+            assert sub1.res_id[i1] == sub2.res_id[i2]
+            assert sub1.atom_name[i1] == sub2.atom_name[i2]
