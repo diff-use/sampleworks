@@ -35,9 +35,17 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
     submission_endpoint = "ticket/pair" if use_pairing else "ticket/msa"
 
     # Validate mutually exclusive authentication methods
-    has_basic_auth = msa_server_username and msa_server_password
+    has_username = msa_server_username is not None
+    has_password = msa_server_password is not None
+    has_basic_auth = has_username and has_password
     has_header_auth = auth_headers is not None
-    if has_basic_auth and (has_header_auth or auth_headers):
+
+    if has_username != has_password:
+        raise ValueError(
+            "Both msa_server_username and msa_server_password must be provided together."
+        )
+
+    if has_basic_auth and has_header_auth:
         raise ValueError(
             "Cannot use both basic authentication (username/password) and header/API key "
             "authentication. Please use only one authentication method."
@@ -49,13 +57,17 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
     # Set up authentication
     auth = None
     if has_basic_auth:
-        assert msa_server_username is not None and msa_server_password is not None
+        if msa_server_username is None or msa_server_password is None:
+            raise ValueError(
+                "Both msa_server_username and msa_server_password must be provided together."
+            )
         auth = HTTPBasicAuth(msa_server_username, msa_server_password)
         logger.debug(
             f"MMSeqs2 server authentication: using basic auth for user '{msa_server_username}'"
         )
     elif has_header_auth:
-        assert auth_headers is not None
+        if auth_headers is None:
+            raise ValueError("auth_headers must be provided when header authentication is enabled.")
         headers.update(auth_headers)
         logger.debug("MMSeqs2 server authentication: using header-based authentication")
     else:
