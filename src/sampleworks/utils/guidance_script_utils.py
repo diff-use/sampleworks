@@ -40,17 +40,17 @@ from sampleworks.utils.msa import MSAManager
 try:
     from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
 except ImportError:
-    Boltz1Wrapper = None
+    Boltz1Wrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import Boltz, hopefully you're running a different model")
 try:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
 except ImportError:
-    ProtenixWrapper = None
+    ProtenixWrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import Protenix, hopefully you're running a different model")
 try:
     from sampleworks.models.rf3.wrapper import RF3Wrapper
 except ImportError:
-    RF3Wrapper = None
+    RF3Wrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import RF3, hopefully you're running a different model")
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -96,7 +96,7 @@ def _save_trajectory(
             continue
         array_copy = atom_array.copy()
         array_copy = stack([array_copy] * ensemble_size)
-        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+        array_copy.coord[:, reward_param_mask] = coords.detach().numpy()
         save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
@@ -122,7 +122,7 @@ def _save_fk_steering_trajectory(
         array_copy = stack([array_copy] * ensemble_size)
         # we save only the first ensemble out of n_particles, since saving
         # each particle at every step would clog trajectory saving
-        array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()  # type: ignore[reportOptionalSubscript] coords will be subscriptable
+        array_copy.coord[:, reward_param_mask] = coords[0].detach().numpy()
         save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
@@ -149,24 +149,30 @@ def get_model_and_device(
     device = torch.device(device_str) if device_str else try_gpu()
     logger.debug(f"Using device: {device}")
     if model_type == StructurePredictor.PROTENIX:
+        if ProtenixWrapper is None:
+            raise ImportError("Protenix dependencies not installed")
         logger.debug(f"Loading Protenix model from {model_checkpoint_path}")
-        model_wrapper = ProtenixWrapper(  # ty: ignore
+        model_wrapper = ProtenixWrapper(
             checkpoint_path=model_checkpoint_path, device=device, model=model
         )
     elif model_type == StructurePredictor.BOLTZ_1:
+        if Boltz1Wrapper is None:
+            raise ImportError("Boltz dependencies not installed")
         logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
-        model_wrapper = Boltz1Wrapper(  # ty: ignore
+        model_wrapper = Boltz1Wrapper(
             checkpoint_path=model_checkpoint_path,
             use_msa_manager=True,
             device=device,
             model=model,
         )
     elif model_type == StructurePredictor.BOLTZ_2:
+        if Boltz2Wrapper is None:
+            raise ImportError("Boltz dependencies not installed")
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
         logger.debug(f"Loading Boltz2 model from {model_checkpoint_path}")
-        model_wrapper = Boltz2Wrapper(  #  ty: ignore
+        model_wrapper = Boltz2Wrapper(
             checkpoint_path=model_checkpoint_path,
             use_msa_manager=True,
             device=device,
@@ -184,7 +190,7 @@ def get_model_and_device(
     device = getattr(model_wrapper, "device", device)
 
     # (pyright doesn't think Boltz1Wrapper etc are "Any")
-    return device, model_wrapper  # ty: ignore
+    return device, model_wrapper
 
 
 # TODO: further atomize for easier testing.
@@ -198,7 +204,7 @@ def get_reward_function_and_structure(
 ) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
     logger.debug(f"Loading structure from {structure_path}")
     structure = parse(
-        structure_path,  # ty: ignore  (doesn't like the type being passed)
+        Path(structure_path),
         hydrogen_policy="remove",
         add_missing_atoms=False,
         ccd_mirror_path=None,
@@ -209,7 +215,7 @@ def get_reward_function_and_structure(
 
     logger.debug("Setting up scattering parameters")
 
-    atom_array = structure["asym_unit"]  # ty: ignore
+    atom_array = structure["asym_unit"]
     scattering_params = setup_scattering_params(atom_array=atom_array, em_mode=em, device=device)
 
     selection_mask = atom_array.occupancy > 0
@@ -275,11 +281,11 @@ def save_everything(
 
     if final_state is not None:
         ensemble_size = final_state.shape[0]
-        reward_param_mask = atom_array_for_masking.occupancy > 0  # ty: ignore[unsupported-operator]
-        reward_param_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)  # ty: ignore[invalid-argument-type, no-matching-overload]
+        reward_param_mask = atom_array_for_masking.occupancy > 0
+        reward_param_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)
 
         ensemble_array = stack([atom_array_for_masking.copy() for _ in range(ensemble_size)])
-        ensemble_array.coord[:, reward_param_mask] = final_state.detach().cpu().numpy()  # ty: ignore[not-subscriptable]
+        ensemble_array.coord[:, reward_param_mask] = final_state.detach().cpu().numpy()
         atom_array = ensemble_array
 
     final_structure = CIFFile()

@@ -197,12 +197,12 @@ class ProtenixWrapper:
         self.configs.model_name = str(self.checkpoint_path).split("/")[-1].replace(".pt", "")
         self.configs.load_checkpoint_dir = str(self.cache_path)
         model_name = self.configs.model_name
-        _, model_size, model_feature, model_version = cast(str, model_name).split("_")
+        _, model_size, model_feature, model_version = model_name.split("_")
         logger.info(
             f"Inference by Protenix: model_size: {model_size}, with_feature: "
             f"{model_feature.replace('-', ', ')}, model_version: {model_version}"
         )
-        model_specifics_configs = ConfigDict(model_configs[cast(str, model_name)])
+        model_specifics_configs = ConfigDict(model_configs[model_name])
         # update model specific configs
         self.configs.update(model_specifics_configs)
         logger.info(
@@ -244,9 +244,9 @@ class ProtenixWrapper:
 
             esm_config = self.configs.esm
             self.esm_featurizer = ESMFeaturizer(
-                embedding_dir=esm_config.embedding_dir,  # type: ignore (their ConfigDict lacks typing)
-                sequence_fpath=esm_config.sequence_fpath,  # type: ignore (their ConfigDict lacks typing)
-                embedding_dim=esm_config.embedding_dim,  # type: ignore (their ConfigDict lacks typing)
+                embedding_dir=esm_config.embedding_dir,
+                sequence_fpath=esm_config.sequence_fpath,
+                embedding_dim=esm_config.embedding_dim,
                 error_dir="./esm_embeddings/",
             )
         else:
@@ -296,7 +296,7 @@ class ProtenixWrapper:
                     if "proteinChain" in seq_data
                 }
                 msa_paths = self.msa_manager.get_msa(
-                    sequence_data,  # ty: ignore
+                    sequence_data,
                     msa_pairing_strategy="complete",  # not actually passed through for Protenix
                     structure_predictor=StructurePredictor.PROTENIX,
                 )
@@ -323,16 +323,16 @@ class ProtenixWrapper:
         ).long()
 
         entity_to_asym_id = DataPipeline.get_label_entity_id_to_asym_id_int(atom_array_protenix)
-        msa_features = (
-            InferenceMSAFeaturizer.make_msa_feature(  # type: ignore (they forgot @staticmethod)
+        msa_features: dict[str, Any] = {}
+        if use_msa:
+            msa_features_raw = InferenceMSAFeaturizer.make_msa_feature(
                 bioassembly=json_dict["sequences"],
-                entity_to_asym_id=entity_to_asym_id,
+                entity_to_asym_id=cast(dict[str, Any], entity_to_asym_id),
                 token_array=token_array,
                 atom_array=atom_array_protenix,
             )
-            if use_msa
-            else {}
-        )
+            if msa_features_raw is not None:
+                msa_features = cast(dict[str, Any], msa_features_raw)
 
         if self.esm_featurizer is not None:
             x_esm = self.esm_featurizer(
@@ -505,12 +505,12 @@ class ProtenixWrapper:
             self.configs.enable_diffusion_shared_vars_cache,
         ):
             outputs["pair_z"] = autocasting_disable_decorator(
-                self.model.configs.skip_amp.sample_diffusion  # type: ignore (their ConfigDict lacks typing)
-            )(
-                self.model.diffusion_module.diffusion_conditioning.prepare_cache
-            )(features["relp"], z, False)
+                self.model.configs.skip_amp.sample_diffusion
+            )(self.model.diffusion_module.diffusion_conditioning.prepare_cache)(
+                features["relp"], z, False
+            )
             outputs["p_lm/c_l"] = autocasting_disable_decorator(
-                self.model.configs.skip_amp.sample_diffusion  # type: ignore (their ConfigDict lacks typing)
+                self.model.configs.skip_amp.sample_diffusion
             )(self.model.diffusion_module.atom_attention_encoder.prepare_cache)(
                 features["ref_pos"],
                 features["ref_charge"],

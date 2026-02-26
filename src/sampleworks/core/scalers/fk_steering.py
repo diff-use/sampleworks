@@ -192,7 +192,7 @@ class FKSteering:
         # lowest_loss_coords: (ensemble, atoms, 3) — the winning ensemble's
         # denoised coordinates.
         lowest_loss_index = torch.argmin(loss_history[-1]) if loss_history else 0
-        lowest_loss_coords = coords_4d[lowest_loss_index]  # ty: ignore[possibly-unresolved-reference]
+        lowest_loss_coords = coords_4d[lowest_loss_index]
 
         return GuidanceOutput(
             structure=structure,

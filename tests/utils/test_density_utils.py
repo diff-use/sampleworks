@@ -58,7 +58,8 @@ class TestCreateSyntheticGrid:
         max_coords = coords.max(axis=0)
 
         assert np.all(xmap.origin <= min_coords - 5.0)
-        uc_dims = np.array([xmap.unit_cell.a, xmap.unit_cell.b, xmap.unit_cell.c])  # ty: ignore[possibly-missing-attribute]
+        assert xmap.unit_cell is not None
+        uc_dims = np.array([xmap.unit_cell.a, xmap.unit_cell.b, xmap.unit_cell.c])
         grid_end = xmap.origin + uc_dims
         assert np.all(grid_end >= max_coords + 5.0)
 
@@ -85,14 +86,16 @@ class TestCreateSyntheticGrid:
     def test_orthogonal_unit_cell(self, synthetic_grid):
         """Test that unit cell has 90 degree angles."""
         xmap, resolution, padding = synthetic_grid
-        assert xmap.unit_cell.alpha == 90.0  # ty: ignore[possibly-missing-attribute]
-        assert xmap.unit_cell.beta == 90.0  # ty: ignore[possibly-missing-attribute]
-        assert xmap.unit_cell.gamma == 90.0  # ty: ignore[possibly-missing-attribute]
+        assert xmap.unit_cell is not None
+        assert xmap.unit_cell.alpha == 90.0
+        assert xmap.unit_cell.beta == 90.0
+        assert xmap.unit_cell.gamma == 90.0
 
     def test_space_group_p1(self, synthetic_grid):
         """Test that space group is P1."""
         xmap, resolution, padding = synthetic_grid
-        space_group_str = str(xmap.unit_cell.space_group)  # ty: ignore[possibly-missing-attribute]
+        assert xmap.unit_cell is not None
+        space_group_str = str(xmap.unit_cell.space_group)
         assert "P1" in space_group_str or space_group_str == "P 1"
 
     def test_handles_atomarray_stack(self, simple_atom_array_stack: AtomArrayStack):
@@ -247,7 +250,7 @@ class TestComputeDensityFromAtomarray:
         """Test that function works with single model from stack."""
         single_model = simple_atom_array_stack[0]
         density, _ = compute_density_from_atomarray(
-            single_model,  # ty: ignore[invalid-argument-type]
+            single_model,
             resolution=2.0,
             em_mode=False,
             device=device,
@@ -309,7 +312,7 @@ class TestComputeDensityFromAtomarray:
             atom_array = atom_array[0]
 
         density_no_xmap, _ = compute_density_from_atomarray(
-            atom_array,  # ty: ignore[invalid-argument-type]
+            atom_array,
             resolution=2.0,
             em_mode=False,
             device=device,
@@ -319,7 +322,7 @@ class TestComputeDensityFromAtomarray:
         assert torch.isfinite(density_no_xmap).all()
 
         density_xmap, _ = compute_density_from_atomarray(
-            atom_array,  # ty: ignore[invalid-argument-type]
+            atom_array,
             xmap=density_map_1vme,  # resolution 1.8 A
             em_mode=False,
             device=device,

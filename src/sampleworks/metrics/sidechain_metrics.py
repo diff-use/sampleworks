@@ -162,7 +162,7 @@ def check_sidechain_quality(
 
     # ... Remove OXT atoms and hydrogens
     standard_aa_atom_array = [
-        aa[(~np.isin(aa.atom_name, np.array(["OXT"]))) & (aa.element != "H")]  # ty: ignore
+        aa[(~np.isin(aa.atom_name, np.array(["OXT"]))) & (aa.element != "H")]
         for aa in standard_aa_atom_array
     ]
 

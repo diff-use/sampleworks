@@ -373,14 +373,14 @@ def weighted_rigid_align_differentiable(
     if backend_name == "torch":
         weights_expanded = (mask * weights).unsqueeze(-1)  # type: ignore[union-attr]
 
-        true_centroid = (true_coords * weights_expanded).sum(  # type: ignore[call-arg]
+        true_centroid = (true_coords * weights_expanded).sum(
             dim=1,  # type: ignore[call-arg]
             keepdim=True,  # type: ignore[call-arg]
-        ) / weights_expanded.sum(dim=1, keepdim=True)  # type: ignore[call-arg]
-        pred_centroid = (pred_coords * weights_expanded).sum(  # type: ignore[call-arg]
+        ) / weights_expanded.sum(dim=1, keepdim=True)
+        pred_centroid = (pred_coords * weights_expanded).sum(
             dim=1,  # type: ignore[call-arg]
             keepdim=True,  # type: ignore[call-arg]
-        ) / weights_expanded.sum(dim=1, keepdim=True)  # type: ignore[call-arg]
+        ) / weights_expanded.sum(dim=1, keepdim=True)
 
         true_coords_centered = true_coords - true_centroid
         pred_coords_centered = pred_coords - pred_centroid
@@ -398,7 +398,7 @@ def weighted_rigid_align_differentiable(
         )
 
         original_dtype = cov_matrix.dtype
-        cov_matrix_32 = cov_matrix.to(dtype=backend.float32)  # type: ignore[union-attr]
+        cov_matrix_32 = cov_matrix.to(dtype=backend.float32)
 
         U, _, Vh = backend.linalg.svd(cov_matrix_32)
 
@@ -410,7 +410,7 @@ def weighted_rigid_align_differentiable(
 
         rotation = backend.matmul(U * diag.unsqueeze(1), Vh)
 
-        rotation = rotation.to(dtype=original_dtype)  # type: ignore[union-attr]
+        rotation = rotation.to(dtype=original_dtype)
 
         # true @ rot.T
         aligned_coords = (
@@ -424,7 +424,7 @@ def weighted_rigid_align_differentiable(
             # Alignment uses: aligned = true @ rotation.T + pred_centroid
             # Transform functions use left multiplication: coords' = R @ coords + t
             # Since we use rotation.T in alignment, return rotation for left-mult
-            translation_uncentered = pred_centroid - einx.dot(  # type: ignore[operator]
+            translation_uncentered = pred_centroid - einx.dot(
                 "b i j, b n j -> b n i", rotation, true_centroid
             )
             transforms = {
@@ -492,7 +492,7 @@ def weighted_rigid_align_differentiable(
                 "rotation": rotation,
                 "translation": einx.rearrange("b () d -> b d", translation_uncentered),
             }
-            return aligned_coords, transforms  # type: ignore[return-value]
+            return aligned_coords, transforms
 
         return aligned_coords
 

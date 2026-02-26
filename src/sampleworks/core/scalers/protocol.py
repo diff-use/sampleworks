@@ -34,7 +34,6 @@ ModelWrapperT = TypeVar(
     FlowModelWrapper,
     EnergyBasedModelWrapper,
     StructureModelWrapper,
-    infer_variance=True,
 )
 
 
