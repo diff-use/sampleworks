@@ -40,6 +40,9 @@ def find_altloc_selections(
         altk = select_altloc(structure, altloc_id=altloc_id)
         unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))  # pyright:ignore (reportArgumentType)
         # probably unnecessary but making sure these are consistently ordered
+        # FIXME? This is a little clunky. Perhaps should be hierarchical by chain then altloc?
+        #   At some point though we'll do altloc selections using correlations/contacts
+        #   so this is probably not a big deal.
         altlocs[altloc_id] = sorted(list(unique_altk))
 
     all_altloc_selections = {}
@@ -60,7 +63,7 @@ def find_altloc_selections(
 
 
 def find_consecutive_residues(
-    altlocs: dict[str, list[tuple[str, int]]],
+    altlocs: dict[str, list[tuple[str, int]]],  # Ex: {'A': [('X', 1), ('X', 2), ('X', 3)]}
 ) -> Iterable[tuple[str, int, int, set[str]]]:
     """
     Find and yield spans of consecutive residues with the same set of
@@ -97,16 +100,23 @@ def find_consecutive_residues(
          ('A', 138, 141, {'A', 'B'}),
          ('A', 155, 169, {'A', 'B'})]
 
-    """
+      """
+    # TODO create test cases from 5SOP and 7Z0E, low priority since this isn't a critical function
+    #   and will likely change in the future anyway.
 
     # First find the chains
     all_chains = {res[0] for altloc in altlocs.values() for res in altloc}
 
     # iterating over chains, check each residue's membership in altlocs.
-    # Yield spans when membership changes or there is a break in residue number
+    # Yield spans when membership changes or there is a break in the residue number
     for chain in all_chains:
-        chain_altlocs = {altloc_id: {res[1] for res in altlocs[altloc_id]} for altloc_id in altlocs}
+        chain_altlocs = {
+            altloc_id: {res[1] for res in altlocs[altloc_id] if res[0] == chain}
+            for altloc_id in altlocs
+        }
         all_res_ids = sorted(list(set.union(*chain_altlocs.values())))
+        if not all_res_ids:
+            continue
 
         start = all_res_ids[0]
         next_res_id = None
