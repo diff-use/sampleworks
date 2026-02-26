@@ -56,12 +56,12 @@ def try_gpu():
             # Adjust idx to match the actual GPU index, which gets remapped by CUDA_VISIBLE_DEVICES
             # e.g. if CUDA_VISIBLE_DEVICES=2,3 and idx=3 (the 3rd GPU according to nvidia-smi),
             # we need to return cuda:1 (the 2nd GPU in the visible list)
-            idx = available_gpus.index(idx)  # type: ignore[reportArgumentType] idx is int, pyright doesn't track that
+            idx = available_gpus.index(idx)
 
         print(
             "Returning GPU{} with {} free MiB".format(
                 idx,
-                gpu_df.iloc[idx]["memory.free"],  # type: ignore[pandas-indexing] (pandas typing does not recognize integer indexing here)
+                gpu_df.iloc[idx]["memory.free"],
             )
         )
 

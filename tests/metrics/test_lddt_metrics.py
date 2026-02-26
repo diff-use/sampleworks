@@ -108,9 +108,9 @@ def test_selected_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
     assert isinstance(result_dict["overall_lddt"], np.ndarray), (
         "overall_lddt should be a numpy array"
     )
-    np.testing.assert_allclose(
-        result_dict["overall_lddt"], expected_dict["overall_lddt"], atol=0.001
-    )
+    overall_lddt = np.asarray(result_dict["overall_lddt"], dtype=float)
+    expected_overall_lddt = np.asarray(expected_dict["overall_lddt"], dtype=float)
+    np.testing.assert_allclose(overall_lddt, expected_overall_lddt, atol=0.001)
 
     # Check that all expected keys are present in residue_lddt_scores
     result_residue_scores = cast(dict[str, list[float]], result_dict["residue_lddt_scores"])

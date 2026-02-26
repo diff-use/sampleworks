@@ -51,7 +51,7 @@ def load_structure_with_altlocs(path: Path) -> AtomArray:
     atom_array = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
     if isinstance(atom_array, AtomArrayStack):
         atom_array = cast(AtomArray, atom_array[0])
-    return cast(AtomArray, atom_array)
+    return atom_array
 
 
 def save_structure_to_cif(
@@ -191,7 +191,7 @@ def find_all_altloc_ids(atom_array: AtomArray | AtomArrayStack) -> set[str]:
     Find all unique alternate location indicator (altloc) IDs in an AtomArray or AtomArrayStack.
     """
     if hasattr(atom_array, "altloc_id"):
-        altloc_ids = np.unique(atom_array.altloc_id)  # ty: ignore[invalid-argument-type]
+        altloc_ids = np.unique(atom_array.altloc_id)
     else:
         raise AttributeError("atom_array must have `altloc_id` annotation")
 
@@ -252,15 +252,15 @@ def map_altlocs_to_stack(
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
             raise ValueError("Cannot map altlocs with multiple structures each containing altlocs")
-        atom_array = atom_array[0]  # ty: ignore[invalid-assignment]
+        atom_array = atom_array[0]
     altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
     altloc_list = [
         select_altloc(atom_array, altloc_id, return_full_array=True) for altloc_id in altloc_ids
     ]
     # ensure that each structure has the same number of atoms
     atom_arrays = filter_to_common_atoms(*altloc_list)
-    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])  # ty: ignore
-    occupancies = np.vstack([r.occupancy for r in atom_arrays])  # ty: ignore
+    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])
+    occupancies = np.vstack([r.occupancy for r in atom_arrays])
 
     # remove those annotations or we cannot stack arrays.
     for array in atom_arrays:
@@ -305,7 +305,7 @@ def select_altloc(
 
     if return_full_array:
         mask = np.isin(
-            atom_array.altloc_id,  # ty: ignore[invalid-argument-type]
+            atom_array.altloc_id,
             list(
                 {
                     altloc_id,
@@ -496,8 +496,8 @@ def filter_to_common_atoms(
         filtered_array = array[:, mask]
 
         # Sort by atom ID to ensure matching order
-        sort_idx = np.argsort(make_atom_id(filtered_array))  # ty: ignore[invalid-argument-type]
-        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])  # ty: ignore
+        sort_idx = np.argsort(make_atom_id(filtered_array))
+        filtered_array = cast(AtomArrayStack, filtered_array[:, sort_idx])
 
         filtered_arrays.append(filtered_array)
 

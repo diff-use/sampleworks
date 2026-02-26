@@ -1,4 +1,4 @@
-import marimo  # type: ignore
+import marimo
 
 
 __generated_with = "0.18.1"
@@ -25,7 +25,7 @@ def _(mo):
 
 @app.cell
 def _():
-    import marimo as mo  # type: ignore
+    import marimo as mo
 
     return (mo,)
 
@@ -36,10 +36,10 @@ def _():
     import warnings
     from pathlib import Path
 
-    import matplotlib.pyplot as plt  # type: ignore
+    import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
-    import seaborn as sns  # type: ignore
+    import seaborn as sns
     import torch
 
     return Path, np, pd, plt, re, sns, torch, warnings

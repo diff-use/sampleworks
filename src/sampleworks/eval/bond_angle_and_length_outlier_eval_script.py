@@ -14,7 +14,6 @@ from biotite.structure import AtomArray, BadStructureError, index_distance
 from biotite.structure.io.pdbx import CIFFile, get_structure
 from loguru import logger
 from peppr.bounds import get_distance_bounds
-from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from scipy.special import comb
 from tqdm import tqdm
@@ -142,7 +141,7 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
     # in the original, bonds were fetched from the reference structure, but we don't have one here.
     all_bonds, _ = pose.bonds.get_all_bonds()
     # For a bond angle 'ABC', this list contains the atom indices for 'A' and 'C'
-    bond_indices = []  # type: ignore[var-annotated]
+    bond_indices = []
     center_indices = []
     for center_index, bonded_indices in enumerate(all_bonds):
         # Remove padding values
@@ -227,8 +226,8 @@ def main(args: argparse.Namespace):
     for exp in tqdm(all_experiments):
         # get the refined cif file
         ciffile = CIFFile.read(exp.refined_cif_path)
-        structures = get_structure(ciffile, include_bonds=True)  # ty: ignore
-        structures = ensure_atom_array_stack(structures)  # ty: ignore[invalid-argument-type]
+        structures = get_structure(ciffile, include_bonds=True)
+        structures = ensure_atom_array_stack(structures)
         for model_n, s in enumerate(structures):
             bond_angle_violation_fraction, bond_angle_outliers = bond_angle_violations(s)
             bond_length_violation_fraction, bond_length_outliers = bond_length_violations(s)
