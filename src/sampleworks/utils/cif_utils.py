@@ -53,7 +53,7 @@ def find_altloc_selections(
 
     all_altloc_selections = {}
     for chain, start, end, _ in find_consecutive_residues(altlocs):
-        if end - start >= min_span:
+        if end - start >= min_span - 1:
             # FIXME use new style selection https://github.com/diff-use/sampleworks/issues/56
             yield f"chain {chain} and resi {start}-{end}"  # old style, more compact, selection
 
