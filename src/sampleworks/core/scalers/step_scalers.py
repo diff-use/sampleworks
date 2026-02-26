@@ -56,6 +56,15 @@ class DataSpaceDPSScaler:
                 "Use context.with_reward() before calling scale()."
             )
 
+        n_state = state.shape[-2]
+        n_reward = context.reward_inputs.elements.shape[-1]
+        if n_state != n_reward:
+            raise ValueError(
+                f"State atom count ({n_state}) != reward_inputs atom count ({n_reward}). "
+                "Ensure reward_inputs are built with the correct number of atoms when a mismatch "
+                "exists."
+            )
+
         x0_for_grad = state.detach().requires_grad_(True)
         loss = context.reward(
             coordinates=x0_for_grad,
@@ -113,6 +122,15 @@ class NoiseSpaceDPSScaler:
             )
 
         x_t = context.metadata["x_t"]
+
+        n_state = state.shape[-2]
+        n_reward = context.reward_inputs.elements.shape[-1]
+        if n_state != n_reward:
+            raise ValueError(
+                f"State atom count ({n_state}) != reward_inputs atom count ({n_reward}). "
+                "Ensure reward_inputs are built with the correct number of atoms when a mismatch "
+                "exists."
+            )
 
         loss = context.reward(
             coordinates=state,  # x0_pred, connected to x_t via model

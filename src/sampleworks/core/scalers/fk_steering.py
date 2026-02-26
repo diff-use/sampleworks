@@ -109,6 +109,7 @@ class FKSteering:
             ensemble_size=self.ensemble_size,
         )
 
+        reconciler = processed.reconciler.to(coords.device)
         reward_inputs = processed.to_reward_inputs(device=coords.device)
 
         schedule = sampler.compute_schedule(self.num_steps)
@@ -134,6 +135,8 @@ class FKSteering:
                 coords * torch.as_tensor(starting_context.noise_scale),
             )
 
+        coords_4d_current = coords.reshape(num_particles, self.ensemble_size, -1, 3)
+
         pbar = tqdm(range(self.starting_step, self.num_steps), desc="FK Steering")
         for i in pbar:
             context = sampler.get_context_for_step(i, schedule)
@@ -141,6 +144,11 @@ class FKSteering:
 
             if apply_guidance:
                 context = context.with_reward(reward, reward_inputs)
+
+            context = context.with_reconciler(
+                reconciler=reconciler,
+                alignment_reference=processed.input_coords,
+            )
 
             # RESAMPLE
             if apply_guidance and loss_prev is not None and self._should_resample(i, context):
@@ -153,7 +161,7 @@ class FKSteering:
                 )
 
             # PROPOSE
-            step_output, denoised_4d, coords_4d = self._run_step(
+            step_output, denoised_4d = self._run_step(
                 coords=coords,
                 model=model,
                 sampler=sampler,
@@ -185,23 +193,27 @@ class FKSteering:
             pbar.set_postfix({"loss": current_loss})
 
             coords = step_output.state
-            trajectory_next_step.append(coords.clone().cpu())
+            coords_4d_current = coords.reshape(num_particles, self.ensemble_size, -1, 3)
+            trajectory_next_step.append(coords_4d_current.clone().cpu())
 
         # Select the particle (ensemble) with the best final reward.
-        # coords_4d: (particles, ensemble, atoms, 3) from the last _run_step call.
+        # final_coords_4d: (particles, ensemble, atoms, 3)
         # lowest_loss_coords: (ensemble, atoms, 3) — the winning ensemble's
         # denoised coordinates.
+        final_coords_4d = coords_4d_current
         lowest_loss_index = torch.argmin(loss_history[-1]) if loss_history else 0
-        lowest_loss_coords = coords_4d[lowest_loss_index]
+        lowest_loss_coords = final_coords_4d[lowest_loss_index]
+
+        metadata: dict = {"trajectory_denoised": trajectory_denoised}
+        if reconciler.has_mismatch and processed.model_atom_array is not None:
+            metadata["model_atom_array"] = processed.model_atom_array
 
         return GuidanceOutput(
             structure=structure,
             final_state=lowest_loss_coords,
             trajectory=trajectory_next_step,
             losses=losses,
-            metadata={
-                "trajectory_denoised": trajectory_denoised,
-            },
+            metadata=metadata,
         )
 
     def _run_step(
@@ -213,7 +225,7 @@ class FKSteering:
         context: StepParams,
         step_scaler: StepScalerProtocol | None,
         num_particles: int,
-    ) -> tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]:
+    ) -> tuple[SamplerStepOutput, torch.Tensor | None]:
         r"""Run a single denoising step, optionally with per-particle guidance.
 
         In FK steering, each "particle" is an ensemble of structures/trajectories.
@@ -245,11 +257,10 @@ class FKSteering:
 
         Returns
         -------
-        tuple[SamplerStepOutput, torch.Tensor | None, torch.Tensor]
-            ``(step_output, denoised_4d, coords_4d)`` where
+        tuple[SamplerStepOutput, torch.Tensor | None]
+            ``(step_output, denoised_4d)`` where
             - ``step_output.state`` has shape ``(particles * ensemble, atoms, 3)``
             - ``denoised_4d`` has shape ``(particles, ensemble, atoms, 3)``
-            - ``coords_4d`` has shape ``(particles, ensemble, atoms, 3)``
         """
         coords_4d = coords.reshape(num_particles, self.ensemble_size, -1, 3)
 
@@ -267,9 +278,7 @@ class FKSteering:
             if step_output.denoised is not None:
                 denoised_4d = step_output.denoised.reshape(num_particles, self.ensemble_size, -1, 3)
 
-            coords_4d = step_output.state.reshape(num_particles, self.ensemble_size, -1, 3)
-
-            return step_output, denoised_4d, coords_4d
+            return step_output, denoised_4d
 
         states_per_particle: list[torch.Tensor] = []
         denoised_per_particle: list[torch.Tensor] = []
@@ -332,7 +341,7 @@ class FKSteering:
             log_proposal_correction=log_proposal_per_particle,
         )
 
-        return combined_output, denoised_4d, state_4d
+        return combined_output, denoised_4d
 
     def _should_resample(self, step: int, context: StepParams) -> bool:
         """Determine if FK resampling should occur at this step.

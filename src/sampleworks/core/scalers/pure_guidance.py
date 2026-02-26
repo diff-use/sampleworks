@@ -87,6 +87,7 @@ class PureGuidance:
             ensemble_size=self.ensemble_size,
         )
 
+        reconciler = processed_structure.reconciler.to(coords.device)
         reward_inputs = processed_structure.to_reward_inputs(device=coords.device)
 
         trajectory_denoised: list[torch.Tensor] = []
@@ -111,6 +112,11 @@ class PureGuidance:
             if apply_guidance:
                 context = context.with_reward(reward, reward_inputs)
 
+            context = context.with_reconciler(
+                reconciler=reconciler,
+                alignment_reference=processed_structure.input_coords,
+            )
+
             step_output = sampler.step(
                 state=coords,
                 model_wrapper=model,
@@ -130,10 +136,14 @@ class PureGuidance:
             else:
                 losses.append(None)
 
+        metadata: dict = {"trajectory_denoised": trajectory_denoised}
+        if reconciler.has_mismatch and processed_structure.model_atom_array is not None:
+            metadata["model_atom_array"] = processed_structure.model_atom_array
+
         return GuidanceOutput(
             structure=structure,
             final_state=coords,
             trajectory=trajectory_next_step,
             losses=losses,
-            metadata={"trajectory_denoised": trajectory_denoised},
+            metadata=metadata,
         )
