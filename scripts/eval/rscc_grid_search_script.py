@@ -124,14 +124,15 @@ def main(args: argparse.Namespace):
             try:
                 # TODO: this needs to be better unified with what's in generate_synthetic_density
                 # Load base map for canonical unit cell,
-                # don't extract selection as we'll use the full map later too.
+                # don't overwrite the base map with selection map as we'll use the full map later too.
                 if (protein, _exp.occ_a, selection) not in base_map_cache:
                     _base_xmap = protein_config.load_map(_base_map_path)
                     if _base_xmap is None:
                         raise ValueError(f"Failed to load base map from {_base_map_path}")
 
-                    # Extract the region around altloc residues from the base map
-                    _extracted_base = _base_xmap.extract(
+                    # Extract the region around altloc residues from the base map, using the
+                    # union of boxes around each atom. _extracted_base is no longer an XMap
+                    _, _extracted_base = _base_xmap.extract_tight(
                         _selection_coords, padding=DEFAULT_SELECTION_PADDING
                     )
                     logger.info(
@@ -143,7 +144,7 @@ def main(args: argparse.Namespace):
                     _base_xmap, _extracted_base = base_map_cache[(protein, _exp.occ_a, selection)]
 
                 # Validate extraction
-                if _extracted_base is None or _extracted_base.array.size == 0:
+                if _extracted_base is None or _extracted_base.shape[0] == 0:
                     raise ValueError(f"Extracted base map from {_base_map_path} is empty")
 
                 # Load refined structure
@@ -153,7 +154,7 @@ def main(args: argparse.Namespace):
                 atom_array = get_asym_unit_from_structure(_structure)
                 if not hasattr(atom_array, "coord") or atom_array.coord is None:
                     raise AttributeError("AtomArray | AtomArrayStack is missing coordinates")
-                
+
                 if not hasattr(atom_array, "b_factor"):
                     logger.warning(
                         f"No b-factor array found in {_exp.refined_cif_path}, setting to 20."
@@ -168,16 +169,16 @@ def main(args: argparse.Namespace):
                 # and replacing its array with the computed density
                 _computed_xmap = copy.deepcopy(_base_xmap)
                 _computed_xmap.array = _computed_density.cpu().numpy().squeeze()
-                _extracted_computed = _computed_xmap.extract(
+                _, _extracted_computed = _computed_xmap.extract_tight(
                     _selection_coords, padding=DEFAULT_SELECTION_PADDING
                 )
 
                 # Validate extraction
-                if _extracted_computed is None or _extracted_computed.array.size == 0:
+                if _extracted_computed is None or _extracted_computed.shape[0] == 0:
                     raise ValueError("Extracted computed map is empty")
 
                 # Calculate RSCC on extracted regions
-                _exp.rscc = rscc(_extracted_base.array, _extracted_computed.array)
+                _exp.rscc = rscc(_extracted_base, _extracted_computed)
                 _exp.base_map_path = _base_map_path
 
             except Exception as _e:
@@ -187,18 +188,21 @@ def main(args: argparse.Namespace):
                 _exp.rscc = np.nan  # this is the default, but better to be explicit.
                 _exp.base_map_path = _base_map_path
 
-            results.append(_exp)
-            if (_i + 1) % 10 == 0 or _i == 0:
-                logger.debug(
-                    f"  [{_i + 1}/{len(all_experiments)}] {_exp.protein_dir_name} / '{selection}' "
-                    f"{_exp.model} / {_exp.scaler} / ens{_exp.ensemble_size}_"
-                    f"gw{_exp.guidance_weight}: RSCC = {_exp.rscc:.4f}"
-                )
+            exp_dict_copy = _exp.__dict__.copy()
+            exp_dict_copy["selection"] = selection
+            results.append(exp_dict_copy)
+
+        if (_i + 1) % 10 == 0 or _i == 0:
+            logger.debug(
+                f"  [{_i + 1}/{len(all_experiments)}] {_exp.protein_dir_name} / "
+                f"{_exp.model} / {_exp.scaler} / ens{_exp.ensemble_size}_"
+                f"gw{_exp.guidance_weight}: RSCC = {_exp.rscc:.4f}"
+            )
 
     logger.info(f"\nCompleted RSCC calculation for {len(results)} experiments")
 
     # Create DataFrame from results
-    df = pd.DataFrame([r.__dict__ for r in results])
+    df = pd.DataFrame(results)
     df.to_csv(grid_search_dir / "rscc_results.csv", index=False)
 
     if not df.empty:
