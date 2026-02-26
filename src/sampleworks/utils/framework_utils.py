@@ -127,3 +127,49 @@ def ensure_jax(*arg_names: str):
         return wrapper
 
     return decorator
+
+
+def match_batch(array: Array, target_batch_size: int) -> Array:
+    """Match an array's leading batch dimension to a target size.
+
+    Supports both PyTorch tensors and JAX arrays.
+
+    Parameters
+    ----------
+    array : torch.Tensor or jax.Array
+        Input with batch dimension on axis 0.  Must have ``ndim >= 1``.
+    target_batch_size : int
+        Desired size for axis 0 in the output.
+
+    Returns
+    -------
+    torch.Tensor or jax.Array
+        Array whose leading dimension equals *target_batch_size*.
+
+    Raises
+    ------
+    ValueError
+        If *array* is a scalar (``ndim == 0``) or the batch sizes are
+        incompatible (source > 1 and target is not a multiple of source).
+    TypeError
+        If *array* is neither a PyTorch tensor nor a JAX array.
+    """
+    if array.ndim == 0:
+        raise ValueError("match_batch requires ndim >= 1")
+    b, n = array.shape[0], target_batch_size
+    if b == n:
+        return array
+    # torch.broadcast_to / torch.tile mirror jnp.broadcast_to / jnp.tile exactly
+    if is_torch_tensor(array):
+        _broadcast_to, _tile = torch.broadcast_to, torch.tile  # pyright: ignore[reportAttributeAccessIssue]
+    elif is_jax_array(array):
+        _broadcast_to, _tile = jnp.broadcast_to, jnp.tile  # pyright: ignore[reportAttributeAccessIssue]
+    else:
+        raise TypeError(f"unsupported array type: {type(array)}")
+    # singleton: lazy broadcast (no copy)
+    if b == 1:
+        return _broadcast_to(array, (n, *array.shape[1:]))  # ty: ignore[invalid-argument-type]
+    # divisible: tile
+    if n % b:
+        raise ValueError(f"batch {b} not divisible into target {n}")
+    return _tile(array, (n // b, *(1,) * (array.ndim - 1)))  # ty: ignore[invalid-argument-type]
