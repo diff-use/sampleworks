@@ -59,6 +59,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-file", type=Path, required=True)
     parser.add_argument("--min-span", type=int, default=5)
     parser.add_argument("--altloc-label", type=str, default="label_alt_id")
-    parser.add_argument("--cif-pattern", type=str, default="[0-9]*.cif")
     args = parser.parse_args()
     main(args)
