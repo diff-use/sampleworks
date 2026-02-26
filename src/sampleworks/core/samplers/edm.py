@@ -448,14 +448,14 @@ class AF3EDMSampler:
         eps_working_frame = eps
         align_transform = None
         alignment_reference = (
-            torch.as_tensor(context.alignment_reference)
+            torch.as_tensor(context.alignment_reference, device=x_hat_0.device, dtype=x_hat_0.dtype)
             if context.alignment_reference is not None
             else None
         )
 
         if alignment_reference is not None and x_hat_0.ndim == 3:
             alignment_reference = match_batch(
-                torch.as_tensor(alignment_reference),
+                alignment_reference,
                 target_batch_size=x_hat_0.shape[0],
             )
 
@@ -476,7 +476,7 @@ class AF3EDMSampler:
             else:
                 x_hat_0_working_frame, align_transform = align_to_reference_frame(
                     torch.as_tensor(x_hat_0),
-                    torch.as_tensor(alignment_reference),
+                    alignment_reference,
                     allow_gradients=allow_gradients,
                 )
 
