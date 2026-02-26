@@ -447,6 +447,72 @@ class XMap(_BaseVolume):
             origin=self.origin,
         )
 
+    def extract_tight(self, orth_coor, padding=2.0):
+        """
+        Return density in the union of bounding boxes around individual atoms.
+
+        This differs from extract() by creating a bounding box around each coordinate
+        separately, then combining them (removing duplicates) rather than creating
+        a single large bounding box around all coordinates.
+
+        As a result, it does not return an XMap object, but rather the grid indices
+        and the density at each.
+
+        Args:
+            orth_coor (np.ndarray[(n_atoms, 3), dtype=np.float]):
+                a collection of Cartesian atomic coordinates
+            padding (float): amount of padding (in Angstrom) to add around each
+                coordinate
+        Returns:
+            A tuple of (grid_indices, densities):
+                unique grid indices that are near the input coordinates
+                The corresponding density at each point. NOTE: this is a 1D array.
+        """
+        if not self.is_canonical_unit_cell():
+            raise RuntimeError("XMap should contain full unit cell.")
+
+        # Convert Cartesian coordinates to fractional coordinates
+        frac_coor = orth_coor @ self.unit_cell.orth_to_frac.T
+
+        # Convert fractional coordinates to grid coordinates
+        grid_coor = frac_coor * self.unit_cell_shape  # (n_atoms, 3) in (x, y, z) order
+        grid_coor -= self.offset
+
+        # Calculate padding in grid units
+        grid_padding = padding / self.voxelspacing  # (3,) in (x, y, z) order
+
+        # Create bounding box around each point
+        all_indices = []
+        for point in grid_coor:
+            # Compute bounds for this single point
+            lb_xyz = np.floor(point - grid_padding).astype(int)
+            ru_xyz = np.ceil(point + grid_padding).astype(int)
+
+            # Convert to (z, y, x) order
+            lb = lb_xyz[::-1]
+            ru = ru_xyz[::-1]
+
+            # Create coordinate arrays with periodic wrapping
+            z_indices = np.arange(lb[0], ru[0]) % self.shape[0]
+            y_indices = np.arange(lb[1], ru[1]) % self.shape[1]
+            x_indices = np.arange(lb[2], ru[2]) % self.shape[2]
+
+            # Create meshgrid for this point
+            z_grid, y_grid, x_grid = np.meshgrid(z_indices, y_indices, x_indices, indexing="ij")
+
+            # Flatten and stack to get (n_points, 3) array
+            indices = np.stack([z_grid.ravel(), y_grid.ravel(), x_grid.ravel()], axis=1)
+            all_indices.append(indices)
+
+        # Concatenate all indices
+        all_indices = np.concatenate(all_indices, axis=0)
+
+        # Remove duplicates using numpy.unique on rows
+        unique_indices = np.unique(all_indices, axis=0)
+
+        # Return the unique (z, y, x) indices
+        return unique_indices, self.array[unique_indices[:, 0], unique_indices[:, 1], unique_indices[:, 2]]
+
     def interpolate(self, xyz):
         # Transform xyz to grid coor.
         uc = self.unit_cell
