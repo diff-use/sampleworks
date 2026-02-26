@@ -68,6 +68,12 @@ def main(args) -> None:
         )
         return
 
+    # apparently a list of empty dataframes evaluates to True, so check for that.
+    clashscore_metrics = [df for df in clashscore_metrics if not df.empty]
+    if not clashscore_metrics:
+        logger.error("No experiments produced output, check that result files are available.")
+        return
+
     clashscore_df = pd.concat(clashscore_metrics)
     clashscore_df.to_csv(
         workspace_root / "grid_search_results" / "clashscore_metrics.csv", index=False
@@ -83,11 +89,12 @@ def process_one_experiment(experiment: Experiment) -> pd.DataFrame:
     logger.info(f"Removing nans from {experiment.refined_cif_path}")
 
     with file_with_no_nans.open("w") as fn:
-        retcode = subprocess.call(
-            ["grep", "-viP", r"\bnan\b", str(experiment.refined_cif_path)], stdout=fn
-        )
+        grep_cmd = ["grep", "-viP", r"\bnan\b", str(experiment.refined_cif_path)]
+        retcode = subprocess.call(grep_cmd, stdout=fn)
     if retcode != 0:
-        raise RuntimeError(f"grep failed with code {retcode}, see {logfile} for details")
+        raise RuntimeError(
+            f"grep failed with code {retcode}, the command was {' '.join(grep_cmd)}"
+        )
 
     # phenix needs to be installed and on path for this to work. Also sh won't work with
     # phenix.clashscore because of that pesky period in the name.

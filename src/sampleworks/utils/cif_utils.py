@@ -36,15 +36,28 @@ def find_altloc_selections(
     structure.set_annotation("altloc_id", structure.get_annotation(altloc_label))
 
     altlocs = OrderedDict()
-    for k in find_all_altloc_ids(structure):
-        altk = select_altloc(structure, altloc_id=k)
+    for altloc_id in find_all_altloc_ids(structure):
+        altk = select_altloc(structure, altloc_id=altloc_id)
         unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))  # pyright:ignore (reportArgumentType)
         # probably unnecessary but making sure these are consistently ordered
-        altlocs[k] = sorted(list(unique_altk))
+        altlocs[altloc_id] = sorted(list(unique_altk))
 
-    for chain, start, end, altlocs in find_consecutive_residues(altlocs):
+    all_altloc_selections = {}
+    for chain, start, end, _ in find_consecutive_residues(altlocs):
         if end - start >= min_span:
             yield f"chain {chain} and resi {start}-{end}"
+            yield f"chain {chain} and resi {start}-{end}"  # old style, more compact, selection
+
+        if chain not in all_altloc_selections:
+            all_altloc_selections[chain] = []
+        if start == end:
+            all_altloc_selections[chain].append(f"(res_id == {start})")
+        else:
+            all_altloc_selections[chain].append(f"(res_id >= {start} and res_id <= {end})")
+
+    for chain, selections in all_altloc_selections.items():
+        yield f"chain_id == '{chain}' and ({' or '.join(selections)})"
+
 
 
 def find_consecutive_residues(
