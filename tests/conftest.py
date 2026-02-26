@@ -24,6 +24,7 @@ from biotite.structure import AtomArray, AtomArrayStack, stack
 from sampleworks.core.samplers.edm import AF3EDMSampler
 from sampleworks.core.samplers.protocol import StepParams
 from sampleworks.eval.structure_utils import SampleworksProcessedStructure
+from sampleworks.utils.atom_space import AtomReconciler
 from sampleworks.utils.guidance_constants import (
     Rewards,
     StepScalers,
@@ -38,12 +39,8 @@ from sampleworks.utils.imports import (
 )
 from sampleworks.utils.torch_utils import try_gpu
 
-from tests.mocks import MockFlowModelWrapper, MockStepScaler, MockTrajectorySampler
-from tests.mocks.rewards import (
-    MockGradientRewardFunction,
-    MockPrecomputableRewardFunction,
-    MockRewardFunction,
-)
+from tests.mocks import MockFlowModelWrapper, MockStepScaler
+from tests.mocks.rewards import MockGradientRewardFunction
 
 
 if TYPE_CHECKING:
@@ -291,7 +288,14 @@ MOCK_WRAPPER_INFO = ComponentInfo(
 # Registry helpers for test parametrization
 # ============================================================================
 
-STRUCTURES: list[str] = ["structure_1vme", "structure_6b8x"]
+STRUCTURES: list[str] = [
+    "structure_1vme",
+    "structure_6b8x",
+    "structure_2yl0",
+    "structure_5sop",
+    "structure_6ni6",
+    "structure_9bn8",
+]
 
 
 def get_all_model_wrappers() -> list[StructurePredictor]:
@@ -404,6 +408,46 @@ def structure_1vme(resources_dir: Path) -> dict:
 @pytest.fixture(scope="session")
 def structure_6b8x(resources_dir: Path) -> dict:
     return parse(resources_dir / "6b8x" / "6b8x_final.pdb", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_2yl0(resources_dir: Path) -> dict:
+    return parse(resources_dir / "2YL0" / "2YL0_single_001.pdb", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_2yl0_density(resources_dir: Path) -> dict:
+    return parse(resources_dir / "2YL0" / "2YL0_single_001_density_input.cif", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_5sop(resources_dir: Path) -> dict:
+    return parse(resources_dir / "5SOP" / "5SOP_single_001.pdb", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_5sop_density(resources_dir: Path) -> dict:
+    return parse(resources_dir / "5SOP" / "5SOP_single_001_density_input.cif", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_6ni6(resources_dir: Path) -> dict:
+    return parse(resources_dir / "6NI6" / "6NI6_single_001.pdb", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_6ni6_density(resources_dir: Path) -> dict:
+    return parse(resources_dir / "6NI6" / "6NI6_single_001_density_input.cif", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_9bn8(resources_dir: Path) -> dict:
+    return parse(resources_dir / "9BN8" / "9BN8_single_001.pdb", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def structure_9bn8_density(resources_dir: Path) -> dict:
+    return parse(resources_dir / "9BN8" / "9BN8_single_001_density_input.cif", ccd_mirror_path=None)
 
 
 @pytest.fixture(scope="session")
@@ -626,31 +670,6 @@ def test_coordinates_1vme(structure_1vme_density, device: torch.device):
     atom_array = atom_array[mask]
     coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
     return coords, atom_array
-
-
-@pytest.fixture(scope="module")
-def simple_atom_array():
-    """Small AtomArray with valid coords, elements, occupancy, b_factor."""
-
-    atom_array = AtomArray(5)
-    coord = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
-        ]
-    )
-    atom_array.coord = coord
-    atom_array.set_annotation("chain_id", np.array(["A"] * 5))
-    atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
-    atom_array.set_annotation("res_name", np.array(["ALA", "GLY", "VAL", "LEU", "SER"]))
-    atom_array.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
-    atom_array.set_annotation("element", np.array(["C", "C", "C", "C", "C"]))
-    atom_array.set_annotation("b_factor", np.array([20.0, 20.0, 20.0, 20.0, 20.0]))
-    atom_array.set_annotation("occupancy", np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
-    return atom_array
 
 
 @pytest.fixture(scope="module")
@@ -984,14 +1003,8 @@ def mock_trajectory_context() -> StepParams:
 
 
 # ============================================================================
-# Mock sampler and scaler fixtures
+# Mock scaler and reward fixtures
 # ============================================================================
-
-
-@pytest.fixture
-def mock_sampler() -> MockTrajectorySampler:
-    """MockTrajectorySampler for trajectory-based tests."""
-    return MockTrajectorySampler()
 
 
 @pytest.fixture
@@ -1000,27 +1013,10 @@ def mock_step_scaler() -> MockStepScaler:
     return MockStepScaler(step_size=0.1)
 
 
-# ============================================================================
-# Mock reward fixtures
-# ============================================================================
-
-
 @pytest.fixture
 def mock_gradient_reward() -> MockGradientRewardFunction:
     """MockGradientRewardFunction for guidance tests."""
     return MockGradientRewardFunction(gradient_scale=1.0)
-
-
-@pytest.fixture
-def mock_precomputable_reward() -> MockPrecomputableRewardFunction:
-    """MockPrecomputableRewardFunction for FK steering tests."""
-    return MockPrecomputableRewardFunction(scale=1.0)
-
-
-@pytest.fixture
-def mock_reward_function() -> MockRewardFunction:
-    """MockRewardFunction for basic reward testing."""
-    return MockRewardFunction(scale=1.0)
 
 
 # ============================================================================
@@ -1044,6 +1040,7 @@ def mock_processed_structure(mock_wrapper: MockFlowModelWrapper) -> SampleworksP
         input_coords=torch.randn(1, num_atoms, 3),
         atom_array=atom_array,
         ensemble_size=1,
+        reconciler=AtomReconciler.identity(num_atoms),
     )
 
 
