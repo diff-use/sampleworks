@@ -208,5 +208,10 @@ def patch_individual_cif_file(
 if __name__ == "__main__":
     args = parse_args()
     main(
-        args.input_dir, args.grid_search_input_dir, args.cif_pattern, args.rcsb_pattern, args.depth
+        args.input_dir,
+        args.grid_search_input_dir,
+        args.cif_pattern,
+        args.rcsb_pattern,
+        args.depth,
+        args.input_pdb_pattern,
     )
