@@ -7,6 +7,7 @@ including helper functions and model-specific behavior.
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import pytest
 import torch
 
@@ -14,6 +15,8 @@ import torch
 pytest.importorskip("boltz", reason="Boltz not installed")
 
 from sampleworks.models.boltz.wrapper import (
+    _atom_array_from_boltz_npz,
+    _load_model_atom_array_from_structures_dir,
     BoltzConditioning,
     BoltzConfig,
     create_boltz_input_from_structure,
@@ -154,6 +157,64 @@ class TestBoltzConfig:
         assert config.num_workers == 4
         assert config.ensemble_size == 5
         assert config.recycling_steps == 2
+
+
+class TestBoltzNpzAtomArrayHelpers:
+    """Unit tests for Boltz NPZ parsing and loading helpers."""
+
+    def _write_npz(
+        self,
+        out_path: Path,
+        *,
+        include_chains: bool = True,
+    ) -> Path:
+        atoms_dtype = np.dtype([("coords", np.float32, (3,)), ("name", "U4")])
+        residues_dtype = np.dtype([("atom_idx", np.int32), ("res_idx", np.int32), ("name", "U4")])
+        chains_dtype = np.dtype([("res_idx", np.int32), ("name", "U2")])
+
+        atoms = np.zeros(2, dtype=atoms_dtype)
+        atoms["coords"] = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+        atoms["name"] = np.array(["N", "CA"])
+
+        residues = np.zeros(1, dtype=residues_dtype)
+        residues["atom_idx"] = np.array([0], dtype=np.int32)
+        residues["res_idx"] = np.array([7], dtype=np.int32)
+        residues["name"] = np.array(["ALA"])
+
+        chains = np.zeros(1, dtype=chains_dtype)
+        chains["res_idx"] = np.array([0], dtype=np.int32)
+        chains["name"] = np.array(["A"])
+
+        if include_chains:
+            np.savez(out_path, atoms=atoms, residues=residues, chains=chains)
+        else:
+            np.savez(out_path, atoms=atoms, residues=residues)
+        return out_path
+
+    def test_atom_array_from_npz(self, temp_output_dir: Path):
+        npz_path = self._write_npz(temp_output_dir / "single.npz")
+
+        arr = _atom_array_from_boltz_npz(npz_path)
+        assert len(arr) == 2
+        assert cast(np.ndarray, arr.chain_id).tolist() == ["A", "A"]
+        assert cast(np.ndarray, arr.res_id).tolist() == [7, 7]
+        assert cast(np.ndarray, arr.atom_name).tolist() == ["N", "CA"]
+        assert arr.occupancy is not None
+        assert arr.b_factor is not None
+
+    def test_atom_array_from_npz_validates_missing_keys(self, temp_output_dir: Path):
+        npz_path = self._write_npz(temp_output_dir / "missing_chains.npz", include_chains=False)
+        with pytest.raises(ValueError, match="missing required keys"):
+            _atom_array_from_boltz_npz(npz_path)
+
+    def test_load_model_atom_array_from_structures_dir(self, temp_output_dir: Path):
+        structures_dir = temp_output_dir / "structures"
+        structures_dir.mkdir(parents=True, exist_ok=True)
+        self._write_npz(structures_dir / "target.npz")
+
+        arr = _load_model_atom_array_from_structures_dir(structures_dir)
+        assert arr is not None
+        assert len(arr) == 2
 
 
 @pytest.mark.slow
