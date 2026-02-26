@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Generic, Protocol, runtime_checkable, TYPE_CHECKING, TypeVar
 
 import torch
@@ -21,6 +21,7 @@ from sampleworks.utils.framework_utils import Array
 if TYPE_CHECKING:
     from sampleworks.core.rewards.protocol import RewardInputs
     from sampleworks.core.scalers.protocol import StepScalerProtocol
+    from sampleworks.utils.atom_space import AtomReconciler
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,12 @@ class StepParams:
     reward: RewardFunctionProtocol | None = None
     reward_inputs: RewardInputs | None = None
 
+    # Optional atom reconciliation
+    reconciler: AtomReconciler | None = None
+    # Optional alignment reference coordinates in model space (meaning same number of atoms as used
+    # in the model representation, not necessarily the structure). Used for rigid alignment.
+    alignment_reference: Float[Array, "*batch atoms 3"] | None = None
+
     # Optional other metadata (could include velocity for momentum, etc.)
     metadata: dict[str, Any] | None = None
 
@@ -88,38 +95,67 @@ class StepParams:
         reward: RewardFunctionProtocol,
         reward_inputs: RewardInputs,
     ) -> StepParams:
-        """Return new StepParams with reward information for guided sampling."""
-        return StepParams(
-            step_index=self.step_index,
-            total_steps=self.total_steps,
-            t=self.t,
-            dt=self.dt,
-            noise_scale=self.noise_scale,
-            learning_rate=self.learning_rate,
-            reward=reward,
-            reward_inputs=reward_inputs,
-            metadata=self.metadata,
-        )
+        """Return a new ``StepParams`` with reward information attached.
+
+        Parameters
+        ----------
+        reward : RewardFunctionProtocol
+            Reward (or loss) function used for guided sampling.
+        reward_inputs : RewardInputs
+            Pre-computed inputs required by *reward* (e.g. reference
+            coordinates, masks, density maps).
+
+        Returns
+        -------
+        StepParams
+            Shallow copy with *reward* and *reward_inputs* set.
+        """
+        return replace(self, reward=reward, reward_inputs=reward_inputs)
+
+    def with_reconciler(
+        self,
+        reconciler: AtomReconciler,
+        alignment_reference: Float[Array, "*batch atoms 3"] | None = None,
+    ) -> StepParams:
+        """Return a new ``StepParams`` with atom reconciliation context.
+
+        Parameters
+        ----------
+        reconciler : AtomReconciler
+            Adapter that translates between model and structure atom spaces.
+        alignment_reference : Tensor or jax.Array, optional
+            Reference coordinates for rigid alignment during
+            sampling. Shape ``(*batch, n_atoms, 3)``.
+
+        Returns
+        -------
+        StepParams
+            Shallow copy with *reconciler* and *alignment_reference* set.
+        """
+        return replace(self, reconciler=reconciler, alignment_reference=alignment_reference)
 
     def with_metadata(
         self,
         metadata: dict[str, Any],
     ) -> StepParams:
-        """Return new StepParams with updated metadata.
-        Will merge with existing metadata if present."""
+        """Return a new ``StepParams`` with updated metadata.
+
+        Entries in *metadata* are merged into any existing metadata dict.
+        Conflicting keys are overwritten by the new values.
+
+        Parameters
+        ----------
+        metadata : dict[str, Any]
+            Key/value pairs to merge into the metadata.
+
+        Returns
+        -------
+        StepParams
+            Shallow copy with merged metadata.
+        """
         merged_metadata = dict(self.metadata) if self.metadata is not None else {}
         merged_metadata.update(metadata)
-        return StepParams(
-            step_index=self.step_index,
-            total_steps=self.total_steps,
-            t=self.t,
-            dt=self.dt,
-            noise_scale=self.noise_scale,
-            learning_rate=self.learning_rate,
-            reward=self.reward,
-            reward_inputs=self.reward_inputs,
-            metadata=merged_metadata,
-        )
+        return replace(self, metadata=merged_metadata)
 
 
 StateT = TypeVar("StateT")
