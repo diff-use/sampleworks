@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import torch
 from atomworks.enums import ChainType
 from atomworks.ml.samplers import LoadBalancedDistributedSampler
@@ -18,6 +19,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 from sampleworks.models.protocol import GenerativeModelInput
+from sampleworks.utils.framework_utils import match_batch
 from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 
@@ -47,6 +49,7 @@ class RF3Conditioning:
     z_trunk: Tensor
     features: dict[str, Any]
     true_atom_array: AtomArray | None = None
+    model_atom_array: AtomArray | None = None
 
 
 @dataclass
@@ -304,20 +307,37 @@ class RF3Wrapper:
             cast(AtomArray, atom_array[0]) if isinstance(atom_array, AtomArrayStack) else atom_array
         )
 
+        num_atoms = len(pairformer_out["features"]["atom_to_token_map"])
+
+        # Build model atom array from non-hydrogen InferenceInput atoms
+        model_aa = cast(
+            AtomArray, inference_input.atom_array[inference_input.atom_array.element != "H"]
+        )
+        # RF3 feature assembly preserves inference_input atom order after hydrogen filtering.
+        # Any excess atoms are trailing entries not represented in atom_to_token_map.
+        if len(model_aa) > num_atoms:
+            model_aa = cast(AtomArray, model_aa[:num_atoms])
+        if not hasattr(model_aa, "occupancy") or model_aa.occupancy is None:
+            model_aa.set_annotation("occupancy", np.ones(len(model_aa), dtype=np.float32))
+        if not hasattr(model_aa, "b_factor") or model_aa.b_factor is None:
+            model_aa.set_annotation("b_factor", np.full(len(model_aa), 20.0, dtype=np.float32))
+
         conditioning = RF3Conditioning(
             s_inputs=pairformer_out["s_inputs"],
             s_trunk=pairformer_out["s_trunk"],
             z_trunk=pairformer_out["z_trunk"],
             features=pairformer_out["features"],
             true_atom_array=true_atom_array,
+            model_atom_array=model_aa,
         )
-
-        num_atoms = len(pairformer_out["features"]["atom_to_token_map"])
 
         # x_init should be the reference coordinates for alignment purposes.
         if true_atom_array is not None and len(true_atom_array) == num_atoms:
             x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
+            x_init = cast(
+                torch.Tensor,
+                match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size),
+            ).clone()
         else:
             logger.warning(
                 "True structure not available or atom count mismatch; initializing "
@@ -414,13 +434,16 @@ class RF3Wrapper:
             x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
 
         if isinstance(t, (int, float)):
-            t_tensor = torch.tensor([t] * x_t.shape[0], device=self.device, dtype=x_t.dtype)
+            t_tensor = torch.tensor([t], device=self.device, dtype=x_t.dtype)
         else:
             t_tensor = t.to(device=self.device, dtype=x_t.dtype)
             if t_tensor.ndim == 0:
-                t_tensor = t_tensor.unsqueeze(0).expand(x_t.shape[0])
-            elif t_tensor.shape[0] == 1 and x_t.shape[0] > 1:
-                t_tensor = t_tensor.expand(x_t.shape[0])
+                t_tensor = t_tensor.unsqueeze(0)
+
+        t_tensor = cast(
+            torch.Tensor,
+            match_batch(t_tensor, target_batch_size=x_t.shape[0]),
+        )
 
         with torch.autocast(
             "cuda", dtype=torch.float32

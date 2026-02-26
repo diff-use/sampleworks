@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import torch
 from biotite.structure import AtomArray
 from configs.configs_base import configs as configs_base
@@ -31,9 +32,9 @@ from sampleworks.models.protenix.structure_processing import (
     create_protenix_input_from_structure,
     ensure_atom_array,
     filter_zero_occupancy,
-    reconcile_atom_arrays,
 )
 from sampleworks.models.protocol import GenerativeModelInput
+from sampleworks.utils.framework_utils import match_batch
 from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 from sampleworks.utils.torch_utils import send_tensors_in_dict_to_device
@@ -77,6 +78,7 @@ class ProtenixConditioning:
     p_lm: Tensor | None = None
     c_l: Tensor | None = None
     true_atom_array: AtomArray | None = None
+    model_atom_array: AtomArray | None = None
 
 
 @dataclass
@@ -367,26 +369,21 @@ class ProtenixWrapper:
         # numbers mismatch. I imagine this will be a common source of bugs for other models too...
         atom_array = ensure_atom_array(structure["asym_unit"])
         atom_array = filter_zero_occupancy(atom_array)
-        atom_array = add_terminal_oxt_atoms(
-            atom_array=atom_array, chain_info=structure.get("chain_info", {})
-        )
-        atom_array = reconcile_atom_arrays(atom_array, atom_array_protenix)
-
-        if "asym_unit" in structure:
-            n_atoms_protenix = len(atom_array_protenix)
-            n_atoms_atomworks = len(atom_array)
-            assert n_atoms_protenix == n_atoms_atomworks, (
-                f"Atom count mismatch after reconciliation: Protenix has "
-                f"{n_atoms_protenix} atoms, Atomworks has {n_atoms_atomworks} atoms."
-            )
+        atom_array = add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
 
         features = cast(dict[str, Any], input_feature_dict)
 
         if "asym_unit" in structure:
-            true_coords = atom_array.coord
+            # true_coords feeds into the model and must match the Protenix
+            # feature dimensions (N_protenix atoms).
+            true_coords = atom_array_protenix.coord
+            if true_coords is None:
+                raise ValueError("Protenix atom array has no coordinates")
             if not isinstance(true_coords, torch.Tensor):
-                true_coords = torch.tensor(true_coords, device=self.device, dtype=torch.float32)
+                true_coords = torch.as_tensor(true_coords, device=self.device, dtype=torch.float32)
             features["true_coords"] = true_coords
+
+            # true_atom_array is used by the scalers for reward computation
             features["true_atom_array"] = atom_array
 
         features = self.model.relative_position_encoding.generate_relp(features)
@@ -405,6 +402,13 @@ class ProtenixWrapper:
         p_lm = p_lm_c_l[0] if p_lm_c_l else None
         c_l = p_lm_c_l[1] if p_lm_c_l else None
 
+        # Build model atom array for mismatch reconciliation
+        model_aa = cast(AtomArray, atom_array_protenix)
+        if not hasattr(model_aa, "occupancy") or model_aa.occupancy is None:
+            model_aa.set_annotation("occupancy", np.ones(len(model_aa), dtype=np.float32))
+        if not hasattr(model_aa, "b_factor") or model_aa.b_factor is None:
+            model_aa.set_annotation("b_factor", np.full(len(model_aa), 20.0, dtype=np.float32))
+
         num_atoms_protenix = len(atom_array_protenix)
         conditioning = ProtenixConditioning(
             s_inputs=pairformer_out["s_inputs"],
@@ -416,12 +420,16 @@ class ProtenixWrapper:
             p_lm=p_lm,
             c_l=c_l,
             true_atom_array=atom_array if "asym_unit" in structure else None,
+            model_atom_array=model_aa,
         )
 
         # x_init should be the reference coordinates for alignment purposes.
         if "asym_unit" in structure:
             x_init = torch.tensor(atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = x_init.unsqueeze(0).expand(ensemble_size, -1, -1).clone()
+            x_init = cast(
+                torch.Tensor,
+                match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size),
+            ).clone()
         else:
             logger.warning(
                 "True structure not available or atom count mismatch; initializing "
@@ -564,13 +572,16 @@ class ProtenixWrapper:
             x_t = torch.tensor(x_t, device=self.device, dtype=torch.float32)
 
         if isinstance(t, (int, float)):
-            t_tensor = torch.tensor([t] * x_t.shape[0], device=self.device, dtype=x_t.dtype)
+            t_tensor = torch.tensor([t], device=self.device, dtype=x_t.dtype)
         else:
             t_tensor = t.to(device=self.device, dtype=x_t.dtype)
             if t_tensor.ndim == 0:
-                t_tensor = t_tensor.unsqueeze(0).expand(x_t.shape[0])
-            elif t_tensor.shape[0] == 1 and x_t.shape[0] > 1:
-                t_tensor = t_tensor.expand(x_t.shape[0])
+                t_tensor = t_tensor.unsqueeze(0)
+
+        t_tensor = cast(
+            torch.Tensor,
+            match_batch(t_tensor, target_batch_size=x_t.shape[0]),
+        )
 
         # When gradients are enabled, detach cached pairformer outputs so gradients
         # only flow through the diffusion module (not back through the pairformer).
