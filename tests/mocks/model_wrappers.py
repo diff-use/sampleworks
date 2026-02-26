@@ -25,7 +25,7 @@ class MockConditioning:
         Atom count in the model representation.
     model_atom_array
         Optional model-space atom template used to build an
-        :class:`sampleworks.utils.atom_space.AtomReconciler`.
+        :class:`sampleworks.utils.atom_reconciler.AtomReconciler`.
     """
 
     sequence_length: int
@@ -50,7 +50,7 @@ class MismatchCase:
     expected_n_common
         Expected common-atom count after reconciliation.
     expected_has_mismatch
-        Expected mismatch flag from :class:`sampleworks.utils.atom_space.AtomReconciler`.
+        Expected mismatch flag from :class:`sampleworks.utils.atom_reconciler.AtomReconciler`.
     """
 
     id: str

@@ -21,7 +21,7 @@ from sampleworks.utils.framework_utils import Array
 if TYPE_CHECKING:
     from sampleworks.core.rewards.protocol import RewardInputs
     from sampleworks.core.scalers.protocol import StepScalerProtocol
-    from sampleworks.utils.atom_space import AtomReconciler
+    from sampleworks.utils.atom_reconciler import AtomReconciler
 
 
 @dataclass(frozen=True, slots=True)
