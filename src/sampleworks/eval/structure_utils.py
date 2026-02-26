@@ -1,10 +1,9 @@
 import re
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
-import einx
 import numpy as np
 import torch
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
@@ -14,6 +13,8 @@ from loguru import logger
 from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.models.protocol import GenerativeModelInput
+from sampleworks.utils.atom_space import AtomReconciler
+from sampleworks.utils.framework_utils import match_batch
 
 
 try:
@@ -43,12 +44,18 @@ class SampleworksProcessedStructure:
     input_coords: torch.Tensor
     atom_array: AtomArray
     ensemble_size: int
+    reconciler: AtomReconciler
+    model_atom_array: AtomArray | None = None
 
     def to_reward_inputs(self, device: torch.device | str = "cpu") -> RewardInputs:
-        """Build RewardInputs from the processed atom array.
+        """Build RewardInputs with model atom count when model atom arrays are available.
 
         Delegates to :meth:`RewardInputs.from_atom_array` so that element
         lookup, masking, and batching logic lives in one place.
+
+        Reward tensors are generated from the model atom array whenever possible.
+        Structure-derived B-factors are copied onto common atoms, and the
+        reference coordinates come from ``self.input_coords`` (model-space).
 
         Parameters
         ----------
@@ -59,10 +66,41 @@ class SampleworksProcessedStructure:
         -------
         RewardInputs
         """
-        return RewardInputs.from_atom_array(
-            atom_array=self.atom_array,
+        reconciler = self.reconciler
+        atom_array_for_rewards = self.model_atom_array or self.atom_array
+
+        reward_inputs = RewardInputs.from_atom_array(
+            atom_array=atom_array_for_rewards,
             ensemble_size=self.ensemble_size,
             device=device,
+        )
+
+        updated_b_factors = reward_inputs.b_factors
+        if self.model_atom_array is not None and self.atom_array.b_factor is not None:
+            struct_b_factors = torch.as_tensor(
+                cast(np.ndarray, self.atom_array.b_factor)[
+                    reconciler.struct_indices.detach().cpu().numpy()
+                ],
+                device=reward_inputs.b_factors.device,
+                dtype=reward_inputs.b_factors.dtype,
+            )
+            model_indices = reconciler.model_indices.to(device=reward_inputs.b_factors.device)
+            updated_b_factors = reward_inputs.b_factors.clone()
+            updated_b_factors[..., model_indices] = struct_b_factors
+
+        # input_coords stored on the processed structure are always full model atom
+        # references, apply reward_param_mask for reward calls.
+        masked_input_coords = self.input_coords[..., reward_inputs.reward_param_mask, :].to(
+            device=reward_inputs.input_coords.device,
+            dtype=reward_inputs.input_coords.dtype,
+        )
+        updated_mask_like = torch.ones_like(masked_input_coords[..., 0])
+
+        return replace(
+            reward_inputs,
+            b_factors=updated_b_factors,
+            input_coords=masked_input_coords,
+            mask_like=updated_mask_like,
         )
 
 
@@ -110,15 +148,18 @@ def process_structure_to_trajectory_input(
     atom_array = None
     needs_protenix_preprocessing = False
 
-    if features.conditioning and hasattr(features.conditioning, "true_atom_array"):
-        atom_array = features.conditioning.true_atom_array
+    # TODO: still a bit jank, but it is better than before I think, and the transform related issues
+    # will help when resolved
+    conditioning = features.conditioning
+    if hasattr(conditioning, "true_atom_array"):
+        atom_array = conditioning.true_atom_array
 
     if atom_array is None:
         if "asym_unit" not in structure:
             raise ValueError("structure must contain 'asym_unit' key")
         atom_array = ensure_atom_array_stack(structure["asym_unit"])[0]
-        if features.conditioning:
-            cond_class = features.conditioning.__class__.__name__
+        if conditioning is not None:
+            cond_class = conditioning.__class__.__name__
             needs_protenix_preprocessing = cond_class == "ProtenixConditioning"
 
     # Add OXT atoms for Protenix to match the model's internal representation.
@@ -131,20 +172,59 @@ def process_structure_to_trajectory_input(
         atom_array = _filter_zero_occupancy(atom_array)
         atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
 
-    # Mask to valid atoms (nonzero occupancy, no NaN coords)
+    # Mask to valid atoms (nonzero occupancy, no NaN coords) in structure atom space
     reward_param_mask = atom_array.occupancy > 0
     reward_param_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)
     atom_array = atom_array[reward_param_mask]
 
-    input_coords = torch.as_tensor(
-        einx.rearrange(
-            "... -> e ...",
-            torch.from_numpy(atom_array.coord).to(
-                dtype=coords_from_prior.dtype, device=coords_from_prior.device
-            ),
-            e=ensemble_size,
-        ),
+    # Build reconciler from model and structure atom arrays.
+    model_atom_array = (
+        cast(AtomArray | None, conditioning.model_atom_array)
+        if hasattr(conditioning, "model_atom_array")
+        else None
     )
+    if model_atom_array is not None:
+        reconciler = AtomReconciler.from_arrays(model_atom_array, atom_array)  # pyright: ignore[reportArgumentType]
+        if reconciler.has_mismatch:
+            logger.info(
+                f"Atom count mismatch: model={reconciler.n_model}, "
+                f"structure={reconciler.n_struct}, common={reconciler.n_common}"
+            )
+    else:
+        reconciler = AtomReconciler.identity(len(atom_array))  # pyright: ignore[reportArgumentType]
+
+    # Build model atom reference coordinates used for alignment and partial diffusion.
+    struct_coords_np = np.ascontiguousarray(cast(np.ndarray, atom_array.coord))
+    struct_coords = torch.from_numpy(struct_coords_np).to(
+        dtype=coords_from_prior.dtype,
+        device=coords_from_prior.device,
+    )
+    if model_atom_array is not None:
+        model_template_np = np.asarray(cast(np.ndarray, model_atom_array.coord))
+
+        # Replace non-finite coords with the common-atom centroid
+        # TODO: use something like the RF3 processing where they put things on the nearest token
+        # (this is in atomworks RF3 transform pipeline)
+        struct_centroid = struct_coords_np.mean(axis=0)
+        if not np.isfinite(model_template_np).all():
+            logger.warning(
+                "Model atom array contains non-finite coordinates; replacing with "
+                "structure centroid for model-only template atoms."
+            )
+            bad = ~np.isfinite(model_template_np)
+            model_template_np = model_template_np.copy()
+            model_template_np[bad] = np.broadcast_to(struct_centroid, model_template_np.shape)[bad]
+        model_template_np = np.ascontiguousarray(model_template_np)
+
+        model_template = torch.from_numpy(model_template_np).to(
+            dtype=coords_from_prior.dtype,
+            device=coords_from_prior.device,
+        )
+        model_reference_coords = reconciler.struct_to_model(struct_coords, model_template)
+    else:
+        model_reference_coords = struct_coords
+
+    input_coords = torch.as_tensor(match_batch(model_reference_coords.unsqueeze(0), ensemble_size))
 
     structure["asym_unit"] = atom_array
 
@@ -154,6 +234,8 @@ def process_structure_to_trajectory_input(
         input_coords=input_coords,
         atom_array=atom_array,
         ensemble_size=ensemble_size,
+        reconciler=reconciler,
+        model_atom_array=model_atom_array,
     )
 
 

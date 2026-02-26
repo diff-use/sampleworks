@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import einx
 import torch
 from jaxtyping import Float
+from loguru import logger
 
 from sampleworks.core.samplers.protocol import SamplerSchedule, SamplerStepOutput, StepParams
 from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
@@ -19,6 +20,7 @@ from sampleworks.utils.frame_transforms import (
     transform_coords_and_noise_to_frame,
     weighted_rigid_align_differentiable,
 )
+from sampleworks.utils.framework_utils import match_batch
 
 
 if TYPE_CHECKING:
@@ -341,11 +343,13 @@ class AF3EDMSampler:
 
         # Ensure guidance_weight has batch dimension matching guidance_direction
         batch_size = guidance_direction.shape[0]
-        guidance_weight = torch.as_tensor(guidance_weight)
+        guidance_weight = torch.as_tensor(guidance_weight, device=noisy_state.device)
         if guidance_weight.ndim == 0:
-            guidance_weight = guidance_weight.unsqueeze(0).expand(batch_size)
-        elif guidance_weight.shape[0] == 1 and batch_size > 1:
-            guidance_weight = guidance_weight.expand(batch_size)
+            guidance_weight = guidance_weight.unsqueeze(0)
+        guidance_weight = torch.as_tensor(
+            match_batch(guidance_weight, target_batch_size=batch_size),
+            device=noisy_state.device,
+        )
 
         if align_transform is not None and allow_gradients:
             guidance_direction = apply_forward_transform(
@@ -432,25 +436,50 @@ class AF3EDMSampler:
         with torch.set_grad_enabled(allow_gradients):
             x_hat_0 = model_wrapper.step(noisy_state, t_hat, features=features)
 
+        reconciler = (
+            context.reconciler.to(torch.as_tensor(x_hat_0).device)
+            if context.reconciler is not None
+            else None
+        )
+
         # work in augmented frame
         x_hat_0_working_frame = x_hat_0
         noisy_state_working_frame = noisy_state
         eps_working_frame = eps
         align_transform = None
+        alignment_reference = (
+            torch.as_tensor(context.alignment_reference)
+            if context.alignment_reference is not None
+            else None
+        )
 
-        if self.align_to_input and features is not None:
-            align_mask = (
-                torch.as_tensor(context.metadata.get("mask"))
-                if context.metadata and context.metadata.get("mask") is not None
-                else None
+        if alignment_reference is not None and x_hat_0.ndim == 3:
+            alignment_reference = match_batch(
+                torch.as_tensor(alignment_reference),
+                target_batch_size=x_hat_0.shape[0],
             )
-            x_hat_0_working_frame, align_transform = align_to_reference_frame(
-                torch.as_tensor(x_hat_0),
-                torch.as_tensor(features.x_init),  # <-- this is what is being aligned to
-                mask=align_mask,
-                weights=align_mask,
-                allow_gradients=allow_gradients,
+
+        if self.align_to_input and alignment_reference is None:
+            logger.warning(
+                "align_to_input is True but no alignment_reference provided; "
+                "skipping alignment. Set alignment_reference on StepParams via "
+                "with_reconciler() to enable alignment."
             )
+
+        if self.align_to_input and alignment_reference is not None:
+            if reconciler is not None:
+                x_hat_0_working_frame, align_transform = reconciler.align(
+                    torch.as_tensor(x_hat_0),
+                    alignment_reference,
+                    allow_gradients=allow_gradients,
+                )
+            else:
+                x_hat_0_working_frame, align_transform = align_to_reference_frame(
+                    torch.as_tensor(x_hat_0),
+                    torch.as_tensor(alignment_reference),
+                    allow_gradients=allow_gradients,
+                )
+
             _, eps_working_frame, noisy_state_working_frame = transform_coords_and_noise_to_frame(
                 torch.as_tensor(maybe_augmented_state), torch.as_tensor(eps), align_transform
             )
