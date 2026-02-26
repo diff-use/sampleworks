@@ -117,14 +117,12 @@ def patch_individual_cif_file(
         logger.warning(msg)
         return msg
 
-    # fetch only downloads the file if it isn't already present.
-    rcsb_path = fetch(rcsb_id, format="cif", target_path=str(SAMPLEWORKS_CACHE))
-
-    # Get the offset for residue numbering in the reference structure
-    reference_path = reference_dir / input_pdb_pattern.format(pdb_id=rcsb_id)
-    
-    # load the two CIF files.
+    # Get the offset for residue numbering in the reference structure    
     try:
+        reference_path = reference_dir / input_pdb_pattern.format(pdb_id=rcsb_id)
+        # fetch only downloads the file if it isn't already present.
+        rcsb_path = fetch(rcsb_id, format="cif", target_path=str(SAMPLEWORKS_CACHE))
+
         reference = load_any(reference_path)
         asym_unit = load_any(cif_file)
         asym_unit = ensure_atom_array_stack(asym_unit)
@@ -150,7 +148,14 @@ def patch_individual_cif_file(
         return msg
 
     # patch the residue numbers to match the original pdb
-    mapping = {cif_key: ref_key[1] for cif_key, ref_key in zip(cif_keys, ref_keys, strict=True)}
+    mapping = {}
+    for cif_key, ref_key in zip(cif_keys, ref_keys, strict=True):
+        if cif_key[0] != ref_key[0]:
+            msg = f"Chain mismatch while remapping residues for {cif_path} vs {reference_path}"
+            logger.error(msg)
+            return msg
+        mapping[cif_key] = ref_key[1]
+
     atom_keys = list(zip(asym_unit.chain_id.tolist(), asym_unit.res_id.tolist()))
     asym_unit.res_id = np.array([mapping[k] for k in atom_keys], dtype=asym_unit.res_id.dtype)
 
