@@ -8,6 +8,7 @@ from sampleworks.utils.framework_utils import (
     is_jax_array,
     is_torch_tensor,
     jax_to_torch,
+    match_batch,
     torch_to_jax,
 )
 
@@ -455,3 +456,37 @@ class TestDecoratorIntegration:
 
         assert isinstance(input_result, jax.Array)
         assert isinstance(output_result, torch.Tensor)
+
+
+class TestMatchBatch:
+    """Test batch-size matching across frameworks."""
+
+    def test_torch_passthrough_when_batch_matches(self):
+        array = torch.randn(4, 10, 3)
+        result = match_batch(array, target_batch_size=4)
+        assert result is array
+
+    def test_torch_singleton_broadcast(self):
+        array = torch.randn(1, 6, 3)
+        result = match_batch(array, target_batch_size=3)
+        assert result.shape == (3, 6, 3)
+        torch.testing.assert_close(result[0], array[0])
+        torch.testing.assert_close(result[1], array[0])
+        torch.testing.assert_close(result[2], array[0])
+
+    def test_jax_singleton_broadcast(self):
+        array = jnp.arange(6, dtype=jnp.float32).reshape(1, 2, 3)
+        result = match_batch(array, target_batch_size=3)
+        assert result.shape == (3, 2, 3)
+        np.testing.assert_allclose(np.asarray(result[0]), np.asarray(array[0]))
+        np.testing.assert_allclose(np.asarray(result[1]), np.asarray(array[0]))
+
+    def test_raises_on_incompatible_batch_sizes(self):
+        array = torch.randn(2, 5, 3)
+        with pytest.raises(ValueError, match="not divisible"):
+            match_batch(array, target_batch_size=5)
+
+    def test_raises_on_scalar_input(self):
+        scalar = torch.tensor(1.0)
+        with pytest.raises(ValueError, match="ndim >= 1"):
+            match_batch(scalar, target_batch_size=2)
