@@ -13,7 +13,7 @@ from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray, BadStructureError, index_distance
 from biotite.structure.io.pdbx import CIFFile, get_structure
 from loguru import logger
-from peppr.bounds import get_distance_bounds  # pyright:ignore
+from peppr.bounds import get_distance_bounds
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from scipy.special import comb
 from tqdm import tqdm
@@ -238,6 +238,7 @@ def main(args: argparse.Namespace):
 
             all_bond_length_outliers.append(bond_length_outliers)
             all_bond_angle_outliers.append(bond_angle_outliers)
+
             all_bond_length_violation_fractions.append(
                 {
                     "outlier_fraction": bond_length_violation_fraction,

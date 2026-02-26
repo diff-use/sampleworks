@@ -115,7 +115,7 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
     # remove any atoms with nan coordinates--these seem to come in because we sometimes use parse
     # (from AtomWorks) which creates them. Still we'll do this here just in case.
     flat_coords = einx.rearrange("a b c -> b (a c)", asym_unit.coord)
-    asym_unit = asym_unit[:, ~np.isnan(flat_coords).any(axis=1)]  # ty: ignore
+    asym_unit = asym_unit[:, ~np.isnan(flat_coords).any(axis=1)]
 
     # make sure entity ids match in atom_site and entity_poly
     if "entity_poly" in template.block:
@@ -126,7 +126,7 @@ def patch_individual_cif_file(cif_file: Path, rcsb_regex: str):
             entity_id = ep["entity_id"].as_item()
             if "label_entity_id" not in asym_unit.get_annotation_categories():
                 asym_unit.add_annotation("label_entity_id", int)
-            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)  # ty: ignore[invalid-argument-type]
+            asym_unit.label_entity_id = np.ones_like(asym_unit.label_entity_id) * int(entity_id)
     else:
         logger.warning("No entity_poly block found in template CIF file. Cannot patch entity ids")
 

@@ -211,7 +211,7 @@ def create_boltz_input_from_structure(
             sequence_to_chains.setdefault(seq, []).append(chain_id)
 
         unique_chain_sequences = {chains[0]: seq for seq, chains in sequence_to_chains.items()}
-        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)  # ty: ignore[invalid-argument-type]
+        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)
 
         msa_paths = {}
         for seq, chains_with_seq in sequence_to_chains.items():
@@ -1102,7 +1102,7 @@ class Boltz1Wrapper:
             if not self.model.no_msa:
                 z = z + self.model.msa_module(
                     z, s_inputs, features, use_kernels=self.model.use_kernels
-                )  # type: ignore (Object will be callable here)
+                )
 
             if self.model.is_pairformer_compiled:
                 pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)

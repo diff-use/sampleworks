@@ -51,7 +51,7 @@ def load_structure_with_altlocs(path: Path) -> AtomArray:
     atom_array = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
     if isinstance(atom_array, AtomArrayStack):
         atom_array = cast(AtomArray, atom_array[0])
-    return cast(AtomArray, atom_array)
+    return atom_array
 
 
 def save_structure_to_cif(
@@ -193,7 +193,7 @@ def find_all_altloc_ids(
     Find all unique alternate location indicator (altloc) IDs in an AtomArray or AtomArrayStack.
     """
     if hasattr(atom_array, altloc_label):
-        altloc_ids = np.unique(getattr(atom_array, altloc_label))  # pyright: ignore (reportArgumentType)
+        altloc_ids = np.unique(getattr(atom_array, altloc_label))  # ty: ignore[invalid-argument-type]
     else:
         raise AttributeError(
             "atom_array must have altloc annotation, defaults to 'altloc_id'; "

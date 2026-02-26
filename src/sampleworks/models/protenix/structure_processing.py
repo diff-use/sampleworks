@@ -282,7 +282,7 @@ def add_terminal_oxt_atoms(atom_array: AtomArray, chain_info: dict) -> AtomArray
 
     combined_array = concatenate([atom_array, oxt_atom_array])
 
-    return cast(AtomArray, combined_array)  # type: ignore (concatenate returns AtomArray if inputs are AtomArray)
+    return cast(AtomArray, combined_array)
 
 
 def add_unique_chain_and_copy_ids(atom_array):
@@ -756,7 +756,7 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
         for label_entity_id in np.unique(cast(np.ndarray, atom_array.label_entity_id)):
             for chain_id in chain_info:
                 chain_atom = atom_array[atom_array.chain_id == chain_id]
-                if len(chain_atom) > 0 and chain_atom[0].label_entity_id == label_entity_id:  # ty: ignore[invalid-argument-type, index-out-of-bounds]
+                if len(chain_atom) > 0 and chain_atom[0].label_entity_id == label_entity_id:
                     if chain_id in valid_positions and valid_positions[chain_id]:
                         entity_min_res_id[str(label_entity_id)] = min(valid_positions[chain_id])
                     else:

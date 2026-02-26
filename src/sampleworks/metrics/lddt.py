@@ -214,7 +214,7 @@ def extract_lddt_features_from_atom_arrays(
 
     # For the remaining feature generation, we can directly use the
     # first model in the stack (only coordinates are different)
-    ground_truth_atom_array = ground_truth_atom_array_stack[0]  # ty: ignore
+    ground_truth_atom_array = ground_truth_atom_array_stack[0]
 
     # Create the coordinate mask using occupancy if available, fallback to coordinate validity
     # Note (marcus.collins@astera.org) added `is not None` check, hopefully this does not
@@ -249,14 +249,14 @@ def extract_lddt_features_from_atom_arrays(
         tok_idx = data["atom_array"].token_id.astype(np.int32)
 
     # Compute chain identification at the token-level
-    token_starts = get_token_starts(ground_truth_atom_array)  # ty: ignore
+    token_starts = get_token_starts(ground_truth_atom_array)
 
     if "chain_iid" in ground_truth_atom_array.get_annotation_categories():
-        chain_iid_token_lvl = ground_truth_atom_array.chain_iid[token_starts]  # ty: ignore
+        chain_iid_token_lvl = ground_truth_atom_array.chain_iid[token_starts]
     else:
         # Use the chain_id annotation instead
         # (e.g., for AF-3 outputs, where the chain_id is ostensibly the chain_iid)
-        chain_iid_token_lvl = ground_truth_atom_array.chain_id[token_starts]  # ty: ignore
+        chain_iid_token_lvl = ground_truth_atom_array.chain_id[token_starts]
 
     return {
         "X_L": X_L,

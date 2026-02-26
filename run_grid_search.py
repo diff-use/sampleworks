@@ -12,7 +12,7 @@ import pickle
 import shutil
 import subprocess
 import time
-from concurrent.futures import ProcessPoolExecutor  # ty: ignore
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock

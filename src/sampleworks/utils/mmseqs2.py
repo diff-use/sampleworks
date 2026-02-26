@@ -44,17 +44,18 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
         )
 
     # Set header agent as boltz
-    headers = {}
-    headers["User-Agent"] = "boltz"
+    headers: dict[str, str] = {"User-Agent": "boltz"}
 
     # Set up authentication
     auth = None
     if has_basic_auth:
-        auth = HTTPBasicAuth(msa_server_username, msa_server_password)  # ty: ignore[invalid-argument-type]
+        assert msa_server_username is not None and msa_server_password is not None
+        auth = HTTPBasicAuth(msa_server_username, msa_server_password)
         logger.debug(
             f"MMSeqs2 server authentication: using basic auth for user '{msa_server_username}'"
         )
     elif has_header_auth:
+        assert auth_headers is not None
         headers.update(auth_headers)
         logger.debug("MMSeqs2 server authentication: using header-based authentication")
     else:
@@ -247,7 +248,7 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
                     raise Exception(msg)
 
             # Download results
-            download(ID, tar_gz_file)  # ty: ignore[possibly-unresolved-reference]
+            download(ID, tar_gz_file)
 
     # prep list of a3m files
     # TODO: if calling protenix server, the expected files appear to be:
