@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
@@ -246,12 +247,9 @@ def main(args: argparse.Namespace):
                 )
                 logger.error(f"  Traceback: {traceback.format_exc()}")
 
-    all_results = []
-    # TODO parallelize this loop? It will require replicating `reference_atom_arrays`
-    #  https://github.com/diff-use/sampleworks/issues/98
-
     # Do the quick pass through all the "rows" of our output table to filter in those we can run.
     filtered_experiments = []
+    null_results = []
     for _exp in all_experiments:
 
         if _exp.protein in protein_configs:
@@ -273,7 +271,7 @@ def main(args: argparse.Namespace):
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
 
-        null_results = []
+
         if (protein, _exp.occ_a) not in reference_atom_arrays:
             logger.warning(
                 f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
@@ -305,11 +303,12 @@ def main(args: argparse.Namespace):
 
     # now we can more easily parallelize this loop.
     logger.debug("Starting LDDT evaluation loop. This may take a while...")
-    for _i, (_exp, protein_config, px_seln_refernce_atom_array, selection) in enumerate(filtered_experiments):
-        result = process_exp_with_selection(_exp, protein_config, px_seln_refernce_atom_array, selection)
-        all_results.append(result)
+    all_results = Parallel(n_jobs=args.n_jobs)(
+        delayed(process_exp_with_selection)(_exp, protein_config, px_seln_refernce_atom_array, selection)
+        for _exp, protein_config, px_seln_refernce_atom_array, selection in filtered_experiments
+    )
 
-    df = pd.DataFrame(all_results)
+    df = pd.DataFrame(null_results + all_results)
     df.to_csv(grid_search_dir / "lddt_results.csv", index=False)
 
 
