@@ -1,9 +1,28 @@
 import argparse
-import csv
 from pathlib import Path
 
+import pandas as pd
 from loguru import logger
 from sampleworks.utils.cif_utils import find_altloc_selections
+
+
+def _process_row(row: pd.Series, altloc_label: str, min_span: int) -> pd.Series:
+    cif_file = row["structure"]
+    selections = ";".join(find_altloc_selections(cif_file, altloc_label, min_span))
+    if not selections:
+        logger.warning(f"No altlocs found for {cif_file}")
+
+    # The column names here are defined by the input requirements of scripts like
+    # rscc_grid_search_script.py
+    output = {
+        "protein": row["name"],  # this should be the RSCB ID
+        "selection": selections,
+        "structure_pattern": Path(cif_file).name,
+        "map_pattern": Path(row["density"]).name,
+        "base_map_dir": Path(row["density"]).parent.name,
+        "resolution": row["resolution"],
+    }
+    return pd.Series(output)
 
 
 def main(args):
@@ -14,38 +33,11 @@ def main(args):
     This script will likely change until we settle on a final input/output
     results directory structure.
     """
-    output_lines = []
-    warnings = []  # output these all at the end so they're easy to see.
-    with args.input_csv.open(newline="") as infile:
-        reader = csv.DictReader(infile)
-        required = {"name", "structure", "resolution", "density"}
-        if reader.fieldnames is None or not required.issubset(set(reader.fieldnames)):
-            raise ValueError("Input CSV must include: name, structure, resolution, density")
-        output_lines.append(
-            "protein,selection,structure_pattern,map_pattern,base_map_dir,resolution"
-        )
-        for datum in reader:
-            cif_file = datum["structure"]
-            structure_pattern = Path(cif_file).name
-            pdb_id = datum["name"]
-            resolution = datum["resolution"]
-            density = Path(datum["density"])
-            base_map_dir = density.parent.name  # we want the path relative to the input directory
-            map_pattern = density.name
-
-            selections = ";".join(find_altloc_selections(cif_file, args.altloc_label, args.min_span))
-            if not selections:
-                warnings.append(f"No altlocs found for {cif_file}")
-
-            output_lines.append(
-                f'{pdb_id},"{selections}",{structure_pattern},{map_pattern},{base_map_dir},{resolution}'
-            )
-
-    with open(args.output_file, "w") as f:
-        f.write("\n".join(output_lines))
-
-    for warning in warnings:
-        logger.warning(warning)
+    input_df = pd.read_csv(args.input_csv)
+    output = input_df.apply(
+        _process_row, altloc_label=args.altloc_label, min_span=args.min_span, axis=1
+    )
+    output.to_csv(args.output_file, index=False)
 
 
 if __name__ == "__main__":
