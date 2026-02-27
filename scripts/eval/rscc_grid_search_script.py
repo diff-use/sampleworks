@@ -33,9 +33,12 @@ from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.structure_utils import (
     get_asym_unit_from_structure,
+    get_reference_atomarraystack,
     get_reference_structure_coords,
 )
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms
 from sampleworks.utils.density_utils import compute_density_from_atomarray
+from sampleworks.utils.frame_transforms import weighted_rigid_align_differentiable, apply_forward_transform
 
 
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
@@ -160,6 +163,46 @@ def main(args: argparse.Namespace):
                     )
                     atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
 
+                # TODO Check lines 166-205 _thoroughly_. They came from Claude.
+                # Align the refined structure to the reference structure
+                # 1. Get the reference structure path
+                ref_path, _ = get_reference_atomarraystack(protein_config, _exp.occ_a)
+                if ref_path is None:
+                    raise ValueError(f"Could not find reference structure for occupancy {_exp.occ_a}")
+
+                # 2. Load the reference structure with parse() to get only the first altloc
+                ref_structure = parse(ref_path, ccd_mirror_path=None)
+                ref_atom_array = get_asym_unit_from_structure(ref_structure)
+
+                # 3. Find the common atoms between the reference and the refined structure
+                ref_common, pred_common = filter_to_common_atoms(ref_atom_array, atom_array)
+
+                # 4. Align the refined structure to the reference using weighted_rigid_align_differentiable
+                # Convert to torch tensors with batch dimension
+                ref_coords_torch = torch.from_numpy(ref_common.coord).unsqueeze(0).float()  # [1, n_atoms, 3]
+                pred_coords_torch = torch.from_numpy(pred_common.coord).unsqueeze(0).float()  # [1, n_atoms, 3]
+
+                # Create uniform weights and mask for all common atoms
+                n_atoms = ref_coords_torch.shape[1]
+                weights = torch.ones(1, n_atoms)
+                mask = torch.ones(1, n_atoms)
+
+                # Align predicted to reference and get the transform
+                _, transform = weighted_rigid_align_differentiable(
+                    true_coords=pred_coords_torch,  # coords to align
+                    pred_coords=ref_coords_torch,   # target coords
+                    weights=weights,
+                    mask=mask,
+                    return_transforms=True,
+                    allow_gradients=False
+                )
+
+                # 5. Apply the transform to the entire refined structure (atom_array)
+                atom_array_coords_torch = torch.from_numpy(atom_array.coord).unsqueeze(0).float()
+                aligned_coords_torch = apply_forward_transform(atom_array_coords_torch, transform, rotation_only=False)
+                atom_array.coord = aligned_coords_torch.squeeze(0).numpy()
+
+                # Compute density from the aligned refined structure
                 _computed_density, _ = compute_density_from_atomarray(
                     atom_array, xmap=_base_xmap, em_mode=False, device=_device
                 )
