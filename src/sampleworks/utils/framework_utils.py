@@ -134,22 +134,24 @@ def match_batch(array: "torch.Tensor", target_batch_size: int) -> "torch.Tensor"
 @overload
 def match_batch(array: "jax.Array", target_batch_size: int) -> "jax.Array": ...
 @overload
+def match_batch(array: np.ndarray, target_batch_size: int) -> np.ndarray: ...
+@overload
 def match_batch(array: Array, target_batch_size: int) -> Array: ...
-def match_batch(array: Array, target_batch_size: int) -> Array:
+def match_batch(array: Array | np.ndarray, target_batch_size: int) -> Array | np.ndarray:
     """Match an array's leading batch dimension to a target size.
 
-    Supports both PyTorch tensors and JAX arrays.
+    Supports PyTorch tensors, JAX arrays, and NumPy arrays.
 
     Parameters
     ----------
-    array : torch.Tensor or jax.Array
+    array : torch.Tensor, jax.Array, or np.ndarray
         Input with batch dimension on axis 0.  Must have ``ndim >= 1``.
     target_batch_size : int
         Desired size for axis 0 in the output.
 
     Returns
     -------
-    torch.Tensor or jax.Array
+    torch.Tensor, jax.Array, or np.ndarray
         Array whose leading dimension equals *target_batch_size*.
 
     Raises
@@ -158,13 +160,16 @@ def match_batch(array: Array, target_batch_size: int) -> Array:
         If *array* is a scalar (``ndim == 0``) or the batch sizes are
         incompatible (source > 1 and target is not a multiple of source).
     TypeError
-        If *array* is neither a PyTorch tensor nor a JAX array.
+        If *array* is not a PyTorch tensor, JAX array, or NumPy array.
     """
-    # torch.broadcast_to / torch.tile mirror jnp.broadcast_to / jnp.tile exactly
+    # torch.broadcast_to / torch.tile mirror jnp.broadcast_to / jnp.tile
+    # and np.broadcast_to / np.tile exactly.
     if is_torch_tensor(array):
         _broadcast_to, _tile = torch.broadcast_to, torch.tile
     elif is_jax_array(array):
         _broadcast_to, _tile = jnp.broadcast_to, jnp.tile
+    elif isinstance(array, (np.ndarray, np.generic)):
+        _broadcast_to, _tile = np.broadcast_to, np.tile
     else:
         raise TypeError(f"unsupported array type: {type(array)}")
 

@@ -19,7 +19,10 @@ from sampleworks.core.samplers.protocol import (
     TrajectorySampler,
 )
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
-from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
+from sampleworks.eval.structure_utils import (
+    process_structure_to_trajectory_input,
+    SampleworksProcessedStructure,
+)
 from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
 
 
@@ -102,7 +105,7 @@ class FKSteering:
             ),
         )
 
-        processed = process_structure_to_trajectory_input(
+        processed: SampleworksProcessedStructure = process_structure_to_trajectory_input(
             structure=structure,
             coords_from_prior=coords[: self.ensemble_size],
             features=features,
@@ -205,6 +208,9 @@ class FKSteering:
         lowest_loss_coords = final_coords_4d[lowest_loss_index]
 
         metadata: dict = {"trajectory_denoised": trajectory_denoised}
+
+        # If we had a mismatch, we need to add this key to the metadata so the save_everything
+        # function can get the right number of atoms.
         if reconciler.has_mismatch and processed.model_atom_array is not None:
             metadata["model_atom_array"] = processed.model_atom_array
 

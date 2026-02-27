@@ -82,7 +82,7 @@ class AtomReconciler:
         -------
         AtomReconciler
         """
-        (_, _), (m_idx, s_idx) = filter_to_common_atoms(
+        _, (m_idx, s_idx) = filter_to_common_atoms(
             model_array,
             struct_array,
             normalize_ids=True,

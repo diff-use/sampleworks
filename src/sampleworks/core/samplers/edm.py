@@ -346,6 +346,7 @@ class AF3EDMSampler:
         guidance_weight = torch.as_tensor(guidance_weight, device=noisy_state.device)
         if guidance_weight.ndim == 0:
             guidance_weight = guidance_weight.unsqueeze(0)
+        # expand/match batch dimension of guidance weight to guidance_direction
         guidance_weight = torch.as_tensor(
             match_batch(guidance_weight, target_batch_size=batch_size),
             device=noisy_state.device,
