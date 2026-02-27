@@ -9,6 +9,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from loguru import logger
+from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
@@ -24,7 +25,7 @@ def parse_experiment_dir(exp_dir: Path) -> dict[str, int | float | None]:
     - pure_guidance format: ens{N}_gw{W}
     """
     dir_name = exp_dir.name
-    logger.debug(f"Parsing experiment directory: {dir_name}")
+    logger.debug(f"Parsing experiment directory: {exp_dir}")
 
     # Extract ensemble size
     ens_match = re.search(r"ens(\d+)", dir_name)
@@ -128,7 +129,10 @@ def scan_grid_search_results(
     # Recurse into subdirectories
     for item in current_directory.iterdir():
         if item.is_dir() and not item.name.endswith(".json"):
-            experiments.extend(scan_grid_search_results(item, current_depth + 1, target_depth))
+            grid_search_experiments = scan_grid_search_results(
+                item, current_depth + 1, target_depth, target_filename=target_filename
+            )
+            experiments.extend(grid_search_experiments)
 
     return experiments
 
@@ -174,5 +178,12 @@ def parse_args(description: str | None = None):
         help="Path to the CSV file containing protein configurations, like ${HOME}/configs.csv "
         "Defaults to sampleworks/data/protein_configs.csv",
         default=files("sampleworks.data") / "protein_configs.csv",
+    )
+    parser.add_argument(
+        "--occupancies",
+        nargs="+",
+        type=float,
+        help="Occupancies to evaluate",
+        default=OCCUPANCY_LEVELS,
     )
     return parser.parse_args()
