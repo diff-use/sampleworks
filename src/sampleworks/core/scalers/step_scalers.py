@@ -14,6 +14,22 @@ if TYPE_CHECKING:
     from sampleworks.models.protocol import FlowModelWrapper
 
 
+def _raise_value_error_if_atom_count_mismatch(
+    state: Float[Tensor, "*batch atoms 3"],
+    context: StepParams,
+) -> None:
+    """Raise ValueError if state and reward_inputs have different atom counts."""
+    assert context.reward_inputs is not None
+    n_state_atoms = state.shape[-2]
+    n_reward_atoms = context.reward_inputs.elements.shape[-1]
+    if n_state_atoms != n_reward_atoms:
+        raise ValueError(
+            f"State atom count ({n_state_atoms}) != reward_inputs atom count ({n_reward_atoms}). "
+            "Ensure reward_inputs are built with the correct number of atoms when a mismatch "
+            "exists."
+        )
+
+
 class NoScalingScaler:
     """No-op scaler that returns zero guidance."""
 
@@ -56,14 +72,7 @@ class DataSpaceDPSScaler:
                 "Use context.with_reward() before calling scale()."
             )
 
-        n_state = state.shape[-2]
-        n_reward = context.reward_inputs.elements.shape[-1]
-        if n_state != n_reward:
-            raise ValueError(
-                f"State atom count ({n_state}) != reward_inputs atom count ({n_reward}). "
-                "Ensure reward_inputs are built with the correct number of atoms when a mismatch "
-                "exists."
-            )
+        _raise_value_error_if_atom_count_mismatch(state, context)
 
         x0_for_grad = state.detach().requires_grad_(True)
         loss = context.reward(
@@ -123,14 +132,7 @@ class NoiseSpaceDPSScaler:
 
         x_t = context.metadata["x_t"]
 
-        n_state = state.shape[-2]
-        n_reward = context.reward_inputs.elements.shape[-1]
-        if n_state != n_reward:
-            raise ValueError(
-                f"State atom count ({n_state}) != reward_inputs atom count ({n_reward}). "
-                "Ensure reward_inputs are built with the correct number of atoms when a mismatch "
-                "exists."
-            )
+        _raise_value_error_if_atom_count_mismatch(state, context)
 
         loss = context.reward(
             coordinates=state,  # x0_pred, connected to x_t via model

@@ -66,7 +66,9 @@ class SampleworksProcessedStructure:
         -------
         RewardInputs
         """
-        reconciler = self.reconciler
+        # model_atom_array is None when the model conditioning/features don't expose a
+        # separate atom array i.e. the model operates on the same atom set as the
+        # input structure and the reconciler is an identity mapping.
         atom_array_for_rewards = self.model_atom_array or self.atom_array
 
         reward_inputs = RewardInputs.from_atom_array(
@@ -75,17 +77,16 @@ class SampleworksProcessedStructure:
             device=device,
         )
 
-        updated_b_factors = reward_inputs.b_factors
+        updated_b_factors = reward_inputs.b_factors.clone()
         if self.model_atom_array is not None and self.atom_array.b_factor is not None:
             struct_b_factors = torch.as_tensor(
                 cast(np.ndarray, self.atom_array.b_factor)[
-                    reconciler.struct_indices.detach().cpu().numpy()
+                    self.reconciler.struct_indices.detach().cpu().numpy()
                 ],
                 device=reward_inputs.b_factors.device,
                 dtype=reward_inputs.b_factors.dtype,
             )
-            model_indices = reconciler.model_indices.to(device=reward_inputs.b_factors.device)
-            updated_b_factors = reward_inputs.b_factors.clone()
+            model_indices = self.reconciler.model_indices.to(device=reward_inputs.b_factors.device)
             updated_b_factors[..., model_indices] = struct_b_factors
 
         # input_coords stored on the processed structure are always full model atom
@@ -184,14 +185,17 @@ def process_structure_to_trajectory_input(
         else None
     )
     if model_atom_array is not None:
-        reconciler = AtomReconciler.from_arrays(model_atom_array, atom_array)  # pyright: ignore[reportArgumentType]
+        # here, the model_atom_array is the AtomArray with all the atoms that the model will operate
+        # on, which may not overlap entirely with the deposited reference structure (atom_array)
+        # atoms. The reconciler figures out which atoms are in common and deals with that
+        reconciler = AtomReconciler.from_arrays(model_atom_array, atom_array)
         if reconciler.has_mismatch:
             logger.info(
                 f"Atom count mismatch: model={reconciler.n_model}, "
                 f"structure={reconciler.n_struct}, common={reconciler.n_common}"
             )
     else:
-        reconciler = AtomReconciler.identity(len(atom_array))  # pyright: ignore[reportArgumentType]
+        reconciler = AtomReconciler.identity(len(atom_array))
 
     # Build model atom reference coordinates used for alignment and partial diffusion.
     struct_coords_np = np.ascontiguousarray(cast(np.ndarray, atom_array.coord))
@@ -200,7 +204,7 @@ def process_structure_to_trajectory_input(
         device=coords_from_prior.device,
     )
     if model_atom_array is not None:
-        model_template_np = np.asarray(cast(np.ndarray, model_atom_array.coord))
+        model_template_np = cast(np.ndarray, model_atom_array.coord)
 
         # Replace non-finite coords with the common-atom centroid
         # TODO: use something like the RF3 processing where they put things on the nearest token

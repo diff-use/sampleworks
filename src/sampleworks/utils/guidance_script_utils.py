@@ -85,7 +85,8 @@ def _write_coords_into_array(
     """**Mutates** ``array_copy.coord`` in-place with trajectory coordinates.
 
     When the trajectory spans all atoms in the array (model trajectories during
-    a mismatch run), coords are assigned directly to ``.coord``. Otherwise the
+    a mismatch run, where the model's internal atom count differs from the input structure we are
+    aligning to), coords are assigned directly to ``.coord``. Otherwise the
     ``reward_param_mask`` indexes the correct atom subset.
     """
     n_atoms_array = array_copy.coord.shape[-2]  # pyright: ignore[reportOptionalMemberAccess]
@@ -309,7 +310,7 @@ def save_everything(
 
     base_atom_array = ensure_atom_array_stack(refined_structure["asym_unit"])[0]
 
-    # Use model template for mismatch runs when available
+    # Use model's internal atom accounting template for mismatch runs when available
     atom_array_for_masking: AtomArray = (
         model_atom_array if model_atom_array is not None else base_atom_array
     )
@@ -319,18 +320,16 @@ def save_everything(
         hasattr(atom_array_for_masking, "occupancy")
         and atom_array_for_masking.occupancy is not None
     ):
-        reward_param_mask = atom_array_for_masking.occupancy > 0  # pyright: ignore[reportOptionalOperand]
-        reward_param_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        occupancy_mask = atom_array_for_masking.occupancy > 0
+        occupancy_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)
     else:
-        reward_param_mask = np.ones(len(atom_array_for_masking), dtype=bool)
+        occupancy_mask = np.ones(len(atom_array_for_masking), dtype=bool)
 
     if final_state is not None:
         ensemble_size = final_state.shape[0]
 
         ensemble_array = stack([atom_array_for_masking.copy() for _ in range(ensemble_size)])
-        _write_coords_into_array(
-            ensemble_array, final_state.detach().cpu().numpy(), reward_param_mask
-        )
+        _write_coords_into_array(ensemble_array, final_state.detach().cpu().numpy(), occupancy_mask)
         atom_array = ensemble_array
     else:
         atom_array = base_atom_array
@@ -345,7 +344,7 @@ def save_everything(
         traj_denoised,  # <--- the difference is here!
         atom_array_for_masking,
         output_dir,
-        reward_param_mask,
+        occupancy_mask,
         "denoised",
         save_every=10,
     )
@@ -354,7 +353,7 @@ def save_everything(
         traj_next_step,  # <--- and here!
         atom_array_for_masking,
         output_dir,
-        reward_param_mask,
+        occupancy_mask,
         "next_step",
         save_every=10,
     )

@@ -137,6 +137,9 @@ class PureGuidance:
                 losses.append(None)
 
         metadata: dict = {"trajectory_denoised": trajectory_denoised}
+
+        # If we had a mismatch, we need to add this key to the metadata so the save_everything
+        # function can get the right number of atoms.
         if reconciler.has_mismatch and processed_structure.model_atom_array is not None:
             metadata["model_atom_array"] = processed_structure.model_atom_array
 

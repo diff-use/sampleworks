@@ -490,3 +490,63 @@ class TestMatchBatch:
         scalar = torch.tensor(1.0)
         with pytest.raises(ValueError, match="ndim >= 1"):
             match_batch(scalar, target_batch_size=2)
+
+
+class TestMatchBatchNumpy:
+    """Test match_batch with pure NumPy arrays."""
+
+    def test_passthrough_when_batch_matches(self):
+        array = np.random.randn(4, 10, 3)
+        result = match_batch(array, target_batch_size=4)
+        assert result is array
+
+    def test_singleton_broadcast(self):
+        array = np.random.randn(1, 6, 3)
+        result = match_batch(array, target_batch_size=3)
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (3, 6, 3)
+        np.testing.assert_allclose(result[0], array[0])
+        np.testing.assert_allclose(result[1], array[0])
+        np.testing.assert_allclose(result[2], array[0])
+
+    def test_tile_divisible(self):
+        array = np.random.randn(2, 5, 3)
+        result = match_batch(array, target_batch_size=6)
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (6, 5, 3)
+        np.testing.assert_allclose(result[0], array[0])
+        np.testing.assert_allclose(result[1], array[1])
+        np.testing.assert_allclose(result[2], array[0])
+        np.testing.assert_allclose(result[3], array[1])
+
+    def test_raises_on_incompatible_batch_sizes(self):
+        array = np.random.randn(2, 5, 3)
+        with pytest.raises(ValueError, match="not divisible"):
+            match_batch(array, target_batch_size=5)
+
+    def test_raises_on_scalar_input(self):
+        scalar = np.float64(1.0)
+        with pytest.raises(ValueError, match="ndim >= 1"):
+            match_batch(scalar, target_batch_size=2)  # type: ignore[no-matching-overload]
+
+    def test_1d_array(self):
+        array = np.array([42.0])
+        result = match_batch(array, target_batch_size=5)
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (5,)
+        np.testing.assert_allclose(result, np.full(5, 42.0))
+
+    def test_singleton_broadcast_is_readonly_view(self):
+        array = np.random.randn(1, 4, 3)
+        result = match_batch(array, target_batch_size=3)
+        assert not result.flags.writeable
+
+    def test_preserves_dtype(self):
+        for dtype in [np.float32, np.float64, np.int32]:
+            array = np.ones((1, 3), dtype=dtype)
+            result = match_batch(array, target_batch_size=4)
+            assert result.dtype == dtype
+
+    def test_raises_on_unsupported_type(self):
+        with pytest.raises(TypeError, match="unsupported array type"):
+            match_batch([1, 2, 3], target_batch_size=2)  # type: ignore[no-matching-overload]
