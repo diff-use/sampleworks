@@ -13,22 +13,28 @@ def find_altloc_selections(
     cif_file: Path | str, altloc_label: str = "label_alt_id", min_span: int = 5
 ) -> Iterable[str]:
     """
-    Find alternative location selections in a CIF file.
+    Find alternative location selections in a CIF file. Individual spans at least min_span
+    residues long are yielded as selection strings. A final batch of selection strings
+    is also yielded that contains all residues with altlocs, one selection per chain.
 
     Parameters:
     - cif_file (Path | str): Path to the CIF file.
     - altloc_label (str):
         Label for alternative location identifier. Default is 'label_alt_id'.
         If you don't know it, search for "_atom_site" in your CIF file to identify it.
+    - min_span (int): Minimum number of consecutive residues to consider an altloc selection.
+        spans of altlocs shorter than this are not yielded as selection strings, but ARE
+        included in the final selections which includes all residues with altlocs in each chain.
 
-    Returns:
+    Yields:
     - Iterable[str]: Iterable of alternative location selections, keyed by altloc ID.
 
-    Example: for RCSB PDB entry 5SOP, this should return
+    Example: for RCSB PDB entry 5SOP, this should yield items like:
+    ['chain A and resi 3-6', 'chain A and resi 10-12', 'chain A and resi 20-26', ...,
+     'chain_id == 'A' and (res_id == 3 or res_id == 10 or res_id == 20 or ...)]
 
     """
     cif_file = Path(cif_file)
-    # TODO: we should really write these in C++
     logger.info(f"Finding altloc selections for {cif_file}")
     structure = load_any(cif_file, altloc="all", extra_fields=["occupancy", altloc_label])
 
@@ -38,7 +44,7 @@ def find_altloc_selections(
     altlocs = OrderedDict()
     for altloc_id in find_all_altloc_ids(structure):
         altk = select_altloc(structure, altloc_id=altloc_id)
-        unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))  # pyright:ignore (reportArgumentType)
+        unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))
         # probably unnecessary but making sure these are consistently ordered
         # FIXME? This is a little clunky. Perhaps should be hierarchical by chain then altloc?
         #   At some point though we'll do altloc selections using correlations/contacts
@@ -48,6 +54,7 @@ def find_altloc_selections(
     all_altloc_selections = {}
     for chain, start, end, _ in find_consecutive_residues(altlocs):
         if end - start >= min_span:
+            # FIXME use new style selection https://github.com/diff-use/sampleworks/issues/56
             yield f"chain {chain} and resi {start}-{end}"  # old style, more compact, selection
 
         if chain not in all_altloc_selections:
@@ -59,7 +66,6 @@ def find_altloc_selections(
 
     for chain, selections in all_altloc_selections.items():
         yield f"chain_id == '{chain}' and ({' or '.join(selections)})"
-
 
 
 def find_consecutive_residues(
@@ -100,9 +106,10 @@ def find_consecutive_residues(
          ('A', 138, 141, {'A', 'B'}),
          ('A', 155, 169, {'A', 'B'})]
 
-      """
+    """
     # TODO create test cases from 5SOP and 7Z0E, low priority since this isn't a critical function
     #   and will likely change in the future anyway.
+    #   https://github.com/diff-use/sampleworks/issues/111
 
     # First find the chains
     all_chains = {res[0] for altloc in altlocs.values() for res in altloc}
@@ -126,9 +133,9 @@ def find_consecutive_residues(
             res_membership = {k for k in chain_altlocs if next_res_id in chain_altlocs[k]}
             if res_membership != current_membership or next_res_id - current_res_id > 1:
                 if start is not None:
-                    yield chain, start, current_res_id, current_membership  # pyright:ignore
+                    yield chain, start, current_res_id, current_membership
 
                 start = next_res_id if len(res_membership) > 1 else None
                 current_membership = res_membership if len(res_membership) > 1 else None
         if start is not None and next_res_id:
-            yield chain, start, next_res_id, current_membership  # pyright:ignore
+            yield chain, start, next_res_id, current_membership
