@@ -2,7 +2,7 @@ import re
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast
+from typing import cast, Any
 
 import numpy as np
 import torch
@@ -243,6 +243,8 @@ def process_structure_to_trajectory_input(
     )
 
 
+# TODO: migrate this to atomworks's selection algebra that is added to AtomArray/Stack
+#   https://github.com/diff-use/sampleworks/issues/56
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
     """Parse a selection string like 'chain A and resi 326-339'.
 
@@ -303,8 +305,22 @@ def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
     if selection is None:
         return atom_array
 
+    if not any(x in selection for x in ("==", ">", "<", "<=", ">=", " in ")):
+        mask = get_mask_from_old_selection_string(atom_array, selection)
+    else:
+        mask = atom_array.mask(selection)
+
+    return cast(AtomArray, atom_array[mask])
+
+
+def get_mask_from_old_selection_string(
+        atom_array: AtomArray, selection: str
+) -> np.ndarray[tuple[int], np.dtype[Any]]:
+    DeprecationWarning(f"Using old-style selection strings like {selection} is deprecated."
+                       f" Use atomworks/pandas style selection strings instead.")
     chain_id, resi_start, resi_end = parse_selection_string(selection)
-    mask = np.ones(len(atom_array), dtype=bool)
+    # use the length of any of the required non-coord attributes to get the mask shape
+    mask = np.ones(len(atom_array.res_id), dtype=bool)
 
     if chain_id is not None:
         mask &= atom_array.chain_id == chain_id
@@ -318,8 +334,7 @@ def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
 
     if mask.sum() == 0:
         raise ValueError(f"Selection '{selection}' matched no atoms")
-
-    return cast(AtomArray, atom_array[mask])
+    return mask
 
 
 def extract_selection_coordinates(
@@ -349,24 +364,10 @@ def extract_selection_coordinates(
     else:
         working_array = atom_array
 
-    chain_id, resi_start, resi_end = parse_selection_string(selection)
-
-    # Create the selection mask, don't rely on len(atom_array) in case it is the ensemble size
-    mask = np.ones(len(working_array), dtype=bool)
-
-    if chain_id is not None:
-        mask &= working_array.chain_id == chain_id
-
-    if resi_start is not None:
-        res_ids = cast(np.ndarray, working_array.res_id)
-        if resi_end is not None:
-            # Explicitly check for None to satisfy pyright
-            start: int = resi_start
-            end: int = resi_end
-            mask &= (res_ids >= start) & (res_ids <= end)
-        else:
-            start = resi_start
-            mask &= res_ids == start
+    if not any(x in selection for x in ("==", ">", "<", "<=", ">=")):
+        mask = get_mask_from_old_selection_string(atom_array, selection)
+    else:
+        mask = atom_array.mask(selection)
 
     selected_coords = cast(np.ndarray, working_array.coord)[mask]
 
@@ -374,7 +375,6 @@ def extract_selection_coordinates(
     if len(selected_coords) == 0:
         raise RuntimeError(
             f"No atoms matched selection: '{selection}'. "
-            f"Chain ID: {chain_id}, Residue range: {resi_start}-{resi_end}. "
             f"Total atoms in structure: {len(atom_array)}"
         )
 
@@ -431,45 +431,43 @@ def get_reference_atomarraystack(
 
 def get_reference_structure_coords(
     protein_config: ProteinConfig, protein_key: str, occ_list: tuple[float, ...] = (0.0, 1.0)
-) -> np.ndarray | None:
+) -> dict[str, np.ndarray] | None:
     """
     This has a slightly odd function, which is to output an array of all possible coordinates
     of a structure, with altlocs mixed in. It returns NO information about which atom is which
     or whether there are duplicates. It's used for masking density maps.
     """
-    protein_ref_coords_list = []
+    protein_ref_coords_list = {selection: [] for selection in protein_config.selection}
     for occ in occ_list:
         ref_path, ref_struct = get_reference_atomarraystack(protein_config, occ)
         if ref_path and ref_struct:  # if not None, it is already a validated Path object
-            try:
-                # TODO: enumerate actual exceptions this can raise.
-                coords = extract_selection_coordinates(ref_struct, protein_config.selection)
-                if not len(coords):
-                    logger.warning(
-                        f"  No atoms in selection '{protein_config.selection}' for {protein_key}"
+            for selection in protein_config.selection:
+                try:
+                    # TODO: enumerate actual exceptions this can raise.
+                    coords = extract_selection_coordinates(ref_struct, selection)
+                    if not len(coords):
+                        logger.warning(f"  No atoms in selection '{selection}' for {protein_key}")
+                    elif not np.isfinite(coords).all():
+                        logger.warning(
+                            f"  NaN/Inf coordinates in selection '{selection}' for {protein_key}"
+                        )
+                    else:
+                        protein_ref_coords_list[selection].append(coords)
+                        logger.info(
+                            f"  Loaded reference structure for {protein_key}: "
+                            f"{len(coords)} atoms in selection '{selection}'"
+                        )
+                except Exception as _e:
+                    _selection = selection if selection else "(none)"
+                    logger.error(
+                        f"  ERROR: Failed to load reference structure for {protein_key}: {_e}\n"
+                        f"    Path: {ref_path}\n"
+                        f"    Selection: {_selection}\n"
+                        f"    Traceback: {traceback.format_exc()}"
                     )
-                elif not np.isfinite(coords).all():
-                    logger.warning(
-                        f"  NaN/Inf coordinates in selection "
-                        f"'{protein_config.selection}' for {protein_key}"
-                    )
-                else:
-                    protein_ref_coords_list.append(coords)
-                    logger.info(
-                        f"  Loaded reference structure for {protein_key}: "
-                        f"{len(coords)} atoms in selection '{protein_config.selection}'"
-                    )
-            except Exception as _e:
-                _selection = protein_config.selection if protein_config.selection else "(none)"
-                logger.error(
-                    f"  ERROR: Failed to load reference structure for {protein_key}: {_e}\n"
-                    f"    Path: {ref_path}\n"
-                    f"    Selection: {_selection}\n"
-                    f"    Traceback: {traceback.format_exc()}"
-                )
 
-    if not protein_ref_coords_list:
-        logger.error(f"No reference structures found for {protein_key}")
-        return None
-
-    return np.vstack(protein_ref_coords_list)
+    return {
+        k: np.vstack(protein_ref_coords_list[k])
+        for k in protein_ref_coords_list
+        if protein_ref_coords_list[k]
+    }

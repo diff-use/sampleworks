@@ -2,6 +2,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
+from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import ArrayLike, Float, Int
 from loguru import logger
@@ -98,6 +99,7 @@ def extract_density_inputs_from_atomarray(
         ``(1, n_atoms)``. For an ``AtomArrayStack`` with *M* models the batch
         dimension is *M* instead of 1.
     """
+
     is_stack = isinstance(atom_array_or_stack, AtomArrayStack)
 
     coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array_or_stack.coord)
@@ -130,6 +132,7 @@ def extract_density_inputs_from_atomarray(
             f"({n_valid}/{n_total} atoms remaining)"
         )
 
+    # TODO can we use [..., valid_mask] here?
     if is_stack:
         valid_coords = coords[:, valid_mask]
     else:
