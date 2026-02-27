@@ -186,14 +186,19 @@ def save_structure_to_cif(
     return output_path
 
 
-def find_all_altloc_ids(atom_array: AtomArray | AtomArrayStack) -> set[str]:
+def find_all_altloc_ids(
+    atom_array: AtomArray | AtomArrayStack, altloc_label: str = "altloc_id"
+) -> set[str]:
     """
     Find all unique alternate location indicator (altloc) IDs in an AtomArray or AtomArrayStack.
     """
-    if hasattr(atom_array, "altloc_id"):
-        altloc_ids = np.unique(atom_array.altloc_id)
+    if hasattr(atom_array, altloc_label):
+        altloc_ids = np.unique(getattr(atom_array, altloc_label))  # ty: ignore[invalid-argument-type]
     else:
-        raise AttributeError("atom_array must have `altloc_id` annotation")
+        raise AttributeError(
+            "atom_array must have altloc annotation, defaults to 'altloc_id'; "
+            f"you provided {altloc_label}"
+        )
 
     return set(altloc_ids.tolist()) - BLANK_ALTLOC_IDS
 
@@ -234,12 +239,22 @@ def detect_altlocs(atom_array: AtomArray) -> AltlocInfo:
 
 def map_altlocs_to_stack(
     atom_array: AtomArray | AtomArrayStack,
+    selection: str | None = None,
+    return_full_array: bool = True,
 ) -> tuple[AtomArrayStack, np.ndarray, np.ndarray]:
     """
     Map alternate location indicators (altloc) to separate structures in a new AtomArrayStack.
 
-    Note: this will take _only_ the first structure if you pass an AtomArrayStack. It will raise
-    an error if there is more than one structure in the input AtomArrayStack.
+    Note: This will raise an error if you pass an AtomArrayStack containing multiple structures
+
+    Parameters:
+        atom_array: AtomArray or AtomArrayStack to map altlocs from.
+        selection: str
+            Optional selection string to apply to the atom array before mapping altlocs.
+            If the return_full_array is also True, this selection applies _only_ to the altlocs.
+        return_full_array: bool
+            If True, return the full AtomArrayStack with all atoms, even those with no altlocs.
+            If False, only return structures with altlocs.
 
     Returns:
         Tuple containing:
@@ -252,15 +267,43 @@ def map_altlocs_to_stack(
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
             raise ValueError("Cannot map altlocs with multiple structures each containing altlocs")
-        atom_array = atom_array[0]
+        atom_array = atom_array[0]  # ty: ignore[invalid-assignment]
+
+    if not hasattr(atom_array, "altloc_id") or atom_array.altloc_id is None:
+        raise ValueError("The passed AtomArray | AtomArrayStack must have attribute 'altloc_id'")
+
+    if not hasattr(atom_array, "mask") or not hasattr(atom_array, "query"):
+        raise ValueError(
+            "map_altlocs_to_stack requires atom_arrays loaded with "
+            "atomworks.io.utils.io_utils.load_any or a similar method that provides .mask, .query"
+        )
+
+
+    altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
+    if selection is not None and return_full_array:
+        # in this case, we select atoms with no altlocs, and atoms in the selection
+        # that do have altlocs construct the query (note np.isin doesn't seem to list
+        # sets, hence conversion to list.
+        no_altloc_mask = np.isin(atom_array.altloc_id, list(BLANK_ALTLOC_IDS))
+        altloc_mask = np.isin(atom_array.altloc_id, altloc_ids)
+        selection_mask = atom_array.mask(selection)
+        mask = np.logical_or(no_altloc_mask, np.logical_and(altloc_mask, selection_mask))
+        atom_array = atom_array[mask]
+    elif selection is not None:
+        atom_array = atom_array.query(selection)
+
+    # The available altloc ids might have changed if one or more are missing from the selection.
     altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
     altloc_list = [
-        select_altloc(atom_array, altloc_id, return_full_array=True) for altloc_id in altloc_ids
+        select_altloc(atom_array, altloc_id, return_full_array=return_full_array)
+        for altloc_id in altloc_ids
     ]
     # ensure that each structure has the same number of atoms
+    # it's critical that we've updated the altloc id list above, or this will return only
+    # residues with no altlocs in case one or more altloc ids is/are missing from the selection.
     atom_arrays = filter_to_common_atoms(*altloc_list)
-    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])
-    occupancies = np.vstack([r.occupancy for r in atom_arrays])
+    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])  # ty: ignore
+    occupancies = np.vstack([r.occupancy for r in atom_arrays])  # ty: ignore
 
     # remove those annotations or we cannot stack arrays.
     for array in atom_arrays:
@@ -305,12 +348,8 @@ def select_altloc(
 
     if return_full_array:
         mask = np.isin(
-            atom_array.altloc_id,
-            list(
-                {
-                    altloc_id,
-                }.union(BLANK_ALTLOC_IDS)
-            ),
+            atom_array.altloc_id,  # ty: ignore[invalid-argument-type]
+            list({altloc_id,}.union(BLANK_ALTLOC_IDS)),
         )
     else:
         mask = atom_array.altloc_id == altloc_id
