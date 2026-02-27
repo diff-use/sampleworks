@@ -152,6 +152,11 @@ def compute_density_from_atomarray(
         atom_array, device
     )
 
+    # need to make sure these all have the same batch dimension or the transformer will fail.
+    elements = elements.expand(coords.shape[0], -1)
+    b_factors = b_factors.expand(coords.shape[0], -1)
+    occupancies = occupancies.expand(coords.shape[0], -1)
+
     with torch.no_grad():
         density = transformer(
             coordinates=coords,

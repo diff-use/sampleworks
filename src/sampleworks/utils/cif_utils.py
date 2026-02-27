@@ -30,8 +30,7 @@ def find_altloc_selections(
     - Iterable[str]: Iterable of alternative location selections, keyed by altloc ID.
 
     Example: for RCSB PDB entry 5SOP, this should yield items like:
-    ['chain A and resi 3-6', 'chain A and resi 10-12', 'chain A and resi 20-26', ...,
-     'chain_id == 'A' and (res_id == 3 or res_id == 10 or res_id == 20 or ...)]
+    ['chain A and resi 125-137', "chain_id == 'A' and ((res_id >= 3 and res_id <= 6) or ...)"]
 
     """
     cif_file = Path(cif_file)
@@ -44,7 +43,7 @@ def find_altloc_selections(
     altlocs = OrderedDict()
     for altloc_id in find_all_altloc_ids(structure):
         altk = select_altloc(structure, altloc_id=altloc_id)
-        unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id))
+        unique_altk = set((ch, res) for ch, res in zip(altk.chain_id, altk.res_id, strict=True))
         # probably unnecessary but making sure these are consistently ordered
         # FIXME? This is a little clunky. Perhaps should be hierarchical by chain then altloc?
         #   At some point though we'll do altloc selections using correlations/contacts
