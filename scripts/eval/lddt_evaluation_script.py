@@ -11,7 +11,7 @@ from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
-from sampleworks.eval.eval_dataclasses import ProteinConfig
+from sampleworks.eval.eval_dataclasses import ProteinConfig, Experiment
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
@@ -134,7 +134,9 @@ def nn_lddt_clustering(
 
     # Second, compute the cross-LDDT matrix between all structures in the predicted stack and
     # all structures in the reference stack
-    cross_lddt_matrix = compute_cross_lddts(ref_atom_array_stack, pred_atom_array_stack, selection)
+    cross_lddt_matrix = compute_cross_lddts(
+        ref_atom_array_stack, pred_atom_array_stack, selection
+    )
 
     # Assign each predicted structure to the closest reference structure based on LDDT score (i.e.,
     # the reference structure with the highest LDDT score is assigned to the predicted structure)
@@ -233,7 +235,11 @@ def main(args: argparse.Namespace):
                 reference_protein_stack, _, _ = map_altlocs_to_stack(
                     reference_proteins, selection=translate_selection(sel), return_full_array=True
                 )
-                reference_atom_arrays[(protein_key, occ, sel)] = reference_protein_stack
+                # hierarchical dictionary cache makes it lighter weight to parallelize.
+                if (protein_key, occ) not in reference_atom_arrays:
+                    reference_atom_arrays[(protein_key, occ)] = {}
+
+                reference_atom_arrays[(protein_key, occ)][sel] = reference_protein_stack
             except Exception as e:
                 logger.error(
                     f"Error loading ref structure for {protein_key} and occupancy {occ}: {e}"
@@ -243,56 +249,127 @@ def main(args: argparse.Namespace):
     all_results = []
     # TODO parallelize this loop? It will require replicating `reference_atom_arrays`
     #  https://github.com/diff-use/sampleworks/issues/98
-    for _i, _exp in enumerate(all_experiments):
+
+    # Do the quick pass through all the "rows" of our output table to filter in those we can run.
+    filtered_experiments = []
+    for _exp in all_experiments:
+
         if _exp.protein in protein_configs:
             protein = _exp.protein
         elif _exp.protein.upper() in protein_configs:
             protein = _exp.protein.upper()
+        elif _exp.protein.lower() in protein_configs:
+            protein = _exp.protein.lower()
         else:
+            # These we just skip over--we assume that the user has told us via the config file
+            # what results they are interested in.
             logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
             continue
 
         protein_config = protein_configs[protein]
+        if protein_config.protein != protein:
+            raise ValueError(
+                f"Protein name mismatch: expected {protein_config.protein}, got {protein}, make"
+                f"sure you loaded your protein configs with ProteinConfig.from_csv()."
+            )
 
-        for selection in protein_config.selection:
-            result = _exp.__dict__.copy()
-            result["selection"] = selection
-            atom_array_key = (protein, _exp.occ_a, selection)
-            if atom_array_key not in reference_atom_arrays:
+        null_results = []
+        if (protein, _exp.occ_a) not in reference_atom_arrays:
+            logger.warning(
+                f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
+                f"for {_exp.protein}, occupancy {_exp.occ_a}."
+            )
+            # record empty results for all selections, indicating they could not be computed.
+            for _sel in protein_config.selection:
+                exp_copy = _exp.__dict__.copy()
+                exp_copy["selection"] = _sel
+                null_results.append(exp_copy)
+            continue
+
+        protein_reference_atom_arrays = reference_atom_arrays[(protein, _exp.occ_a)]
+        for _sel in protein_config.selection:
+            if _sel not in protein_reference_atom_arrays:
                 logger.warning(
                     f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
-                    f"for {_exp.protein}, occupancy {_exp.occ_a} and selection '{selection}'."
+                    f"for {_exp.protein}, occupancy {_exp.occ_a} and selection '{_sel}'."
                 )
+                exp_copy = _exp.__dict__.copy()
+                exp_copy["selection"] = _sel
+                null_results.append(exp_copy)
                 continue
 
-            try:
-                reference_atom_array_stack = reference_atom_arrays[atom_array_key]
-                # generated structures shouldn't have altlocs, don't need altloc="all".
-                predicted_atom_array_stack = load_any(_exp.refined_cif_path)
-                clustering_results = nn_lddt_clustering(
-                    reference_atom_array_stack,
-                    ensure_atom_array_stack(predicted_atom_array_stack),
-                    translate_selection(selection),
-                )
+            px_seln_refernce_atom_array = protein_reference_atom_arrays[_sel]
+            filtered_experiments.append(
+                (_exp, protein_config, px_seln_refernce_atom_array, _sel)
+            )
 
-                result.update(
-                    {
-                        k: clustering_results[k]
-                        for k in ("occupancies", "avg_silhouette", "avg_silhouette_to_ref")
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Error processing experiment {_exp.exp_dir}: {e}")
-                logger.error(f"  Traceback: {traceback.format_exc()}")
-                result["error"] = str(e)
-                result["avg_silhouette"] = np.nan
-                result["avg_silhouette_to_ref"] = np.nan
-                result["occupancies"] = []
-
-            all_results.append(result)
+    # now we can more easily parallelize this loop.
+    logger.debug("Starting LDDT evaluation loop. This may take a while...")
+    for _i, (_exp, protein_config, px_seln_refernce_atom_array, selection) in enumerate(filtered_experiments):
+        result = process_exp_with_selection(_exp, protein_config, px_seln_refernce_atom_array, selection)
+        all_results.append(result)
 
     df = pd.DataFrame(all_results)
     df.to_csv(grid_search_dir / "lddt_results.csv", index=False)
+
+
+def process_exp_with_selection(
+        exp: Experiment,
+        protein_config: ProteinConfig,
+        px_seln_refernce_atom_array: AtomArrayStack,
+        selection_string: str
+) -> dict[str, str | float | list[float]]:
+    """
+
+    Parameters
+    ----------
+    exp: Experiment, a description of the structure generation experiment
+    protein_config: ProteinConfig, specifying the locations of reference structures and maps
+    px_seln_refernce_atom_array: AtomArrayStack,
+        the atom array stack for the reference structure, which in principle could be fetched
+        using the protein_config, but for efficiency we load once previously and pass in here,
+        since this method will run many times in parallel using the same structure
+    selection_string: str, the selection string for the evaluation
+
+    Returns
+    -------
+        A dictionary of results of LDDT-based clustering that can be collated in a dataframe.
+        In addition to the data in the `exp` object, this dictionary contains:
+        - occupancies: list[float], the occupancies of the selected atoms, computed as the
+            fraction of structures in the experiment that are closest to one or the other
+            altloc of the reference structure. .
+        - avg_silhouette: float, the average silhouette score for the LDDT-based clustering
+        - avg_silhouette_to_ref: float,
+            a sort of silhouette score, measuring each structure's relative "closeness" to the
+            assigned reference altloc.
+    """
+    logger.debug(f"Evaluating selection {selection_string} for protein {protein_config}")
+    result = exp.__dict__.copy()
+    result["selection"] = selection_string
+
+    try:
+        # generated structures shouldn't have altlocs, don't need altloc="all".
+        predicted_atom_array_stack = load_any(exp.refined_cif_path)
+        clustering_results = nn_lddt_clustering(
+            px_seln_refernce_atom_array,
+            ensure_atom_array_stack(predicted_atom_array_stack),
+            translate_selection(selection_string),
+        )
+
+        lddt_result_keys = ("occupancies", "avg_silhouette", "avg_silhouette_to_ref")
+        result.update({k: clustering_results[k] for k in lddt_result_keys})
+
+        logger.info(f"Successfully processed {exp.protein_dir_name} w/ selection {selection_string}")
+
+    except Exception as e:
+        logger.error(f"Error processing experiment {exp.exp_dir}: {e}")
+        logger.error(f"  Traceback: {traceback.format_exc()}")
+        result["error"] = str(e)
+        result["avg_silhouette"] = np.nan
+        result["avg_silhouette_to_ref"] = np.nan
+        result["occupancies"] = []
+
+    return result
 
 
 if __name__ == "__main__":
