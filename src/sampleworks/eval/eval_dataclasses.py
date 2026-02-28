@@ -52,20 +52,10 @@ class ProteinConfig:
         self.base_map_dir = Path(self.base_map_dir)  # just in case someone passes a string
 
     def get_base_map_path_for_occupancy(self, occupancy_a: float) -> Path | None:
-        occ_str = occupancy_to_str(occupancy_a, use_6b8x_format=self.protein == "6b8x")
+        occ_str = occupancy_to_str(A=occupancy_a, B=1.0 - occupancy_a)
         map_path = self.base_map_dir / self.map_pattern.format(occ_str=occ_str)
         if map_path.exists():
             return map_path
-
-        # TODO: this is a kluge we should work to remove @kchrispens
-        alt_patterns = []
-        if self.protein == "6b8x":
-            alt_patterns.append(f"6b8x_{occupancy_to_str(occupancy_a)}_1.74A.ccp4")
-
-        for alt in alt_patterns:
-            alt_path = self.base_map_dir / alt
-            if alt_path.exists():
-                return alt_path
 
         logger.warning(f"Base map for protein {self.protein} ({map_path}) NOT FOUND")
         return None
@@ -85,17 +75,10 @@ class ProteinConfig:
         if not self.structure_pattern:
             return None
 
-        occ_str = occupancy_to_str(occupancy_a, use_6b8x_format=self.protein == "6b8x")
+        occ_str = occupancy_to_str(A=occupancy_a, B=1.0 - occupancy_a)
         structure_path = self.base_map_dir / self.structure_pattern.format(occ_str=occ_str)
         if structure_path.exists():
             return structure_path
-
-        # Try shifted version for 6b8x
-        if self.protein == "6b8x":
-            _pattern = self.structure_pattern.format(occ_str=occ_str)
-            shifted_path = self.base_map_dir / _pattern.replace(".cif", "_shifted.cif")
-            if shifted_path.exists():
-                return shifted_path
 
         logger.warning(
             f"Reference structure for {self.protein} with occ {occupancy_a} "

@@ -37,46 +37,47 @@ def extract_protein_and_occupancy(dir_name):
     return protein, occ_a
 
 
-def occupancy_to_str(occ_a, use_6b8x_format=False):
-    """Convert occupancy float to string format used in filenames."""
-    if use_6b8x_format:
-        return _occupancy_to_str_6b8x(occ_a)
-    else:
-        return _occupancy_to_str(occ_a)
+def occupancy_to_str(**altloc_occupancies: float) -> str:
+    """Convert altloc occupancies to the string format used in filenames.
 
+    Zero-occupancy altlocs are omitted. Values are rounded to two decimal
+    places to avoid floating-point artifacts in filenames.
 
-def _occupancy_to_str(occ_a):
-    """Convert occupancy float to string format used in filenames.
+    Parameters
+    ----------
+    **altloc_occupancies : float
+        Keyword arguments mapping altloc labels to their occupancies.
 
-    Examples:
-    - 1.0 -> '1.0occA'
-    - 0.0 -> '1.0occB'
-    - 0.5 -> '0.5occA_0.5occB'
-    - 0.25 -> '0.25occA_0.75occB'
+    Returns
+    -------
+    str
+        Underscore-joined occupancy string, e.g. ``"0.5occA_0.5occB"``.
+
+    Raises
+    ------
+    ValueError
+        If no altlocs have non-zero occupancy.
+
+    Examples
+    -------
+    >>> occupancy_to_str(A=1.0, B=0.0)
+    '1.0occA'
+    >>> occupancy_to_str(A=0.0, B=1.0)
+    '1.0occB'
+    >>> occupancy_to_str(A=0.5, B=0.5)
+    '0.5occA_0.5occB'
+    >>> occupancy_to_str(A=0.25, B=0.75)
+    '0.25occA_0.75occB'
+    >>> occupancy_to_str(A=0.5, B=0.3, C=0.2)
+    '0.5occA_0.3occB_0.2occC'
     """
-    if abs(occ_a - 1.0) < 1e-6:
-        return "1.0occA"
-    elif abs(occ_a) < 1e-6:
-        return "1.0occB"
-    else:
-        occ_b = round(1.0 - occ_a, 2)
-        return f"{occ_a}occA_{occ_b}occB"
-
-
-# TODO: @karson.chrispens can you fix your file paths so this isn't needed?
-# Or generalize if this is a common case?
-def _occupancy_to_str_6b8x(occ_a):
-    """Convert occupancy float to 6b8x-style string format.
-
-    Examples:
-    - 1.0 -> '1.0occAconf'
-    - 0.0 -> '1.0occBconf'
-    - 0.5 -> '0.5occAconf_0.5occBconf'
-    """
-    if abs(occ_a - 1.0) < 1e-6:
-        return "1.0occAconf"
-    elif abs(occ_a) < 1e-6:
-        return "1.0occBconf"
-    else:
-        occ_b = round(1.0 - occ_a, 2)
-        return f"{occ_a}occAconf_{occ_b}occBconf"
+    parts = []
+    for label, occ in altloc_occupancies.items():
+        if occ < 0:
+            raise ValueError(f"Negative occupancy for altloc {label}: {occ}")
+        occ = round(occ, 2)
+        if abs(occ) > 1e-6:
+            parts.append(f"{occ}occ{label}")
+    if not parts:
+        raise ValueError("At least one altloc must have non-zero occupancy")
+    return "_".join(parts)
