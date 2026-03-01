@@ -13,6 +13,7 @@ from biotite.database.rcsb import fetch
 from biotite.structure.io.pdbx import CIFColumn, CIFFile, set_structure
 from loguru import logger
 
+from sampleworks.utils.atom_array_utils import remove_atoms_with_any_nan_coords
 
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 
@@ -164,9 +165,7 @@ def patch_individual_cif_file(
 
     # remove any atoms with nan coordinates--these seem to come in because we sometimes use parse
     # (from AtomWorks) which creates them. Still, we'll do this here just in case.
-    # I do the flattening so that we remove all copies of an atom if it is missing in any structure
-    flat_coords = einx.rearrange("a b c -> b (a c)", asym_unit.coord)
-    asym_unit = asym_unit[:, ~np.isnan(flat_coords).any(axis=1)]
+    asym_unit = remove_atoms_with_any_nan_coords(asym_unit)
 
     # make sure entity ids match in atom_site and entity_poly
     if "entity_poly" in template.block:
