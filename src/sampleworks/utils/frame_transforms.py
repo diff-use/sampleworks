@@ -3,6 +3,7 @@ from types import ModuleType
 from typing import Literal, overload, TYPE_CHECKING
 
 import einx
+from loguru import logger
 
 
 if TYPE_CHECKING:
@@ -368,7 +369,11 @@ def weighted_rigid_align_differentiable(
 
     """
     backend_name, backend = get_backend(true_coords)
-    batch_size, num_points, dim = true_coords.shape
+    try:
+        batch_size, num_points, dim = true_coords.shape
+    except ValueError as e:
+        logger.error(f"Invalid shape for true_coords: {true_coords.shape}, must be b x n x d")
+        raise e
 
     if backend_name == "torch":
         weights_expanded = (mask * weights).unsqueeze(-1)  # type: ignore[union-attr]

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast, Literal, overload
 
+import einx
 import numpy as np
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
@@ -482,6 +483,30 @@ def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Atom
         return atom_array[:, mask]  # pyright: ignore[reportReturnType]
     else:
         return atom_array[mask]  # pyright: ignore[reportReturnType]
+
+
+@overload
+def remove_atoms_with_any_nan_coords(atom_array: AtomArrayStack) -> AtomArrayStack: ...
+
+
+@overload
+def remove_atoms_with_any_nan_coords(atom_array: AtomArray) -> AtomArray: ...
+
+
+def remove_atoms_with_any_nan_coords(
+        atom_array: AtomArray | AtomArrayStack
+) -> AtomArray | AtomArrayStack:
+    """
+    Remove atoms with any NaN coordinates in any structure from an AtomArray or AtomArrayStack.
+    """
+    if isinstance(atom_array, AtomArrayStack):
+        # Partially flatten the coords so that we remove any atom from all structures if any
+        # one of them has a NaN at that position.
+        flattened_coords = einx.rearrange("a b c -> b (a c)", atom_array.coord)
+    else:
+        flattened_coords = atom_array.coord
+
+    return atom_array[..., np.isfinite(flattened_coords).all(axis=1)]
 
 
 def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomArrayStack:

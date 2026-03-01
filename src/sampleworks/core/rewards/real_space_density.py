@@ -145,8 +145,8 @@ def extract_density_inputs_from_atomarray(
     if is_stack:
         if not np.all(valid_occupancy * n_models <= 1.0):
             logger.warning(
-                f"AtomArrayStack with {n_models} models: occupancy values sum to greater than 1 for"
-                "some atoms (max sum {valid_occupancy.max() * n_models:.4f}). This may lead to "
+                f"AtomArrayStack with {n_models} models: occupancy values sum to > 1 for "
+                f"some atoms (max sum {valid_occupancy.max() * n_models:.4f}). This may lead to "
                 "higher density values than expected under "
                 f"uniform model weighting (expected {1 / n_models:.4f}). Keeping "
                 "provided occupancies unchanged."

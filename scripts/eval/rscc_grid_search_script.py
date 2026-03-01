@@ -16,9 +16,12 @@ search results.
 
 import argparse
 import copy
+import pdb
+import sys
 import traceback
 from pathlib import Path
 
+import einx
 import numpy as np
 import pandas as pd
 import torch
@@ -36,9 +39,11 @@ from sampleworks.eval.structure_utils import (
     get_reference_atomarraystack,
     get_reference_structure_coords,
 )
-from sampleworks.utils.atom_array_utils import filter_to_common_atoms
+from sampleworks.utils.atom_array_utils import filter_to_common_atoms, \
+    remove_atoms_with_any_nan_coords
 from sampleworks.utils.density_utils import compute_density_from_atomarray
 from sampleworks.utils.frame_transforms import weighted_rigid_align_differentiable, apply_forward_transform
+from sampleworks.utils.framework_utils import match_batch
 
 
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
@@ -92,6 +97,7 @@ def main(args: argparse.Namespace):
 
     results = []
     base_map_cache: dict[tuple[str, float, str], tuple[XMap, XMap]] = {}
+    ref_full_structure_cache: dict[tuple[str, float], object] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
     for _i, _exp in enumerate(all_experiments):
         if _exp.protein in protein_configs:
@@ -164,23 +170,42 @@ def main(args: argparse.Namespace):
                     atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
 
                 # TODO Check lines 166-205 _thoroughly_. They came from Claude.
+                # Lines ~166-205 are to align the refined structure to the reference structure.
+                # so that the calculated maps are also aligned, for a correct RSCC calculation
+                #
                 # Align the refined structure to the reference structure
-                # 1. Get the reference structure path
-                ref_path, _ = get_reference_atomarraystack(protein_config, _exp.occ_a)
-                if ref_path is None:
-                    raise ValueError(f"Could not find reference structure for occupancy {_exp.occ_a}")
+                # 1. Get the reference structure path and load from cache if available
+                if (protein, _exp.occ_a) not in ref_full_structure_cache:
+                    ref_path = protein_config.get_reference_structure_path(_exp.occ_a)
+                    if ref_path is None:
+                        raise ValueError(f"Could not find reference structure for occupancy {_exp.occ_a}")
 
-                # 2. Load the reference structure with parse() to get only the first altloc
-                ref_structure = parse(ref_path, ccd_mirror_path=None)
-                ref_atom_array = get_asym_unit_from_structure(ref_structure)
+                    # 2. Load the reference structure with parse() to get only the first altloc
+                    ref_structure = parse(ref_path, ccd_mirror_path=None)
+                    ref_atom_array = get_asym_unit_from_structure(ref_structure)
+                    logger.info(
+                        f"Caching reference structure for {protein} occ_a={_exp.occ_a}"
+                    )
+                    ref_full_structure_cache[(protein, _exp.occ_a)] = ref_atom_array
+                else:
+                    ref_atom_array = ref_full_structure_cache[(protein, _exp.occ_a)]
 
-                # 3. Find the common atoms between the reference and the refined structure
+                # 3. Find the common atoms with non-nan coords between the reference
+                #    and the refined structure
+                ref_atom_array = remove_atoms_with_any_nan_coords(ref_atom_array)
+                atom_array = remove_atoms_with_any_nan_coords(atom_array)
                 ref_common, pred_common = filter_to_common_atoms(ref_atom_array, atom_array)
+
 
                 # 4. Align the refined structure to the reference using weighted_rigid_align_differentiable
                 # Convert to torch tensors with batch dimension
-                ref_coords_torch = torch.from_numpy(ref_common.coord).unsqueeze(0).float()  # [1, n_atoms, 3]
-                pred_coords_torch = torch.from_numpy(pred_common.coord).unsqueeze(0).float()  # [1, n_atoms, 3]
+                ref_coords_torch = torch.from_numpy(ref_common.coord).float()  # [1, n_atoms, 3]
+                pred_coords_torch = torch.from_numpy(pred_common.coord).float()  # [1, n_atoms, 3]
+
+                ref_coords_torch = match_batch(ref_coords_torch, pred_coords_torch.shape[0])
+                if len(ref_coords_torch.shape) != 3 or ref_coords_torch.shape[1] != pred_coords_torch.shape[1]:
+                    logger.error(f"Shape error: ref_coords_torch: {ref_coords_torch.shape}, pred_coords_torch: {pred_coords_torch.shape}")
+                    raise ValueError(f"ref_coords_torch and pred_coords_torch must have the same shape")
 
                 # Create uniform weights and mask for all common atoms
                 n_atoms = ref_coords_torch.shape[1]
@@ -189,8 +214,8 @@ def main(args: argparse.Namespace):
 
                 # Align predicted to reference and get the transform
                 _, transform = weighted_rigid_align_differentiable(
-                    true_coords=pred_coords_torch,  # coords to align
-                    pred_coords=ref_coords_torch,   # target coords
+                    true_coords=ref_coords_torch,  # coords to align
+                    pred_coords=pred_coords_torch,   # target coords
                     weights=weights,
                     mask=mask,
                     return_transforms=True,
@@ -198,9 +223,9 @@ def main(args: argparse.Namespace):
                 )
 
                 # 5. Apply the transform to the entire refined structure (atom_array)
-                atom_array_coords_torch = torch.from_numpy(atom_array.coord).unsqueeze(0).float()
+                atom_array_coords_torch = torch.from_numpy(atom_array.coord)
                 aligned_coords_torch = apply_forward_transform(atom_array_coords_torch, transform, rotation_only=False)
-                atom_array.coord = aligned_coords_torch.squeeze(0).numpy()
+                atom_array.coord = aligned_coords_torch.numpy()
 
                 # Compute density from the aligned refined structure
                 _computed_density, _ = compute_density_from_atomarray(

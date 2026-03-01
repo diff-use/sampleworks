@@ -89,7 +89,9 @@ def scan_grid_search_results(
         method, model = get_method_and_model_name(model_dir.name)
 
         params = parse_experiment_dir(exp_dir)
-        guidance_weight = float(params["guidance_weight"]) if params["guidance_weight"] else None
+        guidance_weight = None
+        if params["guidance_weight"] is not None:
+            guidance_weight = float(params["guidance_weight"])
         gd_steps = int(params["gd_steps"]) if params["gd_steps"] else None
 
         # Validate parameters to satisfy pyright

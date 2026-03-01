@@ -7,19 +7,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
 from joblib import Parallel, delayed
-from atomworks.io.parser import parse
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Experiment
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
-from sampleworks.eval.structure_utils import get_reference_atomarraystack, get_asym_unit_from_structure
+from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import filter_to_common_atoms, map_altlocs_to_stack
-from sampleworks.utils.frame_transforms import weighted_rigid_align_differentiable, apply_forward_transform
 from sklearn.metrics import silhouette_samples
 
 
@@ -274,6 +271,7 @@ def main(args: argparse.Namespace):
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
 
+
         if (protein, _exp.occ_a) not in reference_atom_arrays:
             logger.warning(
                 f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
@@ -349,62 +347,11 @@ def process_exp_with_selection(
     result["selection"] = selection_string
 
     try:
-        # Step 1: Load the reference structure (first altloc only) using parse
-        ref_path, _ = get_reference_atomarraystack(protein_config, exp.occ_a)
-        if ref_path is None:
-            raise ValueError(f"Could not find reference structure for occupancy {exp.occ_a}")
-
-        ref_structure = parse(ref_path, ccd_mirror_path=None)
-        ref_atom_array = get_asym_unit_from_structure(ref_structure)
-
-        # Step 2: Load the refined/predicted structure
-        predicted_structure = parse(exp.refined_cif_path, ccd_mirror_path=None)
-        predicted_atom_array = get_asym_unit_from_structure(predicted_structure)
-
-        # Step 3: Filter to common atoms between reference and predicted
-        ref_common, pred_common = filter_to_common_atoms(ref_atom_array, predicted_atom_array)
-
-        # Step 4: Align the predicted structure to the reference using weighted_rigid_align_differentiable
-        # Convert to torch tensors with batch dimension
-        ref_coords_torch = torch.from_numpy(ref_common.coord).unsqueeze(0).float()  # [1, n_atoms, 3]
-        pred_coords_torch = torch.from_numpy(pred_common.coord).unsqueeze(0).float()  # [1, n_atoms, 3]
-
-        # Create uniform weights and mask for all common atoms
-        n_atoms = ref_coords_torch.shape[1]
-        weights = torch.ones(1, n_atoms)
-        mask = torch.ones(1, n_atoms)
-
-        # Align predicted to reference and get the transform
-        _, transform = weighted_rigid_align_differentiable(
-            true_coords=pred_coords_torch,  # coords to align
-            pred_coords=ref_coords_torch,   # target coords
-            weights=weights,
-            mask=mask,
-            return_transforms=True,
-            allow_gradients=False
-        )
-
-        # Step 5: Apply the transform to the entire predicted structure
-        # Load as stack for all models
+        # generated structures shouldn't have altlocs, don't need altloc="all".
         predicted_atom_array_stack = load_any(exp.refined_cif_path)
-        predicted_atom_array_stack = ensure_atom_array_stack(predicted_atom_array_stack)
-
-        # Apply transform to each model in the stack
-        aligned_stack_coords = []
-        for i in range(predicted_atom_array_stack.stack_depth()):
-            model_coords = torch.from_numpy(predicted_atom_array_stack[i].coord).unsqueeze(0).float()
-            aligned_coords = apply_forward_transform(model_coords, transform, rotation_only=False)
-            aligned_stack_coords.append(aligned_coords.squeeze(0).numpy())
-
-        # Create aligned AtomArrayStack
-        aligned_stack = predicted_atom_array_stack.copy()
-        for i, coords in enumerate(aligned_stack_coords):
-            aligned_stack.coord[i] = coords
-
-        # Step 6: Compute LDDT clustering on aligned structures
         clustering_results = nn_lddt_clustering(
             px_seln_refernce_atom_array,
-            aligned_stack,
+            ensure_atom_array_stack(predicted_atom_array_stack),
             translate_selection(selection_string),
         )
 
