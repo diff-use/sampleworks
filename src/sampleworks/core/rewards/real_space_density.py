@@ -43,7 +43,7 @@ def setup_scattering_params(
         containing scattering coefficients for each element type
     """
     elements = atom_array.element
-    unique_elements = sorted(set(normalize_element(e) for e in elements))  # ty: ignore[not-iterable]
+    unique_elements = sorted(set(normalize_element(e) for e in elements))
     atomic_num_dict = {elem: ELEMENT_TO_ATOMIC_NUM[elem] for elem in unique_elements}
 
     structure_factors = ELECTRON_SCATTERING_FACTORS if em_mode else ATOM_STRUCTURE_FACTORS
@@ -98,6 +98,7 @@ def extract_density_inputs_from_atomarray(
         ``(1, n_atoms)``. For an ``AtomArrayStack`` with *M* models the batch
         dimension is *M* instead of 1.
     """
+
     is_stack = isinstance(atom_array_or_stack, AtomArrayStack)
 
     coords = cast(np.ndarray[Any, np.dtype[np.float64]], atom_array_or_stack.coord)
@@ -130,6 +131,7 @@ def extract_density_inputs_from_atomarray(
             f"({n_valid}/{n_total} atoms remaining)"
         )
 
+    # TODO can we use [..., valid_mask] here?
     if is_stack:
         valid_coords = coords[:, valid_mask]
     else:

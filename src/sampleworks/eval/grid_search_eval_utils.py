@@ -183,7 +183,18 @@ def parse_args(description: str | None = None):
         "--occupancies",
         nargs="+",
         type=float,
-        help="Occupancies to evaluate",
+        help=f"Occupancies to evaluate, defaults to {OCCUPANCY_LEVELS}",
         default=OCCUPANCY_LEVELS,
+    )
+    parser.add_argument(
+        "--target-filename",
+        default="refined.cif",
+        help="Target filename for the CIF files to process, defaults to 'refined.cif'",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        help="Number of parallel jobs to run. -1 uses all CPUs.",
+        default=16,
     )
     return parser.parse_args()
