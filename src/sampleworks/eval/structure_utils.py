@@ -2,7 +2,7 @@ import re
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast, Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -314,10 +314,12 @@ def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
 
 
 def get_mask_from_old_selection_string(
-        atom_array: AtomArray, selection: str
+    atom_array: AtomArray | AtomArrayStack, selection: str
 ) -> np.ndarray[tuple[int], np.dtype[Any]]:
-    DeprecationWarning(f"Using old-style selection strings like {selection} is deprecated."
-                       f" Use atomworks/pandas style selection strings instead.")
+    DeprecationWarning(
+        f"Using old-style selection strings like {selection} is deprecated."
+        f" Use atomworks/pandas style selection strings instead."
+    )
     chain_id, resi_start, resi_end = parse_selection_string(selection)
     # use the length of any of the required non-coord attributes to get the mask shape
     mask = np.ones(len(atom_array.res_id), dtype=bool)
