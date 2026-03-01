@@ -193,7 +193,7 @@ def find_all_altloc_ids(
     Find all unique alternate location indicator (altloc) IDs in an AtomArray or AtomArrayStack.
     """
     if hasattr(atom_array, altloc_label):
-        altloc_ids = np.unique(getattr(atom_array, altloc_label))  # ty: ignore[invalid-argument-type]
+        altloc_ids = np.unique(getattr(atom_array, altloc_label))
     else:
         raise AttributeError(
             "atom_array must have altloc annotation, defaults to 'altloc_id'; "
@@ -267,7 +267,7 @@ def map_altlocs_to_stack(
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
             raise ValueError("Cannot map altlocs with multiple structures each containing altlocs")
-        atom_array = atom_array[0]  # ty: ignore[invalid-assignment]
+        atom_array = atom_array[0]
 
     if not hasattr(atom_array, "altloc_id") or atom_array.altloc_id is None:
         raise ValueError("The passed AtomArray | AtomArrayStack must have attribute 'altloc_id'")
@@ -277,7 +277,6 @@ def map_altlocs_to_stack(
             "map_altlocs_to_stack requires atom_arrays loaded with "
             "atomworks.io.utils.io_utils.load_any or a similar method that provides .mask, .query"
         )
-
 
     altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
     if selection is not None and return_full_array:
@@ -302,8 +301,8 @@ def map_altlocs_to_stack(
     # it's critical that we've updated the altloc id list above, or this will return only
     # residues with no altlocs in case one or more altloc ids is/are missing from the selection.
     atom_arrays = filter_to_common_atoms(*altloc_list)
-    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])  # ty: ignore
-    occupancies = np.vstack([r.occupancy for r in atom_arrays])  # ty: ignore
+    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])
+    occupancies = np.vstack([r.occupancy for r in atom_arrays])
 
     # remove those annotations or we cannot stack arrays.
     for array in atom_arrays:
@@ -348,8 +347,12 @@ def select_altloc(
 
     if return_full_array:
         mask = np.isin(
-            atom_array.altloc_id,  # ty: ignore[invalid-argument-type]
-            list({altloc_id,}.union(BLANK_ALTLOC_IDS)),
+            atom_array.altloc_id,
+            list(
+                {
+                    altloc_id,
+                }.union(BLANK_ALTLOC_IDS)
+            ),
         )
     else:
         mask = atom_array.altloc_id == altloc_id

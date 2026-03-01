@@ -7,12 +7,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
+from joblib import delayed, Parallel
 from loguru import logger
-from sampleworks.eval.eval_dataclasses import ProteinConfig, Experiment
+from sampleworks.eval.eval_dataclasses import Experiment, ProteinConfig
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
@@ -135,9 +135,7 @@ def nn_lddt_clustering(
 
     # Second, compute the cross-LDDT matrix between all structures in the predicted stack and
     # all structures in the reference stack
-    cross_lddt_matrix = compute_cross_lddts(
-        ref_atom_array_stack, pred_atom_array_stack, selection
-    )
+    cross_lddt_matrix = compute_cross_lddts(ref_atom_array_stack, pred_atom_array_stack, selection)
 
     # Assign each predicted structure to the closest reference structure based on LDDT score (i.e.,
     # the reference structure with the highest LDDT score is assigned to the predicted structure)
@@ -251,7 +249,6 @@ def main(args: argparse.Namespace):
     filtered_experiments = []
     null_results = []
     for _exp in all_experiments:
-
         if _exp.protein in protein_configs:
             protein = _exp.protein
         elif _exp.protein.upper() in protein_configs:
@@ -270,7 +267,6 @@ def main(args: argparse.Namespace):
                 f"Protein name mismatch: expected {protein_config.protein}, got {protein}, make"
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
-
 
         if (protein, _exp.occ_a) not in reference_atom_arrays:
             logger.warning(
@@ -297,14 +293,14 @@ def main(args: argparse.Namespace):
                 continue
 
             px_seln_refernce_atom_array = protein_reference_atom_arrays[_sel]
-            filtered_experiments.append(
-                (_exp, protein_config, px_seln_refernce_atom_array, _sel)
-            )
+            filtered_experiments.append((_exp, protein_config, px_seln_refernce_atom_array, _sel))
 
     # now we can more easily parallelize this loop.
     logger.debug("Starting LDDT evaluation loop. This may take a while...")
     all_results = Parallel(n_jobs=args.n_jobs)(
-        delayed(process_exp_with_selection)(_exp, protein_config, px_seln_refernce_atom_array, selection)
+        delayed(process_exp_with_selection)(
+            _exp, protein_config, px_seln_refernce_atom_array, selection
+        )
         for _exp, protein_config, px_seln_refernce_atom_array, selection in filtered_experiments
     )
 
@@ -313,10 +309,10 @@ def main(args: argparse.Namespace):
 
 
 def process_exp_with_selection(
-        exp: Experiment,
-        protein_config: ProteinConfig,
-        px_seln_refernce_atom_array: AtomArrayStack,
-        selection_string: str
+    exp: Experiment,
+    protein_config: ProteinConfig,
+    px_seln_refernce_atom_array: AtomArrayStack,
+    selection_string: str,
 ) -> dict[str, str | float | list[float]]:
     """
 
@@ -358,7 +354,9 @@ def process_exp_with_selection(
         lddt_result_keys = ("occupancies", "avg_silhouette", "avg_silhouette_to_ref")
         result.update({k: clustering_results[k] for k in lddt_result_keys})
 
-        logger.info(f"Successfully processed {exp.protein_dir_name} w/ selection {selection_string}")
+        logger.info(
+            f"Successfully processed {exp.protein_dir_name} w/ selection {selection_string}"
+        )
 
     except Exception as e:
         logger.error(f"Error processing experiment {exp.exp_dir}: {e}")
