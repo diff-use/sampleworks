@@ -94,7 +94,7 @@ def scan_grid_search_results(
         model_dir = scaler_dir.parent
         protein_dir = model_dir.parent
 
-        protein, occ_a = extract_protein_and_occupancy(protein_dir.name)
+        protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
         method, model = get_method_and_model_name(model_dir.name)
 
         params = parse_experiment_dir(exp_dir)
@@ -106,7 +106,7 @@ def scan_grid_search_results(
         # Validate parameters to satisfy ty
         if (
             protein is None
-            or occ_a is None
+            or not altloc_occupancies
             or (model == StructurePredictor.BOLTZ_2 and method is None)
             or params["ensemble_size"] is None
             or (guidance_weight is None and gd_steps is None)
@@ -117,7 +117,7 @@ def scan_grid_search_results(
         experiments.append(
             Experiment(
                 protein=protein,
-                occ_a=occ_a,
+                altloc_occupancies=altloc_occupancies,
                 model=model,
                 method=method,
                 scaler=scaler_dir.name,

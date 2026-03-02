@@ -1,5 +1,6 @@
 import re
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast, overload
@@ -427,9 +428,19 @@ def get_asym_unit_from_structure(
 
 
 def get_reference_atomarraystack(
-    protein_config: ProteinConfig, occupancy_a: float = 0.5
+    protein_config: ProteinConfig, altloc_occupancies: dict[str, float]
 ) -> tuple[Path | str | None, AtomArrayStack | None]:
-    ref_path = protein_config.get_reference_structure_path(occupancy_a)  # will warn if not found
+    """Load a reference structure for the given altloc occupancies.
+
+    Parameters
+    ----------
+    protein_config : ProteinConfig
+        Configuration for the protein.
+    altloc_occupancies : dict[str, float]
+        Mapping of altloc labels to occupancy values,
+        e.g. ``{"A": 0.5, "B": 0.5}``.
+    """
+    ref_path = protein_config.get_reference_structure_path(altloc_occupancies)
     if ref_path is None:
         return None, None
     ref_struct = load_any(ref_path, altloc="all", extra_fields=["occupancy"])
@@ -441,14 +452,21 @@ def get_reference_atomarraystack(
 
 
 def get_reference_structure_coords(
-    protein_config: ProteinConfig, protein_key: str, occ_list: tuple[float, ...] = (0.0, 1.0)
+    protein_config: ProteinConfig,
+    protein_key: str,
+    occ_list: Sequence[dict[str, float]] | None = None,
 ) -> dict[str, np.ndarray] | None:
     """
     This has a slightly odd function, which is to output an array of all possible coordinates
     of a structure, with altlocs mixed in. It returns NO information about which atom is which
     or whether there are duplicates. It's used for masking density maps.
     """
-    protein_ref_coords_list = {selection: [] for selection in protein_config.selection}
+    if occ_list is None:
+        occ_list = [{"A": 0.0, "B": 1.0}, {"A": 1.0, "B": 0.0}]
+
+    protein_ref_coords_list: dict[str, list[np.ndarray]] = {
+        selection: [] for selection in protein_config.selection
+    }
     for occ in occ_list:
         ref_path, ref_struct = get_reference_atomarraystack(protein_config, occ)
         if ref_path and ref_struct:  # if not None, it is already a validated Path object
@@ -477,8 +495,9 @@ def get_reference_structure_coords(
                         f"    Traceback: {traceback.format_exc()}"
                     )
 
-    return {
+    result = {
         k: np.vstack(protein_ref_coords_list[k])
         for k in protein_ref_coords_list
         if protein_ref_coords_list[k]
     }
+    return result or None
