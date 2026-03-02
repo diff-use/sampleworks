@@ -119,6 +119,9 @@ def main(args: argparse.Namespace):
                 )
                 continue
 
+            exp_result = _exp.__dict__.copy()
+            exp_result["selection"] = selection
+            exp_result["error"] = None
             try:
                 # TODO: this needs to be better unified with what's in generate_synthetic_density
                 #
@@ -178,19 +181,17 @@ def main(args: argparse.Namespace):
 
                 # Calculate RSCC on extracted regions
                 # TODO: don't alter the input object _exp, just get a copy of it as a dict.
-                _exp.rscc = rscc(_extracted_base, _extracted_computed)
-                _exp.base_map_path = _base_map_path
+                exp_result.rscc = rscc(_extracted_base, _extracted_computed)
+                exp_result.base_map_path = _base_map_path
 
             except Exception as _e:
                 logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")
                 logger.error(f"  Traceback: {traceback.format_exc()}")
-                _exp.error = _e
-                _exp.rscc = np.nan  # this is the default, but better to be explicit.
-                _exp.base_map_path = _base_map_path
+                exp_result["error"] = _e
+                exp_result["rscc"] = np.nan  # this is the default, but better to be explicit.
+                exp_result["base_map_path"] = _base_map_path
 
-            exp_dict_copy = _exp.__dict__.copy()
-            exp_dict_copy["selection"] = selection
-            results.append(exp_dict_copy)
+            results.append(exp_result)
 
         if (_i + 1) % 10 == 0 or _i == 0:
             logger.debug(

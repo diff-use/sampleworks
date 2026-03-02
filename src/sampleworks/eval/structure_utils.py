@@ -16,6 +16,7 @@ from sampleworks.models.protocol import GenerativeModelInput
 from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.framework_utils import match_batch
 
+ATOMWORKS_COMPARISON_OPS = ("==", ">", "<", "<=", ">=", " in ")
 
 try:
     from sampleworks.models.protenix.structure_processing import (
@@ -305,7 +306,7 @@ def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
     if selection is None:
         return atom_array
 
-    if not any(x in selection for x in ("==", ">", "<", "<=", ">=", " in ")):
+    if not any(x in selection for x in ATOMWORKS_COMPARISON_OPS):
         mask = get_mask_from_old_selection_string(atom_array, selection)
     else:
         mask = atom_array.mask(selection)
@@ -366,10 +367,10 @@ def extract_selection_coordinates(
     else:
         working_array = atom_array
 
-    if not any(x in selection for x in ("==", ">", "<", "<=", ">=")):
+    if not any(x in selection for x in ATOMWORKS_COMPARISON_OPS):
         mask = get_mask_from_old_selection_string(atom_array, selection)
     else:
-        mask = atom_array.mask(selection)
+        mask = working_array.mask(selection)
 
     selected_coords = cast(np.ndarray, working_array.coord)[mask]
 
