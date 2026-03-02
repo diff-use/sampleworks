@@ -9,6 +9,8 @@ from sampleworks.eval.occupancy_utils import occupancy_to_str
 
 
 @dataclass
+# TODO rename to make consistend w/ hub.diffuse.science
+#  https://github.com/diff-use/sampleworks/issues/122
 class Experiment:
     protein: str
     occ_a: float
@@ -50,6 +52,13 @@ class ProteinConfig:
     def __post_init__(self):
         # TODO validate structure patterns? Anything else we should check to avoid later errors?
         self.base_map_dir = Path(self.base_map_dir)  # just in case someone passes a string
+        self.selection = [s.strip() for s in self.selection if self.is_selection_valid(s)]
+        if not self.selection:
+            raise ValueError(f"No valid selection provided for protein {self.protein}")
+
+    def is_selection_valid(self, selection: str) -> bool:
+        return selection is not None and selection.strip() != ""
+
 
     def get_base_map_path_for_occupancy(self, occupancy_a: float) -> Path | None:
         occ_str = occupancy_to_str(occupancy_a, use_6b8x_format=self.protein == "6b8x")
@@ -190,7 +199,7 @@ class ProteinConfig:
                     config = cls(
                         protein=protein,
                         base_map_dir=base_map_dir,
-                        selection=row["selection"].strip().split(";"),
+                        selection=row["selection"].split(";"),
                         resolution=resolution,
                         map_pattern=row["map_pattern"].strip(),
                         structure_pattern=structure_pattern,

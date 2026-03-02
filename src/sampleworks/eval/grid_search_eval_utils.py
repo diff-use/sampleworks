@@ -17,6 +17,7 @@ from sampleworks.utils.guidance_constants import StructurePredictor
 
 # TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
 #  for how the folder names are generated.
+#  https://github.com/diff-use/sampleworks/issues/121
 def parse_experiment_dir(exp_dir: Path) -> dict[str, int | float | None]:
     """Parse experiment directory name to extract parameters.
 
@@ -75,6 +76,7 @@ def scan_grid_search_results(
             )
         return experiments
 
+    # FIXME https://github.com/diff-use/sampleworks/issues/121
     # Check if we found a refined.cif file in the current directory
     refined_cif = current_directory / target_filename
     if current_depth == target_depth and refined_cif.exists():

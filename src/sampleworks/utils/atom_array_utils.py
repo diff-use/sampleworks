@@ -194,6 +194,11 @@ def find_all_altloc_ids(
     """
     if hasattr(atom_array, altloc_label):
         altloc_ids = np.unique(getattr(atom_array, altloc_label))
+        altloc_values = getattr(atom_array, altloc_label)
+        if altloc_values is None:
+            raise AttributeError(
+                f"atom_array.{altloc_label} exists but is None; cannot find altloc IDs"
+            )
     else:
         raise AttributeError(
             "atom_array must have altloc annotation, defaults to 'altloc_id'; "
@@ -254,7 +259,7 @@ def map_altlocs_to_stack(
             If the return_full_array is also True, this selection applies _only_ to the altlocs.
         return_full_array: bool
             If True, return the full AtomArrayStack with all atoms, even those with no altlocs.
-            If False, only return structures with altlocs.
+            If False, only return the specific atoms with altlocs.
 
     Returns:
         Tuple containing:
@@ -293,6 +298,10 @@ def map_altlocs_to_stack(
 
     # The available altloc ids might have changed if one or more are missing from the selection.
     altloc_ids = sorted(list(find_all_altloc_ids(atom_array)))
+    if len(altloc_ids) == 0:
+        raise ValueError(
+            f"No altlocs found in selection '{selection}' for AtomArray with altloc_id"
+        )
     altloc_list = [
         select_altloc(atom_array, altloc_id, return_full_array=return_full_array)
         for altloc_id in altloc_ids
