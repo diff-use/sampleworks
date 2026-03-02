@@ -217,8 +217,8 @@ def main(args: argparse.Namespace):
 
                 # Align predicted to reference and get the transform
                 _, transform = weighted_rigid_align_differentiable(
-                    true_coords=ref_coords_torch,  # coords to align
-                    pred_coords=pred_coords_torch,   # target coords
+                    true_coords=pred_coords_torch,  # coords to align
+                    pred_coords=ref_coords_torch,   # target coords
                     weights=weights,
                     mask=mask,
                     return_transforms=True,
