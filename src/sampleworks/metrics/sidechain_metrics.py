@@ -13,17 +13,23 @@ from sampleworks.metrics.metric import Metric
 def collapsing_virtual_atoms_batched(
     atom_arrays, central_atom, threshold=0.5, return_virtual_index=False
 ):
-    """
-    Apply collapsing_virtual_atoms to a batch of atom arrays.
+    """Apply collapsing_virtual_atoms to a batch of atom arrays.
 
-    Parameters:
-        atom_arrays (List[AtomArray]): Batch of atom arrays.
-        central_atom (str): Atom to compute distance from (e.g., "CA").
-        threshold (float): Distance threshold to identify virtual atoms.
-        return_virtual_index (bool): Whether to also return the virtual mask.
+    Parameters
+    ----------
+    atom_arrays : list[AtomArray]
+        Batch of atom arrays.
+    central_atom : str
+        Atom to compute distance from (e.g., "CA").
+    threshold : float
+        Distance threshold to identify virtual atoms.
+    return_virtual_index : bool
+        Whether to also return the virtual mask.
 
-    Returns:
-        List of filtered atom arrays or (atom_array, mask) tuples
+    Returns
+    -------
+    list
+        List of filtered atom arrays or (atom_array, mask) tuples.
     """
     result = []
     for atom_array in atom_arrays:
@@ -77,18 +83,23 @@ def collapsing_virtual_atoms_batched(
 
 
 def construct_graph(coords, cutoff_min, cutoff_max):
-    """
-    Use coordinates to construct a NetworkX graph.
+    """Use coordinates to construct a NetworkX graph.
     Nodes = atom indices.
     Edges = distance-based inferred bonds.
 
-    Parameters:
-        coords: [n, 3]
-        cutoff_min: min distance to consider a bond (avoid self-loops)
-        cutoff_max: max distance to consider a bond (e.g., typical covalent bond)
+    Parameters
+    ----------
+    coords : ndarray
+        Atom coordinates, shape (n, 3).
+    cutoff_min : float
+        Min distance to consider a bond (avoid self-loops).
+    cutoff_max : float
+        Max distance to consider a bond (e.g., typical covalent bond).
 
-    Returns:
-        G: A NetworkX graph
+    Returns
+    -------
+    nx.Graph
+        A NetworkX graph with atoms as nodes and inferred bonds as edges.
     """
     dists = cdist(coords, coords)  # [N, N]
 

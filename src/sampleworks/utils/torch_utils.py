@@ -114,10 +114,14 @@ def send_tensors_in_dict_to_device(d: dict, device: DeviceLikeType, inplace: boo
 def _assert_no_nans(x: Any, *, msg: str = "", fail_if_not_tensor: bool = False) -> None:
     """Recursively checks for NaN values in tensor-like objects.
 
-    Args:
-        - x (Any): Input to check for NaNs. Can be a tensor, dict, list, tuple, or other type.
-        - msg (str): Prefix for error messages.
-        - fail_if_not_tensor (bool): If True, raises error for non-tensor types.
+    Parameters
+    ----------
+    x : Any
+        Input to check for NaNs. Can be a tensor, dict, list, tuple, or other type.
+    msg : str
+        Prefix for error messages.
+    fail_if_not_tensor : bool
+        If True, raises error for non-tensor types.
     """
     if isinstance(x, torch.Tensor):
         torch._assert(

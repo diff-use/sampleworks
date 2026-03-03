@@ -24,20 +24,22 @@ FlowOrEnergyBasedModelOutputT = TypeVar("FlowOrEnergyBasedModelOutputT")
 
 @dataclass
 class GenerativeModelInput(Generic[C]):  # noqa: UP046 (for Python 3.11 compatibility)
-    """
-    Container for inputs to generative models.
+    """Container for inputs to generative models.
 
     The x_init tensor is typically sampled from a prior distribution,
     with shape determined by the input data (e.g., sequence length
     determines atom count).
 
-    Attributes:
-        x_init: Initial structure coordinates, shape (*batch, atoms, 3).
-                This can be a reference structure (e.g. for alignment during sampling)
-                or a noisy sample from a prior distribution. This should have the proper
-                shape expected for the given ensemble being sampled, e.g. (4, atoms, 3) for
-                ensemble size 4.
-        conditioning: Model-specific conditioning features, or None.
+    Attributes
+    ----------
+    x_init : Float[Array, "*batch atoms 3"]
+        Initial structure coordinates.
+        This can be a reference structure (e.g. for alignment during sampling)
+        or a noisy sample from a prior distribution. This should have the proper
+        shape expected for the given ensemble being sampled, e.g. (4, atoms, 3) for
+        ensemble size 4.
+    conditioning : C | None
+        Model-specific conditioning features, or None.
     """
 
     # TODO: make x_init more general (not just Float),
@@ -48,16 +50,16 @@ class GenerativeModelInput(Generic[C]):  # noqa: UP046 (for Python 3.11 compatib
 
 @runtime_checkable
 class StructureModelWrapper(Protocol[C, StructureModelOutputT]):
-    """
-    Direct structure prediction from features.
+    """Direct structure prediction from features.
 
     Maps input features to atomic coordinates in a single forward pass.
     Internal iteration (e.g., AlphaFold2 recycling) is encapsulated.
 
-    Examples:
-        - AlphaFold2 (JAX)
-        - ESMFold (PyTorch)
-        - OpenFold (PyTorch/JAX)
+    Examples
+    --------
+    - AlphaFold2 (JAX)
+    - ESMFold (PyTorch)
+    - OpenFold (PyTorch/JAX)
     """
 
     def featurize(self, structure: dict) -> GenerativeModelInput[C]:
@@ -95,17 +97,17 @@ class StructureModelWrapper(Protocol[C, StructureModelOutputT]):
 
 @runtime_checkable
 class FlowModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
-    """
-    Flow-matching and diffusion model wrapper.
+    """Flow-matching and diffusion model wrapper.
 
     Iteratively denoises samples from a prior distribution to generate
     structures. Each step conditions on a timestep t ∈ [0, 1] representing
     the noise level.
 
-    Examples:
-        - Boltz-1/Boltz-2 (PyTorch)
-        - AlphaFold3 / Protenix (JAX/PyTorch)
-        - Chai-1 (PyTorch)
+    Examples
+    --------
+    - Boltz-1/Boltz-2 (PyTorch)
+    - AlphaFold3 / Protenix (JAX/PyTorch)
+    - Chai-1 (PyTorch)
     """
 
     def featurize(self, structure: dict) -> GenerativeModelInput[C]:
@@ -182,16 +184,16 @@ class FlowModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
 
 @runtime_checkable
 class EnergyBasedModelWrapper(Protocol[C, FlowOrEnergyBasedModelOutputT]):
-    """
-    Energy-based model wrapper.
+    """Energy-based model wrapper.
 
     Generates structures by iteratively minimizing an implicit energy function.
     Unlike flow models, steps are not conditioned on an explicit timestep.
     Sampling typically uses Langevin dynamics or similar MCMC methods.
 
-    Examples:
-        - Distributional Graphormer (PyTorch)
-        - Equilibrium Matching
+    Examples
+    --------
+    - Distributional Graphormer (PyTorch)
+    - Equilibrium Matching
     """
 
     def featurize(self, structure: dict) -> GenerativeModelInput[C]:

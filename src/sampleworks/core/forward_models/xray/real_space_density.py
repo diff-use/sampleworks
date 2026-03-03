@@ -1156,8 +1156,8 @@ def scattering_integrand_derivative(
 ) -> torch.Tensor:
     """Compute the derivative of scattering integrand with respect to radius.
 
-    Parameters are the same as scattering_integrand, but this calculates
-    the analytical derivative with respect to r.
+    Parameters are the same as ``scattering_integrand``, but this calculates
+    the analytical derivative with respect to ``r``.
     """
     s_expanded = s.reshape(*s.shape, 1)
     r_expanded = r.reshape(1, -1)
@@ -1327,14 +1327,19 @@ def to_density(f_map: torch.Tensor) -> torch.Tensor:
 
 
 def radial_hamming_3d(f_mag, cutoff_radius):
-    """3D radial Hamming filter in Fourier space
+    """3D radial Hamming filter in Fourier space.
 
-    Args:
-        f_mag: Frequency magnitudes from FFT
-        cutoff_radius: Frequency cutoff in same units as frequency coordinates
+    Parameters
+    ----------
+    f_mag : Tensor
+        Frequency magnitudes from FFT.
+    cutoff_radius : float
+        Frequency cutoff in same units as frequency coordinates.
 
-    Returns:
-        3D tensor containing the Hamming filter
+    Returns
+    -------
+    Tensor
+        3D tensor containing the Hamming filter.
     """
     filter = torch.zeros_like(f_mag)
 

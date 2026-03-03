@@ -376,13 +376,23 @@ def save_everything(
 def run_guidance(
     args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
 ) -> JobResult:
-    """
-    Wrapper around the actual _run_guidance function to redirect logs and generate a JobResult.
-    Args:
-        args:
-        guidance_type:
+    """Wrapper around ``_run_guidance`` to redirect logs and generate a JobResult.
 
-    Returns:
+    Parameters
+    ----------
+    args : GuidanceConfig | argparse.Namespace
+        Configuration for the guidance run.
+    guidance_type : str
+        Type of guidance/scaler to apply.
+    model_wrapper
+        Loaded model wrapper instance.
+    device
+        Torch device to run on.
+
+    Returns
+    -------
+    JobResult
+        Result of the guidance run including status and timing.
     """
 
     log_path = getattr(args, "log_path", None) or os.path.join(args.output_dir, "run.log")

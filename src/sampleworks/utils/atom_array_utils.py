@@ -248,27 +248,29 @@ def map_altlocs_to_stack(
     selection: str | None = None,
     return_full_array: bool = True,
 ) -> tuple[AtomArrayStack, np.ndarray, np.ndarray]:
-    """
-    Map alternate location indicators (altloc) to separate structures in a new AtomArrayStack.
+    """Map alternate location indicators (altloc) to separate structures in a new AtomArrayStack.
 
-    Note: This will raise an error if you pass an AtomArrayStack containing multiple structures
+    Note: This will raise an error if you pass an AtomArrayStack containing multiple structures.
 
-    Parameters:
-        atom_array: AtomArray or AtomArrayStack to map altlocs from.
-        selection: str
-            Optional selection string to apply to the atom array before mapping altlocs.
-            If the return_full_array is also True, this selection applies _only_ to the altlocs.
-        return_full_array: bool
-            If True, return the full AtomArrayStack with all atoms, even those with no altlocs.
-            If False, only return the specific atoms with altlocs.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        AtomArray or AtomArrayStack to map altlocs from.
+    selection : str | None
+        Optional selection string to apply to the atom array before mapping altlocs.
+        If ``return_full_array`` is also True, this selection applies *only* to the altlocs.
+    return_full_array : bool
+        If True, return the full AtomArrayStack with all atoms, even those with no altlocs.
+        If False, only return the specific atoms with altlocs.
 
-    Returns:
+    Returns
+    -------
+    tuple[AtomArrayStack, np.ndarray, np.ndarray]
         Tuple containing:
-            - AtomArrayStack: The new stack with separate structures for each altloc.
-            - np.ndarray: Array of altloc IDs, corresponding to the order
-                 of the structures in the stack.
-            - np.ndarray: Array of occupancies for each atom in each stack,
-                 corresponding to the order of structures in the stack
+
+        - AtomArrayStack with separate structures for each altloc.
+        - Array of altloc IDs, corresponding to the order of structures in the stack.
+        - Array of occupancies for each atom in each stack.
     """
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
@@ -331,21 +333,23 @@ def select_altloc(
 ) -> AtomArray | AtomArrayStack:
     """Select atoms with a specific alternate location indicator (altloc).
 
-    Parameters:
-        atom_array (AtomArray | AtomArrayStack): The input atom array.
-        altloc_id (str): The alternate location indicator to filter by.
-        return_full_array (bool, optional):
-            If True, return the full atom array with, selecting atoms with either the
-            specified altloc or an empty/default altloc.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        The input atom array.
+    altloc_id : str
+        The alternate location indicator to filter by.
+    return_full_array : bool, optional
+        If True, return the full atom array selecting atoms with either the
+        specified altloc or an empty/default altloc.
 
-    Returns:
-        AtomArray: A new atom array containing only atoms with the specified altloc.
-        if return_full_array is False, AtomArrayStack:
-            A new atom array stack containing only atoms with the specified altloc.
-        if return_full_array is True, AtomArrayStack:
-            A new atom array stack containing atoms with either the specified altloc or
-            an empty/default altloc (period, space, ?, or empty string). It is possible that
-            an alternate altloc may be, e.g.,  disordered and therefore missing from the structure.
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        If ``return_full_array`` is False, atoms with the specified altloc only.
+        If ``return_full_array`` is True, atoms with either the specified altloc or
+        an empty/default altloc (period, space, ?, or empty string). It is possible that
+        an alternate altloc may be, e.g., disordered and therefore missing from the structure.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -380,14 +384,20 @@ def select_non_hetero(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Ato
     (typically ligands, waters, or other non-standard residues). This function
     filters to return only standard protein/nucleic acid atoms.
 
-    Parameters:
-        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        The input atom array or stack.
 
-    Returns:
-        AtomArray | AtomArrayStack: A new array/stack with hetero=False atoms.
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        A new array/stack with hetero=False atoms.
 
-    Raises:
-        TypeError: If input is not an AtomArray or AtomArrayStack.
+    Raises
+    ------
+    TypeError
+        If input is not an AtomArray or AtomArrayStack.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -412,17 +422,24 @@ def keep_polymer(
 
     Filters to return only atoms where the polymer flag is True.
 
-    Parameters:
-        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
-        pol_type (str): The type of polymer to filter for. Default is "peptide".
-            Options are: "peptide", "nucleotide", or "carbohydrate".
-            Abbreviations are supported: "p", "pep", "n", etc.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        The input atom array or stack.
+    pol_type : str
+        The type of polymer to filter for. Default is "peptide".
+        Options are: "peptide", "nucleotide", or "carbohydrate".
+        Abbreviations are supported: "p", "pep", "n", etc.
 
-    Returns:
-        AtomArray | AtomArrayStack: A new array/stack with only polymer atoms.
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        A new array/stack with only polymer atoms.
 
-    Raises:
-        TypeError: If input is not an AtomArray or AtomArrayStack.
+    Raises
+    ------
+    TypeError
+        If input is not an AtomArray or AtomArrayStack.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -445,14 +462,20 @@ def keep_amino_acids(
 
     Filters to return only atoms that are part of standard amino acids.
 
-    Parameters:
-        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        The input atom array or stack.
 
-    Returns:
-        AtomArray | AtomArrayStack: A new array/stack with only amino acid atoms.
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        A new array/stack with only amino acid atoms.
 
-    Raises:
-        TypeError: If input is not an AtomArray or AtomArrayStack.
+    Raises
+    ------
+    TypeError
+        If input is not an AtomArray or AtomArrayStack.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -472,14 +495,20 @@ def remove_hydrogens(atom_array: AtomArray | AtomArrayStack) -> AtomArray | Atom
 
     Filters out all atoms where the element annotation is "H" (hydrogen) or "D" (deuterium).
 
-    Parameters:
-        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        The input atom array or stack.
 
-    Returns:
-        AtomArray | AtomArrayStack: A new array/stack with hydrogen atoms removed.
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        A new array/stack with hydrogen atoms removed.
 
-    Raises:
-        TypeError: If input is not an AtomArray or AtomArrayStack.
+    Raises
+    ------
+    TypeError
+        If input is not an AtomArray or AtomArrayStack.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -530,14 +559,20 @@ def select_backbone(atom_array: AtomArray | AtomArrayStack) -> AtomArray | AtomA
     Returns atoms with atom_name in ["C", "CA", "N", "O"], which are the
     standard protein backbone atoms.
 
-    Parameters:
-        atom_array (AtomArray | AtomArrayStack): The input atom array or stack.
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        The input atom array or stack.
 
-    Returns:
-        AtomArray | AtomArrayStack: A new array/stack containing only backbone atoms.
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        A new array/stack containing only backbone atoms.
 
-    Raises:
-        TypeError: If input is not an AtomArray or AtomArrayStack.
+    Raises
+    ------
+    TypeError
+        If input is not an AtomArray or AtomArrayStack.
     """
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(
@@ -570,7 +605,12 @@ def make_normalized_atom_id(arr: AtomArray | AtomArrayStack) -> np.ndarray:
     """Like ``make_atom_id`` but with sequential 0-based residue numbering per chain.
 
     Handles numbering differences between representations (Boltz 0-based,
-    PDB author numbering, etc.). Returns ``"chainidx_seqpos_atomname"`` strings.
+    PDB author numbering, etc.).
+
+    Returns
+    -------
+    np.ndarray
+        Array of ``"chainidx_seqpos_atomname"`` strings.
     """
     chain_id = cast(np.ndarray, arr.chain_id)
     res_id = cast(np.ndarray, arr.res_id)

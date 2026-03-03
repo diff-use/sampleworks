@@ -55,17 +55,24 @@ def scan_grid_search_results(
     target_depth: int = 4,
     target_filename: str = "refined.cif",
 ) -> ExperimentList:
-    """
-    Recursively scan the grid_search_results directory for all experiments with refined.cif files.
+    """Recursively scan the grid_search_results directory for all experiments with refined.cif
+    files.
 
-    Parameters:
-    - current_directory: (Path) Path to the current directory being scanned.
-    - current_depth: (int) Current depth of the recursion, default 0
-    - target_depth: (int) Depth where we expect to find experiment output files.
-    - target_filename: (str) Name of the target file to look for, default "refined.cif"
+    Parameters
+    ----------
+    current_directory : Path
+        Path to the current directory being scanned.
+    current_depth : int
+        Current depth of the recursion, default 0.
+    target_depth : int
+        Depth where we expect to find experiment output files.
+    target_filename : str
+        Name of the target file to look for, default "refined.cif"
 
-    Returns:
-    - List of dictionaries containing experiment metadata.
+    Returns
+    -------
+    ExperimentList
+        List of experiment metadata objects.
     """
     experiments = ExperimentList()
 

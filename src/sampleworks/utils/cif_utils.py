@@ -12,26 +12,33 @@ from sampleworks.utils.atom_array_utils import find_all_altloc_ids, select_altlo
 def find_altloc_selections(
     cif_file: Path | str, altloc_label: str = "label_alt_id", min_span: int = 5
 ) -> Iterable[str]:
-    """
-    Find alternative location selections in a CIF file. Individual spans at least min_span
-    residues long are yielded as selection strings. A final batch of selection strings
-    is also yielded that contains all residues with altlocs, one selection per chain.
+    """Find alternative location selections in a CIF file.
 
-    Parameters:
-    - cif_file (Path | str): Path to the CIF file.
-    - altloc_label (str):
-        Label for alternative location identifier. Default is 'label_alt_id'.
-        If you don't know it, search for "_atom_site" in your CIF file to identify it.
-    - min_span (int): Minimum number of consecutive residues to consider an altloc selection.
-        spans of altlocs shorter than this are not yielded as selection strings, but ARE
+    Individual spans at least ``min_span`` residues long are yielded as selection strings.
+    A final batch of selection strings is also yielded that contains all residues with
+    altlocs, one selection per chain.
+
+    Parameters
+    ----------
+    cif_file : Path | str
+        Path to the CIF file.
+    altloc_label : str
+        Label for alternative location identifier. Default is ``'label_alt_id'``.
+        If you don't know it, search for ``"_atom_site"`` in your CIF file to identify it.
+    min_span : int
+        Minimum number of consecutive residues to consider an altloc selection.
+        Spans of altlocs shorter than this are not yielded as selection strings, but ARE
         included in the final selections which includes all residues with altlocs in each chain.
 
-    Yields:
-    - Iterable[str]: Iterable of alternative location selections, keyed by altloc ID.
+    Yields
+    ------
+    str
+        Alternative location selections, keyed by altloc ID.
 
-    Example: for RCSB PDB entry 5SOP, this should yield items like:
-    ['chain A and resi 125-137', "chain_id == 'A' and ((res_id >= 3 and res_id <= 6) or ...)"]
-
+    Examples
+    --------
+    For RCSB PDB entry 5SOP, this should yield items like:
+    ``['chain A and resi 125-137', "chain_id == 'A' and ((res_id >= 3 and res_id <= 6) or ...)"]``
     """
     cif_file = Path(cif_file)
     logger.info(f"Finding altloc selections for {cif_file}")
@@ -70,27 +77,30 @@ def find_altloc_selections(
 def find_consecutive_residues(
     altlocs: dict[str, list[tuple[str, int]]],  # Ex: {'A': [('X', 1), ('X', 2), ('X', 3)]}
 ) -> Iterable[tuple[str, int, int, set[str]]]:
-    """
-    Find and yield spans of consecutive residues with the same set of
-    alternate location identifiers.
+    """Find and yield spans of consecutive residues with the same set of altloc identifiers.
 
     This function processes a dictionary mapping alternate location identifiers (altlocs)
     to (chain_id, residue_id) tuples having that altloc. For each chain_id in the structure,
     it yields spans of consecutive residues when membership in altlocs changes
-    or where a break in residue numbering occurs. The yieled spans include information about
+    or where a break in residue numbering occurs. The yielded spans include information about
     the chain, start residue, end residue, and the corresponding membership.
 
-    Arguments:
-        altlocs (dict[str, list[tuple[str, int]]]): A dictionary where keys are
-        alternate location identifiers and values are lists of tuples representing
-        chain identifiers (str) and residue IDs (int).
+    Parameters
+    ----------
+    altlocs : dict[str, list[tuple[str, int]]]
+        A dictionary where keys are alternate location identifiers and values are
+        lists of tuples representing chain identifiers (str) and residue IDs (int).
 
-    Yields:
-        tuple: A tuple containing the chain (str), start residue ID (int), end residue
-        ID (int), and a set of alternate location identifiers representing the
-        membership in the span.
+    Yields
+    ------
+    tuple[str, int, int, set[str]]
+        A tuple containing the chain, start residue ID, end residue ID, and a set
+        of alternate location identifiers representing the membership in the span.
 
-    Example: for RCSB PDB entry 5SOP, this should yield:
+    Examples
+    --------
+    For RCSB PDB entry 5SOP, this should yield::
+
         [('A', 3, 6, {'A', 'B'}),
          ('A', 10, 12, {'A', 'B'}),
          ('A', 20, 26, {'A', 'B'}),
@@ -104,7 +114,6 @@ def find_consecutive_residues(
          ('A', 125, 137, {'A', 'B', 'C'}),
          ('A', 138, 141, {'A', 'B'}),
          ('A', 155, 169, {'A', 'B'})]
-
     """
     # TODO create test cases from 5SOP and 7Z0E, low priority since this isn't a critical function
     #   and will likely change in the future anyway.

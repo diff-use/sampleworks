@@ -40,17 +40,29 @@ def _calc_lddt(
 ) -> tuple[Float[torch.Tensor, "D"], dict[str, list[float]]]:  # noqa F821
     """Calculates LDDT scores for each model in the batch.
 
-    Args:
-        X_L: Predicted coordinates (D, L, 3).
-        X_gt_L: Ground truth coordinates (D, L, 3).
-        crd_mask_L: Coordinate mask indicating valid atoms (D, L).
-        tok_idx: Token index of each atom (L,). Used to exclude same-token pairs.
-        pairs_to_score: Boolean mask for pairs to score (L, L). If None, scores all valid pairs.
-        distance_cutoff: Distance cutoff for scoring pairs.
-        eps: Small epsilon to prevent division by zero.
+    Parameters
+    ----------
+    X_L : Float[Tensor, "D L 3"]
+        Predicted coordinates.
+    X_gt_L : Float[Tensor, "D L 3"]
+        Ground truth coordinates.
+    crd_mask_L : Bool[Tensor, "D L"]
+        Coordinate mask indicating valid atoms.
+    tok_idx : Int[Tensor, "L"]
+        Token index of each atom. Used to exclude same-token pairs.
+    pairs_to_score : Bool[Tensor, "L L"] | None
+        Boolean mask for pairs to score. If None, scores all valid pairs.
+    distance_cutoff : float
+        Distance cutoff for scoring pairs.
+    eps : float
+        Small epsilon to prevent division by zero.
+    selected_token_ids : np.ndarray | None
+        Optional subset of token IDs to compute residue-level scores for.
 
-    Returns:
-        LDDT scores for each model (D,), and a dictionary of residue-level LDDT scores
+    Returns
+    -------
+    tuple[Float[Tensor, "D"], dict[str, list[float]]]
+        LDDT scores for each model, and a dictionary of residue-level LDDT scores.
     """
     D, L = X_L.shape[:2]
 
@@ -181,17 +193,23 @@ def extract_lddt_features_from_atom_arrays(
 ) -> dict[str, Any]:
     """Extract all features needed for LDDT computation from AtomArrays.
 
-    Args:
-        predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
-        ground_truth_atom_array_stack: Ground truth coordinates as AtomArray(Stack)
+    Parameters
+    ----------
+    predicted_atom_array_stack : AtomArrayStack | AtomArray
+        Predicted coordinates as AtomArray(Stack).
+    ground_truth_atom_array_stack : AtomArrayStack | AtomArray
+        Ground truth coordinates as AtomArray(Stack).
 
-    Returns:
+    Returns
+    -------
+    dict[str, Any]
         Dictionary containing:
-        - X_L: Predicted coordinates tensor (D, L, 3)
-        - X_gt_L: Ground truth coordinates tensor (D, L, 3)
-        - crd_mask_L: Coordinate validity mask (D, L)
-        - tok_idx: Token indices for each atom (L,)
-        - chain_iid_token_lvl: Chain identification at token level
+
+        - ``X_L``: Predicted coordinates tensor (D, L, 3)
+        - ``X_gt_L``: Ground truth coordinates tensor (D, L, 3)
+        - ``crd_mask_L``: Coordinate validity mask (D, L)
+        - ``tok_idx``: Token indices for each atom (L,)
+        - ``chain_iid_token_lvl``: Chain identification at token level
     """
     predicted_atom_array_stack = ensure_atom_array_stack(predicted_atom_array_stack)
     ground_truth_atom_array_stack = ensure_atom_array_stack(ground_truth_atom_array_stack)
@@ -295,17 +313,24 @@ class AllAtomLDDT(Metric):
     ) -> dict[str, Any]:
         """Calculates all-atom LDDT between all pairs of atoms.
 
-        Args:
-            predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
-            ground_truth_atom_array_stack: Ground truth coordinates as AtomArray(Stack)
-            selection: Optional string to select which per-residue LDDT scores to report,
-                using the AtomArray.mask() syntax.
+        Parameters
+        ----------
+        predicted_atom_array_stack : AtomArrayStack | AtomArray
+            Predicted coordinates as AtomArray(Stack).
+        ground_truth_atom_array_stack : AtomArrayStack | AtomArray
+            Ground truth coordinates as AtomArray(Stack).
+        selection : str | None
+            Optional string to select which per-residue LDDT scores to report,
+            using the AtomArray.mask() syntax.
 
-        Returns:
+        Returns
+        -------
+        dict[str, Any]
             A dictionary with all-atom LDDT scores:
-            - lddt_scores: Raw LDDT scores for each model (torch.Tensor)
-            - best_of_1_lddt: LDDT score for the first model
-            - best_of_{N}_lddt: Best LDDT score across all N models
+
+            - ``best_of_1_lddt``: LDDT score for the first model
+            - ``best_of_{N}_lddt``: Best LDDT score across all N models
+            - ``residue_lddt_scores``: Per-residue LDDT scores
         """
 
         # Set token ids to something useful for residue-level LDDT (chain ID + residue number)
@@ -413,16 +438,22 @@ class SelectedLDDT(Metric):
         ground_truth_atom_array_stack: AtomArray | AtomArrayStack,
         selections: Iterable[str] = (),
     ) -> dict[str, dict[str, float | dict[str, list[float]]]]:
-        """
-        Calculates LDDT scores between a reference structure and predicted structure,
+        """Calculates LDDT scores between a reference structure and predicted structure,
         calculated only using residues that match the given selection strings.
 
-        Args:
-            predicted_atom_array_stack: Predicted coordinates as AtomArray(Stack)
-            ground_truth_atom_array_stack: Ground truth coordinates as AtomArray(Stack)
-            selections: iterable of selection strings to pass to AtomArrayStack.mask
-        Returns:
-            Dictionary containing overall and residue-level lddt scores for each selection.
+        Parameters
+        ----------
+        predicted_atom_array_stack : AtomArray | AtomArrayStack
+            Predicted coordinates as AtomArray(Stack).
+        ground_truth_atom_array_stack : AtomArray | AtomArrayStack
+            Ground truth coordinates as AtomArray(Stack).
+        selections : Iterable[str]
+            Iterable of selection strings to pass to AtomArrayStack.mask.
+
+        Returns
+        -------
+        dict[str, dict[str, float | dict[str, list[float]]]]
+            Dictionary containing overall and residue-level LDDT scores for each selection.
         """
 
         # Compute interface LDDT scores for each selection

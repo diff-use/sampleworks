@@ -3,8 +3,7 @@ from loguru import logger
 
 
 def rscc(array1, array2):
-    """
-    Calculate the Real Space Correlation Coefficient between two arrays.
+    """Calculate the Real Space Correlation Coefficient between two arrays.
 
     Returns NaN if correlation cannot be computed.
     """
