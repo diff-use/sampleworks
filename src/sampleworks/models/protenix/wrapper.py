@@ -161,13 +161,11 @@ def _has_ccd_components(json_dict: dict) -> bool:
     bool
         True if any ligand or ion entry references CCD codes.
     """
-    for entry in json_dict.get("sequences", []):
-        if entry.get("ion"):
-            return True
-        lig = entry.get("ligand", {})
-        if lig.get("ligand", "").startswith("CCD_"):
-            return True
-    return False
+    return any(
+        "CCD_" in c and "~" in c
+        for entry in json_dict.get("sequences", [])
+        for c in (entry.get("ligand", {}).get("ligand", ""), entry.get("ion") or "")
+    )
 
 
 def _make_ccd_parse_error(json_dict: dict) -> TypeError:
