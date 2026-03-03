@@ -1,4 +1,5 @@
 import copy
+import functools
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -15,6 +16,7 @@ from biotite.structure import (
     get_chain_starts,
     get_residue_starts,
 )
+from loguru import logger
 from protenix.data.constants import STD_RESIDUES
 from protenix.data.utils import (
     get_lig_lig_bonds,
@@ -451,6 +453,64 @@ def merge_covalent_bonds(covalent_bonds, all_entity_counts):
     return merged_covalent_bonds
 
 
+@functools.cache
+def _build_ccd_suffix_map() -> dict[str, list[str]]:
+    """Build a suffix to 5 character CCD code mapping.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        Maps 2 character suffixes to lists of matching 5 character CCD codes.
+    """
+    from protenix.data.ccd import get_all_ccd_code
+
+    suffix_map: dict[str, list[str]] = defaultdict(list)
+    for code in get_all_ccd_code():
+        if len(code) == 5:
+            suffix_map[code[-2:]].append(code)
+    return dict(suffix_map)
+
+
+def _expand_tilde_ccd_code(truncated: str) -> str:
+    """Expand a tilde-truncated PDB CCD code.
+
+    PDB format truncates 5 char CCD codes to '~' + last 2 characters
+    (e.g., A1AQS is ~QS). This function reverses the truncation by
+    searching Protenix's CCD dictionary for matching codes.
+
+    Parameters
+    ----------
+    truncated : str
+        A tilde-prefixed CCD code (e.g., '~QS').
+
+    Returns
+    -------
+    str
+        The full CCD code if a unique match is found, otherwise the
+        original truncated code.
+    """
+    suffix = truncated[1:]  # strip ~
+    candidates = _build_ccd_suffix_map().get(suffix, [])
+
+    if len(candidates) == 1:
+        logger.info(f"Expanded tilde-truncated CCD code '{truncated}' → '{candidates[0]}'")
+        return candidates[0]
+    elif len(candidates) > 1:
+        logger.error(
+            f"Tilde-truncated CCD code '{truncated}' is ambiguous, it maps to "
+            f"{candidates}. Cannot auto-expand. Please use mmCIF format "
+            f"input, which preserves the full CCD code."
+        )
+        return truncated
+    else:
+        logger.error(
+            f"Tilde-truncated CCD code '{truncated}' has no matching 5 character "
+            f"CCD entry. The downstream model may not be able to parse this "
+            f"component. Please use mmCIF format input."
+        )
+        return truncated
+
+
 def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
     """Convert Atomworks structure to Protenix input JSON.
 
@@ -588,7 +648,11 @@ def structure_to_protenix_json(structure: dict) -> dict[str, Any]:
                 entity_dict["msa"] = {}
         else:
             entity_type = "ligand"
-            lig_ccd = "_".join(label_entity_id_to_sequences.get(label_entity_id, ["UNK"]))
+            lig_ccd_components = label_entity_id_to_sequences.get(label_entity_id, ["UNK"])
+            lig_ccd_components = [
+                _expand_tilde_ccd_code(c) if c.startswith("~") else c for c in lig_ccd_components
+            ]
+            lig_ccd = "_".join(lig_ccd_components)
             entity_dict["ligand"] = f"CCD_{lig_ccd}"
 
         entity_dict["count"] = n_chains_for_entity

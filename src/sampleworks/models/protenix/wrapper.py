@@ -148,6 +148,65 @@ def annotate_structure_for_protenix(
     return {**structure, "_protenix_config": config}
 
 
+def _has_ccd_components(json_dict: dict) -> bool:
+    """Check whether any sequence entry uses CCD component codes.
+
+    Parameters
+    ----------
+    json_dict : dict
+        Protenix input JSON dict containing sequence information.
+
+    Returns
+    -------
+    bool
+        True if any ligand or ion entry references CCD codes.
+    """
+    for entry in json_dict.get("sequences", []):
+        if entry.get("ion"):
+            return True
+        lig = entry.get("ligand", {})
+        if lig.get("ligand", "").startswith("CCD_"):
+            return True
+    return False
+
+
+def _make_ccd_parse_error(json_dict: dict) -> TypeError:
+    """Create an actionable TypeError for CCD parse failures.
+
+    Parameters
+    ----------
+    json_dict : dict
+        The Protenix input JSON dict containing sequence information.
+
+    Returns
+    -------
+    TypeError
+        With diagnostic message listing ligand/ion codes and suggesting mmCIF input.
+    """
+    ligand_codes = [
+        entry.get("ligand", {}).get("ligand", "unknown")
+        for entry in json_dict.get("sequences", [])
+        if "ligand" in entry
+    ]
+    ion_codes = [
+        entry.get("ion", {}).get("ion", "unknown")
+        for entry in json_dict.get("sequences", [])
+        if "ion" in entry
+    ]
+    component_summary = []
+    if ligand_codes:
+        component_summary.append(f"Ligand codes: {ligand_codes}")
+    if ion_codes:
+        component_summary.append(f"Ion codes: {ion_codes}")
+    return TypeError(
+        f"Protenix failed to parse one or more CCD components. "
+        f"{'; '.join(component_summary)}. "
+        f"This commonly happens with tilde-prefixed CCD codes (e.g., '~QS') "
+        f"from PDB format files where the full extended CCD code (e.g., 'A1AQS') "
+        f"was truncated. Consider using mmCIF format input instead."
+    )
+
+
 class ProtenixWrapper:
     """
     Wrapper for Protenix (ByteDance AlphaFold3 implementation)
@@ -318,8 +377,13 @@ class ProtenixWrapper:
                 json_data = json.load(f)
                 json_dict = json_data[0]
 
-        sample2feat = SampleDictToFeatures(json_dict)
-        features_dict, atom_array_protenix, token_array = sample2feat.get_feature_dict()
+        try:
+            sample2feat = SampleDictToFeatures(json_dict)
+            features_dict, atom_array_protenix, token_array = sample2feat.get_feature_dict()
+        except TypeError as e:
+            if _has_ccd_components(json_dict):
+                raise _make_ccd_parse_error(json_dict) from e
+            raise
         features_dict["distogram_rep_atom_mask"] = torch.Tensor(
             atom_array_protenix.distogram_rep_atom_mask
         ).long()
