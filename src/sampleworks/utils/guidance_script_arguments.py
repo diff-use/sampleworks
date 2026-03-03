@@ -2,13 +2,58 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from sampleworks.utils.checkpoint_utils import get_checkpoint
-from sampleworks.utils.guidance_constants import (
-    GuidanceType,
-    StructurePredictor,
-)
+from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
+
+
+def get_checkpoint(args: argparse.Namespace) -> str | None:
+    """Resolve a model checkpoint path from an argparse namespace.
+
+    Looks for a ``model_checkpoint`` attribute on *args*.
+    Empty strings are treated as missing values.
+    """
+    value = getattr(args, "model_checkpoint", None)
+    if value is not None and str(value).strip() != "":
+        return str(value)
+
+    return None
+
+
+def validate_model_checkpoint(
+    model: str | StructurePredictor,
+    checkpoint: str | Path | None,
+) -> str:
+    """Validate and normalize the checkpoint path for ``model``.
+
+    Returns
+    -------
+    str
+        Absolute checkpoint path.
+
+    Raises
+    ------
+    ValueError
+        If checkpoint is missing/empty or points to a directory.
+    FileNotFoundError
+        If checkpoint does not exist.
+    """
+    if checkpoint is None or str(checkpoint).strip() == "":
+        raise ValueError(f"Missing checkpoint for model '{model}'. Provide --model-checkpoint.")
+
+    checkpoint_path = Path(str(checkpoint)).expanduser().resolve()
+
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"Checkpoint for model '{model}' does not exist: {checkpoint_path}. "
+            f"Provide a valid path via --model-checkpoint."
+        )
+
+    if not checkpoint_path.is_file():
+        raise ValueError(f"Checkpoint for model '{model}' must be a file, got: {checkpoint_path}")
+
+    return str(checkpoint_path)
 
 
 @dataclass
@@ -63,7 +108,10 @@ class GuidanceConfig:
             raise ValueError(f"Unknown model type: {self.model}")
 
     def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
-        self.model_checkpoint = get_checkpoint(self.model, args)
+        checkpoint = get_checkpoint(args)
+        if checkpoint is not None:
+            self.model_checkpoint = checkpoint
+
         if job.model == StructurePredictor.BOLTZ_2 and job.method:
             self.method = job.method
 
