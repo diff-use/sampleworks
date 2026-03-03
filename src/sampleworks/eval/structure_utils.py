@@ -2,7 +2,7 @@ import re
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 
 import numpy as np
 import torch
@@ -401,6 +401,18 @@ def extract_selection_coordinates(
         )
 
     return selected_coords
+
+
+@overload
+def get_asym_unit_from_structure(
+    structure: dict, atom_array_index: None = None
+) ->  AtomArrayStack: ...
+
+
+@overload
+def get_asym_unit_from_structure(
+        structure: dict, atom_array_index: int
+) -> AtomArray: ...
 
 
 def get_asym_unit_from_structure(

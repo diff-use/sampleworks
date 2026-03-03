@@ -12,6 +12,7 @@ from sampleworks.utils.atom_array_utils import (
     keep_amino_acids,
     keep_polymer,
     make_normalized_atom_id,
+    remove_atoms_with_any_nan_coords,
     remove_hydrogens,
     select_altloc,
 )
@@ -551,6 +552,7 @@ class TestFilterFunctionsIntegration:
         assert "H" not in elements
         assert "D" not in elements
         assert np.all(filter_polymer(polymer_first))
+
     def test_6b8x_altloc_a_vs_b_common_atoms(self, structure_6b8x_with_altlocs):
         """Full-array altloc A and B share atoms at positions with blank altlocs."""
         arr = structure_6b8x_with_altlocs
@@ -708,3 +710,232 @@ class TestReturnIndices:
             assert sub1.chain_id[i1] == sub2.chain_id[i2]
             assert sub1.res_id[i1] == sub2.res_id[i2]
             assert sub1.atom_name[i1] == sub2.atom_name[i2]
+
+
+class TestRemoveAtomsWithAnyNanCoords:
+    """Tests for remove_atoms_with_any_nan_coords function."""
+
+    def test_atom_array_all_finite(self):
+        """Test AtomArray with all finite coordinates - should return unchanged."""
+        atom_array = AtomArray(5)
+        atom_array.coord = np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [7.0, 8.0, 9.0],
+                [10.0, 11.0, 12.0],
+                [13.0, 14.0, 15.0],
+            ]
+        )
+        atom_array.set_annotation("chain_id", np.array(["A"] * 5))
+        atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
+        atom_array.set_annotation("atom_name", np.array(["CA", "CA", "CA", "CA", "CA"]))
+
+        result = remove_atoms_with_any_nan_coords(atom_array)
+
+        assert len(result) == 5
+        np.testing.assert_array_equal(result.coord, atom_array.coord)
+
+    def test_atom_array_with_nan_coords(self):
+        """Test AtomArray with some NaN coordinates - should remove those atoms."""
+        atom_array = AtomArray(5)
+        atom_array.coord = np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, np.nan, 6.0],  # Has NaN in y coordinate
+                [7.0, 8.0, 9.0],
+                [np.nan, 11.0, 12.0],  # Has NaN in x coordinate
+                [13.0, 14.0, 15.0],
+            ]
+        )
+        atom_array.set_annotation("chain_id", np.array(["A"] * 5))
+        atom_array.set_annotation("res_id", np.array([1, 2, 3, 4, 5]))
+        atom_array.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD", "CE"]))
+
+        result = remove_atoms_with_any_nan_coords(atom_array)
+
+        assert len(result) == 3
+        assert list(cast(np.ndarray, result.res_id)) == [1, 3, 5]
+        assert list(cast(np.ndarray, result.atom_name)) == ["CA", "CG", "CE"]
+        assert np.isfinite(result.coord).all()
+
+    def test_atom_array_with_inf_coords(self):
+        """Test AtomArray with infinite coordinates - should remove those atoms."""
+        atom_array = AtomArray(4)
+        atom_array.coord = np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, np.inf, 6.0],  # Has inf in y coordinate
+                [7.0, 8.0, 9.0],
+                [10.0, -np.inf, 12.0],  # Has -inf in y coordinate
+            ]
+        )
+        atom_array.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        result = remove_atoms_with_any_nan_coords(atom_array)
+
+        assert len(result) == 2
+        assert list(cast(np.ndarray, result.res_id)) == [1, 3]
+        assert np.isfinite(result.coord).all()
+
+    def test_atom_array_all_nan(self):
+        """Test AtomArray where all atoms have NaN - should return empty array."""
+        atom_array = AtomArray(3)
+        atom_array.coord = np.array(
+            [
+                [np.nan, 2.0, 3.0],
+                [4.0, np.nan, 6.0],
+                [7.0, 8.0, np.nan],
+            ]
+        )
+        atom_array.set_annotation("chain_id", np.array(["A"] * 3))
+
+        result = remove_atoms_with_any_nan_coords(atom_array)
+
+        assert len(result) == 0
+
+    def test_atom_array_stack_all_finite(self):
+        """Test AtomArrayStack with all finite coordinates."""
+        # Create 2 models with 4 atoms each
+        coords = np.array(
+            [
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+                [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1], [7.1, 8.1, 9.1], [10.1, 11.1, 12.1]],
+            ]
+        )
+
+        atom_array1 = AtomArray(4)
+        atom_array1.coord = coords[0]
+        atom_array1.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array1.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array1.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        atom_array2 = AtomArray(4)
+        atom_array2.coord = coords[1]
+        atom_array2.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array2.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array2.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        atom_stack = stack([atom_array1, atom_array2])
+        result = remove_atoms_with_any_nan_coords(atom_stack)
+
+        assert isinstance(result, AtomArrayStack)
+        assert result.stack_depth() == 2
+        assert result.array_length() == 4
+        # there's some float issue here, so we use almost equal.
+        np.testing.assert_array_almost_equal(result.coord, coords)
+
+    def test_atom_array_stack_nan_in_one_model(self):
+        """Test AtomArrayStack where one model has NaN - should remove that atom from all models."""
+        # Create 2 models, first has NaN in atom index 1
+        coords = np.array(
+            [
+                [[1.0, 2.0, 3.0], [4.0, np.nan, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+                [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1], [7.1, 8.1, 9.1], [10.1, 11.1, 12.1]],
+            ]
+        )
+
+        atom_array1 = AtomArray(4)
+        atom_array1.coord = coords[0]
+        atom_array1.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array1.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array1.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        atom_array2 = AtomArray(4)
+        atom_array2.coord = coords[1]
+        atom_array2.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array2.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array2.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        atom_stack = stack([atom_array1, atom_array2])
+        result = remove_atoms_with_any_nan_coords(atom_stack)
+
+        assert isinstance(result, AtomArrayStack)
+        assert result.stack_depth() == 2
+        assert result.array_length() == 3  # Atom at index 1 removed from all models
+        assert list(cast(np.ndarray, result[0].res_id)) == [1, 3, 4]
+        assert list(cast(np.ndarray, result[1].res_id)) == [1, 3, 4]
+        assert np.isfinite(result.coord).all()
+
+    def test_atom_array_stack_nan_in_different_models(self):
+        """Test AtomArrayStack where different models have NaN in different atoms."""
+        # Model 1 has NaN in atom 1, Model 2 has NaN in atom 2
+        coords = np.array(
+            [
+                [[1.0, 2.0, 3.0], [4.0, np.nan, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+                [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1], [7.1, np.nan, 9.1], [10.1, 11.1, 12.1]],
+            ]
+        )
+
+        atom_array1 = AtomArray(4)
+        atom_array1.coord = coords[0]
+        atom_array1.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array1.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array1.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        atom_array2 = AtomArray(4)
+        atom_array2.coord = coords[1]
+        atom_array2.set_annotation("chain_id", np.array(["A"] * 4))
+        atom_array2.set_annotation("res_id", np.array([1, 2, 3, 4]))
+        atom_array2.set_annotation("atom_name", np.array(["CA", "CB", "CG", "CD"]))
+
+        atom_stack = stack([atom_array1, atom_array2])
+        result = remove_atoms_with_any_nan_coords(atom_stack)
+
+        # Both atoms 1 and 2 should be removed from all models
+        assert isinstance(result, AtomArrayStack)
+        assert result.stack_depth() == 2
+        assert result.array_length() == 2
+        assert list(cast(np.ndarray, result[0].res_id)) == [1, 4]
+        assert list(cast(np.ndarray, result[1].res_id)) == [1, 4]
+        assert np.isfinite(result.coord).all()
+
+    def test_atom_array_stack_preserves_annotations(self):
+        """Test that annotations are preserved after filtering."""
+        coords = np.array(
+            [
+                [[1.0, 2.0, 3.0], [4.0, np.nan, 6.0], [7.0, 8.0, 9.0]],
+                [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1], [7.1, 8.1, 9.1]],
+            ]
+        )
+
+        atom_array1 = AtomArray(3)
+        atom_array1.coord = coords[0]
+        atom_array1.set_annotation("chain_id", np.array(["A", "A", "B"]))
+        atom_array1.set_annotation("res_id", np.array([1, 2, 3]))
+        atom_array1.set_annotation("atom_name", np.array(["CA", "CB", "CG"]))
+        atom_array1.set_annotation("res_name", np.array(["ALA", "VAL", "LEU"]))
+
+        atom_array2 = AtomArray(3)
+        atom_array2.coord = coords[1]
+        atom_array2.set_annotation("chain_id", np.array(["A", "A", "B"]))
+        atom_array2.set_annotation("res_id", np.array([1, 2, 3]))
+        atom_array2.set_annotation("atom_name", np.array(["CA", "CB", "CG"]))
+        atom_array2.set_annotation("res_name", np.array(["ALA", "VAL", "LEU"]))
+
+        atom_stack = stack([atom_array1, atom_array2])
+        result = remove_atoms_with_any_nan_coords(atom_stack)
+
+        assert list(cast(np.ndarray, result[0].chain_id)) == ["A", "B"]
+        assert list(cast(np.ndarray, result[0].res_id)) == [1, 3]
+        assert list(cast(np.ndarray, result[0].atom_name)) == ["CA", "CG"]
+        assert list(cast(np.ndarray, result[0].res_name)) == ["ALA", "LEU"]
+
+    def test_empty_atom_array(self):
+        """Test with empty AtomArray."""
+        atom_array = AtomArray(0)
+        atom_array.coord = np.empty((0, 3))
+
+        with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray|Stack"):
+            remove_atoms_with_any_nan_coords(atom_array)
+        
+    def test_empty_atom_array_stack(self):
+        """Test with empty AtomArrayStack."""
+        atom_array = AtomArray(0)
+        atom_array.coord = np.empty((0, 3))
+        atom_stack = stack([atom_array, atom_array])
+
+        with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray|Stack"):
+            remove_atoms_with_any_nan_coords(atom_stack)

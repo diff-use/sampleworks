@@ -4,7 +4,6 @@ import re
 from argparse import ArgumentParser
 from pathlib import Path
 
-import einx
 import joblib
 import numpy as np
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
@@ -12,8 +11,8 @@ from atomworks.io.utils.io_utils import load_any
 from biotite.database.rcsb import fetch
 from biotite.structure.io.pdbx import CIFColumn, CIFFile, set_structure
 from loguru import logger
-
 from sampleworks.utils.atom_array_utils import remove_atoms_with_any_nan_coords
+
 
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 
@@ -118,7 +117,7 @@ def patch_individual_cif_file(
         logger.warning(msg)
         return msg
 
-    # Get the offset for residue numbering in the reference structure    
+    # Get the offset for residue numbering in the reference structure
     try:
         reference_path = reference_dir / input_pdb_pattern.format(pdb_id=rcsb_id)
         # fetch only downloads the file if it isn't already present.
@@ -127,8 +126,8 @@ def patch_individual_cif_file(
         reference = load_any(reference_path)
         asym_unit = load_any(cif_file)
         asym_unit = ensure_atom_array_stack(asym_unit)
-    except Exception as e:
-        msg = f"Unable to read and parse either/both of {reference_path}, {cif_file}"
+    except Exception:
+        msg = f"Unable to read and parse either/both of {reference_path}, {cif_file}. "
         logger.warning(msg)
         return msg
 
@@ -141,7 +140,7 @@ def patch_individual_cif_file(
     # CodeRabbit improved this: we are now not chain agnostic, so we can handle multiple chains
     ref_keys = list(dict.fromkeys(zip(reference.chain_id.tolist(), reference.res_id.tolist())))
     cif_keys = list(dict.fromkeys(zip(asym_unit.chain_id.tolist(), asym_unit.res_id.tolist())))
-    
+
     # There should be a single, unique mapping between them. If not, something is wrong.
     if len(ref_keys) != len(cif_keys):
         msg = f"Residue numbers in {cif_path} cannot be mapped to those in {reference_path}"

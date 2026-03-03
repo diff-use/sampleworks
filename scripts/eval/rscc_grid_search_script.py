@@ -16,12 +16,10 @@ search results.
 
 import argparse
 import copy
-import pdb
-import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import einx
 import numpy as np
 import pandas as pd
 import torch
@@ -36,14 +34,21 @@ from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.structure_utils import (
     get_asym_unit_from_structure,
-    get_reference_atomarraystack,
     get_reference_structure_coords,
 )
-from sampleworks.utils.atom_array_utils import filter_to_common_atoms, \
-    remove_atoms_with_any_nan_coords
+from sampleworks.utils.atom_array_utils import (
+    filter_to_common_atoms,
+    remove_atoms_with_any_nan_coords,
+)
 from sampleworks.utils.density_utils import compute_density_from_atomarray
-from sampleworks.utils.frame_transforms import weighted_rigid_align_differentiable, apply_forward_transform
+from sampleworks.utils.frame_transforms import (
+    apply_forward_transform,
+    weighted_rigid_align_differentiable,
+)
 from sampleworks.utils.framework_utils import match_batch
+
+if TYPE_CHECKING:
+    from biotite.structure import AtomArrayStack
 
 
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
@@ -97,7 +102,7 @@ def main(args: argparse.Namespace):
 
     results = []
     base_map_cache: dict[tuple[str, float, str], tuple[XMap, XMap]] = {}
-    ref_full_structure_cache: dict[tuple[str, float], object] = {}
+    ref_full_structure_cache: dict[tuple[str, float], AtomArrayStack] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
     for _i, _exp in enumerate(all_experiments):
         if _exp.protein in protein_configs:
@@ -181,14 +186,14 @@ def main(args: argparse.Namespace):
                 if (protein, _exp.occ_a) not in ref_full_structure_cache:
                     ref_path = protein_config.get_reference_structure_path(_exp.occ_a)
                     if ref_path is None:
-                        raise ValueError(f"Could not find reference structure for occupancy {_exp.occ_a}")
+                        raise ValueError(
+                            f"Could not find reference structure for occupancy {_exp.occ_a}"
+                        )
 
                     # 2. Load the reference structure with parse() to get only the first altloc
                     ref_structure = parse(ref_path, ccd_mirror_path=None)
                     ref_atom_array = get_asym_unit_from_structure(ref_structure)
-                    logger.info(
-                        f"Caching reference structure for {protein} occ_a={_exp.occ_a}"
-                    )
+                    logger.info(f"Caching reference structure for {protein} occ_a={_exp.occ_a}")
                     ref_full_structure_cache[(protein, _exp.occ_a)] = ref_atom_array
                 else:
                     ref_atom_array = ref_full_structure_cache[(protein, _exp.occ_a)]
@@ -199,16 +204,24 @@ def main(args: argparse.Namespace):
                 atom_array = remove_atoms_with_any_nan_coords(atom_array)
                 ref_common, pred_common = filter_to_common_atoms(ref_atom_array, atom_array)
 
-
-                # 4. Align the refined structure to the reference using weighted_rigid_align_differentiable
+                # 4. Align the refined structure to the reference
+                # using weighted_rigid_align_differentiable
                 # Convert to torch tensors with batch dimension
                 ref_coords_torch = torch.from_numpy(ref_common.coord).float()  # [1, n_atoms, 3]
                 pred_coords_torch = torch.from_numpy(pred_common.coord).float()  # [1, n_atoms, 3]
 
                 ref_coords_torch = match_batch(ref_coords_torch, pred_coords_torch.shape[0])
-                if len(ref_coords_torch.shape) != 3 or ref_coords_torch.shape[1] != pred_coords_torch.shape[1]:
-                    logger.error(f"Shape error: ref_coords_torch: {ref_coords_torch.shape}, pred_coords_torch: {pred_coords_torch.shape}")
-                    raise ValueError(f"ref_coords_torch and pred_coords_torch must have the same shape")
+                if (
+                    len(ref_coords_torch.shape) != 3
+                    or ref_coords_torch.shape[1] != pred_coords_torch.shape[1]
+                ):
+                    logger.error(
+                        f"Shape error: ref_coords_torch: {ref_coords_torch.shape}, "
+                        f"pred_coords_torch: {pred_coords_torch.shape}"
+                    )
+                    raise ValueError(
+                        "ref_coords_torch and pred_coords_torch must have the same shape"
+                    )
 
                 # Create uniform weights and mask for all common atoms
                 n_atoms = ref_coords_torch.shape[1]
@@ -218,16 +231,18 @@ def main(args: argparse.Namespace):
                 # Align predicted to reference and get the transform
                 _, transform = weighted_rigid_align_differentiable(
                     true_coords=pred_coords_torch,  # coords to align
-                    pred_coords=ref_coords_torch,   # target coords
+                    pred_coords=ref_coords_torch,  # target coords
                     weights=weights,
                     mask=mask,
                     return_transforms=True,
-                    allow_gradients=False
+                    allow_gradients=False,
                 )
 
                 # 5. Apply the transform to the entire refined structure (atom_array)
                 atom_array_coords_torch = torch.from_numpy(atom_array.coord)
-                aligned_coords_torch = apply_forward_transform(atom_array_coords_torch, transform, rotation_only=False)
+                aligned_coords_torch = apply_forward_transform(
+                    atom_array_coords_torch, transform, rotation_only=False
+                )
                 atom_array.coord = aligned_coords_torch.numpy()
 
                 # Compute density from the aligned refined structure
@@ -249,8 +264,8 @@ def main(args: argparse.Namespace):
 
                 # Calculate RSCC on extracted regions
                 # TODO: don't alter the input object _exp, just get a copy of it as a dict.
-                exp_result.rscc = rscc(_extracted_base, _extracted_computed)
-                exp_result.base_map_path = _base_map_path
+                exp_result["rscc"] = rscc(_extracted_base, _extracted_computed)
+                exp_result["base_map_path"] = _base_map_path
 
             except Exception as _e:
                 logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")

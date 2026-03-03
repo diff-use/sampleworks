@@ -506,11 +506,14 @@ def remove_atoms_with_any_nan_coords(atom_array: AtomArray) -> AtomArray: ...
 
 
 def remove_atoms_with_any_nan_coords(
-        atom_array: AtomArray | AtomArrayStack
+    atom_array: AtomArray | AtomArrayStack,
 ) -> AtomArray | AtomArrayStack:
     """
     Remove atoms with any NaN coordinates in any structure from an AtomArray or AtomArrayStack.
     """
+    if not atom_array or not atom_array.shape[-1]:
+        raise ValueError("Cannot remove atoms from empty AtomArray|Stack")
+    
     if isinstance(atom_array, AtomArrayStack):
         # Partially flatten the coords so that we remove any atom from all structures if any
         # one of them has a NaN at that position.
