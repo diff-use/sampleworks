@@ -20,7 +20,10 @@ dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
 
 [project]
-authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
+authors = [
+    {email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"},
+    {email = "marcus.collins@astera.org", name = "Marcus D. Collins"}
+]
 dependencies = [
   "atomworks[ml]==2.1.1",
   "python-dotenv",
@@ -94,7 +97,7 @@ channels = ["conda-forge"]
 platforms = ["linux-64"]
 
 [tool.pytest.ini_options]
-addopts = "-v --strict-markers"
+addopts = "-v --strict-markers --cov=sampleworks"
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')"
 ]
