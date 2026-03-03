@@ -239,16 +239,20 @@ class MSAManager:
         msa_pairing_strategy: str,
         structure_predictor: str | StructurePredictor = StructurePredictor.BOLTZ_2,
     ) -> dict[str | int, Path]:
-        """
-        Fetches existing MSA files from disk or computes new ones if necessary.
-        data: dict[str | int, str]
+        """Fetches existing MSA files from disk or computes new ones if necessary.
+
+        Parameters
+        ----------
+        data : dict[str | int, str]
             A dictionary mapping target (usu. chain or index) names to protein sequences.
-        msa_pairing_strategy: str
+        msa_pairing_strategy : str
             The MSA pairing strategy to use (usually "greedy").
-        structure_predictor: str
+        structure_predictor : str | StructurePredictor
             The name of the model that will use the MSA, to make sure the format is correct.
 
-        Returns: dict[str, Path]
+        Returns
+        -------
+        dict[str | int, Path]
             A dictionary mapping target names to MSA file paths.
         """
         hash_key = self._hash_arguments(data, msa_pairing_strategy)

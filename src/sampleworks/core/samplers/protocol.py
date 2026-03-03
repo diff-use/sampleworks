@@ -78,8 +78,12 @@ class StepParams:
     def t_effective(self) -> Float[Array, " batch"]:
         """Effective time/noise level for this step.
 
-        For trajectory samplers, returns t.
-        Raises ValueError for optimization samplers.
+        For trajectory samplers, returns ``t``.
+
+        Raises
+        ------
+        ValueError
+            If this is an optimization sampler with no time information.
         """
         if self.t is None:
             raise ValueError("StepParams has no time information (optimization sampler)")

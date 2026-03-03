@@ -4,15 +4,14 @@ import torch
 def trilinear_interpolation_torch(
     density_map: torch.Tensor, points_zyx: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Trilinear interpolation on a 3D map.
+    """Trilinear interpolation on a 3D map.
 
-    Parameters:
+    Parameters
     ----------
-    density_map: torch.Tensor
+    density_map : torch.Tensor
         The 3D density map, expected to have shape [Mz, My, Mx],
         where Mz, My, Mx are the grid dimensions along z, y, and x axes.
-    points_zyx: torch.Tensor
+    points_zyx : torch.Tensor
         A tensor of points at which to interpolate values, with shape
         [..., N_points, 3], where "..." represents any number of leading
         batch dimensions. Each innermost [N_points, 3] slice represents
@@ -22,17 +21,17 @@ def trilinear_interpolation_torch(
         (modulo operations) have already been applied to these points
         if the map represents a unit cell.
 
-    Returns:
+    Returns
     -------
     torch.Tensor
         A tensor of shape [..., N_points] containing the interpolated values,
-        matching the leading dimensions of `points_zyx`.
+        matching the leading dimensions of ``points_zyx``.
 
-    Notes:
+    Notes
     -----
     - Assumes integer grid coordinates correspond to voxel corners.
-    - For points on a grid line, torch.floor determines the lower indexed voxel.
-    - The device and dtype of the output will match `density_map`.
+    - For points on a grid line, ``torch.floor`` determines the lower indexed voxel.
+    - The device and dtype of the output will match ``density_map``.
     """
     if not isinstance(density_map, torch.Tensor) or not isinstance(points_zyx, torch.Tensor):
         raise TypeError("Inputs 'density_map' and 'points_zyx' must be torch.Tensors.")
@@ -115,26 +114,25 @@ def trilinear_interpolation_torch(
 def tricubic_interpolation_torch(
     density_map: torch.Tensor, points_zyx: torch.Tensor
 ) -> torch.Tensor:
-    """
-    Tricubic interpolation on a 3D map.
+    """Tricubic interpolation on a 3D map.
 
-    Parameters:
+    Parameters
     ----------
-    density_map: torch.Tensor
+    density_map : torch.Tensor
         The 3D density map, expected to have shape [Mz, My, Mx],
         where Mz, My, Mx are the grid dimensions along z, y, and x axes.
-    points_zyx: torch.Tensor
+    points_zyx : torch.Tensor
         A tensor of points at which to interpolate values, with shape
         [..., N_points, 3], where "..." represents any number of leading
         batch dimensions. Each innermost [N_points, 3] slice represents
         a set of points, with each point having (z, y, x) coordinates
         in grid units.
 
-    Returns:
+    Returns
     -------
     torch.Tensor
         A tensor of shape [..., N_points] containing the interpolated values,
-        matching the leading dimensions of `points_zyx`.
+        matching the leading dimensions of ``points_zyx``.
     """
     if not isinstance(density_map, torch.Tensor) or not isinstance(points_zyx, torch.Tensor):
         raise TypeError("Inputs must be torch.Tensors.")
@@ -239,18 +237,17 @@ def tricubic_interpolation_torch(
 def compute_derivatives_torch(
     density_map: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Compute derivatives of the density map using central finite differences.
+    """Compute derivatives of the density map using central finite differences.
 
-    Parameters:
+    Parameters
     ----------
-    density_map: torch.Tensor
-        The 3D density map of shape [Mz, My, Mx]
+    density_map : torch.Tensor
+        The 3D density map of shape [Mz, My, Mx].
 
-    Returns:
+    Returns
     -------
-    Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-        Tensors containing derivatives in z, y, and x directions
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        Tensors containing derivatives in z, y, and x directions.
     """
     Mz, My, Mx = density_map.shape
 

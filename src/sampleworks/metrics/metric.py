@@ -20,9 +20,11 @@ def instantiate_metric_manager(
 ) -> "MetricManager":
     """Instantiate a MetricManager from a dictionary of metrics.
 
-    Args:
-        metrics: A dictionary where keys are metric names and values are
-            Hydra configurations for the metrics.
+    Parameters
+    ----------
+    metrics_cfg : dict[str, Any] | DictConfig
+        A dictionary where keys are metric names and values are
+        Hydra configurations for the metrics.
     """
     metrics = {}
     for name, cfg in metrics_cfg.items():
@@ -69,9 +71,12 @@ class MetricManager:
     ):
         """Initialize the MetricManager with a set of metrics.
 
-        Args:
-            raise_errors: Whether to raise errors when a metric fails to compute.
-            metrics: A dictionary where keys are metric names and values are Metric instances.
+        Parameters
+        ----------
+        metrics : dict[str, Metric]
+            A dictionary where keys are metric names and values are Metric instances.
+        raise_errors : bool
+            Whether to raise errors when a metric fails to compute.
         """
         self.raise_errors = raise_errors
         self.metrics = {}
@@ -85,9 +90,11 @@ class MetricManager:
     def instantiate_from_hydra(cls, metrics_cfg: dict[str, Any] | DictConfig) -> "MetricManager":
         """Instantiate a MetricManager from a dictionary of metrics.
 
-        Args:
-            metrics_cfg: A dictionary where keys are metric names and values are Hydra
-                configurations for the metrics.
+        Parameters
+        ----------
+        metrics_cfg : dict[str, Any] | DictConfig
+            A dictionary where keys are metric names and values are Hydra
+            configurations for the metrics.
         """
         return instantiate_metric_manager(metrics_cfg)
 
@@ -99,10 +106,13 @@ class MetricManager:
     ) -> "MetricManager":
         """Create MetricManager from metric objects.
 
-        Args:
-            metrics: Either dict mapping names to Metric objects,
-                or list of (name, Metric) tuples.
-            raise_errors: Whether to raise errors on metric failures. Defaults to ``True``.
+        Parameters
+        ----------
+        metrics : dict[str, Metric] | list[tuple[str, Metric]]
+            Either dict mapping names to Metric objects,
+            or list of (name, Metric) tuples.
+        raise_errors : bool
+            Whether to raise errors on metric failures. Defaults to ``True``.
         """
         if isinstance(metrics, list):
             # Convert list of tuples to dict
@@ -183,15 +193,19 @@ class Metric(ABC):
     A Metric can specify which batches a `MetricManager` applies it to, based on
     `tags` in the input batch.
 
-    Args:
-        required_tags_all: A set of tags that must all be present in the input batch
-            for this metric to be computed.
-        required_tags_any: A set of tags where at least one must be present in the
-            input batch for this metric to be computed.
-        prohibited_tags: A set of tags that must not be present in the input batch
-            for this metric to be computed.
-
     To implement a new metric, subclass this class and implement the `compute` method, at a minimum.
+
+    Parameters
+    ----------
+    required_tags_all : list[str] | set[str] | None
+        A set of tags that must all be present in the input batch
+        for this metric to be computed.
+    required_tags_any : list[str] | set[str] | None
+        A set of tags where at least one must be present in the
+        input batch for this metric to be computed.
+    prohibited_tags : list[str] | set[str] | None
+        A set of tags that must not be present in the input batch
+        for this metric to be computed.
     """
 
     def __init__(
@@ -246,10 +260,10 @@ class Metric(ABC):
     def compute_from_kwargs(self, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Run compute with an arbitrary dictionary of input keys and values.
 
-        The 'kwargs_to_compute_args' property here will determine
+        The ``kwargs_to_compute_args`` property here will determine
         where in the kwargs we will look for the values to pass to the compute method.
 
-        Parameters marked in 'optional_kwargs' will only be passed if present in kwargs.
+        Parameters marked in ``optional_kwargs`` will only be passed if present in kwargs.
         """
         if self.kwargs_to_compute_args:
             compute_inputs = {}

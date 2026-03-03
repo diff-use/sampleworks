@@ -14,15 +14,24 @@ from numpy.typing import NDArray
 def find_bin_midpoints(
     max_distance: float, num_bins: int, device: str | torch.device = "cpu"
 ) -> Float[torch.Tensor, "num_bins"]:  # noqa F821
-    """
-    Find the bin midpoints for a given binning scheme. Used to find expectation of values when
-    converting binned predictions to unbinned predictions. Assumes the minimum of the schema is 0.
-    Args:
-        max_distance: float, maximum distance
-        num_bins: int, number of bins
-        device: device to run on
-    Returns:
-        pae_midpoints: [num_bins], bin midpoints
+    """Find the bin midpoints for a given binning scheme.
+
+    Used to find expectation of values when converting binned predictions
+    to unbinned predictions. Assumes the minimum of the schema is 0.
+
+    Parameters
+    ----------
+    max_distance : float
+        Maximum distance.
+    num_bins : int
+        Number of bins.
+    device : str | torch.device
+        Device to run on.
+
+    Returns
+    -------
+    Float[Tensor, "num_bins"]
+        Bin midpoints.
     """
     bin_size = max_distance / num_bins
     bins = torch.linspace(bin_size, max_distance - bin_size, num_bins - 1, device=device)
@@ -35,14 +44,21 @@ def find_bin_midpoints(
 def unbin_logits(
     logits: Float[torch.Tensor, "B num_bins L X"], max_distance: float, num_bins: int
 ) -> Float[torch.Tensor, "B L L"]:  # noqa F821
-    """
-    Unbin the logits to get the matrix
-    Args:
-        logits: [B, num_bins, L, X], binned logits  where X is 23 for plddt and L for pae and pde
-        max_distance: float, maximum distance
-        num_bins: int, number of bins
-    Returns:
-        unbinned: [B, L, L], unbinned matrix
+    """Unbin the logits to get the matrix.
+
+    Parameters
+    ----------
+    logits : Float[Tensor, "B num_bins L X"]
+        Binned logits where X is 23 for plddt and L for pae and pde.
+    max_distance : float
+        Maximum distance.
+    num_bins : int
+        Number of bins.
+
+    Returns
+    -------
+    Float[Tensor, "B L L"]
+        Unbinned matrix.
     """
     midpoints = find_bin_midpoints(max_distance, num_bins, device=logits.device)
     probabilities = torch.nn.Softmax(dim=1)(logits).detach().float()
@@ -53,13 +69,19 @@ def unbin_logits(
 def create_chainwise_masks_1d(
     ch_label: NDArray[np.str_], device: str | torch.device = "cpu"
 ) -> dict[str, Bool[torch.Tensor, "L"]]:  # noqa F821
-    """
-    Create 1D chainwise masks for a set of chain labels
-    Args:
-        ch_label: np.ndarray [L], chain labels
-        device: torch.device, device to run on
-    Returns:
-        ch_masks: dict, chain maps chain letter to which elements to score for that chain
+    """Create 1D chainwise masks for a set of chain labels.
+
+    Parameters
+    ----------
+    ch_label : NDArray[np.str_]
+        Chain labels, shape (L,).
+    device : str | torch.device
+        Device to run on.
+
+    Returns
+    -------
+    dict[str, Bool[Tensor, "L"]]
+        Chain maps chain letter to which elements to score for that chain.
     """
     unique_chains = np.unique(ch_label)
     ch_masks = {}
@@ -72,13 +94,19 @@ def create_chainwise_masks_1d(
 def create_chainwise_masks_2d(
     ch_label: NDArray[np.str_], device: str | torch.device = "cpu"
 ) -> dict[str, Bool[torch.Tensor, "L L"]]:  # noqa F821
-    """
-    Create 2D chainwise masks for a set of chain labels
-    Args:
-        ch_label: np.ndarray [L], chain labels
-        device: torch.device, device to run on
-    Returns:
-        ch_masks: dict, chain maps chain letter to which elements to score for that chain
+    """Create 2D chainwise masks for a set of chain labels.
+
+    Parameters
+    ----------
+    ch_label : NDArray[np.str_]
+        Chain labels, shape (L,).
+    device : str | torch.device
+        Device to run on.
+
+    Returns
+    -------
+    dict[str, Bool[Tensor, "L L"]]
+        Chain maps chain letter to which elements to score for that chain.
     """
     unique_chains = np.unique(ch_label)
     ch_masks = {}
@@ -92,13 +120,19 @@ def create_chainwise_masks_2d(
 def create_interface_masks_2d(
     ch_label: NDArray[np.str_], device: str | torch.device = "cpu"
 ) -> dict[tuple[str, str], Bool[torch.Tensor, "L L"]]:  # noqa F821
-    """
-    Create interface masks for a set of chain labels
-    Args:
-        ch_label: np.ndarray [L], chain labels
-        device: torch.device, device to run on
-    Returns:
-        pairs_to_score: dict mapping chain pairs to boolean masks
+    """Create interface masks for a set of chain labels.
+
+    Parameters
+    ----------
+    ch_label : NDArray[np.str_]
+        Chain labels, shape (L,).
+    device : str | torch.device
+        Device to run on.
+
+    Returns
+    -------
+    dict[tuple[str, str], Bool[Tensor, "L L"]]
+        Mapping of chain pairs to boolean masks.
     """
     unique_chains = np.unique(ch_label)
     pairs_to_score = {}
@@ -117,15 +151,21 @@ def compute_mean_over_subsampled_pairs(
     pairs_to_score: Bool[torch.Tensor, "L M"],
     eps: float = 1e-6,
 ) -> Float[torch.Tensor, "B"]:  # noqa F821
-    """
-    Compute the mean over a subsample of pairs in a 2d matrix.
-    Returns a tensor with an element for each batch
-    Args:
-        matrix_to_mean: tensor of shape (batch, L, L)
-        pairs_to_score: 2d tensor,shape (L, L); 1 where pairs should be scored and 0 elsewhere
-        eps: small epsilon value to avoid division by zero
-    Returns:
-        1d tensor of shape (batch,) with the mean over the subsampled pairs for each batch
+    """Compute the mean over a subsample of pairs in a 2d matrix.
+
+    Parameters
+    ----------
+    matrix_to_mean : Float[Tensor, "B L M"]
+        Tensor of shape (batch, L, M).
+    pairs_to_score : Bool[Tensor, "L M"]
+        2D tensor, shape (L, M); 1 where pairs should be scored and 0 elsewhere.
+    eps : float
+        Small epsilon value to avoid division by zero.
+
+    Returns
+    -------
+    Float[Tensor, "B"]
+        1D tensor of shape (batch,) with the mean over the subsampled pairs for each batch.
     """
     B, L, M = matrix_to_mean.shape
     assert matrix_to_mean.shape == (
@@ -143,14 +183,19 @@ def compute_min_over_subsampled_pairs(
     matrix_to_min: Float[torch.Tensor, "B L M"],  # noqa F821
     pairs_to_score: Bool[torch.Tensor, "L M"],  # noqa F821
 ) -> Float[torch.Tensor, "B"]:  # noqa F821
-    """
-    Compute the min over a subsample of pairs in a 2d matrix.
-    Returns a tensor with an element for each batch
-    Args:
-        matrix_to_min: tensor of shape (batch, L, L)
-        pairs_to_score: 2d tensor,shape (L, L); 1 where pairs should be scored and 0 elsewhere
-    Returns:
-        1d tensor of shape (batch,) with the min over the subsampled pairs for each batch
+    """Compute the min over a subsample of pairs in a 2d matrix.
+
+    Parameters
+    ----------
+    matrix_to_min : Float[Tensor, "B L M"]
+        Tensor of shape (batch, L, M).
+    pairs_to_score : Bool[Tensor, "L M"]
+        2D tensor, shape (L, M); 1 where pairs should be scored and 0 elsewhere.
+
+    Returns
+    -------
+    Float[Tensor, "B"]
+        1D tensor of shape (batch,) with the min over the subsampled pairs for each batch.
     """
     B, L, M = matrix_to_min.shape
     assert matrix_to_min.shape == (
@@ -177,13 +222,18 @@ def compute_min_over_subsampled_pairs(
 
 
 def spread_batch_into_dictionary(batch: Float[torch.Tensor, "B"]) -> dict[int, float]:  # noqa F821
-    """
-    Given a batch of data, create a dictionary with keys as the
+    """Given a batch of data, create a dictionary with keys as the
     batch index and value as the corresponding data
-    Args:
-        batch: 1D tensor of shape (B,)
-    Returns:
-        Dictionary mapping batch indices to float values
+
+    Parameters
+    ----------
+    batch : Float[Tensor, "B"]
+        1D tensor of shape (B,).
+
+    Returns
+    -------
+    dict[int, float]
+        Dictionary mapping batch indices to float values.
     """
     assert len(batch.shape) == 1, f"Batch should be a 1d tensor, {batch}"
     return {i: data.item() for i, data in enumerate(batch)}
