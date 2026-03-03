@@ -15,5 +15,14 @@ jobs:
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
-      - run: pixi run -e boltz-dev all-tests
+      - name: install pixi
+        uses: prefix-dev/setup-pixi@v0.9.4
+        with:
+          pixi-version: v0.62.2
+
+          cache: true
+          auth-host: prefix.dev
+          auth-token: ${{ secrets.PREFIX_DEV_TOKEN }}
+      - name: Run Boltz tests
+        run: pixi run -e boltz-dev all-tests
       - run: echo "🍏 This job's status is ${{ job.status }}."
