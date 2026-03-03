@@ -33,7 +33,11 @@ from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
 )
-from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
+from sampleworks.utils.guidance_script_arguments import (
+    GuidanceConfig,
+    JobResult,
+    validate_model_checkpoint,
+)
 from sampleworks.utils.msa import MSAManager
 
 
@@ -175,21 +179,23 @@ def get_model_and_device(
     method: str | None = None,
     model: Any = None,
 ) -> tuple[torch.device, Any]:
+    validated_checkpoint_path = validate_model_checkpoint(model_type, model_checkpoint_path)
+
     device = torch.device(device_str) if device_str else try_gpu()
     logger.debug(f"Using device: {device}")
     if model_type == StructurePredictor.PROTENIX:
         if ProtenixWrapper is None:
             raise ImportError("Protenix dependencies not installed")
-        logger.debug(f"Loading Protenix model from {model_checkpoint_path}")
+        logger.debug(f"Loading Protenix model from {validated_checkpoint_path}")
         model_wrapper = ProtenixWrapper(
-            checkpoint_path=model_checkpoint_path, device=device, model=model
+            checkpoint_path=validated_checkpoint_path, device=device, model=model
         )
     elif model_type == StructurePredictor.BOLTZ_1:
         if Boltz1Wrapper is None:
             raise ImportError("Boltz dependencies not installed")
-        logger.debug(f"Loading Boltz1 model from {model_checkpoint_path}")
+        logger.debug(f"Loading Boltz1 model from {validated_checkpoint_path}")
         model_wrapper = Boltz1Wrapper(
-            checkpoint_path=model_checkpoint_path,
+            checkpoint_path=validated_checkpoint_path,
             use_msa_manager=True,
             device=device,
             model=model,
@@ -200,9 +206,9 @@ def get_model_and_device(
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
-        logger.debug(f"Loading Boltz2 model from {model_checkpoint_path}")
+        logger.debug(f"Loading Boltz2 model from {validated_checkpoint_path}")
         model_wrapper = Boltz2Wrapper(
-            checkpoint_path=model_checkpoint_path,
+            checkpoint_path=validated_checkpoint_path,
             use_msa_manager=True,
             device=device,
             method=method.upper(),
@@ -211,7 +217,11 @@ def get_model_and_device(
     elif model_type == StructurePredictor.RF3:
         if RF3Wrapper is None:
             raise ImportError("RF3 dependencies not installed")
-        model_wrapper = RF3Wrapper(checkpoint_path=model_checkpoint_path, msa_manager=MSAManager())
+        logger.debug(f"Loading RF3 model from {validated_checkpoint_path}")
+        model_wrapper = RF3Wrapper(
+            checkpoint_path=validated_checkpoint_path,
+            msa_manager=MSAManager(),
+        )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -579,13 +589,11 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         job_queue: list[GuidanceConfig] = pickle.load(fp)
 
     template_job = job_queue[0]
-    if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
-        raise ValueError("Running guidance requires that you specify a model checkpoint")
 
     logger.info(f"Running {len(job_queue)} jobs, using {template_job} as a setup template")
     device, model_wrapper = get_model_and_device(
         str(template_job.device),
-        template_job.model_checkpoint,
+        getattr(template_job, "model_checkpoint", ""),
         template_job.model,
         method=template_job.method if hasattr(template_job, "method") else None,
     )
