@@ -463,31 +463,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="./grid_search_results", help="Output directory")
 
     parser.add_argument(
-        "--boltz1-checkpoint",
-        default=os.environ.get(
-            "BOLTZ1_CHECKPOINT", os.path.expanduser("~/.boltz/boltz1_conf.ckpt")
-        ),
-        help="Boltz1 checkpoint path (default: $BOLTZ1_CHECKPOINT or ~/.boltz/boltz1_conf.ckpt)",
-    )
-    parser.add_argument(
-        "--boltz2-checkpoint",
-        default=os.environ.get(
-            "BOLTZ2_CHECKPOINT", os.path.expanduser("~/.boltz/boltz2_conf.ckpt")
-        ),
-        help="Boltz2 checkpoint path (default: $BOLTZ2_CHECKPOINT or ~/.boltz/boltz2_conf.ckpt)",
-    )
-    parser.add_argument(
-        "--protenix-checkpoint",
-        default=os.environ.get("PROTENIX_CHECKPOINT", ""),
-        help="Protenix checkpoint path",
-    )
-    parser.add_argument(
-        "--rf3-checkpoint",
-        default=os.environ.get(
-            "RF3_CHECKPOINT",
-            os.path.expanduser("~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt"),
-        ),
-        help="RF3 checkpoint path (default: $RF3_CHECKPOINT or ~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt)",
+        "--model-checkpoint",
+        default="",
+        help="Override the default checkpoint path for the selected model",
     )
     parser.add_argument(
         "--methods",
