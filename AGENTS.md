@@ -8,7 +8,7 @@ Code should be direct, readable, and maximize clarity without verbosity. Name va
 
 Respond in a measured, clear tone. Consider alternatives carefully. Include confidence estimates for claims (e.g., "I am about 75% confident").
 
-Code reuse is paramount. Whenever possible, locate high quality open source implementations for algorithms and use those instead of implementing something yourself. Chances are someone has already solved the problem.
+Code reuse is paramount. Whenever possible, locate high-quality open-source implementations for algorithms and use those instead of implementing something yourself. Chances are someone has already solved the problem.
 
 ## Project Overview
 
@@ -79,7 +79,7 @@ Diffusion/flow models operate over time t ∈ [1, 0]. Effective conditioning req
 
 ### 6. Differentiability End-to-End
 
-Gradient-based guidance requires differentiability from experimental observable back to atomic coordinates. The forward models (density calculation, structure factors) must be differentiable. If coordinates or internal representions can't receive gradients, the potential can't guide the structure.
+Gradient-based guidance requires differentiability from experimental observable back to atomic coordinates. The forward models (density calculation, structure factors) must be differentiable. If coordinates or internal representations can't receive gradients, the potential can't guide the structure.
 
 ### 7. Atomic Responsibility
 
