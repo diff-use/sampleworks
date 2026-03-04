@@ -94,7 +94,7 @@ def scan_grid_search_results(
         guidance_weight = None
         if params["guidance_weight"] is not None:
             guidance_weight = float(params["guidance_weight"])
-        gd_steps = int(params["gd_steps"]) if params["gd_steps"] else None
+        gd_steps = int(params["gd_steps"]) if params["gd_steps"] is not None else None
 
         # Validate parameters to satisfy pyright
         if (

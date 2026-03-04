@@ -423,7 +423,7 @@ def get_asym_unit_from_structure(
     optionally specify the index of the AtomArray in the stack (e.g. for NMR models).
     """
     atom_array = structure["asym_unit"]
-    if atom_array_index and isinstance(atom_array, AtomArrayStack):
+    if atom_array_index is not None and isinstance(atom_array, AtomArrayStack):
         atom_array = atom_array.get_array(atom_array_index)
     if not isinstance(atom_array, (AtomArray, AtomArrayStack)):
         raise TypeError(f"Unexpected atom array type: {type(atom_array)}")
