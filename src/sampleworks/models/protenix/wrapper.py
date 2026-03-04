@@ -149,7 +149,11 @@ def annotate_structure_for_protenix(
 
 
 def _has_ccd_components(json_dict: dict) -> bool:
-    """Check whether any sequence entry uses CCD component codes.
+    """Check whether any sequence entry contains truncated CCD codes.
+
+    Detects entries where a CCD code has been truncated with a tilde
+    (i.e., the string contains both ``"CCD_"`` and ``"~"``), which
+    indicates a CCD identifier that was clipped during serialization.
 
     Parameters
     ----------
@@ -159,12 +163,15 @@ def _has_ccd_components(json_dict: dict) -> bool:
     Returns
     -------
     bool
-        True if any ligand or ion entry references CCD codes.
+        True if any ligand or ion entry contains a truncated CCD code.
     """
     return any(
         "CCD_" in c and "~" in c
         for entry in json_dict.get("sequences", [])
-        for c in (entry.get("ligand", {}).get("ligand", ""), entry.get("ion") or "")
+        for c in (
+            entry.get("ligand", {}).get("ligand", ""),
+            entry.get("ion", {}).get("ion", ""),
+        )
     )
 
 
@@ -196,12 +203,14 @@ def _make_ccd_parse_error(json_dict: dict) -> TypeError:
         component_summary.append(f"Ligand codes: {ligand_codes}")
     if ion_codes:
         component_summary.append(f"Ion codes: {ion_codes}")
+    base_msg = "Protenix failed to parse one or more CCD components."
+    if component_summary:
+        base_msg += f" {'; '.join(component_summary)}."
     return TypeError(
-        f"Protenix failed to parse one or more CCD components. "
-        f"{'; '.join(component_summary)}. "
-        f"This commonly happens with tilde-prefixed CCD codes (e.g., '~QS') "
-        f"from PDB format files where the full extended CCD code (e.g., 'A1AQS') "
-        f"was truncated. Consider using mmCIF format input instead."
+        base_msg
+        + " This commonly happens with tilde-prefixed CCD codes (e.g., '~QS') "
+        + "from PDB format files where the full extended CCD code (e.g., 'A1AQS') "
+        + "was truncated. Consider using mmCIF format input instead."
     )
 
 
