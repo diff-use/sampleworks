@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+*.egg
+.eggs
+dist
+build
+
+# Virtual environments and package managers
+.venv
+venv
+.pixi
+.conda
+
+# Testing and development
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+tests/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation
+*.md
+docs/
+
+# Pre-commit
+.pre-commit-config.yaml
+
+# Environment files (may contain secrets)
+.env
+.env.*
+
+# Output directories (generated at runtime)
+output/
+results/
+
+# macOS
+.DS_Store
+
+# Hatch alternative config (not needed in container)
+pyproject-hatch.toml
