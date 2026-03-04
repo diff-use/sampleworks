@@ -928,7 +928,7 @@ class TestRemoveAtomsWithAnyNanCoords:
         atom_array = AtomArray(0)
         atom_array.coord = np.empty((0, 3))
 
-        with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray|Stack"):
+        with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray\|Stack"):
             remove_atoms_with_any_nan_coords(atom_array)
         
     def test_empty_atom_array_stack(self):
@@ -937,5 +937,5 @@ class TestRemoveAtomsWithAnyNanCoords:
         atom_array.coord = np.empty((0, 3))
         atom_stack = stack([atom_array, atom_array])
 
-        with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray|Stack"):
+        with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray\|Stack"):
             remove_atoms_with_any_nan_coords(atom_stack)

@@ -288,7 +288,7 @@ class TestGetReferenceStructureCoords:
     """Tests for get_reference_structure_coords function."""
 
     def test_returns_empty_dict_when_no_valid(self, mock_protein_config):
-        """Test that no valid structures returns None."""
+        """Test that no valid structures returns and empty dictionary."""
         coords = get_reference_structure_coords(mock_protein_config, "test", occ_list=(0.0, 1.0))
         assert isinstance(coords, dict)
         assert len(coords) == 0

@@ -18,7 +18,6 @@ import argparse
 import copy
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -26,6 +25,7 @@ import torch
 
 # Import local modules for density calculation
 from atomworks.io.parser import parse
+from biotite.structure import AtomArrayStack
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING
@@ -47,8 +47,6 @@ from sampleworks.utils.frame_transforms import (
 )
 from sampleworks.utils.framework_utils import match_batch
 
-if TYPE_CHECKING:
-    from biotite.structure import AtomArrayStack
 
 
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
@@ -177,8 +175,7 @@ def main(args: argparse.Namespace):
                     )
                     atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
 
-                # TODO Check lines 166-205 _thoroughly_. They came from Claude.
-                # Lines ~166-205 are to align the refined structure to the reference structure.
+                # Lines ~183-245 are to align the refined structure to the reference structure.
                 # so that the calculated maps are also aligned, for a correct RSCC calculation
                 #
                 # Align the refined structure to the reference structure
