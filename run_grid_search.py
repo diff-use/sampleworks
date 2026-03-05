@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent
-import csv
 import json
 import multiprocessing
 import os
@@ -21,6 +20,7 @@ from typing import Any
 from loguru import logger as log
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
+from sampleworks.utils.protein_input import ProteinInput
 
 
 @dataclass
@@ -283,11 +283,7 @@ def main(args: argparse.Namespace):
 def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     jobs = []
 
-    with open(args.proteins, newline="") as f:
-        reader = csv.DictReader(f)
-        proteins = list(reader)
-
-    proteins_dir = Path(args.proteins).parent
+    proteins = ProteinInput.from_csv(Path(args.proteins))
     models = args.models.split()
     scalers = args.scalers.split()
     ensemble_sizes = [int(x) for x in args.ensemble_sizes.split()]
@@ -296,10 +292,10 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     methods = [m.strip() for m in args.methods.split(",")]
 
     for protein in proteins:
-        structure = proteins_dir / protein["structure"].strip()
-        density = str(proteins_dir / protein["density"].strip())  # qfit.volume only supports str
-        resolution = float(protein["resolution"].strip())
-        protein_name = protein["name"].strip()
+        structure = protein.structure
+        density = str(protein.density)  # in case patch for Path in qfit.volume doesn't work
+        resolution = protein.resolution
+        protein_name = protein.name
 
         for model in models:
             model_methods = methods if model == StructurePredictor.BOLTZ_2 else [None]
