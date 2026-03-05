@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pickle
 import traceback
@@ -578,17 +579,12 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     job_results = []
     for i, job in enumerate(job_queue):
         logger.info(f"Running job {i + 1}/{len(job_queue)}: {job}")
-        # TODO: I think it is safe now to re-use the wrapper, it might save us some time.
-        # The model wrapper can persist state across runs, so we need to re-initialize it each run.
-        # if job.model_checkpoint is None:
-        #     raise ValueError(
-        #         "Running guidance requires that you specify a model checkpoint, not None"
-        #     )
-        # device, model_wrapper = get_model_and_device(
-        #     str(device), job.model_checkpoint, job.model, job.method, model_wrapper.model
-        # )
 
         job_result = run_guidance(job, job.guidance_type, model_wrapper, device)
+        # write out the job parameters to a JSON file in the same directory as the refined.cif file
+        with open(Path(job_result.output_dir) / "job_metadata.json", "w") as fp:
+            json.dump(job.__dict__, fp)
+
         job_results.append(job_result)
         torch.cuda.empty_cache()  # just in case
 
