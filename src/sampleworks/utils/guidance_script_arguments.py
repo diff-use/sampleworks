@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sampleworks.utils.checkpoint_utils import get_checkpoint
@@ -21,7 +22,7 @@ class GuidanceConfig:
 
     # add basic arguments by default.
     protein: str
-    structure: str  # actually a path to a structure file
+    structure: str | Path  # actually a path to a structure file
     density: str
     model: str | StructurePredictor
     guidance_type: str | GuidanceType
@@ -322,7 +323,7 @@ def parse_rf3_fk_steering_args():
 @dataclass
 class JobConfig:
     protein: str
-    structure_path: str
+    structure_path: str | Path
     density_path: str
     resolution: float
     model: str
