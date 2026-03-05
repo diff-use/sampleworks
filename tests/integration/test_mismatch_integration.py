@@ -275,8 +275,6 @@ def _model_space_reward_inputs(n_model: int, batch: int = 1) -> RewardInputs:
         b_factors=torch.ones(batch, n_model) * 20.0,
         occupancies=torch.ones(batch, n_model),
         input_coords=torch.randn(batch, n_model, 3),
-        reward_param_mask=np.ones(n_model, dtype=bool),
-        mask_like=torch.ones(batch, n_model),
     )
 
 
@@ -639,7 +637,7 @@ class TestRealStructurePreprocessing:
 
         assert reward_inputs.elements.shape[-1] == real_pair_case.expected_n_model
         assert reward_inputs.input_coords.shape[-2] == real_pair_case.expected_n_model
-        assert reward_inputs.mask_like.shape == reward_inputs.input_coords.shape[:-1]
+        assert reward_inputs.input_coords.shape[-2] == real_pair_case.expected_n_model
 
         atom_b_factors = cast(np.ndarray, processed.atom_array.b_factor)
         expected_common_b_factors = torch.as_tensor(
@@ -980,7 +978,7 @@ class TestPreprocessingPipeline:
         assert reward_inputs.elements.shape[-1] == n_model
         assert reward_inputs.b_factors.shape[-1] == n_model
         assert reward_inputs.input_coords.shape[-2] == n_model
-        assert reward_inputs.mask_like.shape[-1] == n_model
+        assert reward_inputs.input_coords.shape[-2] == n_model
 
     def test_b_factor_override(self, mismatch_case: MismatchCase):
         """Structure B-factors override model template values on common atoms."""
