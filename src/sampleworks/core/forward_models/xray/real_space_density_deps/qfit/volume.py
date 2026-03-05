@@ -511,7 +511,9 @@ class XMap(_BaseVolume):
         unique_indices = np.unique(all_indices, axis=0)
 
         # Return the unique (z, y, x) indices
-        return unique_indices, self.array[unique_indices[:, 0], unique_indices[:, 1], unique_indices[:, 2]]
+        return unique_indices, self.array[
+            unique_indices[:, 0], unique_indices[:, 1], unique_indices[:, 2]
+        ]
 
     def interpolate(self, xyz):
         # Transform xyz to grid coor.
@@ -540,10 +542,10 @@ class ASU:
 
 # Volume parsers
 def parse_volume(fid, fmt=None):
-    try:
-        fname = fid.name
-    except AttributeError:
-        fname = fid
+    if hasattr(fid, "read"):
+        fname = getattr(fid, "name", "unknown_file")
+    else:
+        fname = str(fid)
 
     if fmt is None:
         fmt = os.path.splitext(fname)[-1]
