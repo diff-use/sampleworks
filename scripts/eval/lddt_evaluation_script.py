@@ -1,5 +1,4 @@
 import argparse
-
 import re
 import sys
 import traceback
@@ -278,7 +277,7 @@ def main(args: argparse.Namespace):
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
 
-        atom_array_key = (_exp.protein, _exp.occ_key)
+        atom_array_key = (protein, _exp.occ_key)
         if atom_array_key not in reference_atom_arrays:
             logger.warning(
                 f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
