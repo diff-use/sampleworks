@@ -22,8 +22,8 @@ class GuidanceConfig:
 
     # add basic arguments by default.
     protein: str
-    structure: str | Path  # actually a path to a structure file
-    density: str
+    structure: Path | str  # actually a path to a structure file
+    density: Path | str
     model: str | StructurePredictor
     guidance_type: str | GuidanceType
     log_path: str
@@ -323,8 +323,8 @@ def parse_rf3_fk_steering_args():
 @dataclass
 class JobConfig:
     protein: str
-    structure_path: str | Path
-    density_path: str
+    structure_path: Path | str
+    density_path: Path | str
     resolution: float
     model: str
     scaler: str
