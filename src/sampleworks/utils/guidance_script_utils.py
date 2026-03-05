@@ -388,6 +388,9 @@ def run_guidance(
     log_path = getattr(args, "log_path", None) or os.path.join(args.output_dir, "run.log")
     os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
 
+    # just in case log_path does not go to args.output_dir, make sure the latter exists
+    os.makedirs(args.output_dir, exist_ok=True)
+
     # separate logs for each guidance run
     handle = logger.add(
         log_path, level="INFO", filter=lambda rec: rec["extra"].get("special", False) is True
