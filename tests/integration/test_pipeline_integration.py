@@ -13,7 +13,6 @@ This file consolidates tests for:
 Tests are organized from fast (mock-based) to slow (real wrappers).
 """
 
-import numpy as np
 import pytest
 import torch
 from sampleworks.core.rewards.protocol import RewardInputs
@@ -25,6 +24,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
+from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.utils.guidance_constants import (
     StepScalers,
     StructurePredictor,
@@ -94,8 +94,6 @@ def create_step_context_with_reward(
         b_factors=torch.ones(batch_size, num_atoms, device=device) * 20.0,
         occupancies=torch.ones(batch_size, num_atoms, device=device),
         input_coords=state.clone(),
-        reward_param_mask=np.ones(num_atoms, dtype=bool),
-        mask_like=torch.ones(batch_size, num_atoms, device=device),
     )
 
     metadata = None
@@ -324,8 +322,6 @@ class TestStepScalerMatrix:
             b_factors=torch.ones(batch_size, num_atoms, device=device) * 20.0,
             occupancies=torch.ones(batch_size, num_atoms, device=device),
             input_coords=state.detach().clone(),
-            reward_param_mask=np.ones(num_atoms, dtype=bool),
-            mask_like=torch.ones(batch_size, num_atoms, device=device),
         )
         context = StepParams(
             step_index=0,
@@ -368,8 +364,6 @@ class TestStepScalerMatrix:
                 b_factors=torch.ones(batch_size, num_atoms, device=device) * 20.0,
                 occupancies=torch.ones(batch_size, num_atoms, device=device),
                 input_coords=state.detach().clone(),
-                reward_param_mask=np.ones(num_atoms, dtype=bool),
-                mask_like=torch.ones(batch_size, num_atoms, device=device),
             )
             context = StepParams(
                 step_index=0,
@@ -1073,6 +1067,57 @@ class TestRealTrajectoryScalerMatrix:
         assert torch.isfinite(torch.as_tensor(result.final_state)).all()
         assert result.trajectory is not None
         assert len(result.trajectory) == 3
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("wrapper_type", get_slow_wrappers(), ids=lambda w: w.value)
+@pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))
+class TestRealWrapperPreprocessing:
+    """process_structure_to_trajectory_input feeds properly into to_reward_inputs with real wrappers
+
+    Verifies that featurization and preprocessing produce reward_inputs whose
+    atom dimension matches the state dimension for every wrapper × structure
+    combination.  This catches model-specific NaN coordinate or occupancy
+    issues (e.g., RF3 on 5I09) that only surface with real featurization.
+    """
+
+    def test_reward_inputs_dimensions_match_state(
+        self,
+        wrapper_type: StructurePredictor,
+        structure_fixture: str,
+        temp_output_dir,
+        request,
+    ):
+        """reward_inputs atom count equals the model state atom count.
+
+        Wrappers must ensure model_atom_array has valid coordinates and
+        occupancy for all atoms.  ``RewardInputs.from_atom_array`` uses
+        all atoms without masking, so any NaN or zero-occupancy atoms
+        would produce invalid reward tensors and a dimension mismatch
+        in the step scalers.
+        """
+        wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
+        structure = request.getfixturevalue(structure_fixture)
+        device = wrapper.device if hasattr(wrapper, "device") else torch.device("cpu")
+
+        annotated = annotate_structure_for_wrapper_type(wrapper_type, structure, temp_output_dir)
+        features = wrapper.featurize(annotated)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
+
+        processed = process_structure_to_trajectory_input(
+            structure=annotated,
+            coords_from_prior=state,
+            features=features,
+            ensemble_size=1,
+        )
+        reward_inputs = processed.to_reward_inputs(device=device)
+
+        n_state = state.shape[-2]
+        n_reward = reward_inputs.elements.shape[-1]
+        assert n_state == n_reward, (
+            f"State atom count ({n_state}) != reward atom count ({n_reward}). "
+            f"wrapper={wrapper_type.value}, structure={structure_fixture}"
+        )
 
 
 @pytest.mark.slow

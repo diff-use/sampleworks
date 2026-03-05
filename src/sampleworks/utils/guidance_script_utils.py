@@ -66,18 +66,13 @@ def save_trajectory(
     trajectory,
     atom_array,
     output_dir,
-    reward_param_mask,
     subdir_name,
     save_every=10,
 ):
     if scaler_type == GuidanceType.PURE_GUIDANCE:
-        _save_trajectory(
-            trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
-        )
+        _save_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every)
     elif scaler_type == GuidanceType.FK_STEERING:
-        _save_fk_steering_trajectory(
-            trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
-        )
+        _save_fk_steering_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every)
     else:  # we shouldn't ever get here, since we can't have run guidance w/o this!
         raise ValueError(f"Invalid scaler type: {scaler_type}")
 
@@ -85,33 +80,24 @@ def save_trajectory(
 def _write_coords_into_array(
     array_copy: AtomArrayStack,
     coords: np.ndarray,
-    reward_param_mask: np.ndarray,
 ) -> None:
     """**Mutates** ``array_copy.coord`` in-place with trajectory coordinates.
 
-    When the trajectory spans all atoms in the array (model trajectories during
-    a mismatch run, where the model's internal atom count differs from the input structure we are
-    aligning to), coords are assigned directly to ``.coord``. Otherwise the
-    ``reward_param_mask`` indexes the correct atom subset.
+    Coordinates must span all atoms in the array. Wrappers are responsible
+    for producing model atom arrays with valid coordinates for every atom.
     """
-    n_atoms_array = array_copy.coord.shape[-2]  # pyright: ignore[reportOptionalMemberAccess]
+    n_atoms_array = array_copy.coord.shape[-2]
     n_atoms_coords = coords.shape[-2]
 
-    if n_atoms_coords == n_atoms_array:
-        array_copy.coord = coords
-    elif n_atoms_coords == int(reward_param_mask.sum()):
-        array_copy.coord[:, reward_param_mask] = coords  # pyright: ignore[reportOptionalSubscript]
-    else:
+    if n_atoms_coords != n_atoms_array:
         raise ValueError(
-            f"Trajectory coords ({n_atoms_coords} atoms) match neither "
-            f"the full atom array ({n_atoms_array}) nor the masked subset "
-            f"({int(reward_param_mask.sum())})"
+            f"Trajectory coords ({n_atoms_coords} atoms) don't match "
+            f"atom array ({n_atoms_array} atoms)"
         )
+    array_copy.coord = coords
 
 
-def _save_trajectory(
-    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
-):
+def _save_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every):
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -129,13 +115,11 @@ def _save_trajectory(
             continue
         array_copy = atom_array.copy()
         array_copy = stack([array_copy] * ensemble_size)
-        _write_coords_into_array(array_copy, coords.detach().numpy(), reward_param_mask)
+        _write_coords_into_array(array_copy, coords.detach().numpy())
         save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
-def _save_fk_steering_trajectory(
-    trajectory, atom_array, output_dir, reward_param_mask, subdir_name, save_every
-):
+def _save_fk_steering_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every):
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -155,7 +139,7 @@ def _save_fk_steering_trajectory(
         array_copy = stack([array_copy] * ensemble_size)
         # we save only the first ensemble out of n_particles, since saving
         # each particle at every step would clog trajectory saving
-        _write_coords_into_array(array_copy, coords[0].detach().numpy(), reward_param_mask)
+        _write_coords_into_array(array_copy, coords[0].detach().numpy())
         save_structure(str(output_dir / f"trajectory_{i}.cif"), array_copy)
 
 
@@ -322,25 +306,16 @@ def save_everything(
     base_atom_array = ensure_atom_array_stack(refined_structure["asym_unit"])[0]
 
     # Use model's internal atom accounting template for mismatch runs when available
-    atom_array_for_masking: AtomArray = (
+    # Wrappers must guarantee model atom arrays have valid coords and occupancy.
+    atom_array_for_saving: AtomArray = (
         model_atom_array if model_atom_array is not None else base_atom_array
     )
-
-    # Build occupancy mask properly as model atom arrays may lack occupancy annotation
-    if (
-        hasattr(atom_array_for_masking, "occupancy")
-        and atom_array_for_masking.occupancy is not None
-    ):
-        occupancy_mask = atom_array_for_masking.occupancy > 0
-        occupancy_mask &= ~np.any(np.isnan(atom_array_for_masking.coord), axis=-1)
-    else:
-        occupancy_mask = np.ones(len(atom_array_for_masking), dtype=bool)
 
     if final_state is not None:
         ensemble_size = final_state.shape[0]
 
-        ensemble_array = stack([atom_array_for_masking.copy() for _ in range(ensemble_size)])
-        _write_coords_into_array(ensemble_array, final_state.detach().cpu().numpy(), occupancy_mask)
+        ensemble_array = stack([atom_array_for_saving.copy() for _ in range(ensemble_size)])
+        _write_coords_into_array(ensemble_array, final_state.detach().cpu().numpy())
         atom_array = ensemble_array
     else:
         atom_array = base_atom_array
@@ -353,18 +328,16 @@ def save_everything(
     save_trajectory(
         scaler_type,
         traj_denoised,  # <--- the difference is here!
-        atom_array_for_masking,
+        atom_array_for_saving,
         output_dir,
-        occupancy_mask,
         "denoised",
         save_every=10,
     )
     save_trajectory(
         scaler_type,
         traj_next_step,  # <--- and here!
-        atom_array_for_masking,
+        atom_array_for_saving,
         output_dir,
-        occupancy_mask,
         "next_step",
         save_every=10,
     )

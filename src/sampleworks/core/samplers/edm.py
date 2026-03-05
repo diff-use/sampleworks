@@ -526,7 +526,7 @@ class AF3EDMSampler:
                 ) / (2 * noise_var)
 
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
-        # pyright sees dt as float | None, but it will be float if check_context didn't raise
+        # ty sees dt as float | None, but it will be float if check_context didn't raise
         next_state = noisy_state_working_frame_t + self.step_scale * dt * delta  # ty: ignore[unsupported-operator]
 
         return SamplerStepOutput(

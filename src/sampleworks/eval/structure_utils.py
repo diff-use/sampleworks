@@ -16,6 +16,7 @@ from sampleworks.models.protocol import GenerativeModelInput
 from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.framework_utils import match_batch
 
+
 ATOMWORKS_COMPARISON_OPS = ("==", ">", "<", "<=", ">=", " in ")
 
 try:
@@ -90,19 +91,13 @@ class SampleworksProcessedStructure:
             model_indices = self.reconciler.model_indices.to(device=reward_inputs.b_factors.device)
             updated_b_factors[..., model_indices] = struct_b_factors
 
-        # input_coords stored on the processed structure are always full model atom
-        # references, apply reward_param_mask for reward calls.
-        masked_input_coords = self.input_coords[..., reward_inputs.reward_param_mask, :].to(
-            device=reward_inputs.input_coords.device,
-            dtype=reward_inputs.input_coords.dtype,
-        )
-        updated_mask_like = torch.ones_like(masked_input_coords[..., 0])
-
         return replace(
             reward_inputs,
             b_factors=updated_b_factors,
-            input_coords=masked_input_coords,
-            mask_like=updated_mask_like,
+            input_coords=self.input_coords.to(
+                device=reward_inputs.input_coords.device,
+                dtype=reward_inputs.input_coords.dtype,
+            ),
         )
 
 
@@ -174,10 +169,13 @@ def process_structure_to_trajectory_input(
         atom_array = _filter_zero_occupancy(atom_array)
         atom_array = _add_terminal_oxt_atoms(atom_array, structure.get("chain_info", {}))
 
-    # Mask to valid atoms (nonzero occupancy, no NaN coords) in structure atom space
-    reward_param_mask = atom_array.occupancy > 0
-    reward_param_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)
-    atom_array = atom_array[reward_param_mask]
+    # Filter to valid atoms (nonzero occupancy, finite coords) in structure atom space.
+    # The deposited structure may have zero-occupancy or NaN-coordinate atoms from
+    # unresolved regions or altloc processing; these must be removed before
+    # building the reconciler against the model's (already-clean) atom array.
+    valid_atom_mask = atom_array.occupancy > 0
+    valid_atom_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)
+    atom_array = atom_array[valid_atom_mask]
 
     # Build reconciler from model and structure atom arrays.
     model_atom_array = (
@@ -406,13 +404,11 @@ def extract_selection_coordinates(
 @overload
 def get_asym_unit_from_structure(
     structure: dict, atom_array_index: None = None
-) ->  AtomArrayStack: ...
+) -> AtomArrayStack: ...
 
 
 @overload
-def get_asym_unit_from_structure(
-        structure: dict, atom_array_index: int
-) -> AtomArray: ...
+def get_asym_unit_from_structure(structure: dict, atom_array_index: int) -> AtomArray: ...
 
 
 def get_asym_unit_from_structure(
