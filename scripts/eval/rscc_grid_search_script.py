@@ -17,7 +17,6 @@ search results.
 import argparse
 import copy
 import traceback
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -29,8 +28,7 @@ from biotite.structure import AtomArrayStack
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING
-from sampleworks.eval.eval_dataclasses import ProteinConfig
-from sampleworks.eval.grid_search_eval_utils import parse_eval_args, scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.structure_utils import (
     get_asym_unit_from_structure,
@@ -48,25 +46,9 @@ from sampleworks.utils.frame_transforms import (
 from sampleworks.utils.framework_utils import match_batch
 
 
-
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
 def main(args: argparse.Namespace):
-    workspace_root = Path(args.workspace_root)
-    grid_search_dir = workspace_root / "grid_search_results"
-
-    # Protein configurations: base map paths, structure selections, and resolutions
-    protein_inputs_dir = args.grid_search_inputs_path or workspace_root
-    protein_configs = ProteinConfig.from_csv(protein_inputs_dir, args.protein_configs_csv)
-
-    logger.info(f"Grid search directory: {grid_search_dir}")
-    logger.info(f"Proteins configured: {list(protein_configs.keys())}")
-
-    # Scan for trials (look for refined.cif files)
-    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
-    logger.info(f"Found {len(all_trials)} trials with {args.target_filename} files")
-
-    if all_trials:
-        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    all_experiments, protein_configs = setup_evaluation_parameters(args)
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     ref_coords = {}
@@ -288,7 +270,7 @@ def main(args: argparse.Namespace):
 
     # Create DataFrame from results
     df = pd.DataFrame(results)
-    df.to_csv(grid_search_dir / "rscc_results.csv", index=False)
+    df.to_csv(args.grid_search_inputs_path / "rscc_results.csv", index=False)
 
     if not df.empty:
         # Remove error column for display if present
