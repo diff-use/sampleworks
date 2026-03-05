@@ -1,5 +1,4 @@
 import argparse
-import itertools
 import re
 import sys
 import traceback
@@ -220,30 +219,40 @@ def main(args: argparse.Namespace):
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     reference_atom_arrays = {}
     for protein_key, protein_config in protein_configs.items():
-        for occ, sel in itertools.product(args.occupancies, protein_config.selection):
-            ref_path, reference_proteins = get_reference_atomarraystack(protein_config, occ)
-            if reference_proteins is None:
-                logger.warning(
-                    f"Could not find ref structure for {protein_key} and occupancy {occ}"
+        for occ in args.occupancies:
+            altloc_occ = {"A": occ, "B": 1.0 - occ}
+            occ_key = tuple(sorted(altloc_occ.items()))
+            for sel in protein_config.selection:
+                ref_path, reference_proteins = get_reference_atomarraystack(
+                    protein_config, altloc_occ
                 )
-                continue
-            try:
-                logger.info(
-                    f"Loaded ref structure for {protein_key} and occupancy {occ}: {ref_path}"
-                )
-                reference_protein_stack, _, _ = map_altlocs_to_stack(
-                    reference_proteins, selection=translate_selection(sel), return_full_array=True
-                )
-                # hierarchical dictionary cache makes it lighter weight to parallelize.
-                if (protein_key, occ) not in reference_atom_arrays:
-                    reference_atom_arrays[(protein_key, occ)] = {}
+                if reference_proteins is None:
+                    logger.warning(
+                        f"Could not find ref structure for {protein_key} "
+                        f"and occupancies {altloc_occ}"
+                    )
+                    continue
+                try:
+                    logger.info(
+                        f"Loaded ref structure for {protein_key} "
+                        f"and occupancies {altloc_occ}: {ref_path}"
+                    )
+                    reference_protein_stack, _, _ = map_altlocs_to_stack(
+                        reference_proteins,
+                        selection=translate_selection(sel),
+                        return_full_array=True,
+                    )
+                    # hierarchical dictionary cache makes it lighter weight to parallelize.
+                    if (protein_key, occ_key) not in reference_atom_arrays:
+                        reference_atom_arrays[(protein_key, occ_key)] = {}
 
-                reference_atom_arrays[(protein_key, occ)][sel] = reference_protein_stack
-            except Exception as e:
-                logger.error(
-                    f"Error loading ref structure for {protein_key} and occupancy {occ}: {e}"
-                )
-                logger.error(f"  Traceback: {traceback.format_exc()}")
+                    reference_atom_arrays[(protein_key, occ_key)][sel] = reference_protein_stack
+                except Exception as e:
+                    logger.error(
+                        f"Error loading ref structure for {protein_key} "
+                        f"and occupancies {altloc_occ}: {e}"
+                    )
+                    logger.error(f"  Traceback: {traceback.format_exc()}")
 
     # Do the quick pass through all the "rows" of our output table to filter in those we can run.
     filtered_experiments = []
@@ -268,10 +277,11 @@ def main(args: argparse.Namespace):
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
 
-        if (protein, _exp.occ_a) not in reference_atom_arrays:
+        atom_array_key = (protein, _exp.occ_key)
+        if atom_array_key not in reference_atom_arrays:
             logger.warning(
                 f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
-                f"for {_exp.protein}, occupancy {_exp.occ_a}."
+                f"for {_exp.protein} and occupancies {_exp.altloc_occupancies}."
             )
             # record empty results for all selections, indicating they could not be computed.
             for _sel in protein_config.selection:
@@ -280,12 +290,13 @@ def main(args: argparse.Namespace):
                 null_results.append(exp_copy)
             continue
 
-        protein_reference_atom_arrays = reference_atom_arrays[(protein, _exp.occ_a)]
+        protein_reference_atom_arrays = reference_atom_arrays[atom_array_key]
         for _sel in protein_config.selection:
             if _sel not in protein_reference_atom_arrays:
                 logger.warning(
                     f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
-                    f"for {_exp.protein}, occupancy {_exp.occ_a} and selection '{_sel}'."
+                    f"for {_exp.protein} and occupancies {_exp.altloc_occupancies}, "
+                    f"selection '{_sel}'."
                 )
                 exp_copy = _exp.__dict__.copy()
                 exp_copy["selection"] = _sel

@@ -1,82 +1,98 @@
 import re
 
 
-def extract_protein_and_occupancy(dir_name):
-    """Extract protein name and occupancy from directory name.
+def extract_protein_and_occupancy(dir_name: str) -> tuple[str, dict[str, float]]:
+    """Extract protein name and altloc occupancies from a directory name.
 
-    Examples:
-    - '1vme_0.5occA_0.5occB' -> ('1vme', 0.5)
-    - '6b8x_1.0occA' -> ('6b8x', 1.0)
-    - '5sop_1.0occB' -> ('5sop', 0.0)
+    Parses all ``{value}occ{label}`` tokens found in *dir_name*.  The protein
+    name is taken as the first underscore-delimited token that does not match
+    the occupancy pattern.
+
+    Parameters
+    ----------
+    dir_name : str
+        Directory name to parse, e.g. ``"1vme_0.5occA_0.5occB"``.
+
+    Returns
+    -------
+    tuple[str, dict[str, float]]
+        ``(protein, altloc_occupancies)`` where *altloc_occupancies* maps
+        uppercase altloc labels to their occupancy values.  The dict is empty
+        when no occupancy tokens are found.
+
+    Examples
+    -------
+    >>> extract_protein_and_occupancy('1vme_0.5occA_0.5occB')
+    ('1vme', {'A': 0.5, 'B': 0.5})
+    >>> extract_protein_and_occupancy('6b8x_1.0occA')
+    ('6b8x', {'A': 1.0})
+    >>> extract_protein_and_occupancy('5sop_1.0occB')
+    ('5sop', {'B': 1.0})
+    >>> extract_protein_and_occupancy('1abc_0.5occA_0.3occB_0.2occC')
+    ('1abc', {'A': 0.5, 'B': 0.3, 'C': 0.2})
     """
-    # Extract protein name (first part before underscore with occupancy)
-    parts = dir_name.lower().split("_")
-    protein = parts[0]
+    protein = dir_name.split("_")[0].lower()
 
-    # Parse occupancy
-    if "native" in dir_name.lower():
-        # this is a hack, it would be better to properly name the directory
-        occ_a = 0.5
-    elif "1.0occa" in dir_name.lower() or "1occa" in dir_name.lower():
-        # Check it's not a mixed case like 0.1occA
-        if not any(f"0.{i}occa" in dir_name.lower() for i in range(1, 10)):
-            occ_a = 1.0
-        else:
-            match = re.search(r"(\d+\.?\d*)occA", dir_name, re.IGNORECASE)
-            occ_a = float(match.group(1)) if match else None
-    elif "1.0occb" in dir_name.lower() or "1occb" in dir_name.lower():
-        if not any(f"0.{i}occb" in dir_name.lower() for i in range(1, 10)):
-            occ_a = 0.0
-        else:
-            match = re.search(r"(\d+\.?\d*)occA", dir_name, re.IGNORECASE)
-            occ_a = float(match.group(1)) if match else None
-    else:
-        match = re.search(r"(\d+\.?\d*)occA", dir_name, re.IGNORECASE)
-        occ_a = float(match.group(1)) if match else None
+    altloc_occupancies: dict[str, float] = {}
+    for match in re.finditer(r"(\d+\.?\d*)occ([A-Za-z])", dir_name, re.IGNORECASE):
+        label = match.group(2).upper()
+        altloc_occupancies[label] = float(match.group(1))
 
-    return protein, occ_a
+    return protein, altloc_occupancies
 
 
-def occupancy_to_str(occ_a, use_6b8x_format=False):
-    """Convert occupancy float to string format used in filenames."""
-    if use_6b8x_format:
-        return _occupancy_to_str_6b8x(occ_a)
-    else:
-        return _occupancy_to_str(occ_a)
+def occupancy_to_str(**altloc_occupancies: float) -> str:
+    """Convert altloc occupancies to the string format used in filenames.
 
+    Zero-occupancy altlocs are omitted. Values are rounded to two decimal
+    places to avoid floating-point artifacts in filenames.
 
-def _occupancy_to_str(occ_a):
-    """Convert occupancy float to string format used in filenames.
+    Parameters
+    ----------
+    **altloc_occupancies : float
+        Keyword arguments mapping altloc labels to their occupancies.
 
-    Examples:
-    - 1.0 -> '1.0occA'
-    - 0.0 -> '1.0occB'
-    - 0.5 -> '0.5occA_0.5occB'
-    - 0.25 -> '0.25occA_0.75occB'
+    Returns
+    -------
+    str
+        Underscore-joined occupancy string, e.g. ``"0.5occA_0.5occB"``.
+
+    Raises
+    ------
+    ValueError
+        If no altlocs have non-zero occupancy, if occupancies sum to more than 1, or if any
+        occupancy is outside the range [0, 1].
+
+    Examples
+    -------
+    >>> occupancy_to_str(A=1.0, B=0.0)
+    '1.0occA'
+    >>> occupancy_to_str(A=0.0, B=1.0)
+    '1.0occB'
+    >>> occupancy_to_str(A=0.5, B=0.5)
+    '0.5occA_0.5occB'
+    >>> occupancy_to_str(A=0.25, B=0.75)
+    '0.25occA_0.75occB'
+    >>> occupancy_to_str(A=0.5, B=0.3, C=0.2)
+    '0.5occA_0.3occB_0.2occC'
     """
-    if abs(occ_a - 1.0) < 1e-6:
-        return "1.0occA"
-    elif abs(occ_a) < 1e-6:
-        return "1.0occB"
-    else:
-        occ_b = round(1.0 - occ_a, 2)
-        return f"{occ_a}occA_{occ_b}occB"
-
-
-# TODO: @karson.chrispens can you fix your file paths so this isn't needed?
-# Or generalize if this is a common case?
-def _occupancy_to_str_6b8x(occ_a):
-    """Convert occupancy float to 6b8x-style string format.
-
-    Examples:
-    - 1.0 -> '1.0occAconf'
-    - 0.0 -> '1.0occBconf'
-    - 0.5 -> '0.5occAconf_0.5occBconf'
-    """
-    if abs(occ_a - 1.0) < 1e-6:
-        return "1.0occAconf"
-    elif abs(occ_a) < 1e-6:
-        return "1.0occBconf"
-    else:
-        occ_b = round(1.0 - occ_a, 2)
-        return f"{occ_a}occAconf_{occ_b}occBconf"
+    if sum(altloc_occupancies.values()) > 1:
+        raise ValueError(
+            "Altloc occupancies cannot sum to more than 1, currently "
+            f"they sum to {sum(altloc_occupancies.values())}: {altloc_occupancies}"
+        )
+    if any(occ < 0 or occ > 1 for occ in altloc_occupancies.values()):
+        raise ValueError(
+            "Altloc occupancies must be between 0 and 1, currently "
+            f"they don't: {altloc_occupancies}"
+        )
+    parts = []
+    for label in sorted(altloc_occupancies, key=lambda label_name: str(label_name).upper()):
+        occ = altloc_occupancies[label]
+        occ = round(occ, 2)
+        if abs(occ) > 1e-6:
+            label_str = str(label).upper()
+            parts.append(f"{occ}occ{label_str}")
+    if not parts:
+        raise ValueError("At least one altloc must have non-zero occupancy")
+    return "_".join(parts)

@@ -13,7 +13,7 @@ from sampleworks.eval.occupancy_utils import occupancy_to_str
 #  https://github.com/diff-use/sampleworks/issues/122
 class Experiment:
     protein: str
-    occ_a: float
+    altloc_occupancies: dict[str, float]
     model: str
     method: str | None
     scaler: str
@@ -26,6 +26,11 @@ class Experiment:
     rscc: float = np.nan  # these last three are placeholders for RSCC calculations.
     base_map_path: Path | None = None
     error: Exception | None = None
+
+    @property
+    def occ_key(self) -> tuple[tuple[str, float], ...]:
+        """Hashable representation of altloc_occupancies for use as dict/cache keys."""
+        return tuple(sorted(self.altloc_occupancies.items()))
 
 
 class ExperimentList(list[Experiment]):
@@ -59,22 +64,26 @@ class ProteinConfig:
     def is_selection_valid(self, selection: str) -> bool:
         return selection is not None and selection.strip() != ""
 
+    def get_base_map_path_for_occupancy(self, altloc_occupancies: dict[str, float]) -> Path | None:
+        """Return the base-map path for the given altloc occupancies, or ``None``.
 
-    def get_base_map_path_for_occupancy(self, occupancy_a: float) -> Path | None:
-        occ_str = occupancy_to_str(occupancy_a, use_6b8x_format=self.protein == "6b8x")
+        Parameters
+        ----------
+        altloc_occupancies : dict[str, float]
+            Mapping of altloc labels to occupancy values,
+            e.g. ``{"A": 0.5, "B": 0.5}`` or ``{"A": 0.5, "B": 0.3, "C": 0.2}``.
+        """
+        try:
+            occ_str = occupancy_to_str(**altloc_occupancies)
+        except ValueError as e:
+            logger.warning(
+                f"Cannot determine occupancy string for {self.protein} with occupancies"
+                f" {altloc_occupancies}: {e}"
+            )
+            return None
         map_path = self.base_map_dir / self.map_pattern.format(occ_str=occ_str)
         if map_path.exists():
             return map_path
-
-        # TODO: this is a kluge we should work to remove @kchrispens
-        alt_patterns = []
-        if self.protein == "6b8x":
-            alt_patterns.append(f"6b8x_{occupancy_to_str(occupancy_a)}_1.74A.ccp4")
-
-        for alt in alt_patterns:
-            alt_path = self.base_map_dir / alt
-            if alt_path.exists():
-                return alt_path
 
         logger.warning(f"Base map for protein {self.protein} ({map_path}) NOT FOUND")
         return None
@@ -90,24 +99,32 @@ class ProteinConfig:
 
         return xmap
 
-    def get_reference_structure_path(self, occupancy_a: float) -> Path | None:
+    def get_reference_structure_path(self, altloc_occupancies: dict[str, float]) -> Path | None:
+        """Return the reference-structure path for the given altloc occupancies, or ``None``.
+
+        Parameters
+        ----------
+        altloc_occupancies : dict[str, float]
+            Mapping of altloc labels to occupancy values,
+            e.g. ``{"A": 0.5, "B": 0.5}`` or ``{"A": 0.5, "B": 0.3, "C": 0.2}``.
+        """
         if not self.structure_pattern:
             return None
 
-        occ_str = occupancy_to_str(occupancy_a, use_6b8x_format=self.protein == "6b8x")
+        try:
+            occ_str = occupancy_to_str(**altloc_occupancies)
+        except ValueError as e:
+            logger.warning(
+                f"Cannot determine occupancy string for {self.protein} with occupancies"
+                f" {altloc_occupancies}: {e}"
+            )
+            return None
         structure_path = self.base_map_dir / self.structure_pattern.format(occ_str=occ_str)
         if structure_path.exists():
             return structure_path
 
-        # Try shifted version for 6b8x
-        if self.protein == "6b8x":
-            _pattern = self.structure_pattern.format(occ_str=occ_str)
-            shifted_path = self.base_map_dir / _pattern.replace(".cif", "_shifted.cif")
-            if shifted_path.exists():
-                return shifted_path
-
         logger.warning(
-            f"Reference structure for {self.protein} with occ {occupancy_a} "
+            f"Reference structure for {self.protein} with occupancies {altloc_occupancies} "
             f"not found: {structure_path}"
         )
         return None

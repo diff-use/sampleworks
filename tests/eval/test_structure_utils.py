@@ -242,7 +242,7 @@ class TestGetReferenceAtomArrayStack:
 
     def test_returns_none_when_not_found(self, mock_protein_config):
         """Test that missing file returns (None, None)."""
-        path, struct = get_reference_atomarraystack(mock_protein_config, occupancy_a=0.5)
+        path, struct = get_reference_atomarraystack(mock_protein_config, {"A": 0.5, "B": 0.5})
         assert path is None
         assert struct is None
 
@@ -256,13 +256,13 @@ class TestGetReferenceAtomArrayStack:
         config = ProteinConfig(
             protein="test",
             base_map_dir=tmp_path,
-            selection=["chain A", ], 
+            selection=["chain A", ],
             resolution=2.0,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="{occ_str}.cif",
         )
 
-        path, struct = get_reference_atomarraystack(config, occupancy_a=0.5)
+        path, struct = get_reference_atomarraystack(config, {"A": 0.5, "B": 0.5})
         assert path is not None
         assert isinstance(struct, AtomArrayStack)
         assert struct.stack_depth() == 1
@@ -278,7 +278,7 @@ class TestGetReferenceAtomArrayStack:
             structure_pattern="6b8x_final.pdb",
         )
 
-        path, struct = get_reference_atomarraystack(config, occupancy_a=0.5)
+        path, struct = get_reference_atomarraystack(config, {"A": 0.5, "B": 0.5})
         assert path is not None
         assert struct is not None
         assert isinstance(struct, AtomArrayStack)
@@ -287,11 +287,12 @@ class TestGetReferenceAtomArrayStack:
 class TestGetReferenceStructureCoords:
     """Tests for get_reference_structure_coords function."""
 
-    def test_returns_empty_dict_when_no_valid(self, mock_protein_config):
-        """Test that no valid structures returns and empty dictionary."""
-        coords = get_reference_structure_coords(mock_protein_config, "test", occ_list=(0.0, 1.0))
-        assert isinstance(coords, dict)
-        assert len(coords) == 0
+    def test_returns_none_when_no_valid(self, mock_protein_config):
+        """Test that no valid structures returns None."""
+        coords = get_reference_structure_coords(
+            mock_protein_config, "test", occ_list=[{"A": 0.0, "B": 1.0}, {"A": 1.0, "B": 0.0}]
+        )
+        assert coords is None
 
     def test_handles_exceptions_gracefully(self, tmp_path):
         """Test that exceptions are logged and function continues."""
@@ -304,9 +305,8 @@ class TestGetReferenceStructureCoords:
             structure_pattern="{occ_str}.cif",
         )
 
-        coords = get_reference_structure_coords(config, "test", occ_list=(0.5,))
-        assert isinstance(coords, dict)
-        assert len(coords) == 0
+        coords = get_reference_structure_coords(config, "test", occ_list=[{"A": 0.5, "B": 0.5}])
+        assert coords is None
 
     def test_with_real_structure(self, resources_dir):
         """Test loading coords from real structure."""
@@ -320,12 +320,14 @@ class TestGetReferenceStructureCoords:
             structure_pattern="6b8x_final.pdb",
         )
 
-        coords_dict = get_reference_structure_coords(config, "6b8x", occ_list=(0.5,))
+        coords_dict = get_reference_structure_coords(
+            config, "6b8x", occ_list=[{"A": 0.5, "B": 0.5}]
+        )
         assert coords_dict is not None
         assert isinstance(coords_dict, dict)
         assert len(coords_dict) == 1
         assert selection_string in coords_dict
-        
+
         coords = coords_dict[selection_string]
         assert isinstance(coords, np.ndarray)
         assert coords.ndim == 2
