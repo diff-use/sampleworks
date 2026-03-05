@@ -23,17 +23,17 @@ class TestExpandTildeCCDCode:
         result = _expand_tilde_ccd_code("~QS")
         assert result == "A1AQS"
 
-    def test_ambiguous_match_returns_original(self):
-        """When multiple codes share a suffix, return the truncated code."""
+    def test_ambiguous_match_raises(self):
+        """When multiple codes share a suffix, raise ValueError."""
         fake_codes = ["A1DXX", "A1HXX", "GLY", "ALA"]
         _build_ccd_suffix_map.cache_clear()
         with patch(
             "protenix.data.ccd.get_all_ccd_code",
             return_value=fake_codes,
         ):
-            result = _expand_tilde_ccd_code("~XX")
+            with pytest.raises(ValueError, match="ambiguous"):
+                _expand_tilde_ccd_code("~XX")
         _build_ccd_suffix_map.cache_clear()
-        assert result == "~XX"
 
     def test_no_match_returns_original(self):
         """When no code matches the suffix, return the truncated code."""
