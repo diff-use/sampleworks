@@ -464,11 +464,11 @@ def _build_ccd_suffix_map() -> dict[str, list[str]]:
     """
     from protenix.data.ccd import get_all_ccd_code
 
-    suffix_map: dict[str, list[str]] = defaultdict(list)
+    suffix_map: dict[str, list[str]] = {}
     for code in get_all_ccd_code():
         if len(code) == 5:
-            suffix_map[code[-2:]].append(code)
-    return dict(suffix_map)
+            suffix_map.setdefault(code[-2:], []).append(code)
+    return suffix_map
 
 
 def _expand_tilde_ccd_code(truncated: str) -> str:
@@ -496,16 +496,17 @@ def _expand_tilde_ccd_code(truncated: str) -> str:
         logger.info(f"Expanded tilde-truncated CCD code '{truncated}' → '{candidates[0]}'")
         return candidates[0]
     elif len(candidates) > 1:
-        logger.error(
+        msg = (
             f"Tilde-truncated CCD code '{truncated}' is ambiguous, it maps to "
             f"{candidates}. Cannot auto-expand. Please use mmCIF format "
-            f"input, which preserves the full CCD code."
+            "input, which preserves the full CCD code."
         )
-        return truncated
+        logger.error(msg)
+        raise ValueError(msg)
     else:
         logger.error(
             f"Tilde-truncated CCD code '{truncated}' has no matching 5 character "
-            f"CCD entry. The downstream model may not be able to parse this "
+            f"CCD entry. Protenix may not be able to parse this "
             f"component. Please use mmCIF format input."
         )
         return truncated
