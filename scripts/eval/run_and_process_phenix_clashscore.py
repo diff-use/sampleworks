@@ -1,4 +1,3 @@
-import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -7,39 +6,7 @@ import joblib
 import pandas as pd
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import Trial
-from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results
-
-
-# TODO unify this with the other parse_args most eval scripts use.
-#  https://github.com/diff-use/sampleworks/issues/110
-def parse_args() -> argparse.Namespace:
-    """
-    Arguments required for evaluating clashscores with phenix.
-    These are currently slightly different from the other eval scripts.
-    """
-    parser = argparse.ArgumentParser(
-        description="Crawl the workspace root for CIF files matching --target-filename and"
-        " run phenix.clashscore on them."
-    )
-    parser.add_argument(
-        "--workspace-root",
-        type=Path,
-        required=True,
-        help="Path containing the grid search results directory, e.g. if results are "
-        "at $HOME/grid_search_results, $HOME should be what you pass",
-    )
-    parser.add_argument(
-        "--n-jobs",
-        type=int,
-        help="Number of parallel jobs to run. -1 uses all CPUs.",
-        default=16,
-    )
-    parser.add_argument(
-        "--target-filename",
-        default="refined.cif",
-        help="Target filename for the CIF files to process",
-    )
-    return parser.parse_args()
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, scan_grid_search_results
 
 
 def main(args) -> None:
@@ -118,7 +85,7 @@ def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
         json_data = json.load(f)
 
     model_name = json_data.get("model_name")
-    # For now we're only collecting model-level summary statistics, but
+    # For now, we're only collecting model-level summary statistics, but
     # there are lists of specific clashes in each model too.
     summary_results = json_data.get("summary_results", {})
 
@@ -136,5 +103,7 @@ def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    argparse_description = "Crawl the workspace root for CIF files matching "
+    argparse_description += "--target-filename and run phenix.clashscore on them."
+    eval_args = parse_eval_args(description=argparse_description)
+    main(eval_args)
