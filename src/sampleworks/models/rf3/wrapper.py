@@ -289,7 +289,7 @@ class RF3Wrapper:
         )  # since we're not batching, the loader returns a list of length 1
 
         # (Hydra instantiation of pipeline means it is going to be hard to type check here)
-        pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # type: ignore
+        pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # ty: ignore[call-non-callable]
         pipeline_output = trainer.fabric.to_device(pipeline_output)
 
         features = trainer._assemble_network_inputs(pipeline_output)
@@ -317,8 +317,32 @@ class RF3Wrapper:
         # Any excess atoms are trailing entries not represented in atom_to_token_map.
         if len(model_aa) > num_atoms:
             model_aa = cast(AtomArray, model_aa[:num_atoms])
-        if not hasattr(model_aa, "occupancy") or model_aa.occupancy is None:
-            model_aa.set_annotation("occupancy", np.ones(len(model_aa), dtype=np.float32))
+
+        # atomworks's add_missing_atoms adds unresolved atoms with
+        # occupancy=0.0 and NaN coordinates when we get our atom array with
+        # InferenceInput.from_atom_array. RF3 operates on these atoms (they're
+        # in atom_to_token_map), so initialize their coordinates with noise and
+        # set occupancy to 1.0 so they participate in guidance and don't get
+        # masked out in reward functions.
+        nan_coord_mask = np.any(np.isnan(model_aa.coord), axis=-1)
+        if nan_coord_mask.any():
+            n_nan = int(nan_coord_mask.sum())
+            resolved_coords = model_aa.coord[~nan_coord_mask]
+            centroid = resolved_coords.mean(axis=0) if len(resolved_coords) > 0 else np.zeros(3)
+            rng = np.random.default_rng(42)
+            noise = rng.normal(scale=1.0, size=(n_nan, 3)).astype(np.float32)
+            new_coords = model_aa.coord.copy()
+            new_coords[nan_coord_mask] = centroid + noise
+            model_aa.coord = new_coords
+            logger.info(
+                f"Initialized {n_nan} unresolved atoms with noise "
+                f"(had NaN coordinates from add_missing_atoms)"
+            )
+
+        # All atoms in model_aa are operated on by RF3 during diffusion.
+        # Set occupancy to 1.0 regardless of what atomworks assigned (unresolved
+        # atoms from add_missing_atoms get occupancy=0.0, but RF3 should use them)
+        model_aa.set_annotation("occupancy", np.ones(len(model_aa), dtype=np.float32))
         if not hasattr(model_aa, "b_factor") or model_aa.b_factor is None:
             model_aa.set_annotation("b_factor", np.full(len(model_aa), 20.0, dtype=np.float32))
 
