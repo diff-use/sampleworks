@@ -161,7 +161,7 @@ def get_method_and_model_name(model_name: str) -> tuple[str | None, str]:
     return method, model
 
 
-def parse_args(description: str | None = None):
+def parse_eval_args(description: str | None = None):
     """
     Return a common set of arguments for grid search evaluation scripts,
     with a custom description, which is passed to argparse.ArgumentParser.

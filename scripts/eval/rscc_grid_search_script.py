@@ -30,7 +30,7 @@ from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING
 from sampleworks.eval.eval_dataclasses import ProteinConfig
-from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, scan_grid_search_results
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.structure_utils import (
     get_asym_unit_from_structure,
@@ -48,6 +48,7 @@ from sampleworks.utils.frame_transforms import (
 from sampleworks.utils.framework_utils import match_batch
 
 
+
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
@@ -60,17 +61,9 @@ def main(args: argparse.Namespace):
     logger.info(f"Grid search directory: {grid_search_dir}")
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
-    # Test base map path resolution
-    logger.debug("Testing base map path resolution:")
-    for _, config in protein_configs.items():
-        for occ in args.occupancies:
-            path = config.get_base_map_path_for_occupancy(occ)  # will warn if not found
-            if path:
-                logger.debug(f"  {config.protein} occ={occ}: {path}")
-
     # Scan for trials (look for refined.cif files)
     all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
-    logger.info(f"Found {len(all_trials)} trials with refined.cif files")
+    logger.info(f"Found {len(all_trials)} trials with {args.target_filename} files")
 
     if all_trials:
         all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
@@ -320,5 +313,5 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    args = parse_args("Evaluate RSCC on grid search results.")
+    args = parse_eval_args("Evaluate RSCC on grid search results.")
     main(args)

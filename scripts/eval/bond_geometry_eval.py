@@ -14,7 +14,7 @@ from biotite.structure import AtomArray, BadStructureError, index_distance
 from biotite.structure.io.pdbx import CIFFile, get_structure
 from loguru import logger
 from peppr.bounds import get_distance_bounds
-from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, scan_grid_search_results
 from scipy.special import comb
 from tqdm import tqdm
 
@@ -269,5 +269,5 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    args = parse_args("Evaluate bond angle and length outliers on grid search results.")
+    args = parse_eval_args("Evaluate bond angle and length outliers on grid search results.")
     main(args)

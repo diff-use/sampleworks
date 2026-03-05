@@ -13,7 +13,7 @@ from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial
-from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, scan_grid_search_results
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import filter_to_common_atoms, map_altlocs_to_stack
@@ -378,5 +378,5 @@ def process_trial_with_selection(
 
 
 if __name__ == "__main__":
-    args = parse_args("Evaluate LDDT on grid search results.")
+    args = parse_eval_args("Evaluate LDDT on grid search results.")
     main(args)
