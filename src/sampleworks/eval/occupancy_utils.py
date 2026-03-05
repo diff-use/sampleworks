@@ -60,7 +60,8 @@ def occupancy_to_str(**altloc_occupancies: float) -> str:
     Raises
     ------
     ValueError
-        If no altlocs have non-zero occupancy.
+        If no altlocs have non-zero occupancy, if occupancies sum to more than 1, or if any
+        occupancy is outside the range [0, 1].
 
     Examples
     -------
@@ -75,11 +76,19 @@ def occupancy_to_str(**altloc_occupancies: float) -> str:
     >>> occupancy_to_str(A=0.5, B=0.3, C=0.2)
     '0.5occA_0.3occB_0.2occC'
     """
+    if sum(altloc_occupancies.values()) > 1:
+        raise ValueError(
+            "Altloc occupancies cannot sum to more than 1, currently "
+            f"they sum to {sum(altloc_occupancies.values())}: {altloc_occupancies}"
+        )
+    if any(occ < 0 or occ > 1 for occ in altloc_occupancies.values()):
+        raise ValueError(
+            "Altloc occupancies must be between 0 and 1, currently "
+            f"they don't: {altloc_occupancies}"
+        )
     parts = []
-    for label in sorted(altloc_occupancies, key=lambda l: str(l).upper()):
+    for label in sorted(altloc_occupancies, key=lambda label_name: str(label_name).upper()):
         occ = altloc_occupancies[label]
-        if occ < 0 or occ > 1:
-            raise ValueError(f"Invalid (<0 or >1) occupancy for altloc {label}: {occ}")
         occ = round(occ, 2)
         if abs(occ) > 1e-6:
             label_str = str(label).upper()

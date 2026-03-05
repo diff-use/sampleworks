@@ -8,14 +8,15 @@ from typing import Any, cast, overload
 import numpy as np
 import torch
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
-from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
 from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.models.protocol import GenerativeModelInput
+from sampleworks.utils.atom_array_utils import load_structure_with_altlocs
 from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.framework_utils import match_batch
+
 
 ATOMWORKS_COMPARISON_OPS = ("==", ">", "<", "<=", ">=", " in ")
 
@@ -407,13 +408,11 @@ def extract_selection_coordinates(
 @overload
 def get_asym_unit_from_structure(
     structure: dict, atom_array_index: None = None
-) ->  AtomArrayStack: ...
+) -> AtomArrayStack: ...
 
 
 @overload
-def get_asym_unit_from_structure(
-        structure: dict, atom_array_index: int
-) -> AtomArray: ...
+def get_asym_unit_from_structure(structure: dict, atom_array_index: int) -> AtomArray: ...
 
 
 def get_asym_unit_from_structure(
@@ -447,7 +446,7 @@ def get_reference_atomarraystack(
     ref_path = protein_config.get_reference_structure_path(altloc_occupancies)
     if ref_path is None:
         return None, None
-    ref_struct = load_any(ref_path, altloc="all", extra_fields=["occupancy"])
+    ref_struct = load_structure_with_altlocs(ref_path)
     if ref_struct.coord is None:
         raise ValueError(f"Unable to load coordinates from {ref_path} Please check file")
     if isinstance(ref_struct, AtomArray):
