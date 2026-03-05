@@ -103,7 +103,7 @@ def scan_grid_search_results(
             guidance_weight = float(params["guidance_weight"])
         gd_steps = int(params["gd_steps"]) if params["gd_steps"] is not None else None
 
-        # Validate parameters to satisfy pyright
+        # Validate parameters to satisfy ty
         if (
             protein is None
             or occ_a is None
