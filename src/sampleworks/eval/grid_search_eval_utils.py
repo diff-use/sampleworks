@@ -5,12 +5,13 @@ All eval scripts should use these methods to avoid any deviations.
 
 import argparse
 import re
+import sys
 from importlib.resources import files
 from pathlib import Path
 
 from loguru import logger
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
-from sampleworks.eval.eval_dataclasses import Trial, TrialList
+from sampleworks.eval.eval_dataclasses import Trial, TrialList, ProteinConfig
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
 
@@ -170,24 +171,26 @@ def parse_eval_args(description: str | None = None):
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "--workspace-root",
+        "--grid-search-results-path",
         type=Path,
         required=True,
-        help="Path containing the grid search results directory, e.g. if results are "
-        "at $HOME/grid_search_results, $HOME should be what you pass",
+        help="Path to the top-level grid search results directory, usu. called "
+             "``grid_search_results``",
     )
+    # not technically used everywhere yet, but requiring it future-proofs.
     parser.add_argument(
         "--grid-search-inputs-path",
         type=Path,
-        help="Path to the directory containing the grid search inputs, if it is different "
-        "than the workspace root.",
+        required=True,
+        help="Path to the directory containing the grid search inputs, in particular "
+             "the protein configuration CSV file, maps, and reference structures.",
         default=None,
     )
     parser.add_argument(
         "--protein-configs-csv",
         type=Path,
-        help="Path to the CSV file containing protein configurations, like ${HOME}/configs.csv "
-        "Defaults to sampleworks/data/protein_configs.csv",
+        help="Path to the CSV file containing protein configurations, like "
+             "``${HOME}/configs.csv``. Defaults to sampleworks/data/protein_configs.csv",
         default=files("sampleworks.data") / "protein_configs.csv",
     )
     parser.add_argument(
@@ -209,3 +212,30 @@ def parse_eval_args(description: str | None = None):
         default=16,
     )
     return parser.parse_args()
+
+
+def setup_evaluation_parameters(
+        args: argparse.Namespace
+) -> tuple[ExperimentList, dict[str, ProteinConfig]]:
+    grid_search_dir = Path(args.grid_search_results_path)
+
+    # Protein configurations: base map paths, structure selections, and resolutions
+    protein_inputs_dir = args.grid_search_inputs_path
+    protein_configs = ProteinConfig.from_csv(protein_inputs_dir, args.protein_configs_csv)
+
+    logger.info(f"Grid search directory: {grid_search_dir}")
+    logger.info(f"Proteins configured: {list(protein_configs.keys())}")
+
+    # Scan for experiments (look for refined.cif files)
+    all_experiments = scan_grid_search_results(
+        grid_search_dir, target_filename=args.target_filename
+    )
+    logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
+
+    if all_experiments:
+        all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    else:
+        logger.error("No experiments found in grid search directory. Exiting with status 1.")
+        sys.exit(1)
+
+    return all_experiments, protein_configs
