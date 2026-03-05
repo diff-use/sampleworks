@@ -287,6 +287,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
         reader = csv.DictReader(f)
         proteins = list(reader)
 
+    proteins_dir = Path(args.proteins).parent
     models = args.models.split()
     scalers = args.scalers.split()
     ensemble_sizes = [int(x) for x in args.ensemble_sizes.split()]
@@ -295,8 +296,8 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     methods = [m.strip() for m in args.methods.split(",")]
 
     for protein in proteins:
-        structure = protein["structure"].strip()
-        density = protein["density"].strip()
+        structure = proteins_dir / protein["structure"].strip()
+        density = str(proteins_dir / protein["density"].strip())  # qfit.volume only supports str
         resolution = float(protein["resolution"].strip())
         protein_name = protein["name"].strip()
 
