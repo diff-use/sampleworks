@@ -1,6 +1,6 @@
 #!/bin/bash
-# Run Boltz1 and Boltz2 grid searches in parallel, 4 GPUs each
-# Total: 8 GPUs used (2 jobs x 4 GPUs each)
+# Run all model grid searches in parallel: Boltz1, Boltz2, Protenix, and RF3
+# Total: 16 GPUs used (4 jobs x 4 GPUs each)
 #
 # Checkpoints are BAKED INTO the Docker image - no need to mount them!
 #
@@ -20,7 +20,8 @@ mkdir -p "$RESULTS_DIR"
 DOCKER_OPTS="--rm --shm-size=16g"
 
 echo "=========================================="
-echo "Starting Boltz model grid searches"
+echo "Starting all model grid searches"
+echo "Models: boltz1, boltz2, protenix, rf3"
 echo "Data: $DATA_DIR"
 echo "Results: $RESULTS_DIR"
 echo "Checkpoints: BAKED INTO IMAGE"
@@ -63,9 +64,11 @@ run_model() {
     echo "[$(date)] $model job started (PID: $!)"
 }
 
-# Run Boltz1 and Boltz2 in parallel with 4 GPUs each:
-# - boltz1: GPUs 0,1,2,3
-# - boltz2: GPUs 4,5,6,7
+# Run all four models in parallel with 4 GPUs each:
+# - boltz1:   GPUs 0,1,2,3
+# - boltz2:   GPUs 4,5,6,7
+# - protenix: GPUs 8,9,10,11
+# - rf3:      GPUs 12,13,14,15
 
 # Boltz1 (GPUs 0-3) - checkpoints baked in, uses defaults
 run_model "boltz1" "boltz" "0,1,2,3"
@@ -73,12 +76,20 @@ run_model "boltz1" "boltz" "0,1,2,3"
 # Boltz2 (GPUs 4-7) - needs --methods flag
 run_model "boltz2" "boltz" "4,5,6,7" --methods "X-RAY DIFFRACTION"
 
+# Protenix (GPUs 8-11)
+run_model "protenix" "protenix" "8,9,10,11"
+
+# RF3 (GPUs 12-15)
+run_model "rf3" "rf3" "12,13,14,15"
+
 echo ""
 echo "=========================================="
-echo "Both Boltz model jobs launched!"
+echo "All model jobs launched!"
 echo "Logs:"
 echo "  - $RESULTS_DIR/boltz1_run.log"
 echo "  - $RESULTS_DIR/boltz2_run.log"
+echo "  - $RESULTS_DIR/protenix_run.log"
+echo "  - $RESULTS_DIR/rf3_run.log"
 echo ""
 echo "Monitor GPU usage: nvidia-smi -l 1"
 echo "Waiting for all jobs to complete..."
