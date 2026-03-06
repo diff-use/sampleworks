@@ -23,14 +23,17 @@ class RewardInputs:
     Contains all the information needed to call a RewardFunctionProtocol,
     extracted from an atom array. This allows the caller to extract inputs
     once and pass them to scale() methods without redundant extraction.
+
+    The atom array passed to :meth:`from_atom_array` must already be clean:
+    all coordinates finite and all occupancies positive.  Wrappers are
+    responsible for ensuring this (e.g. replacing NaN coordinates with
+    noise and setting occupancy to 1.0 for model-operated atoms).
     """
 
     elements: Float[torch.Tensor, "*batch n_atoms"]
     b_factors: Float[torch.Tensor, "*batch n_atoms"]
     occupancies: Float[torch.Tensor, "*batch n_atoms"]
     input_coords: Float[torch.Tensor, "*batch n_atoms 3"]
-    reward_param_mask: np.ndarray
-    mask_like: Float[torch.Tensor, "*batch n_atoms"]
 
     @classmethod
     def from_atom_array(
@@ -42,10 +45,15 @@ class RewardInputs:
     ) -> RewardInputs:
         """Construct RewardInputs from a Biotite AtomArray.
 
+        The atom array must contain only valid atoms (finite coordinates,
+        positive occupancy).  Callers are responsible for filtering
+        beforehand; no masking is applied here.
+
         Parameters
         ----------
         atom_array
             Biotite AtomArray or AtomArrayStack containing structure data.
+            Must have not NaN coordinates and positive occupancy.
         ensemble_size
             Number of ensemble members (batch dimension).
         num_particles
@@ -58,13 +66,17 @@ class RewardInputs:
         RewardInputs
             Dataclass containing all inputs needed for reward function computation.
         """
-        occupancy_mask = atom_array.occupancy > 0
-        nan_mask = ~np.any(np.isnan(atom_array.coord), axis=-1)
-        reward_param_mask = occupancy_mask & nan_mask
+        # input validation: ensure atom_array has required annotations and valid values
+        if not hasattr(atom_array, "element"):
+            raise ValueError("Atom array must have 'element' annotation.")
+        if not hasattr(atom_array, "b_factor"):
+            raise ValueError("Atom array must have 'b_factor' annotation.")
+        if np.any(np.isnan(atom_array.coord)):
+            raise ValueError("Atom array contains NaN coordinates.")
+        if np.any((atom_array.occupancy <= 0) | (atom_array.occupancy > 1)):
+            raise ValueError("Atom array contains invalid occupancy values.")
 
-        elements_list = [
-            ELEMENT_TO_ATOMIC_NUM[e.title()] for e in atom_array.element[reward_param_mask]
-        ]
+        elements_list = [ELEMENT_TO_ATOMIC_NUM[e.title()] for e in atom_array.element]
 
         total_batch_size = num_particles * ensemble_size if num_particles > 1 else ensemble_size
 
@@ -80,7 +92,7 @@ class RewardInputs:
             )
             b_factors = einx.rearrange(
                 "n -> p e n",
-                torch.Tensor(atom_array.b_factor[reward_param_mask]),
+                torch.Tensor(atom_array.b_factor),
                 p=num_particles,
                 e=ensemble_size,
             )
@@ -89,12 +101,12 @@ class RewardInputs:
                 "... -> b ...",
                 coords_t,
                 b=total_batch_size,
-            )[..., reward_param_mask, :]
+            )
         else:
             elements = einx.rearrange("n -> b n", torch.Tensor(elements_list), b=ensemble_size)
             b_factors = einx.rearrange(
                 "n -> b n",
-                torch.Tensor(atom_array.b_factor[reward_param_mask]),
+                torch.Tensor(atom_array.b_factor),
                 b=ensemble_size,
             )
             occupancies = torch.ones_like(b_factors) / ensemble_size
@@ -102,9 +114,7 @@ class RewardInputs:
                 "... -> e ...",
                 coords_t,
                 e=ensemble_size,
-            )[..., reward_param_mask, :]
-
-        mask_like = torch.ones_like(input_coords[..., 0])
+            )
 
         if isinstance(device, str):
             device = torch.device(device)
@@ -114,8 +124,6 @@ class RewardInputs:
             b_factors=b_factors.to(device),
             occupancies=occupancies.to(device),
             input_coords=input_coords.to(device),
-            reward_param_mask=reward_param_mask,
-            mask_like=mask_like.to(device),
         )
 
 

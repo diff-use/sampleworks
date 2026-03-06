@@ -286,7 +286,7 @@ def _process_single_row(
     # TODO: there's probably a more robust way to do this
     atom_array = keep_polymer(keep_amino_acids(atom_array)) if strip_ligands else atom_array
 
-    altloc_info = detect_altlocs(atom_array)  # pyright: ignore[reportArgumentType]
+    altloc_info = detect_altlocs(atom_array)  # ty: ignore[invalid-argument-type]
     if row.occ_values:
         if occ_mode != "custom":
             logger.warning(
@@ -324,7 +324,7 @@ def _process_single_row(
         # Shift coordinates into the grid frame so the saved CIF aligns with
         # the CCP4 map. CCP4 format (unlike MRC) cannot encode an arbitrary Cartesian
         # origin, so we move the atoms instead. Possible the better way is to resample the map?
-        atom_array.coord = atom_array.coord - xmap_torch.origin  # pyright: ignore[reportOptionalOperand]
+        atom_array.coord = atom_array.coord - xmap_torch.origin
         structure_output_path = structure_path.parent / f"{structure_path.stem}_density_input.cif"
         try:
             save_structure_to_cif(atom_array, structure_output_path)

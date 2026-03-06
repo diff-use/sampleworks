@@ -371,7 +371,7 @@ class TestExtractDensityInputsFromAtomArrayStack:
         """Coordinates in each batch entry should match the corresponding model."""
         coords, _, _, _ = extract_density_inputs_from_atomarray(simple_atom_array_stack, device)
         for i in range(simple_atom_array_stack.stack_depth()):
-            expected = torch.from_numpy(simple_atom_array_stack.coord[i].copy()).to(  # pyright: ignore[reportOptionalSubscript]
+            expected = torch.from_numpy(simple_atom_array_stack.coord[i].copy()).to(
                 device, dtype=torch.float32
             )
             torch.testing.assert_close(coords[i], expected)
