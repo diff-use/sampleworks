@@ -61,7 +61,6 @@ def main(args: argparse.Namespace):
                 ref_coords[(protein_key, selection)] = protein_ref_coords[selection]
 
     # Calculate RSCC for all trials
-    # (BIG) TODO: implement a sliding-window version (global can be achieved with diff't selections.
     logger.info("Calculating RSCC values for all trials...")
     logger.warning(
         "Note: RSCC is computed on the region around altloc residues (defined by selection)"

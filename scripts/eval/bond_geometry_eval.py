@@ -38,19 +38,9 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
     outlier_info : pd.DataFrame
         DataFrame containing information about the outliers, including atom indices and distances.
     """
-    if pose.array_length() == 0:
-        return np.nan, pd.DataFrame()
-
     try:
-        bounds = get_distance_bounds(pose)  # this fetches values from RDKit
-    except BadStructureError:
-        return np.nan, pd.DataFrame()
-
-    if not pose.bonds:
-        logger.error(
-            "Models must have bonds, use "
-            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
-        )
+        bounds = check_pose_and_get_bounds(pose)
+    except (ValueError, BadStructureError) as e:
         return np.nan, pd.DataFrame()
 
     bond_indices = np.sort(pose.bonds.as_array()[:, :2], axis=1)
@@ -97,6 +87,23 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
     return invalid_fraction, pd.DataFrame(outlier_info)
 
 
+def check_pose_and_get_bounds(pose: AtomArray):
+    if pose.array_length() == 0:
+        raise ValueError("The structure is empty.")
+
+    if not pose.bonds:
+        logger.error(
+            "Models must have bonds, use "
+            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
+        )
+        raise ValueError("The structure does not have bonds.")
+    
+    # this fetches values from RDKit, raises BadStructureError if the structure is bad
+    bounds = get_distance_bounds(pose)
+    return bounds
+
+
+
 def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[float, pd.DataFrame]:
     """
     Calculate the percentage of bonds that are outside acceptable ranges.
@@ -121,22 +128,10 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
     outlier_info : pd.DataFrame
         DataFrame containing information about the outliers, including atom indices and distances.
     """
-    if pose.array_length() == 0:
-        return np.nan, pd.DataFrame()
+    bounds = check_pose_and_get_bounds(pose)
 
-    try:
-        bounds = get_distance_bounds(pose)
-    except BadStructureError:
-        return np.nan, pd.DataFrame()
-
-    if not pose.bonds:
-        logger.error(
-            "Models must have bonds, use "
-            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
-        )
-        return np.nan, pd.DataFrame()
-
-    # in the original, bonds were fetched from the reference structure, but we don't have one here.
+    # in bond_length_violations, bonds are fetched from the reference structure,
+    # but we don't have one here.
     all_bonds, _ = pose.bonds.get_all_bonds()
     # For a bond angle 'ABC', this list contains the atom indices for 'A' and 'C'
     bond_indices = []
@@ -199,10 +194,10 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
     )
     return invalid_fraction, pd.DataFrame(outlier_info)
 
-# TODO make more general: https://github.com/diff-use/sampleworks/issues/93
+
 def main(args: argparse.Namespace):
     # The unused variable is a list of ProteinConfigs, not used yet in this script
-    all_experiments, _ = setup_evaluation_parameters(args)
+    all_trials, _ = setup_evaluation_parameters(args)
 
     all_bond_length_outliers = []
     all_bond_angle_outliers = []
