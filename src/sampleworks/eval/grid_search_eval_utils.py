@@ -216,7 +216,7 @@ def parse_eval_args(description: str | None = None):
 
 def setup_evaluation_parameters(
         args: argparse.Namespace
-) -> tuple[ExperimentList, dict[str, ProteinConfig]]:
+) -> tuple[TrialList, dict[str, ProteinConfig]]:
     grid_search_dir = Path(args.grid_search_results_path)
 
     # Protein configurations: base map paths, structure selections, and resolutions
@@ -227,15 +227,15 @@ def setup_evaluation_parameters(
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
     # Scan for experiments (look for refined.cif files)
-    all_experiments = scan_grid_search_results(
+    all_trials = scan_grid_search_results(
         grid_search_dir, target_filename=args.target_filename
     )
-    logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
+    logger.info(f"Found {len(all_trials)} experiments with refined.cif files")
 
-    if all_experiments:
-        all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    if all_trials:
+        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
     else:
         logger.error("No experiments found in grid search directory. Exiting with status 1.")
         sys.exit(1)
 
-    return all_experiments, protein_configs
+    return all_trials, protein_configs

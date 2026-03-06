@@ -48,7 +48,7 @@ from sampleworks.utils.framework_utils import match_batch
 
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
 def main(args: argparse.Namespace):
-    all_experiments, protein_configs = setup_evaluation_parameters(args)
+    all_trials, protein_configs = setup_evaluation_parameters(args)
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     ref_coords = {}
@@ -61,7 +61,6 @@ def main(args: argparse.Namespace):
                 ref_coords[(protein_key, selection)] = protein_ref_coords[selection]
 
     # Calculate RSCC for all trials
-    # (BIG) TODO: implement a sliding-window version (global can be achieved with diff't selections.
     logger.info("Calculating RSCC values for all trials...")
     logger.warning(
         "Note: RSCC is computed on the region around altloc residues (defined by selection)"
