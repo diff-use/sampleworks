@@ -219,6 +219,7 @@ CLAUDE.local.md
 
 # Model checkpoints
 release_data/
+checkpoints/
 
 # Large results from runs
 grid_search_results/

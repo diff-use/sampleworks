@@ -144,9 +144,11 @@ GRID SEARCH ARGUMENTS (run_grid_search.py):
 
 BAKED-IN CHECKPOINTS:
     The following checkpoints are pre-installed in the image:
-      /checkpoints/boltz1_conf.ckpt  - Boltz1 model (~3.5GB)
-      /checkpoints/boltz2_conf.ckpt  - Boltz2 model (~2.3GB)
-      /checkpoints/ccd.pkl           - Chemical Component Dictionary (~345MB)
+      /checkpoints/boltz1_conf.ckpt                   - Boltz1 model (~3.5GB)
+      /checkpoints/boltz2_conf.ckpt                   - Boltz2 model (~2.3GB)
+      /checkpoints/ccd.pkl                             - Chemical Component Dictionary (~345MB)
+      /checkpoints/rf3_foundry_01_24_latest.ckpt       - RF3 model (~2.9GB)
+      /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model (~1.4GB)
 
     FK steering options:
       --num-gd-steps "N M..."     Space-separated GD steps (FK steering only)

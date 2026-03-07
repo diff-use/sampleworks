@@ -485,9 +485,9 @@ def parse_args() -> argparse.Namespace:
         "--rf3-checkpoint",
         default=os.environ.get(
             "RF3_CHECKPOINT",
-            os.path.expanduser("~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt"),
+            os.path.expanduser("~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt"),
         ),
-        help="RF3 checkpoint path",
+        help="RF3 checkpoint path (default: $RF3_CHECKPOINT or ~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt)",
     )
     parser.add_argument(
         "--methods",

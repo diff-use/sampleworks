@@ -601,7 +601,7 @@ def protenix_wrapper(protenix_checkpoint_path: Path, device: torch.device):
 def rf3_checkpoint_path() -> Path:
     if not RF3_AVAILABLE:
         pytest.skip("RF3 dependencies not installed in this environment")
-    path = Path("~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt").expanduser()
+    path = Path("~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt").expanduser()
     if not path.exists():
         pytest.skip(f"RF3 checkpoint not found at {path}")
     return path

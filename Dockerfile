@@ -41,9 +41,15 @@
 #   docker run --gpus all -it sampleworks bash
 #
 # Baked-in checkpoints:
-#   /checkpoints/boltz1_conf.ckpt  - Boltz1 model
-#   /checkpoints/boltz2_conf.ckpt  - Boltz2 model  
-#   /checkpoints/ccd.pkl           - Chemical Component Dictionary (required for Boltz)
+#   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model (downloaded from HuggingFace)
+#   /checkpoints/boltz2_conf.ckpt                   - Boltz2 model (downloaded from HuggingFace)
+#   /checkpoints/ccd.pkl                             - Chemical Component Dictionary (required for Boltz)
+#   /checkpoints/rf3_foundry_01_24_latest.ckpt       - RF3 model (copied from build context)
+#   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model (copied from build context)
+#
+# Before building, copy RF3 and Protenix checkpoints into the build context:
+#   cp /mnt/diffuse-private/raw/checkpoints/rf3_foundry_01_24_latest.ckpt checkpoints/
+#   cp /mnt/diffuse-private/raw/checkpoints/protenix_base_default_v0.5.0.pt checkpoints/
 
 # ============================================================================
 # Base stage: CUDA + Pixi + common system dependencies
@@ -107,6 +113,8 @@ print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-comp
 # ============================================================================
 # Download and bake in model checkpoints
 # ============================================================================
+
+# Download Boltz checkpoints from HuggingFace (publicly available)
 RUN mkdir -p /checkpoints && \
     echo "Downloading Boltz1 checkpoint..." && \
     curl -L -o /checkpoints/boltz1_conf.ckpt \
@@ -121,13 +129,22 @@ RUN mkdir -p /checkpoints && \
     curl -L -o /checkpoints/mols.tar \
         "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar" && \
     cd /checkpoints && tar -xf mols.tar && rm mols.tar && \
-    echo "All checkpoints downloaded!" && \
+    echo "Boltz checkpoints downloaded!" && \
     ls -lh /checkpoints/
+
+# Copy RF3 and Protenix checkpoints from build context
+# These must be placed in checkpoints/ before building:
+#   cp /mnt/diffuse-private/raw/checkpoints/rf3_foundry_01_24_latest.ckpt checkpoints/
+#   cp /mnt/diffuse-private/raw/checkpoints/protenix_base_default_v0.5.0.pt checkpoints/
+COPY checkpoints/rf3_foundry_01_24_latest.ckpt /checkpoints/rf3_foundry_01_24_latest.ckpt
+COPY checkpoints/protenix_base_default_v0.5.0.pt /checkpoints/protenix_base_default_v0.5.0.pt
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \
     BOLTZ2_CHECKPOINT=/checkpoints/boltz2_conf.ckpt \
-    CCD_PATH=/checkpoints/ccd.pkl
+    CCD_PATH=/checkpoints/ccd.pkl \
+    RF3_CHECKPOINT=/checkpoints/rf3_foundry_01_24_latest.ckpt \
+    PROTENIX_CHECKPOINT=/checkpoints/protenix_base_default_v0.5.0.pt
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["--help"]
