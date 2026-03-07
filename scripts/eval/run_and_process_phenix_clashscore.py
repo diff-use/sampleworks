@@ -6,7 +6,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 from loguru import logger
-from sampleworks.eval.eval_dataclasses import Experiment
+from sampleworks.eval.eval_dataclasses import Trial
 from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results
 
 
@@ -56,25 +56,21 @@ def main(args) -> None:
 
     # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
     grid_search_dir = workspace_root / "grid_search_results"
-    all_experiments = scan_grid_search_results(
-        grid_search_dir, target_filename=args.target_filename
-    )
-    logger.info(f"Found {len(all_experiments)} experiments with {args.target_filename} files")
+    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
+    logger.info(f"Found {len(all_trials)} trials with {args.target_filename} files")
 
-    # Now loop over experiments with joblib and get back tuples of experiment level metrics
+    # Now loop over trials with joblib and get back tuples of trial level metrics
     clashscore_metrics = joblib.Parallel(n_jobs=args.n_jobs)(
-        joblib.delayed(process_one_experiment)(experiment) for experiment in all_experiments
+        joblib.delayed(process_one_trial)(trial) for trial in all_trials
     )
     if not clashscore_metrics:
-        logger.error(
-            "No experiments successfully processed, check that result files are available."
-        )
+        logger.error("No trials successfully processed, check that result files are available.")
         return
 
     # apparently a list of empty dataframes evaluates to True, so check for that.
     clashscore_metrics = [df for df in clashscore_metrics if not df.empty]
     if not clashscore_metrics:
-        logger.error("No experiments produced output, check that result files are available.")
+        logger.error("No trials produced output, check that result files are available.")
         return
 
     clashscore_df = pd.concat(clashscore_metrics, ignore_index=True)
@@ -83,16 +79,16 @@ def main(args) -> None:
     )
 
 
-def process_one_experiment(experiment: Experiment) -> pd.DataFrame:
+def process_one_trial(trial: Trial) -> pd.DataFrame:
     # make sure there are no nan lines in the CIF file; this is an extra
     # precaution, even though our CIF writers should now avoid writing nans
-    file_with_no_nans = experiment.refined_cif_path.parent / "nonan.cif"
-    json_output = experiment.refined_cif_path.parent / "clashscore.json"
-    logfile = experiment.refined_cif_path.parent / "clashscore.log"
-    logger.info(f"Removing nans from {experiment.refined_cif_path}")
+    file_with_no_nans = trial.refined_cif_path.parent / "nonan.cif"
+    json_output = trial.refined_cif_path.parent / "clashscore.json"
+    logfile = trial.refined_cif_path.parent / "clashscore.log"
+    logger.info(f"Removing nans from {trial.refined_cif_path}")
 
     with file_with_no_nans.open("w") as fn:
-        grep_cmd = ["grep", "-viP", r"\bnan\b", str(experiment.refined_cif_path)]
+        grep_cmd = ["grep", "-viP", r"\bnan\b", str(trial.refined_cif_path)]
         retcode = subprocess.call(grep_cmd, stdout=fn)
     if retcode != 0:
         raise RuntimeError(f"grep failed with code {retcode}, the command was {' '.join(grep_cmd)}")

@@ -208,14 +208,14 @@ def main(args: argparse.Namespace):
     grid_search_dir = workspace_root / "grid_search_results"
     logger.info(f"Grid search directory: {grid_search_dir}")
 
-    # Scan for experiments (look for refined.cif files)
-    all_experiments = scan_grid_search_results(grid_search_dir)
-    logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
+    # Scan for trials (look for refined.cif files)
+    all_trials = scan_grid_search_results(grid_search_dir)
+    logger.info(f"Found {len(all_trials)} trials with refined.cif files")
 
-    if all_experiments:
-        all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    if all_trials:
+        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
     else:
-        logger.error("No experiments found in grid search directory. Exiting with status 1.")
+        logger.error("No trials found in grid search directory. Exiting with status 1.")
         sys.exit(1)
 
     all_bond_length_outliers = []
@@ -223,17 +223,17 @@ def main(args: argparse.Namespace):
     all_bond_length_violation_fractions = []
     all_bond_angle_violation_fractions = []
     # TODO parallelize this with joblib
-    for exp in tqdm(all_experiments):
+    for trial in tqdm(all_trials):
         # get the refined cif file
-        ciffile = CIFFile.read(exp.refined_cif_path)
+        ciffile = CIFFile.read(trial.refined_cif_path)
         structures = get_structure(ciffile, include_bonds=True)
         structures = ensure_atom_array_stack(structures)
         for model_n, s in enumerate(structures):
             bond_angle_violation_fraction, bond_angle_outliers = bond_angle_violations(s)
             bond_length_violation_fraction, bond_length_outliers = bond_length_violations(s)
-            bond_angle_outliers["model"] = str(exp.refined_cif_path)
+            bond_angle_outliers["model"] = str(trial.refined_cif_path)
             bond_angle_outliers["model_n"] = model_n
-            bond_length_outliers["model"] = str(exp.refined_cif_path)
+            bond_length_outliers["model"] = str(trial.refined_cif_path)
             bond_length_outliers["model_n"] = model_n
 
             all_bond_length_outliers.append(bond_length_outliers)
@@ -242,14 +242,14 @@ def main(args: argparse.Namespace):
             all_bond_length_violation_fractions.append(
                 {
                     "outlier_fraction": bond_length_violation_fraction,
-                    "model": str(exp.refined_cif_path),
+                    "model": str(trial.refined_cif_path),
                     "model_n": model_n,
                 }
             )
             all_bond_angle_violation_fractions.append(
                 {
                     "outlier_fraction": bond_angle_violation_fraction,
-                    "model": str(exp.refined_cif_path),
+                    "model": str(trial.refined_cif_path),
                     "model_n": model_n,
                 }
             )

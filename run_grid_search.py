@@ -1,4 +1,4 @@
-"""Grid search script for running experiments across models, scalers, and parameters."""
+"""Grid search script for running trials across models, scalers, and parameters."""
 
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ def run_guidance_queue_script(args: tuple[str, int, str, int]):
 
 def main(args: argparse.Namespace):
     """
-    Main pipeline for running grid search experiments.
+    Main pipeline for running grid search trials.
     Args:
         args: Command-line arguments.
     """

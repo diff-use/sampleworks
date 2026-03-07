@@ -12,7 +12,7 @@ from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
-from sampleworks.eval.eval_dataclasses import Experiment, ProteinConfig
+from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial
 from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
@@ -207,14 +207,14 @@ def main(args: argparse.Namespace):
     logger.info(f"Grid search directory: {grid_search_dir}")
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
-    # Scan for experiments (look for refined.cif files)
-    all_experiments = scan_grid_search_results(grid_search_dir)
-    logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
+    # Scan for trials (look for refined.cif files)
+    all_trials = scan_grid_search_results(grid_search_dir)
+    logger.info(f"Found {len(all_trials)} trials with refined.cif files")
 
-    if all_experiments:
-        all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    if all_trials:
+        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
     else:
-        logger.error("No experiments found in grid search directory. Exiting with status 1.")
+        logger.error("No trials found in grid search directory. Exiting with status 1.")
         sys.exit(1)
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
@@ -252,19 +252,19 @@ def main(args: argparse.Namespace):
                 logger.error(f"  Traceback: {traceback.format_exc()}")
 
     # Do the quick pass through all the "rows" of our output table to filter in those we can run.
-    filtered_experiments = []
+    filtered_trials = []
     null_results = []
-    for _exp in all_experiments:
-        if _exp.protein in protein_configs:
-            protein = _exp.protein
-        elif _exp.protein.upper() in protein_configs:
-            protein = _exp.protein.upper()
-        elif _exp.protein.lower() in protein_configs:
-            protein = _exp.protein.lower()
+    for _trial in all_trials:
+        if _trial.protein in protein_configs:
+            protein = _trial.protein
+        elif _trial.protein.upper() in protein_configs:
+            protein = _trial.protein.upper()
+        elif _trial.protein.lower() in protein_configs:
+            protein = _trial.protein.lower()
         else:
             # These we just skip over--we assume that the user has told us via the config file
             # what results they are interested in.
-            logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
+            logger.warning(f"Skipping protein with no configuration: {_trial.protein}")
             continue
 
         protein_config = protein_configs[protein]
@@ -274,50 +274,50 @@ def main(args: argparse.Namespace):
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
 
-        atom_array_key = (protein, _exp.occ_key)
+        atom_array_key = (protein, _trial.occ_key)
         if atom_array_key not in reference_atom_arrays:
             logger.warning(
-                f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
-                f"for {_exp.protein} and occupancies {_exp.altloc_occupancies}."
+                f"Skipping {_trial.protein_dir_name}: no reference atom array stack available "
+                f"for {_trial.protein} and occupancies {_trial.altloc_occupancies}."
             )
             # record empty results for all selections, indicating they could not be computed.
             for _sel in protein_config.selection:
-                exp_copy = _exp.__dict__.copy()
-                exp_copy["selection"] = _sel
-                null_results.append(exp_copy)
+                trial_copy = _trial.__dict__.copy()
+                trial_copy["selection"] = _sel
+                null_results.append(trial_copy)
             continue
 
         protein_reference_atom_arrays = reference_atom_arrays[atom_array_key]
         for _sel in protein_config.selection:
             if _sel not in protein_reference_atom_arrays:
                 logger.warning(
-                    f"Skipping {_exp.protein_dir_name}: no reference atom array stack available "
-                    f"for {_exp.protein} and occupancies {_exp.altloc_occupancies}, "
+                    f"Skipping {_trial.protein_dir_name}: no reference atom array stack available "
+                    f"for {_trial.protein} and occupancies {_trial.altloc_occupancies}, "
                     f"selection '{_sel}'."
                 )
-                exp_copy = _exp.__dict__.copy()
-                exp_copy["selection"] = _sel
-                null_results.append(exp_copy)
+                trial_copy = _trial.__dict__.copy()
+                trial_copy["selection"] = _sel
+                null_results.append(trial_copy)
                 continue
 
             px_seln_refernce_atom_array = protein_reference_atom_arrays[_sel]
-            filtered_experiments.append((_exp, protein_config, px_seln_refernce_atom_array, _sel))
+            filtered_trials.append((_trial, protein_config, px_seln_refernce_atom_array, _sel))
 
     # now we can more easily parallelize this loop.
     logger.debug("Starting LDDT evaluation loop. This may take a while...")
     all_results = Parallel(n_jobs=args.n_jobs)(
-        delayed(process_exp_with_selection)(
-            _exp, protein_config, px_seln_refernce_atom_array, selection
+        delayed(process_trial_with_selection)(
+            _trial, protein_config, px_seln_refernce_atom_array, selection
         )
-        for _exp, protein_config, px_seln_refernce_atom_array, selection in filtered_experiments
+        for _trial, protein_config, px_seln_refernce_atom_array, selection in filtered_trials
     )
 
     df = pd.DataFrame(null_results + all_results)
     df.to_csv(grid_search_dir / "lddt_results.csv", index=False)
 
 
-def process_exp_with_selection(
-    exp: Experiment,
+def process_trial_with_selection(
+    trial: Trial,
     protein_config: ProteinConfig,
     px_seln_refernce_atom_array: AtomArrayStack,
     selection_string: str,
@@ -326,7 +326,7 @@ def process_exp_with_selection(
 
     Parameters
     ----------
-    exp: Experiment, a description of the structure generation experiment
+    trial: Trial, a description of the structure generation trial
     protein_config: ProteinConfig, specifying the locations of reference structures and maps
     px_seln_refernce_atom_array: AtomArrayStack,
         the atom array stack for the reference structure, which in principle could be fetched
@@ -337,9 +337,9 @@ def process_exp_with_selection(
     Returns
     -------
         A dictionary of results of LDDT-based clustering that can be collated in a dataframe.
-        In addition to the data in the `exp` object, this dictionary contains:
+        In addition to the data in the `trial` object, this dictionary contains:
         - occupancies: list[float], the occupancies of the selected atoms, computed as the
-            fraction of structures in the experiment that are closest to one or the other
+            fraction of structures in the trial that are closest to one or the other
             altloc of the reference structure. .
         - avg_silhouette: float, the average silhouette score for the LDDT-based clustering
         - avg_silhouette_to_ref: float,
@@ -347,12 +347,12 @@ def process_exp_with_selection(
             assigned reference altloc.
     """
     logger.debug(f"Evaluating selection {selection_string} for protein {protein_config}")
-    result = exp.__dict__.copy()
+    result = trial.__dict__.copy()
     result["selection"] = selection_string
 
     try:
         # generated structures shouldn't have altlocs, don't need altloc="all".
-        predicted_atom_array_stack = load_any(exp.refined_cif_path)
+        predicted_atom_array_stack = load_any(trial.refined_cif_path)
         clustering_results = nn_lddt_clustering(
             px_seln_refernce_atom_array,
             ensure_atom_array_stack(predicted_atom_array_stack),
@@ -363,11 +363,11 @@ def process_exp_with_selection(
         result.update({k: clustering_results[k] for k in lddt_result_keys})
 
         logger.info(
-            f"Successfully processed {exp.protein_dir_name} w/ selection {selection_string}"
+            f"Successfully processed {trial.protein_dir_name} w/ selection {selection_string}"
         )
 
     except Exception as e:
-        logger.error(f"Error processing experiment {exp.exp_dir}: {e}")
+        logger.error(f"Error processing trial {trial.trial_dir}: {e}")
         logger.error(f"  Traceback: {traceback.format_exc()}")
         result["error"] = str(e)
         result["avg_silhouette"] = np.nan

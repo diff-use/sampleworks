@@ -9,9 +9,7 @@ from sampleworks.eval.occupancy_utils import occupancy_to_str
 
 
 @dataclass
-# TODO rename to make consistend w/ hub.diffuse.science
-#  https://github.com/diff-use/sampleworks/issues/122
-class Experiment:
+class Trial:
     protein: str
     altloc_occupancies: dict[str, float]
     model: str
@@ -20,7 +18,7 @@ class Experiment:
     ensemble_size: int
     guidance_weight: float | None
     gd_steps: int | None
-    exp_dir: Path
+    trial_dir: Path
     refined_cif_path: Path
     protein_dir_name: str
     rscc: float = np.nan  # these last three are placeholders for RSCC calculations.
@@ -34,7 +32,7 @@ class Experiment:
         return tuple(sorted((k, v) for k, v in self.altloc_occupancies.items() if abs(v) > 1e-6))
 
 
-class ExperimentList(list[Experiment]):
+class TrialList(list[Trial]):
     def summarize(self):
         logger.info(f"Proteins: {set(e.protein for e in self)}")
         logger.info(f"Models: {set(e.model for e in self)}")
