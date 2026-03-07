@@ -4,12 +4,12 @@
 # provided by karson.chrispens@ucsf.edu
 
 This script calculates the Real Space Correlation Coefficient (RSCC) between computed maps
-from refined structures and reference (ground truth) maps for all experiments in the grid
+from refined structures and reference (ground truth) maps for all trials in the grid
 search results.
 
 ## Workflow:
-1. Scan the `grid_search_results` directory for completed experiments
-2. For each experiment with a `refined.cif`, compute the electron density map
+1. Scan the `grid_search_results` directory for completed trials
+2. For each trial with a `refined.cif`, compute the electron density map
 3. Compare against the corresponding base map and calculate RSCC
 4. Aggregate and visualize results by ensemble size, guidance weight, and scaler type
 """
@@ -68,14 +68,12 @@ def main(args: argparse.Namespace):
             if _path:
                 logger.debug(f"  {config.protein} occ={_occ}: {_path}")
 
-    # Scan for experiments (look for refined.cif files)
-    all_experiments = scan_grid_search_results(
-        grid_search_dir, target_filename=args.target_filename
-    )
-    logger.info(f"Found {len(all_experiments)} experiments with refined.cif files")
+    # Scan for trials (look for refined.cif files)
+    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
+    logger.info(f"Found {len(all_trials)} trials with refined.cif files")
 
-    if all_experiments:
-        all_experiments.summarize()  # Prints some summary stats, e.g. number of unique proteins
+    if all_trials:
+        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     ref_coords = {}
@@ -87,9 +85,9 @@ def main(args: argparse.Namespace):
             for selection in protein_ref_coords.keys():
                 ref_coords[(protein_key, selection)] = protein_ref_coords[selection]
 
-    # Calculate RSCC for all experiments
+    # Calculate RSCC for all trials
     # (BIG) TODO: implement a sliding-window version (global can be achieved with diff't selections.
-    logger.info("Calculating RSCC values for all experiments...")
+    logger.info("Calculating RSCC values for all trials...")
     logger.warning(
         "Note: RSCC is computed on the region around altloc residues (defined by selection)"
     )
@@ -101,13 +99,13 @@ def main(args: argparse.Namespace):
     base_map_cache: dict[tuple[str, tuple[tuple[str, float], ...], str], tuple[XMap, XMap]] = {}
     ref_full_structure_cache: dict[tuple[str, tuple[tuple[str, float], ...]], AtomArrayStack] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
-    for _i, _exp in enumerate(all_experiments):
-        if _exp.protein in protein_configs:
-            protein = _exp.protein
-        elif _exp.protein.upper() in protein_configs:
-            protein = _exp.protein.upper()
+    for _i, _trial in enumerate(all_trials):
+        if _trial.protein in protein_configs:
+            protein = _trial.protein
+        elif _trial.protein.upper() in protein_configs:
+            protein = _trial.protein.upper()
         else:
-            logger.warning(f"Skipping protein with no configuration: {_exp.protein}")
+            logger.warning(f"Skipping protein with no configuration: {_trial.protein}")
             continue
 
         protein_config = protein_configs[protein]
@@ -115,30 +113,30 @@ def main(args: argparse.Namespace):
             # Check if we have reference coordinates for region extraction
             if (protein, selection) not in ref_coords:
                 logger.warning(
-                    f"Skipping {_exp.protein_dir_name}/{selection}: no reference structure "
-                    f"available for {_exp.protein}, this may be due to a selection with zero atoms "
-                    f"or NaN/Inf coordinates. Check logs above."
+                    f"Skipping {_trial.protein_dir_name}/{selection}: no reference structure "
+                    f"available for {_trial.protein}, this may be due to a selection with zero "
+                    f"atoms or NaN/Inf coordinates. Check logs above."
                 )
                 continue
 
             _selection_coords = ref_coords[(protein, selection)]
-            _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.altloc_occupancies)
+            _base_map_path = protein_config.get_base_map_path_for_occupancy(_trial.altloc_occupancies)
             if _base_map_path is None:
                 logger.warning(
-                    f"Skipping {_exp.protein_dir_name}: base map for selection {selection} and "
-                    f"occupancy {_exp.altloc_occupancies} not found"
+                    f"Skipping {_trial.protein_dir_name}: base map for selection {selection} and "
+                    f"occupancy {_trial.altloc_occupancies} not found"
                 )
                 continue
 
-            exp_result = _exp.__dict__.copy()
-            exp_result["selection"] = selection
-            exp_result["error"] = None
+            trial_result = _trial.__dict__.copy()
+            trial_result["selection"] = selection
+            trial_result["error"] = None
             try:
                 # TODO: this needs to be better unified with what's in generate_synthetic_density
                 #
                 # Load base map for canonical unit cell,
                 # don't overwrite the base map with selection map--we'll use the full map later too.
-                if (protein, _exp.occ_key, selection) not in base_map_cache:
+                if (protein, _trial.occ_key, selection) not in base_map_cache:
                     _base_xmap = protein_config.load_map(_base_map_path)
                     if _base_xmap is None:
                         raise ValueError(f"Failed to load base map from {_base_map_path}")
@@ -150,21 +148,21 @@ def main(args: argparse.Namespace):
                     )
                     logger.info(
                         f"Caching base and subselected maps for {protein} "
-                        f"altloc_occupancies={_exp.altloc_occupancies} selection={selection}"
+                        f"altloc_occupancies={_trial.altloc_occupancies} selection={selection}"
                     )
-                    base_map_cache[(protein, _exp.occ_key, selection)] = (
+                    base_map_cache[(protein, _trial.occ_key, selection)] = (
                         _base_xmap,
                         _extracted_base,
                     )
                 else:
-                    _base_xmap, _extracted_base = base_map_cache[(protein, _exp.occ_key, selection)]
+                    _base_xmap, _extracted_base = base_map_cache[(protein, _trial.occ_key, selection)]
 
                 # Validate extraction
                 if _extracted_base is None or _extracted_base.shape[0] == 0:
                     raise ValueError(f"Extracted base map from {_base_map_path} is empty")
 
                 # Load refined structure
-                _structure = parse(_exp.refined_cif_path, ccd_mirror_path=None)
+                _structure = parse(_trial.refined_cif_path, ccd_mirror_path=None)
 
                 # Compute density from refined structure
                 atom_array = get_asym_unit_from_structure(_structure)
@@ -173,7 +171,7 @@ def main(args: argparse.Namespace):
 
                 if not hasattr(atom_array, "b_factor"):
                     logger.warning(
-                        f"No b-factor array found in {_exp.refined_cif_path}, setting to 20."
+                        f"No b-factor array found in {_trial.refined_cif_path}, setting to 20."
                     )
                     atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
 
@@ -182,12 +180,12 @@ def main(args: argparse.Namespace):
                 #
                 # Align the refined structure to the reference structure
                 # 1. Get the reference structure path and load from cache if available
-                if (protein, _exp.occ_key) not in ref_full_structure_cache:
-                    ref_path = protein_config.get_reference_structure_path(_exp.altloc_occupancies)
+                if (protein, _trial.occ_key) not in ref_full_structure_cache:
+                    ref_path = protein_config.get_reference_structure_path(_trial.altloc_occupancies)
                     if ref_path is None:
                         raise ValueError(
                             f"Could not find reference structure for "
-                            f"occupancy {_exp.altloc_occupancies}"
+                            f"occupancy {_trial.altloc_occupancies}"
                         )
 
                     # 2. Load the reference structure with parse() to get only the first altloc
@@ -195,11 +193,11 @@ def main(args: argparse.Namespace):
                     ref_atom_array = get_asym_unit_from_structure(ref_structure)
                     logger.info(
                         f"Caching reference structure for {protein} "
-                        f"altloc_occupancies={_exp.altloc_occupancies}"
+                        f"altloc_occupancies={_trial.altloc_occupancies}"
                     )
-                    ref_full_structure_cache[(protein, _exp.occ_key)] = ref_atom_array
+                    ref_full_structure_cache[(protein, _trial.occ_key)] = ref_atom_array
                 else:
-                    ref_atom_array = ref_full_structure_cache[(protein, _exp.occ_key)]
+                    ref_atom_array = ref_full_structure_cache[(protein, _trial.occ_key)]
 
                 # 3. Find the common atoms with non-nan coords between the reference
                 #    and the refined structure
@@ -266,27 +264,27 @@ def main(args: argparse.Namespace):
                     raise ValueError("Extracted computed map is empty")
 
                 # Calculate RSCC on extracted regions
-                # TODO: don't alter the input object _exp, just get a copy of it as a dict.
-                exp_result["rscc"] = rscc(_extracted_base, _extracted_computed)
-                exp_result["base_map_path"] = _base_map_path
+                # TODO: don't alter the input object _trial, just get a copy of it as a dict.
+                trial_result["rscc"] = rscc(_extracted_base, _extracted_computed)
+                trial_result["base_map_path"] = _base_map_path
 
             except Exception as _e:
-                logger.error(f"ERROR processing {_exp.exp_dir}: {_e}")
+                logger.error(f"ERROR processing {_trial.trial_dir}: {_e}")
                 logger.error(f"  Traceback: {traceback.format_exc()}")
-                exp_result["error"] = _e
-                exp_result["rscc"] = np.nan  # this is the default, but better to be explicit.
-                exp_result["base_map_path"] = _base_map_path
+                trial_result["error"] = _e
+                trial_result["rscc"] = np.nan  # this is the default, but better to be explicit.
+                trial_result["base_map_path"] = _base_map_path
 
-            results.append(exp_result)
+            results.append(trial_result)
 
         if (_i + 1) % 10 == 0 or _i == 0:
             logger.debug(
-                f"  [{_i + 1}/{len(all_experiments)}] {_exp.protein_dir_name} / "
-                f"{_exp.model} / {_exp.scaler} / ens{_exp.ensemble_size}_"
-                f"gw{_exp.guidance_weight}: RSCC = {_exp.rscc:.4f}"
+                f"  [{_i + 1}/{len(all_trials)}] {_trial.protein_dir_name} / "
+                f"{_trial.model} / {_trial.scaler} / ens{_trial.ensemble_size}_"
+                f"gw{_trial.guidance_weight}: RSCC = {_trial.rscc:.4f}"
             )
 
-    logger.info(f"\nCompleted RSCC calculation for {len(results)} experiments")
+    logger.info(f"\nCompleted RSCC calculation for {len(results)} trials")
 
     # Create DataFrame from results
     df = pd.DataFrame(results)
@@ -295,7 +293,7 @@ def main(args: argparse.Namespace):
     if not df.empty:
         # Remove error column for display if present
         drop_cols = [
-            "exp_dir",
+            "trial_dir",
             "refined_cif_path",
             "base_map_path",
             "error",

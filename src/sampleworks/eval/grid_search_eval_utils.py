@@ -10,7 +10,7 @@ from pathlib import Path
 
 from loguru import logger
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
-from sampleworks.eval.eval_dataclasses import Experiment, ExperimentList
+from sampleworks.eval.eval_dataclasses import Trial, TrialList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
 
@@ -18,15 +18,15 @@ from sampleworks.utils.guidance_constants import StructurePredictor
 # TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
 #  for how the folder names are generated.
 #  https://github.com/diff-use/sampleworks/issues/121
-def parse_experiment_dir(exp_dir: Path) -> dict[str, int | float | None]:
-    """Parse experiment directory name to extract parameters.
+def parse_trial_dir(trial_dir: Path) -> dict[str, int | float | None]:
+    """Parse trial directory name to extract parameters.
 
     Handles both:
     - fk_steering format: ens{N}_gw{W}_gd{D}
     - pure_guidance format: ens{N}_gw{W}
     """
-    dir_name = exp_dir.name
-    logger.debug(f"Parsing experiment directory: {exp_dir}")
+    dir_name = trial_dir.name
+    logger.debug(f"Parsing trial directory: {trial_dir}")
 
     # Extract ensemble size
     ens_match = re.search(r"ens(\d+)", dir_name)
@@ -54,8 +54,8 @@ def scan_grid_search_results(
     current_depth: int = 0,
     target_depth: int = 4,
     target_filename: str = "refined.cif",
-) -> ExperimentList:
-    """Recursively scan the grid_search_results directory for all experiments with refined.cif
+) -> TrialList:
+    """Recursively scan the grid_search_results directory for all trial with refined.cif
     files.
 
     Parameters
@@ -65,39 +65,39 @@ def scan_grid_search_results(
     current_depth : int
         Current depth of the recursion, default 0.
     target_depth : int
-        Depth where we expect to find experiment output files.
+        Depth where we expect to find trial output files.
     target_filename : str
         Name of the target file to look for, default "refined.cif"
 
     Returns
     -------
-    ExperimentList
-        List of experiment metadata objects.
+    TrialList
+        List of trial metadata objects.
     """
-    experiments = ExperimentList()
+    trials = TrialList()
 
     if not current_directory.exists():
         if current_depth == 0:
             logger.error(
                 f"Grid search directory not found: {current_directory} at depth {current_depth}"
             )
-        return experiments
+        return trials
 
     # FIXME https://github.com/diff-use/sampleworks/issues/121
     # Check if we found a refined.cif file in the current directory
     refined_cif = current_directory / target_filename
     if current_depth == target_depth and refined_cif.exists():
         # Reconstruct metadata from path structure
-        # Expected structure: .../protein_dir/model_dir/scaler_dir/exp_dir/refined.cif
-        exp_dir = current_directory
-        scaler_dir = exp_dir.parent
+        # Expected structure: .../protein_dir/model_dir/scaler_dir/trial_dir/refined.cif
+        trial_dir = current_directory
+        scaler_dir = trial_dir.parent
         model_dir = scaler_dir.parent
         protein_dir = model_dir.parent
 
         protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
         method, model = get_method_and_model_name(model_dir.name)
 
-        params = parse_experiment_dir(exp_dir)
+        params = parse_trial_dir(trial_dir)
         guidance_weight = None
         if params["guidance_weight"] is not None:
             guidance_weight = float(params["guidance_weight"])
@@ -111,11 +111,11 @@ def scan_grid_search_results(
             or params["ensemble_size"] is None
             or (guidance_weight is None and gd_steps is None)
         ):
-            logger.warning(f"Skipping experiment in {exp_dir} due to missing metadata")
-            return experiments
+            logger.warning(f"Skipping trial in {trial_dir} due to missing metadata")
+            return trials
 
-        experiments.append(
-            Experiment(
+        trials.append(
+            Trial(
                 protein=protein,
                 altloc_occupancies=altloc_occupancies,
                 model=model,
@@ -124,28 +124,28 @@ def scan_grid_search_results(
                 ensemble_size=int(params["ensemble_size"]),
                 guidance_weight=guidance_weight,
                 gd_steps=gd_steps,
-                exp_dir=exp_dir,
+                trial_dir=trial_dir,
                 refined_cif_path=refined_cif,
                 protein_dir_name=protein_dir.name,
             )
         )
 
-        return experiments
+        return trials
 
     # Stop recursion if max depth reached, this should not happen, but it will prevent any
     # accidental infinite recursion if the directory structure changes in the future.
     if current_depth >= target_depth:
-        return experiments
+        return trials
 
     # Recurse into subdirectories
     for item in current_directory.iterdir():
         if item.is_dir() and not item.name.endswith(".json"):
-            grid_search_experiments = scan_grid_search_results(
+            grid_search_trials = scan_grid_search_results(
                 item, current_depth + 1, target_depth, target_filename=target_filename
             )
-            experiments.extend(grid_search_experiments)
+            trials.extend(grid_search_trials)
 
-    return experiments
+    return trials
 
 
 def get_method_and_model_name(model_name: str) -> tuple[str | None, str]:
