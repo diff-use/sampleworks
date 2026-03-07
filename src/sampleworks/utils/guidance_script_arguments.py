@@ -222,7 +222,7 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
-        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt",
+        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt",
         help="Path to RF3 checkpoint",
     )
     parser.add_argument(
