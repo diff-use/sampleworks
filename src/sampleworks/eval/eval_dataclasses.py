@@ -34,9 +34,9 @@ class Trial:
 
 class TrialList(list[Trial]):
     def summarize(self):
-        logger.info(f"Proteins: {set(e.protein for e in self)}")
-        logger.info(f"Models: {set(e.model for e in self)}")
-        logger.info(f"Scalers: {set(e.scaler for e in self)}")
+        logger.info(f"Proteins: {set(trial.protein for trial in self)}")
+        logger.info(f"Models: {set(trial.model for trial in self)}")
+        logger.info(f"Scalers: {set(trial.scaler for trial in self)}")
 
 
 @dataclass

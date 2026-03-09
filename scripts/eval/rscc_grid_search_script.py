@@ -63,10 +63,10 @@ def main(args: argparse.Namespace):
     # Test base map path resolution
     logger.debug("Testing base map path resolution:")
     for _, config in protein_configs.items():
-        for _occ in args.occupancies:
-            _path = config.get_base_map_path_for_occupancy(_occ)  # will warn if not found
-            if _path:
-                logger.debug(f"  {config.protein} occ={_occ}: {_path}")
+        for occ in args.occupancies:
+            path = config.get_base_map_path_for_occupancy(occ)  # will warn if not found
+            if path:
+                logger.debug(f"  {config.protein} occ={occ}: {path}")
 
     # Scan for trials (look for refined.cif files)
     all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
@@ -92,20 +92,20 @@ def main(args: argparse.Namespace):
         "Note: RSCC is computed on the region around altloc residues (defined by selection)"
     )
 
-    _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Using device: {_device}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
 
     results = []
     base_map_cache: dict[tuple[str, tuple[tuple[str, float], ...], str], tuple[XMap, XMap]] = {}
     ref_full_structure_cache: dict[tuple[str, tuple[tuple[str, float], ...]], AtomArrayStack] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
-    for _i, _trial in enumerate(all_trials):
-        if _trial.protein in protein_configs:
-            protein = _trial.protein
-        elif _trial.protein.upper() in protein_configs:
-            protein = _trial.protein.upper()
+    for i, trial in enumerate(all_trials):
+        if trial.protein in protein_configs:
+            protein = trial.protein
+        elif trial.protein.upper() in protein_configs:
+            protein = trial.protein.upper()
         else:
-            logger.warning(f"Skipping protein with no configuration: {_trial.protein}")
+            logger.warning(f"Skipping protein with no configuration: {trial.protein}")
             continue
 
         protein_config = protein_configs[protein]
@@ -113,22 +113,22 @@ def main(args: argparse.Namespace):
             # Check if we have reference coordinates for region extraction
             if (protein, selection) not in ref_coords:
                 logger.warning(
-                    f"Skipping {_trial.protein_dir_name}/{selection}: no reference structure "
-                    f"available for {_trial.protein}, this may be due to a selection with zero "
+                    f"Skipping {trial.protein_dir_name}/{selection}: no reference structure "
+                    f"available for {trial.protein}, this may be due to a selection with zero "
                     f"atoms or NaN/Inf coordinates. Check logs above."
                 )
                 continue
 
-            _selection_coords = ref_coords[(protein, selection)]
-            _base_map_path = protein_config.get_base_map_path_for_occupancy(_trial.altloc_occupancies)
-            if _base_map_path is None:
+            selection_coords = ref_coords[(protein, selection)]
+            base_map_path = protein_config.get_base_map_path_for_occupancy(trial.altloc_occupancies)
+            if base_map_path is None:
                 logger.warning(
-                    f"Skipping {_trial.protein_dir_name}: base map for selection {selection} and "
-                    f"occupancy {_trial.altloc_occupancies} not found"
+                    f"Skipping {trial.protein_dir_name}: base map for selection {selection} and "
+                    f"occupancy {trial.altloc_occupancies} not found"
                 )
                 continue
 
-            trial_result = _trial.__dict__.copy()
+            trial_result = trial.__dict__.copy()
             trial_result["selection"] = selection
             trial_result["error"] = None
             try:
@@ -136,42 +136,42 @@ def main(args: argparse.Namespace):
                 #
                 # Load base map for canonical unit cell,
                 # don't overwrite the base map with selection map--we'll use the full map later too.
-                if (protein, _trial.occ_key, selection) not in base_map_cache:
-                    _base_xmap = protein_config.load_map(_base_map_path)
-                    if _base_xmap is None:
-                        raise ValueError(f"Failed to load base map from {_base_map_path}")
+                if (protein, trial.occ_key, selection) not in base_map_cache:
+                    base_xmap = protein_config.load_map(base_map_path)
+                    if base_xmap is None:
+                        raise ValueError(f"Failed to load base map from {base_map_path}")
 
                     # Extract the region around altloc residues from the base map, using the
-                    # union of boxes around each atom. _extracted_base is no longer an XMap
-                    _, _extracted_base = _base_xmap.extract_tight(
-                        _selection_coords, padding=DEFAULT_SELECTION_PADDING
+                    # union of boxes around each atom. extracted_base is no longer an XMap
+                    _, extracted_base = base_xmap.extract_tight(
+                        selection_coords, padding=DEFAULT_SELECTION_PADDING
                     )
                     logger.info(
                         f"Caching base and subselected maps for {protein} "
-                        f"altloc_occupancies={_trial.altloc_occupancies} selection={selection}"
+                        f"altloc_occupancies={trial.altloc_occupancies} selection={selection}"
                     )
-                    base_map_cache[(protein, _trial.occ_key, selection)] = (
-                        _base_xmap,
-                        _extracted_base,
+                    base_map_cache[(protein, trial.occ_key, selection)] = (
+                        base_xmap,
+                        extracted_base,
                     )
                 else:
-                    _base_xmap, _extracted_base = base_map_cache[(protein, _trial.occ_key, selection)]
+                    base_xmap, extracted_base = base_map_cache[(protein, trial.occ_key, selection)]
 
                 # Validate extraction
-                if _extracted_base is None or _extracted_base.shape[0] == 0:
-                    raise ValueError(f"Extracted base map from {_base_map_path} is empty")
+                if extracted_base is None or extracted_base.shape[0] == 0:
+                    raise ValueError(f"Extracted base map from {base_map_path} is empty")
 
                 # Load refined structure
-                _structure = parse(_trial.refined_cif_path, ccd_mirror_path=None)
+                structure = parse(trial.refined_cif_path, ccd_mirror_path=None)
 
                 # Compute density from refined structure
-                atom_array = get_asym_unit_from_structure(_structure)
+                atom_array = get_asym_unit_from_structure(structure)
                 if not hasattr(atom_array, "coord") or atom_array.coord is None:
                     raise AttributeError("AtomArray | AtomArrayStack is missing coordinates")
 
                 if not hasattr(atom_array, "b_factor"):
                     logger.warning(
-                        f"No b-factor array found in {_trial.refined_cif_path}, setting to 20."
+                        f"No b-factor array found in {trial.refined_cif_path}, setting to 20."
                     )
                     atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
 
@@ -180,12 +180,12 @@ def main(args: argparse.Namespace):
                 #
                 # Align the refined structure to the reference structure
                 # 1. Get the reference structure path and load from cache if available
-                if (protein, _trial.occ_key) not in ref_full_structure_cache:
-                    ref_path = protein_config.get_reference_structure_path(_trial.altloc_occupancies)
+                if (protein, trial.occ_key) not in ref_full_structure_cache:
+                    ref_path = protein_config.get_reference_structure_path(trial.altloc_occupancies)
                     if ref_path is None:
                         raise ValueError(
                             f"Could not find reference structure for "
-                            f"occupancy {_trial.altloc_occupancies}"
+                            f"occupancy {trial.altloc_occupancies}"
                         )
 
                     # 2. Load the reference structure with parse() to get only the first altloc
@@ -193,11 +193,11 @@ def main(args: argparse.Namespace):
                     ref_atom_array = get_asym_unit_from_structure(ref_structure)
                     logger.info(
                         f"Caching reference structure for {protein} "
-                        f"altloc_occupancies={_trial.altloc_occupancies}"
+                        f"altloc_occupancies={trial.altloc_occupancies}"
                     )
-                    ref_full_structure_cache[(protein, _trial.occ_key)] = ref_atom_array
+                    ref_full_structure_cache[(protein, trial.occ_key)] = ref_atom_array
                 else:
-                    ref_atom_array = ref_full_structure_cache[(protein, _trial.occ_key)]
+                    ref_atom_array = ref_full_structure_cache[(protein, trial.occ_key)]
 
                 # 3. Find the common atoms with non-nan coords between the reference
                 #    and the refined structure
@@ -247,41 +247,44 @@ def main(args: argparse.Namespace):
                 atom_array.coord = aligned_coords_torch.numpy()
 
                 # Compute density from the aligned refined structure
-                _computed_density, _ = compute_density_from_atomarray(
-                    atom_array, xmap=_base_xmap, em_mode=False, device=_device
+                computed_density, _ = compute_density_from_atomarray(
+                    atom_array, xmap=base_xmap, em_mode=False, device=device
                 )
 
                 # Create an XMap from the computed density by copying the base xmap
                 # and replacing its array with the computed density
-                _computed_xmap = copy.deepcopy(_base_xmap)
-                _computed_xmap.array = _computed_density.cpu().numpy().squeeze()
-                _, _extracted_computed = _computed_xmap.extract_tight(
-                    _selection_coords, padding=DEFAULT_SELECTION_PADDING
+                computed_xmap = copy.deepcopy(base_xmap)
+                computed_xmap.array = computed_density.cpu().numpy().squeeze()
+                _, extracted_computed = computed_xmap.extract_tight(
+                    selection_coords, padding=DEFAULT_SELECTION_PADDING
                 )
 
                 # Validate extraction
-                if _extracted_computed is None or _extracted_computed.shape[0] == 0:
+                if extracted_computed is None or extracted_computed.shape[0] == 0:
                     raise ValueError("Extracted computed map is empty")
 
                 # Calculate RSCC on extracted regions
-                # TODO: don't alter the input object _trial, just get a copy of it as a dict.
-                trial_result["rscc"] = rscc(_extracted_base, _extracted_computed)
-                trial_result["base_map_path"] = _base_map_path
+                # TODO: don't alter the input object trial, just get a copy of it as a dict.
+                trial_result["rscc"] = rscc(extracted_base, extracted_computed)
+                trial_result["base_map_path"] = base_map_path
 
-            except Exception as _e:
-                logger.error(f"ERROR processing {_trial.trial_dir}: {_e}")
+            except Exception as e:
+                logger.error(f"ERROR processing {trial.trial_dir}: {e}")
                 logger.error(f"  Traceback: {traceback.format_exc()}")
-                trial_result["error"] = _e
+                trial_result["error"] = e
                 trial_result["rscc"] = np.nan  # this is the default, but better to be explicit.
-                trial_result["base_map_path"] = _base_map_path
+                trial_result["base_map_path"] = base_map_path
 
             results.append(trial_result)
 
-        if (_i + 1) % 10 == 0 or _i == 0:
+        if (i + 1) % 10 == 0 or i == 0:
+            latest_result = results[-1]
             logger.debug(
-                f"  [{_i + 1}/{len(all_trials)}] {_trial.protein_dir_name} / "
-                f"{_trial.model} / {_trial.scaler} / ens{_trial.ensemble_size}_"
-                f"gw{_trial.guidance_weight}: RSCC = {_trial.rscc:.4f}"
+                f"  [{i + 1}/{len(all_trials)}] {latest_result.get('protein_dir_name', '?')} / "
+                f"{latest_result.get('model', '?')} / {latest_result.get('scaler', '?')} / "
+                f"ens{latest_result.get('ensemble_size', '?')}_gw"
+                f"{latest_result.get('guidance_weight', '?')}: "
+                f"RSCC = {latest_result.get('rscc', float('nan')):.4f}"
             )
 
     logger.info(f"\nCompleted RSCC calculation for {len(results)} trials")

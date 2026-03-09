@@ -254,17 +254,17 @@ def main(args: argparse.Namespace):
     # Do the quick pass through all the "rows" of our output table to filter in those we can run.
     filtered_trials = []
     null_results = []
-    for _trial in all_trials:
-        if _trial.protein in protein_configs:
-            protein = _trial.protein
-        elif _trial.protein.upper() in protein_configs:
-            protein = _trial.protein.upper()
-        elif _trial.protein.lower() in protein_configs:
-            protein = _trial.protein.lower()
+    for trial in all_trials:
+        if trial.protein in protein_configs:
+            protein = trial.protein
+        elif trial.protein.upper() in protein_configs:
+            protein = trial.protein.upper()
+        elif trial.protein.lower() in protein_configs:
+            protein = trial.protein.lower()
         else:
             # These we just skip over--we assume that the user has told us via the config file
             # what results they are interested in.
-            logger.warning(f"Skipping protein with no configuration: {_trial.protein}")
+            logger.warning(f"Skipping protein with no configuration: {trial.protein}")
             continue
 
         protein_config = protein_configs[protein]
@@ -274,42 +274,42 @@ def main(args: argparse.Namespace):
                 f"sure you loaded your protein configs with ProteinConfig.from_csv()."
             )
 
-        atom_array_key = (protein, _trial.occ_key)
+        atom_array_key = (protein, trial.occ_key)
         if atom_array_key not in reference_atom_arrays:
             logger.warning(
-                f"Skipping {_trial.protein_dir_name}: no reference atom array stack available "
-                f"for {_trial.protein} and occupancies {_trial.altloc_occupancies}."
+                f"Skipping {trial.protein_dir_name}: no reference atom array stack available "
+                f"for {trial.protein} and occupancies {trial.altloc_occupancies}."
             )
             # record empty results for all selections, indicating they could not be computed.
-            for _sel in protein_config.selection:
-                trial_copy = _trial.__dict__.copy()
-                trial_copy["selection"] = _sel
+            for sel in protein_config.selection:
+                trial_copy = trial.__dict__.copy()
+                trial_copy["selection"] = sel
                 null_results.append(trial_copy)
             continue
 
         protein_reference_atom_arrays = reference_atom_arrays[atom_array_key]
-        for _sel in protein_config.selection:
-            if _sel not in protein_reference_atom_arrays:
+        for sel in protein_config.selection:
+            if sel not in protein_reference_atom_arrays:
                 logger.warning(
-                    f"Skipping {_trial.protein_dir_name}: no reference atom array stack available "
-                    f"for {_trial.protein} and occupancies {_trial.altloc_occupancies}, "
-                    f"selection '{_sel}'."
+                    f"Skipping {trial.protein_dir_name}: no reference atom array stack available "
+                    f"for {trial.protein} and occupancies {trial.altloc_occupancies}, "
+                    f"selection '{sel}'."
                 )
-                trial_copy = _trial.__dict__.copy()
-                trial_copy["selection"] = _sel
+                trial_copy = trial.__dict__.copy()
+                trial_copy["selection"] = sel
                 null_results.append(trial_copy)
                 continue
 
-            px_seln_refernce_atom_array = protein_reference_atom_arrays[_sel]
-            filtered_trials.append((_trial, protein_config, px_seln_refernce_atom_array, _sel))
+            px_seln_refernce_atom_array = protein_reference_atom_arrays[sel]
+            filtered_trials.append((trial, protein_config, px_seln_refernce_atom_array, sel))
 
     # now we can more easily parallelize this loop.
     logger.debug("Starting LDDT evaluation loop. This may take a while...")
     all_results = Parallel(n_jobs=args.n_jobs)(
         delayed(process_trial_with_selection)(
-            _trial, protein_config, px_seln_refernce_atom_array, selection
+            trial, protein_config, px_seln_refernce_atom_array, selection
         )
-        for _trial, protein_config, px_seln_refernce_atom_array, selection in filtered_trials
+        for trial, protein_config, px_seln_refernce_atom_array, selection in filtered_trials
     )
 
     df = pd.DataFrame(null_results + all_results)
