@@ -12,6 +12,8 @@ set -e
 # Configuration - uses absolute path to data
 DATA_DIR="/mnt/diffuse-private/raw/sampleworks/initial_dataset_40"
 RESULTS_DIR="${RESULTS_DIR:-$HOME/sampleworks-exp/grid_search_results}"
+# Docker image to use (override with IMAGE env var)
+IMAGE="${IMAGE:-diffuseproject/sampleworks:latest}"
 
 # Create output directory
 mkdir -p "$RESULTS_DIR"
@@ -24,6 +26,7 @@ echo "Starting all model grid searches"
 echo "Models: boltz1, boltz2, protenix, rf3"
 echo "Data: $DATA_DIR"
 echo "Results: $RESULTS_DIR"
+echo "Image: $IMAGE"
 echo "Checkpoints: BAKED INTO IMAGE"
 echo "=========================================="
 
@@ -46,7 +49,7 @@ run_model() {
         --gpus "\"device=$gpus\"" \
         -v /mnt/diffuse-private:/mnt/diffuse-private:ro \
         -v "$RESULTS_DIR:/data/results" \
-        sampleworks:latest \
+        $IMAGE \
         -e "$env" run_grid_search.py \
         --proteins "$DATA_DIR/proteins.csv" \
         --models "$model" \

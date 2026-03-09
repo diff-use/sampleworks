@@ -1,5 +1,10 @@
 name: Build and Push Docker Images
 
+# CI builds pull all model checkpoints (~10 GB) from Docker Hub automatically via:
+#   COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
+# No checkpoint files are needed on the CI runner. The checkpoints base image is
+# pre-built and pushed from the GPU server. See Dockerfile comments for details.
+
 on:
   push:
     branches: [main]
@@ -9,6 +14,7 @@ on:
       - 'src/**'
       - 'scripts/**'
       - 'Dockerfile'
+      - 'docker-entrypoint.sh'
       - '.github/workflows/docker.yml'
   workflow_dispatch:
 
