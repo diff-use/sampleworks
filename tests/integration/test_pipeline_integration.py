@@ -1076,12 +1076,12 @@ class TestRealWrapperPreprocessing:
     """process_structure_to_trajectory_input feeds properly into to_reward_inputs with real wrappers
 
     Verifies that featurization and preprocessing produce reward_inputs whose
-    atom dimension matches the state dimension for every wrapper × structure
+    atom dimension matches the state dimension for every wrapper by structure
     combination.  This catches model-specific NaN coordinate or occupancy
     issues (e.g., RF3 on 5I09) that only surface with real featurization.
     """
 
-    def test_reward_inputs_dimensions_match_state(
+    def test_reward_inputs_are_valid(
         self,
         wrapper_type: StructurePredictor,
         structure_fixture: str,
@@ -1116,6 +1116,14 @@ class TestRealWrapperPreprocessing:
         n_reward = reward_inputs.elements.shape[-1]
         assert n_state == n_reward, (
             f"State atom count ({n_state}) != reward atom count ({n_reward}). "
+            f"wrapper={wrapper_type.value}, structure={structure_fixture}"
+        )
+        assert torch.isfinite(reward_inputs.input_coords).all(), (
+            f"Non-finite reward coordinates for "
+            f"wrapper={wrapper_type.value}, structure={structure_fixture}"
+        )
+        assert torch.all(reward_inputs.occupancies > 0), (
+            f"Non-positive reward occupancies for "
             f"wrapper={wrapper_type.value}, structure={structure_fixture}"
         )
 
