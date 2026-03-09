@@ -49,7 +49,7 @@ run_model() {
         --gpus "\"device=$gpus\"" \
         -v /mnt/diffuse-private:/mnt/diffuse-private:ro \
         -v "$RESULTS_DIR:/data/results" \
-        $IMAGE \
+        "$IMAGE" \
         -e "$env" run_grid_search.py \
         --proteins "$DATA_DIR/proteins.csv" \
         --models "$model" \
