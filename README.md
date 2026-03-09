@@ -26,6 +26,16 @@ TODO: detailed project description, installation instructions, usage examples, a
    ```bash
    python scripts/boltz2_pure_guidance.py --model-checkpoint ~/.boltz/boltz2_conf.ckpt --output-dir output/boltz2_pure_guidance --guidance-start 130 --structure tests/resources/1vme/1vme_final_carved_edited_0.5occA_0.5occB.cif --density tests/resources/1vme/1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4 --resolution 1.8 --augmentation --align-to-input
    ```
+## Commit Messages
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) to automate versioning and changelog generation. Format:
+
+```
+<type>(<scope>): <summary>
+```
+
+Common types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `perf`. A commitizen pre-commit hook validates messages at commit time. See [AGENTS.md](AGENTS.md#release-process) for full details.
+
 ## Development on OS X (WIP)
 To develop on OS X, ensure you have [homebrew](https://brew.sh/) installed and run the following commands to install dependencies:
 
