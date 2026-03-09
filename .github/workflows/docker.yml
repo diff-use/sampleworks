@@ -41,6 +41,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # The Dockerfile uses COPY --from=diffuseproject/sampleworks-checkpoints:latest
+      # which Docker automatically pulls from Docker Hub during the build.
+      # No checkpoint files are needed in the CI build context.
       - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v5

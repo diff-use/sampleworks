@@ -2,7 +2,7 @@
 # Sampleworks - Protein structure prediction with diffusion model guidance
 #
 # This container includes all three model environments: boltz, protenix, rf3
-# Checkpoints are baked into the image at /checkpoints/
+# Checkpoints are baked into the image at /checkpoints/ via a pre-built base image.
 #
 # Build:
 #   docker build -t sampleworks .
@@ -48,12 +48,16 @@
 #   docker run --gpus all -it sampleworks bash
 #
 # Baked-in checkpoints (from diffuseproject/sampleworks-checkpoints:latest):
-#   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model
-#   /checkpoints/boltz2_conf.ckpt                   - Boltz2 model
-#   /checkpoints/ccd.pkl                             - Chemical Component Dictionary (required for Boltz)
-#   /checkpoints/mols/                               - Boltz2 molecules data
-#   /checkpoints/rf3_foundry_01_24_latest.ckpt       - RF3 model
-#   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model
+#   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model (~3.5GB)
+#   /checkpoints/boltz2_conf.ckpt                   - Boltz2 model (~2.3GB)
+#   /checkpoints/ccd.pkl                             - Chemical Component Dictionary (~345MB)
+#   /checkpoints/mols/                               - Boltz2 molecule data (~2GB)
+#   /checkpoints/rf3_foundry_01_24_latest.ckpt       - RF3 model (~2.9GB)
+#   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model (~1.4GB)
+#
+# Checkpoints base image:
+#   All checkpoints live in diffuseproject/sampleworks-checkpoints:latest on Docker Hub.
+#   To rebuild that image, see /data/users/diffuse/checkpoint-build/ on the GPU server.
 
 # ============================================================================
 # Base stage: CUDA + Pixi + common system dependencies
@@ -116,10 +120,13 @@ print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-comp
 
 # ============================================================================
 # Bake in model checkpoints from pre-built base image on Docker Hub
-# This image contains: boltz1, boltz2, ccd, mols/, rf3, protenix checkpoints
+# ============================================================================
+# All checkpoints (Boltz1, Boltz2, CCD, mols, RF3, Protenix) are pre-built
+# into diffuseproject/sampleworks-checkpoints:latest on Docker Hub.
+# This avoids downloading ~6GB from HuggingFace during build and removes the
+# need to have RF3/Protenix checkpoints in the build context.
 # Rebuild with: docker build -t diffuseproject/sampleworks-checkpoints:latest
 #               docker push diffuseproject/sampleworks-checkpoints:latest
-# ============================================================================
 COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
 
 # Set default checkpoint paths via environment variables
