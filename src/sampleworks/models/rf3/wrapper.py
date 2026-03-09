@@ -326,11 +326,10 @@ class RF3Wrapper:
         # masked out in reward functions.
         nan_coord_mask = np.any(np.isnan(model_aa.coord), axis=-1)
         if nan_coord_mask.any():
-            n_nan = int(nan_coord_mask.sum())
             resolved_coords = model_aa.coord[~nan_coord_mask]
             centroid = resolved_coords.mean(axis=0) if len(resolved_coords) > 0 else np.zeros(3)
-            rng = np.random.default_rng(42)
-            noise = rng.normal(scale=1.0, size=(n_nan, 3)).astype(np.float32)
+            n_nan = int(nan_coord_mask.sum())
+            noise = np.random.normal(loc=0.0, scale=1.0, size=(n_nan, 3)).astype(np.float32)
             new_coords = model_aa.coord.copy()
             new_coords[nan_coord_mask] = centroid + noise
             model_aa.coord = new_coords
