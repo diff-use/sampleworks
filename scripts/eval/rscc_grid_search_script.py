@@ -48,7 +48,6 @@ from sampleworks.utils.frame_transforms import (
 from sampleworks.utils.framework_utils import match_batch
 
 
-
 # TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
 def main(args: argparse.Namespace):
     workspace_root = Path(args.workspace_root)
@@ -99,8 +98,8 @@ def main(args: argparse.Namespace):
     logger.info(f"Using device: {_device}")
 
     results = []
-    base_map_cache: dict[tuple[str, float, str], tuple[XMap, XMap]] = {}
-    ref_full_structure_cache: dict[tuple[str, float], AtomArrayStack] = {}
+    base_map_cache: dict[tuple[str, tuple[tuple[str, float], ...], str], tuple[XMap, XMap]] = {}
+    ref_full_structure_cache: dict[tuple[str, tuple[tuple[str, float], ...]], AtomArrayStack] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
     for _i, _exp in enumerate(all_experiments):
         if _exp.protein in protein_configs:
@@ -123,11 +122,11 @@ def main(args: argparse.Namespace):
                 continue
 
             _selection_coords = ref_coords[(protein, selection)]
-            _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.occ_a)
+            _base_map_path = protein_config.get_base_map_path_for_occupancy(_exp.altloc_occupancies)
             if _base_map_path is None:
                 logger.warning(
                     f"Skipping {_exp.protein_dir_name}: base map for selection {selection} and "
-                    f"occupancy {_exp.occ_a} not found"
+                    f"occupancy {_exp.altloc_occupancies} not found"
                 )
                 continue
 
@@ -139,7 +138,7 @@ def main(args: argparse.Namespace):
                 #
                 # Load base map for canonical unit cell,
                 # don't overwrite the base map with selection map--we'll use the full map later too.
-                if (protein, _exp.occ_a, selection) not in base_map_cache:
+                if (protein, _exp.occ_key, selection) not in base_map_cache:
                     _base_xmap = protein_config.load_map(_base_map_path)
                     if _base_xmap is None:
                         raise ValueError(f"Failed to load base map from {_base_map_path}")
@@ -151,11 +150,14 @@ def main(args: argparse.Namespace):
                     )
                     logger.info(
                         f"Caching base and subselected maps for {protein} "
-                        f"occ_a={_exp.occ_a} selection={selection}"
+                        f"altloc_occupancies={_exp.altloc_occupancies} selection={selection}"
                     )
-                    base_map_cache[(protein, _exp.occ_a, selection)] = (_base_xmap, _extracted_base)
+                    base_map_cache[(protein, _exp.occ_key, selection)] = (
+                        _base_xmap,
+                        _extracted_base,
+                    )
                 else:
-                    _base_xmap, _extracted_base = base_map_cache[(protein, _exp.occ_a, selection)]
+                    _base_xmap, _extracted_base = base_map_cache[(protein, _exp.occ_key, selection)]
 
                 # Validate extraction
                 if _extracted_base is None or _extracted_base.shape[0] == 0:
@@ -180,20 +182,24 @@ def main(args: argparse.Namespace):
                 #
                 # Align the refined structure to the reference structure
                 # 1. Get the reference structure path and load from cache if available
-                if (protein, _exp.occ_a) not in ref_full_structure_cache:
-                    ref_path = protein_config.get_reference_structure_path(_exp.occ_a)
+                if (protein, _exp.occ_key) not in ref_full_structure_cache:
+                    ref_path = protein_config.get_reference_structure_path(_exp.altloc_occupancies)
                     if ref_path is None:
                         raise ValueError(
-                            f"Could not find reference structure for occupancy {_exp.occ_a}"
+                            f"Could not find reference structure for "
+                            f"occupancy {_exp.altloc_occupancies}"
                         )
 
                     # 2. Load the reference structure with parse() to get only the first altloc
                     ref_structure = parse(ref_path, ccd_mirror_path=None)
                     ref_atom_array = get_asym_unit_from_structure(ref_structure)
-                    logger.info(f"Caching reference structure for {protein} occ_a={_exp.occ_a}")
-                    ref_full_structure_cache[(protein, _exp.occ_a)] = ref_atom_array
+                    logger.info(
+                        f"Caching reference structure for {protein} "
+                        f"altloc_occupancies={_exp.altloc_occupancies}"
+                    )
+                    ref_full_structure_cache[(protein, _exp.occ_key)] = ref_atom_array
                 else:
-                    ref_atom_array = ref_full_structure_cache[(protein, _exp.occ_a)]
+                    ref_atom_array = ref_full_structure_cache[(protein, _exp.occ_key)]
 
                 # 3. Find the common atoms with non-nan coords between the reference
                 #    and the refined structure
