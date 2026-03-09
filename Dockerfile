@@ -7,6 +7,13 @@
 # Build:
 #   docker build -t sampleworks .
 #
+# CI builds pull checkpoints automatically from Docker Hub via:
+#   COPY --from=diffuseproject/sampleworks-checkpoints:latest
+# No checkpoint files are needed in the build context or on the CI runner.
+#
+# To rebuild the checkpoints base image (only needed when checkpoints change):
+#   See /data/users/diffuse/checkpoint-build/ on the GPU server
+#
 # Run examples:
 #   # Show help
 #   docker run sampleworks --help
@@ -40,16 +47,13 @@
 #   # Interactive shell
 #   docker run --gpus all -it sampleworks bash
 #
-# Baked-in checkpoints:
-#   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model (downloaded from HuggingFace)
-#   /checkpoints/boltz2_conf.ckpt                   - Boltz2 model (downloaded from HuggingFace)
+# Baked-in checkpoints (from diffuseproject/sampleworks-checkpoints:latest):
+#   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model
+#   /checkpoints/boltz2_conf.ckpt                   - Boltz2 model
 #   /checkpoints/ccd.pkl                             - Chemical Component Dictionary (required for Boltz)
-#   /checkpoints/rf3_foundry_01_24_latest.ckpt       - RF3 model (copied from build context)
-#   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model (copied from build context)
-#
-# Before building, copy RF3 and Protenix checkpoints into the build context:
-#   cp /mnt/diffuse-private/raw/checkpoints/rf3_foundry_01_24_latest.ckpt checkpoints/
-#   cp /mnt/diffuse-private/raw/checkpoints/protenix_base_default_v0.5.0.pt checkpoints/
+#   /checkpoints/mols/                               - Boltz2 molecules data
+#   /checkpoints/rf3_foundry_01_24_latest.ckpt       - RF3 model
+#   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model
 
 # ============================================================================
 # Base stage: CUDA + Pixi + common system dependencies
@@ -111,33 +115,12 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dil
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
 
 # ============================================================================
-# Download and bake in model checkpoints
+# Bake in model checkpoints from pre-built base image on Docker Hub
+# This image contains: boltz1, boltz2, ccd, mols/, rf3, protenix checkpoints
+# Rebuild with: docker build -t diffuseproject/sampleworks-checkpoints:latest
+#               docker push diffuseproject/sampleworks-checkpoints:latest
 # ============================================================================
-
-# Download Boltz checkpoints from HuggingFace (publicly available)
-RUN mkdir -p /checkpoints && \
-    echo "Downloading Boltz1 checkpoint..." && \
-    curl -L -o /checkpoints/boltz1_conf.ckpt \
-        "https://huggingface.co/boltz-community/boltz-1/resolve/main/boltz1_conf.ckpt" && \
-    echo "Downloading Boltz2 checkpoint..." && \
-    curl -L -o /checkpoints/boltz2_conf.ckpt \
-        "https://huggingface.co/boltz-community/boltz-2/resolve/main/boltz2_conf.ckpt" && \
-    echo "Downloading CCD (Chemical Component Dictionary)..." && \
-    curl -L -o /checkpoints/ccd.pkl \
-        "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl" && \
-    echo "Downloading Boltz2 molecules data..." && \
-    curl -L -o /checkpoints/mols.tar \
-        "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar" && \
-    cd /checkpoints && tar -xf mols.tar && rm mols.tar && \
-    echo "Boltz checkpoints downloaded!" && \
-    ls -lh /checkpoints/
-
-# Copy RF3 and Protenix checkpoints from build context
-# These must be placed in checkpoints/ before building:
-#   cp /mnt/diffuse-private/raw/checkpoints/rf3_foundry_01_24_latest.ckpt checkpoints/
-#   cp /mnt/diffuse-private/raw/checkpoints/protenix_base_default_v0.5.0.pt checkpoints/
-COPY checkpoints/rf3_foundry_01_24_latest.ckpt /checkpoints/rf3_foundry_01_24_latest.ckpt
-COPY checkpoints/protenix_base_default_v0.5.0.pt /checkpoints/protenix_base_default_v0.5.0.pt
+COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \
