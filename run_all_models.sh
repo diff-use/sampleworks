@@ -25,6 +25,10 @@ MSA_CACHE_DIR="${MSA_CACHE_DIR:-/data/sampleworks-exp/msa_cache}"
 mkdir -p "$RESULTS_DIR"
 mkdir -p "$MSA_CACHE_DIR"
 
+# Pull latest image (no-op if already up to date)
+echo "Pulling latest Docker image..."
+docker pull diffuseproject/sampleworks:latest
+
 # Common docker options
 DOCKER_OPTS="--rm --shm-size=16g"
 
