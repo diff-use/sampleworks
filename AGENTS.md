@@ -197,19 +197,38 @@ The `run_guidance()` function in `utils/guidance_script_utils.py` is the central
 ```bash
 pixi install          # Install dependencies
 pixi shell            # Activate environment
-pixi run pytest       # Run tests
-pixi run -e boltz-dev pytest  # Run in specific environment
+pixi run test-fast    # Run fast tests across all model dev environments
+pixi run test-all     # Run all tests (including slow tests) across all dev environments
+pixi run -e boltz-dev tests  # Run fast tests in specific environment
 ```
 
 **Environments**: `default`, `boltz[-dev]`, `boltz-analysis`, `protenix[-dev]`, `rf3[-dev]`, `analysis[-dev]`
 
 Model wrappers for Boltz, Protenix, and RF3 have mutually incompatible dependencies — each lives in its own pixi environment. Use the appropriate `-dev` environment for testing.
 
-**Pre-commit hooks**: ruff (lint/format), ty (type checking, per-environment), toml-sort. Hooks block commits on failure.
+**Test tasks** (defined in `pyproject.toml` under `[tool.pixi.tasks]`):
+
+| Task | Command | Description |
+|------|---------|-------------|
+| `tests` | `pixi run -e <env>-dev tests` | Fast tests only (`-m 'not slow'`), single env |
+| `all-tests` | `pixi run -e <env>-dev all-tests` | All tests including slow (GPU/weights), single env |
+| `test-fast` | `pixi run test-fast` | Fast tests across all three model dev envs |
+| `test-all` | `pixi run test-all` | All tests across all three model dev envs |
+
+The `tests` and `all-tests` tasks accept a `flags` argument for forwarding pytest options:
 
 ```bash
-pixi run pre-commit install
-pixi run pre-commit run --all-files
+pixi run -e boltz-dev tests -- -k integration   # Run only integration tests
+pixi run -e rf3-dev tests -- -x                 # Stop on first failure
+```
+
+The `@pytest.mark.slow` marker gates tests that require a GPU or model checkpoint files. Fast test runs (`tests` / `test-fast`) skip these automatically.
+
+**Pre-commit hooks**: ruff (lint/format), ty (type checking, per-environment), toml-sort. Hooks block commits on failure. We use [prek](https://github.com/j178/prek) (a Rust-reimplementation of pre-commit) as the hook runner.
+
+```bash
+pixi run -e boltz-dev prek install      # Install prek as a git hook
+pixi run -e boltz-dev prek run -a       # Run all hooks on all files
 ```
 
 Note: `ty` type checking is split per environment — Boltz files are checked in `boltz-dev`, Protenix files in `protenix-dev`, RF3 files in `rf3-dev`. See `.pre-commit-config.yaml` for the file routing rules.
@@ -236,6 +255,16 @@ def test_wrapper_calls_internal_method():
 ```
 
 Test structure: `tests/{rewards,integration,mocks,models,utils,metrics,eval}/`
+
+Mark any test that requires a GPU or model checkpoint with `@pytest.mark.slow` so it is excluded from fast CI runs:
+
+```python
+import pytest
+
+@pytest.mark.slow
+def test_boltz_full_inference(boltz_wrapper, features):
+    ...
+```
 
 ## Implementation Patterns
 
