@@ -36,6 +36,7 @@ from sampleworks.utils.guidance_constants import (
 from sampleworks.utils.guidance_script_arguments import (
     GuidanceConfig,
     JobResult,
+    _resolve_checkpoint,
     validate_model_checkpoint,
 )
 from sampleworks.utils.msa import MSAManager
@@ -563,7 +564,18 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
 
     template_job = job_queue[0]
     if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
-        raise ValueError("Running guidance requires that you specify a model checkpoint")
+        # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
+        model_key = str(template_job.model).lower().replace("structurepredictor.", "")
+        resolved = _resolve_checkpoint(model_key)
+        if not resolved:
+            raise ValueError(
+                f"Running guidance requires a model checkpoint for '{template_job.model}'. "
+                f"Provide --model-checkpoint or bake checkpoints into /checkpoints/."
+            )
+        template_job.model_checkpoint = resolved
+        # Propagate to all jobs in the queue
+        for job in job_queue:
+            job.model_checkpoint = resolved
 
     logger.info(f"Running {len(job_queue)} jobs, using {template_job} as a setup template")
     device, model_wrapper = get_model_and_device(
