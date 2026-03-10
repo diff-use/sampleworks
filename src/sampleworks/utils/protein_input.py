@@ -1,4 +1,5 @@
 import csv
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,9 +28,10 @@ class ProteinInput:
             raise FileNotFoundError(
                 f"Density file does not exist for protein '{self.name}': {self.density}"
             )
-        if self.resolution <= 0:
+        if not math.isfinite(self.resolution) or self.resolution <= 0:
             raise ValueError(
-                f"Resolution must be positive for protein '{self.name}', got {self.resolution}."
+                f"Resolution must be a positive finite number for protein '{self.name}', "
+                f"got {self.resolution}."
             )
 
     @classmethod
@@ -54,26 +56,30 @@ class ProteinInput:
                     f"Found columns: {reader.fieldnames}"
                 )
 
-            for row in reader:
-                structure = Path(row["structure"].strip())
+            for row_idx, row in enumerate(reader, start=2):
+                name = (row.get("name") or "").strip()
+                structure_raw = (row.get("structure") or "").strip()
+                density_raw = (row.get("density") or "").strip()
+                resolution_raw = (row.get("resolution") or "").strip()
+
+                structure = Path(structure_raw)
                 if not structure.is_absolute():
                     structure = csv_dir / structure
 
-                density = Path(row["density"].strip())
+                density = Path(density_raw)
                 if not density.is_absolute():
                     density = csv_dir / density
 
                 try:
-                    resolution = float(row["resolution"].strip())
-                except ValueError:
+                    resolution = float(resolution_raw)
+                except ValueError as err:
                     raise ValueError(
-                        f"Invalid resolution '{row['resolution']}' "
-                        f"for protein '{row['name'].strip()}'"
-                    )
+                        f"Row {row_idx}: invalid resolution '{resolution_raw}' for protein '{name}'"
+                    ) from err
 
                 protein_inputs.append(
                     cls(
-                        name=row["name"].strip(),
+                        name=name,
                         structure=structure,
                         density=density,
                         resolution=resolution,
