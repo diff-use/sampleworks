@@ -8,6 +8,39 @@ from typing import Any
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 
 
+# Baked-in checkpoint paths (Docker image) with legacy fallbacks
+_CHECKPOINT_CANDIDATES = {
+    "boltz1": ["/checkpoints/boltz1_conf.ckpt", "~/.boltz/boltz1_conf.ckpt"],
+    "boltz2": ["/checkpoints/boltz2_conf.ckpt", "~/.boltz/boltz2_conf.ckpt"],
+    "rf3": [
+        "/checkpoints/rf3_foundry_01_24_latest.ckpt",
+        "~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt",
+    ],
+    "protenix": [
+        "/checkpoints/protenix_base_default_v0.5.0.pt",
+        ".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
+    ],
+}
+
+
+def _resolve_checkpoint(model_key: str) -> str:
+    """Return the first checkpoint path that exists on disk for *model_key*.
+
+    Tries baked-in Docker paths first (``/checkpoints/``), then falls back to
+    legacy development paths.  If none are found the first candidate is returned
+    so that downstream validation produces a clear error message.
+    """
+    candidates = _CHECKPOINT_CANDIDATES.get(model_key, [])
+    for candidate in candidates:
+        resolved = Path(candidate).expanduser()
+        if resolved.exists():
+            return str(resolved)
+    # Nothing found – return the primary (baked-in) path so the error message
+    # points the user to the expected location.
+    return candidates[0] if candidates else ""
+
+
+
 def get_checkpoint(args: argparse.Namespace) -> str | None:
     """Resolve a model checkpoint path from an argparse namespace.
 
@@ -27,6 +60,10 @@ def validate_model_checkpoint(
 ) -> str:
     """Validate and normalize the checkpoint path for ``model``.
 
+    When *checkpoint* is ``None`` (no ``--model-checkpoint`` provided), the
+    function auto-resolves by checking baked-in Docker paths first
+    (``/checkpoints/``) and then legacy development paths.
+
     Returns
     -------
     str
@@ -35,12 +72,20 @@ def validate_model_checkpoint(
     Raises
     ------
     ValueError
-        If checkpoint is missing/empty or points to a directory.
+        If checkpoint points to a directory.
     FileNotFoundError
-        If checkpoint does not exist.
+        If checkpoint does not exist on disk.
     """
+    # Auto-resolve when no explicit checkpoint was provided
     if checkpoint is None or str(checkpoint).strip() == "":
-        raise ValueError(f"Missing checkpoint for model '{model}'. Provide --model-checkpoint.")
+        model_key = str(model).lower().replace("structurepredictor.", "")
+        resolved = _resolve_checkpoint(model_key)
+        if not resolved:
+            raise ValueError(
+                f"Missing checkpoint for model '{model}'. "
+                f"Provide --model-checkpoint or bake checkpoints into /checkpoints/."
+            )
+        checkpoint = resolved
 
     checkpoint_path = Path(str(checkpoint)).expanduser().resolve()
 
@@ -111,6 +156,10 @@ class GuidanceConfig:
         checkpoint = get_checkpoint(args)
         if checkpoint is not None:
             self.model_checkpoint = checkpoint
+        elif not getattr(self, "model_checkpoint", None):
+            # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
+            model_key = str(self.model).lower().replace("structurepredictor.", "")
+            self.model_checkpoint = _resolve_checkpoint(model_key)
 
         if job.model == StructurePredictor.BOLTZ_2 and job.method:
             self.method = job.method
@@ -237,8 +286,8 @@ def add_boltz2_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
-        default="~/.boltz/boltz2_conf.ckpt",
-        help="Path to Boltz2 checkpoint",
+        default=None,
+        help="Path to Boltz2 checkpoint (default: auto-resolved from /checkpoints/ or ~/.boltz/)",
     )
     parser.add_argument(
         "--method",
@@ -252,8 +301,8 @@ def add_protenix_specific_args(parser: argparse.ArgumentParser | GuidanceConfig)
     parser.add_argument(
         "--model-checkpoint",
         type=str,
-        default=".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
-        help="Path to Protenix checkpoint directory",
+        default=None,
+        help="Path to Protenix checkpoint (default: auto-resolved from /checkpoints/ or pixi env)",
     )
 
 
@@ -261,8 +310,8 @@ def add_boltz1_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
-        default="~/.boltz/boltz1_conf.ckpt",
-        help="Path to Boltz1 checkpoint",
+        default=None,
+        help="Path to Boltz1 checkpoint (default: auto-resolved from /checkpoints/ or ~/.boltz/)",
     )
 
 
@@ -270,8 +319,8 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--model-checkpoint",
         type=str,
-        default="~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt",
-        help="Path to RF3 checkpoint",
+        default=None,
+        help="Path to RF3 checkpoint (default: auto-resolved from /checkpoints/ or ~/.foundry/)",
     )
     parser.add_argument(
         "--msa-path",
