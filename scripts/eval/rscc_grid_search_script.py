@@ -100,6 +100,7 @@ def main(args: argparse.Namespace):
     ref_full_structure_cache: dict[tuple[str, tuple[tuple[str, float], ...]], AtomArrayStack] = {}
     # TODO parallelize this loop? It uses GPU, so be careful.
     for i, trial in enumerate(all_trials):
+        prev_result_count = len(results)
         if trial.protein in protein_configs:
             protein = trial.protein
         elif trial.protein.upper() in protein_configs:
@@ -278,14 +279,17 @@ def main(args: argparse.Namespace):
             results.append(trial_result)
 
         if (i + 1) % 10 == 0 or i == 0:
-            latest_result = results[-1]
-            logger.debug(
-                f"  [{i + 1}/{len(all_trials)}] {latest_result.get('protein_dir_name', '?')} / "
-                f"{latest_result.get('model', '?')} / {latest_result.get('scaler', '?')} / "
-                f"ens{latest_result.get('ensemble_size', '?')}_gw"
-                f"{latest_result.get('guidance_weight', '?')}: "
-                f"RSCC = {latest_result.get('rscc', float('nan')):.4f}"
-            )
+            if len(results) > prev_result_count:
+                latest_result = results[-1]
+                logger.debug(
+                    f"  [{i + 1}/{len(all_trials)}] {latest_result.get('protein_dir_name', '?')} / "
+                    f"{latest_result.get('model', '?')} / {latest_result.get('scaler', '?')} / "
+                    f"ens{latest_result.get('ensemble_size', '?')}_gw"
+                    f"{latest_result.get('guidance_weight', '?')}: "
+                    f"RSCC = {latest_result.get('rscc', float('nan')):.4f}"
+                )
+            else:
+                logger.debug(f"  [{i + 1}/{len(all_trials)}] did not add new result.")
 
     logger.info(f"\nCompleted RSCC calculation for {len(results)} trials")
 
