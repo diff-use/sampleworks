@@ -60,8 +60,8 @@ def occupancy_to_str(**altloc_occupancies: float) -> str:
     Raises
     ------
     ValueError
-        If no altlocs have non-zero occupancy, if occupancies sum to more than 1, or if any
-        occupancy is outside the range [0, 1].
+        If no altlocs have non-zero occupancy, if occupancies sum to more than 1 when rounded to 2
+         decimal places, or if any occupancy is outside the range [0, 1].
 
     Examples
     -------
@@ -76,20 +76,21 @@ def occupancy_to_str(**altloc_occupancies: float) -> str:
     >>> occupancy_to_str(A=0.5, B=0.3, C=0.2)
     '0.5occA_0.3occB_0.2occC'
     """
-    if sum(altloc_occupancies.values()) > 1:
+    # Canonicalize occupancies by rounding before validation and output
+    canonical_occ = {label: round(float(val), 2) for label, val in altloc_occupancies.items()}
+
+    if sum(canonical_occ.values()) > 1:
         raise ValueError(
             "Altloc occupancies cannot sum to more than 1, currently "
-            f"they sum to {sum(altloc_occupancies.values())}: {altloc_occupancies}"
+            f"they sum to {sum(canonical_occ.values())}: {canonical_occ}"
         )
-    if any(occ < 0 or occ > 1 for occ in altloc_occupancies.values()):
+    if any(occ < 0 or occ > 1 for occ in canonical_occ.values()):
         raise ValueError(
-            "Altloc occupancies must be between 0 and 1, currently "
-            f"they don't: {altloc_occupancies}"
+            f"Altloc occupancies must be between 0 and 1, currently they don't: {canonical_occ}"
         )
     parts = []
-    for label in sorted(altloc_occupancies, key=lambda label_name: str(label_name).upper()):
-        occ = altloc_occupancies[label]
-        occ = round(occ, 2)
+    for label in sorted(canonical_occ, key=lambda label_name: str(label_name).upper()):
+        occ = canonical_occ[label]
         if abs(occ) > 1e-6:
             label_str = str(label).upper()
             parts.append(f"{occ}occ{label_str}")

@@ -29,8 +29,9 @@ class Experiment:
 
     @property
     def occ_key(self) -> tuple[tuple[str, float], ...]:
-        """Hashable representation of altloc_occupancies for use as dict/cache keys."""
-        return tuple(sorted(self.altloc_occupancies.items()))
+        """Hashable key for caches. Zero-occupancy altlocs are omitted for
+        consistency with occupancy_to_str / extract_protein_and_occupancy."""
+        return tuple(sorted((k, v) for k, v in self.altloc_occupancies.items() if abs(v) > 1e-6))
 
 
 class ExperimentList(list[Experiment]):

@@ -222,7 +222,7 @@ def main(args: argparse.Namespace):
     for protein_key, protein_config in protein_configs.items():
         for occ, sel in itertools.product(args.occupancies, protein_config.selection):
             altloc_occ = {"A": occ, "B": 1.0 - occ}
-            occ_key = tuple(sorted(altloc_occ.items()))
+            occ_key = tuple(sorted((k, v) for k, v in altloc_occ.items() if abs(v) > 1e-6))
             ref_path, reference_proteins = get_reference_atomarraystack(protein_config, altloc_occ)
             if reference_proteins is None:
                 logger.warning(
