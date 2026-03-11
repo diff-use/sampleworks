@@ -289,7 +289,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     ensemble_sizes = [int(x) for x in args.ensemble_sizes.split()]
     gradient_weights = [float(x) for x in args.gradient_weights.split()]
     gd_steps_list = [int(x) for x in args.num_gd_steps.split()]
-    methods = [m.strip() for m in args.methods.split(",")]
+    method = args.method
 
     for protein in proteins:
         structure = protein.structure
