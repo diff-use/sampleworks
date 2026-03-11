@@ -30,7 +30,7 @@ class GridSearchConfig:
     ensemble_sizes: list[int]
     gradient_weights: list[float]
     gd_steps: list[int]
-    methods: list[str]
+    method: str
     proteins_file: str
     output_dir: str
 
