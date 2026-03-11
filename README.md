@@ -2,6 +2,8 @@
 
 > This repository is under heavy and active development. Expect breaking changes. Please feel free to reach out to the team if you're interested in using or contributing!
 
+> HELP WANTED: We are most in need of help adding new ModelWrappers for the latest structure prediction models (we're particularly interested in smaller models that might be more steerable) and implementing fast, differentiable forward models for more experimental data modalities.
+
 **Sampleworks** is a Python framework for integrating generative biomolecular structure models with experimental data.
 
 ## Why sampleworks?
@@ -23,7 +25,7 @@ curl -fsSL https://pixi.sh/install.sh | sh
 ### 2. Clone and install
 
 ```bash
-git clone
+git clone git@github.com:diff-use/sampleworks.git
 cd sampleworks
 pixi install -a   # install all environments
 ```
@@ -139,8 +141,8 @@ pixi run test-all            # run all tests across all environments
 **Prek hooks** (various formatting, ruff + ty type checking):
 
 ```bash
-pixi run prek install
-pixi run prek run --all-files
+pixi run -e [model]-dev prek install
+pixi run -e [model]-dev prek run --all-files
 ```
 
 See [`tests/README.md`](tests/README.md) for full testing instructions.
