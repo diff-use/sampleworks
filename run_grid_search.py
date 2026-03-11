@@ -325,7 +325,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
                                             ensemble_size=ens,
                                             gradient_weight=gw,
                                             gd_steps=gd,
-                                            method=method,
+                                            method=current_method,
                                             output_dir=output_dir,
                                             log_path=log_path,
                                         )
@@ -352,7 +352,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
                                         ensemble_size=ens,
                                         gradient_weight=gw,
                                         gd_steps=1,
-                                        method=method,
+                                        method=current_method,
                                         output_dir=output_dir,
                                         log_path=log_path,
                                     )
