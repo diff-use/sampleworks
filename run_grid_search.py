@@ -301,7 +301,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
             current_method = method if model == StructurePredictor.BOLTZ_2 else None
             method_suffix = f"_{current_method.replace(' ', '_')}" if current_method else ""
 
-                for scaler in scalers:
+            for scaler in scalers:
                     if scaler == GuidanceType.FK_STEERING:
                         for ens in ensemble_sizes:
                             for gw in gradient_weights:
