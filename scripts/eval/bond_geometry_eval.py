@@ -209,7 +209,7 @@ def main(args: argparse.Namespace):
     logger.info(f"Grid search directory: {grid_search_dir}")
 
     # Scan for trials (look for refined.cif files)
-    all_trials = scan_grid_search_results(grid_search_dir)
+    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
     logger.info(f"Found {len(all_trials)} trials with refined.cif files")
 
     if all_trials:
