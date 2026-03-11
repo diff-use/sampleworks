@@ -12,7 +12,7 @@ def trial(tmp_path: Path) -> Trial:
     """Minimal valid Trial, mirroring what scan_grid_search_results produces."""
     return Trial(
         protein="1vme",
-        occ_a=0.5,
+        altloc_occupancies={"A": 1},
         model="boltz2",
         method="MD",
         scaler="pure_guidance",
@@ -29,7 +29,7 @@ class TestTrial:
     def test_field_access(self, trial: Trial):
         """Fields set at construction are readable, matching script access patterns."""
         assert trial.protein == "1vme"
-        assert trial.occ_a == 0.5
+        assert trial.altloc_occupancies == {"A": 1}
         assert trial.model == "boltz2"
         assert trial.scaler == "pure_guidance"
         assert trial.ensemble_size == 10
@@ -48,7 +48,7 @@ class TestTrial:
         """method, guidance_weight, gd_steps can be None (e.g. protenix / pure_guidance trials)."""
         t = Trial(
             protein="6b8x",
-            occ_a=0.3,
+            altloc_occupancies={"A": 0.3, "B": 0.7},
             model="protenix",
             method=None,
             scaler="pure_guidance",
@@ -69,7 +69,7 @@ class TestTrial:
         d = trial.__dict__.copy()
         expected_keys = {
             "protein",
-            "occ_a",
+            "altloc_occupancies",
             "model",
             "method",
             "scaler",
