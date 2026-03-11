@@ -247,9 +247,9 @@ def main(args: argparse.Namespace):
     if len(args.models.split()) > 1:
         # this is designed to run one type of model per script, # TODO to allow multiple models
         raise ValueError("Multiple --models selected, this is not compatible with the new script!")
-    if len(args.methods.split(",")) > 1:
+    if len(args.method.split(",")) > 1:
         # this is designed to run one type of model per script, # TODO to allow multiple models
-        raise ValueError("Multiple --methods selected, this is not compatible with the new script!")
+        raise ValueError("Multiple --method selected, this is not compatible with the new script!")
 
     filtered_jobs, job_statuses = generate_and_filter_jobs(args)
 
