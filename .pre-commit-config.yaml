@@ -20,6 +20,12 @@ repos:
         additional_dependencies:
           - toml-sort==0.24.3
 
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.4.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.0
     hooks:

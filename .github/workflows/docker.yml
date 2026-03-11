@@ -9,13 +9,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'pyproject.toml'
-      - 'pixi.lock'
-      - 'src/**'
-      - 'scripts/**'
       - 'Dockerfile'
       - 'docker-entrypoint.sh'
       - '.github/workflows/docker.yml'
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
 
 env:
@@ -30,26 +28,36 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.DOCKERHUB_ORG }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
+
       - name: Build and push Docker image
         id: build-push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.DOCKERHUB_ORG }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.DOCKERHUB_ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
