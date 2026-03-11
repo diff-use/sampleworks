@@ -298,10 +298,8 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
         protein_name = protein.name
 
         for model in models:
-            model_methods = methods if model == StructurePredictor.BOLTZ_2 else [None]
-
-            for method in model_methods:
-                method_suffix = f"_{method.replace(' ', '_')}" if method else ""
+            current_method = method if model == StructurePredictor.BOLTZ_2 else None
+            method_suffix = f"_{current_method.replace(' ', '_')}" if current_method else ""
 
                 for scaler in scalers:
                     if scaler == GuidanceType.FK_STEERING:
