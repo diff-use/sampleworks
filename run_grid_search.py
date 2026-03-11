@@ -526,7 +526,7 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info(f"Ensemble sizes: {args.ensemble_sizes}")
     log.info(f"Gradient weights: {args.gradient_weights}")
     log.info(f"GD steps: {args.num_gd_steps}")
-    log.info(f"Boltz2 methods: {args.methods}")
+    log.info(f"Boltz2 method: {args.method}")
     log.info(f"Output directory: {args.output_dir}")
     log.info(f"GPUs: {gpus}")
     log.info(f"Dry run: {args.dry_run}")
