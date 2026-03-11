@@ -465,9 +465,9 @@ def parse_args() -> argparse.Namespace:
         help="Override the default checkpoint path for the selected model",
     )
     parser.add_argument(
-        "--methods",
+        "--method",
         default="X-RAY DIFFRACTION",
-        help="Comma-separated methods for Boltz2",
+        help="Method for Boltz2",
     )
 
     parser.add_argument("--num-particles", type=int, default=3, help="FK steering: num particles")
