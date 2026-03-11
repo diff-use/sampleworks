@@ -263,7 +263,7 @@ def main(args: argparse.Namespace):
         ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
         gradient_weights=[float(x) for x in args.gradient_weights.split()],
         gd_steps=[int(x) for x in args.num_gd_steps.split()],
-        methods=[m.strip() for m in args.methods.split(",")],
+        method=args.method,
         proteins_file=args.proteins,
         output_dir=args.output_dir,
     )
