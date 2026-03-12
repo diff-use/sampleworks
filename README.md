@@ -1,10 +1,12 @@
 # Sampleworks
 
-> This repository is under heavy and active development. Expect breaking changes. Please feel free to reach out to the team if you're interested in using or contributing!
+> This repository is under active development. Please always use the latest version. If you encounter any problems, please [create an issue on GitHub](https://github.com/diff-use/sampleworks/issues) and include: the PDB ID, the CIF file you used, your density map(s), and log information.
 
-> HELP WANTED: We are most in need of help adding new ModelWrappers for the latest structure prediction models (we're particularly interested in smaller models that might be more steerable) and implementing fast, differentiable forward models for more experimental data modalities.
+> We would welcome contributions from the community. We are most interested in:
+ - new ModelWrappers for additional structure prediction models (especially smaller models which may be more steerable)
+ - fast, differentiable modules to allow guidance from other experimental data modalities besides X-ray electron density.
 
-**Sampleworks** is a Python framework for integrating generative biomolecular structure models with experimental data.
+**Sampleworks** is a Python framework for integrating generative biomolecular structure models with experimental data. Read our [blog post](https://diffuse.science/posts/sampleworks/) for an introduction.
 
 ## Why sampleworks?
 
@@ -14,7 +16,7 @@ Currently, each structure prediction model has a different implementation, requi
 
 ## Installation
 
-**Requirements**: Linux x86-64, CUDA 12, Python ≥ 3.11
+**Requirements**: Linux x86-64, CUDA 12, Python ≥ 3.11, < 3.14
 
 ### 1. Install Pixi
 
@@ -29,6 +31,8 @@ git clone git@github.com:diff-use/sampleworks.git
 cd sampleworks
 pixi install -a   # install all environments
 ```
+
+> **Note**: `pixi install -a` resolves all environments. This (currently) requires CUDA 12 and will fail on machines without it.
 
 Each generative model has its own Pixi environment. Install only what you need:
 
@@ -90,15 +94,15 @@ pixi run -e boltz python run_grid_search.py \
     --ensemble-sizes "1 4" \
     --gradient-weights "0.1 0.2" \
     --output-dir grid_search_results \
-    --gradient-normalization \       # normalize guidance update magnitude to diffusion update magnitude (TODO: document further)
+    --gradient-normalization \       # normalize guidance update magnitude to diffusion update magnitude
     --augmentation \                 # apply random rotations and translations at each step (defaults for inference with AF3-like models)
     --align-to-input                 # align to input structure at each step (required for density guidance to work since it is not rotation/translation invariant)
 ```
 
 **`proteins.csv` format**
 
-Required columns and format:
-```
+Required columns and format. Supported density map formats: `.ccp4`, `.mrc`, `.map` (not MTZ or SF-CIF yet).
+```csv
 name,structure,density,resolution
 1abc,/data/structures/1abc.cif,/data/maps/1abc.ccp4,2.0
 2xyz,/data/structures/2xyz.cif,/data/maps/2xyz.mrc,1.8
@@ -121,6 +125,10 @@ name,structure,density,resolution
 | `--only-missing` | Run only jobs not yet started | off |
 
 Output layout: `grid_search_results/<protein>/<model>[_<method>]/<scaler>/ens<N>_gw<W>/`
+
+> **Note**: Jobs are skipped if a `refined.cif` file already exists in the output directory. Some flags (e.g., `--use-tweedie`, `--gradient-normalization`) are not reflected in the directory structure, so changing them alone won't trigger a re-run. Use `--force-all` to re-run all jobs regardless. This is under active development and will likely change soon.
+
+Instructions for running evaluation and metrics scripts are coming soon.
 
 
 ## Docker
