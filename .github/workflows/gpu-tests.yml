@@ -19,6 +19,10 @@ on:
       - '.github/workflows/gpu-tests.yml'
   workflow_dispatch:
 
+concurrency:
+  group: gpu-tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gpu-tests:
     runs-on: gpu-1
