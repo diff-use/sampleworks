@@ -269,7 +269,7 @@ def main(args: argparse.Namespace):
 
     # Create DataFrame from results
     df = pd.DataFrame(results)
-    df.to_csv(args.grid_search_inputs_path / "rscc_results.csv", index=False)
+    df.to_csv(args.grid_search_results_path / "rscc_results.csv", index=False)
 
     if not df.empty:
         # Remove error column for display if present
