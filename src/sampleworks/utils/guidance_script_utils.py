@@ -444,10 +444,7 @@ def _run_guidance(
             gradient_normalization=args.gradient_normalization,
         )
     elif step_scaler_type == "none":
-        step_scaler = NoScalingScaler(
-            step_size=args.step_size,
-            gradient_normalization=args.gradient_normalization,
-        )
+        step_scaler = NoScalingScaler()
     else:
         raise ValueError(f"Invalid step_scaler_type: {step_scaler_type}")
 
