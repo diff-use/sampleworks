@@ -150,6 +150,7 @@ class TestCoordinateTranslation:
         assert result.shape == (3, 4, 5, 3)
 
 
+@pytest.mark.gpu
 class TestDeviceHandling:
     """Reconciler.to() moves index tensors to match coordinate device."""
 

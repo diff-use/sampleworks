@@ -217,6 +217,7 @@ class TestBoltzNpzAtomArrayHelpers:
         assert len(arr) == 2
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", BOLTZ_WRAPPER_TYPES, ids=lambda w: w.value)
 class TestBoltzWrapperInitialization:
@@ -234,6 +235,7 @@ class TestBoltzWrapperInitialization:
         assert next(wrapper.model.parameters()).device == device
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", BOLTZ_WRAPPER_TYPES, ids=lambda w: w.value)
 @pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))
@@ -289,6 +291,7 @@ class TestBoltzWrapperFeaturize:
         assert features.x_init.shape[0] == ensemble_size
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", BOLTZ_WRAPPER_TYPES, ids=lambda w: w.value)
 @pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))
@@ -423,6 +426,7 @@ class TestBoltzWrapperStep:
         assert not torch.allclose(result, x_init)
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", BOLTZ_WRAPPER_TYPES, ids=lambda w: w.value)
 @pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))
@@ -483,6 +487,7 @@ class TestBoltzWrapperInitializeFromPrior:
             assert result.shape[0] == batch_size
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", BOLTZ_WRAPPER_TYPES, ids=lambda w: w.value)
 class TestBoltzWrapperInitializeFromPriorValidation:
@@ -516,6 +521,7 @@ class TestBoltzWrapperInitializeFromPriorValidation:
             wrapper.initialize_from_prior(batch_size=2)
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", BOLTZ_WRAPPER_TYPES, ids=lambda w: w.value)
 @pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))

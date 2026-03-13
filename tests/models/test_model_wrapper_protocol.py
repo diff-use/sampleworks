@@ -41,6 +41,7 @@ class TestFlowModelWrapperProtocol:
             f"{wrapper_info.name} does not implement FlowModelWrapper protocol"
         )
 
+    @pytest.mark.gpu
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
@@ -73,6 +74,7 @@ class TestFlowModelWrapperProtocol:
             f"got {type(features.conditioning)}"
         )
 
+    @pytest.mark.gpu
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
@@ -103,6 +105,7 @@ class TestFlowModelWrapperProtocol:
             f"got {features.x_init.shape[2]}"
         )
 
+    @pytest.mark.gpu
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
@@ -132,6 +135,7 @@ class TestFlowModelWrapperProtocol:
             f"{features.x_init.shape}"
         )
 
+    @pytest.mark.gpu
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
@@ -152,6 +156,7 @@ class TestFlowModelWrapperProtocol:
 
         assert torch.is_tensor(result), f"{wrapper_info.name}.step must return Tensor with float t"
 
+    @pytest.mark.gpu
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
@@ -182,6 +187,7 @@ class TestFlowModelWrapperProtocol:
             f"{result.shape[-1]}"
         )
 
+    @pytest.mark.gpu
     @pytest.mark.slow
     def test_initialize_from_prior_with_shape(self, wrapper_info: ComponentInfo, request):
         """Test initialize_from_prior with explicit shape."""

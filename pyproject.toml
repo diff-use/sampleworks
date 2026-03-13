@@ -46,9 +46,11 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pixi.activation.env]
+CUDA_HOME = "$CONDA_PREFIX"
 PYTHONNOUSERSITE = "1"
 
 [tool.pixi.dependencies]
+cuda-toolkit = ">=12,<13"
 gcc_linux-64 = ">=9,<13"
 gxx_linux-64 = ">=9,<13"
 ninja = "*"
@@ -83,6 +85,12 @@ cuda = "12"
 args = [{arg = "flags", default = ""}]
 cmd = "pytest {{ flags }}"
 
+[tool.pixi.tasks.cpu-tests]
+cmd = "pytest -m 'not gpu'"
+
+[tool.pixi.tasks.gpu-tests]
+cmd = "pytest -m gpu"
+
 # Cross-env tasks use bash to orchestrate across environments because pixi's
 # depends-on/alias mechanism only works within a single environment.
 # This continues past failures, exits 1 if any env failed.
@@ -105,7 +113,8 @@ platforms = ["linux-64"]
 [tool.pytest.ini_options]
 addopts = "-v --strict-markers"
 markers = [
-  "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "gpu: marks tests that require a GPU runner"
 ]
 python_classes = ["Test*"]
 python_files = ["test_*.py"]

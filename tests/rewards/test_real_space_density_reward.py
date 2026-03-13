@@ -24,6 +24,7 @@ from sampleworks.core.rewards.real_space_density import (
 )
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 class TestRewardFunctionBasics:
     """Test basic functionality of the RealSpaceRewardFunction class."""
@@ -131,6 +132,7 @@ class TestRewardFunctionBasics:
         torch.testing.assert_close(loss1, loss2)
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 class TestDensityCorrelation:
     """Test that reward function correlates with underlying electron density."""
@@ -270,6 +272,7 @@ class TestDensityCorrelation:
             assert losses[i + 1] >= losses[i]
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 class TestVmapCompatibility:
     """Test vmap functionality for use in FK steering and particle methods."""
@@ -466,6 +469,7 @@ class TestVmapCompatibility:
         torch.testing.assert_close(result_vmap, result_sequential, rtol=1e-5, atol=1e-6)
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 class TestGradientFlow:
     """Test gradient computation for coordinate optimization."""
@@ -614,6 +618,7 @@ class TestGradientFlow:
         assert grad_norm < 1e6
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "shape",
@@ -659,6 +664,7 @@ class TestBatchHandling:
         assert torch.isfinite(loss)
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 class TestEdgeCases:
     """Test edge cases and error handling."""
