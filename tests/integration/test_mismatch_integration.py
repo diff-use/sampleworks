@@ -677,7 +677,7 @@ class TestPreprocessingPipeline:
         n_model = mismatch_case.n_model
         assert reward_inputs.elements.shape[-1] == n_model
         assert reward_inputs.b_factors.shape[-1] == n_model
-        assert reward_inputs.input_coords.shape[-2] == n_model
+        assert reward_inputs.occupancies.shape[-1] == n_model
         assert reward_inputs.input_coords.shape[-2] == n_model
 
     def test_b_factor_override(self, mismatch_case: MismatchCase):

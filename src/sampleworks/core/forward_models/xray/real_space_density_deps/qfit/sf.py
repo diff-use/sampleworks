@@ -1381,3 +1381,34 @@ ELECTRON_SCATTERING_FACTORS = {
         [0.1310, 1.4038, 7.6057, 34.0186, 90.5226],
     ],
 }
+
+
+def _build_element_to_scattering_index() -> dict[str, int]:
+    """Build mapping from all element symbols to unique scattering tensor indices.
+
+    Neutral elements retain their atomic-number indices from
+    ``ELEMENT_TO_ATOMIC_NUM``.  Ionic forms (e.g. ``'O1-'``, ``'Fe2+'``) are assigned unique
+    indices starting after the maximum atomic number.
+
+    Returns
+    -------
+    dict[str, int]
+        Mapping from element symbol to scattering tensor index.
+    """
+    mapping = dict(ELEMENT_TO_ATOMIC_NUM)
+    next_idx = max(ELEMENT_TO_ATOMIC_NUM.values()) + 1
+    all_sf_keys = sorted(
+        set(ATOM_STRUCTURE_FACTORS.keys()) | set(ELECTRON_SCATTERING_FACTORS.keys())
+    )
+    for key in all_sf_keys:
+        if key not in mapping:
+            mapping[key] = next_idx
+            next_idx += 1
+    return mapping
+
+
+ELEMENT_TO_SCATTERING_INDEX: dict[str, int] = _build_element_to_scattering_index()
+"""Extended element to index mapping covering ionic forms. Ionic forms
+(e.g. ``'O1-'``, ``'Fe2+'``) receive unique indices beyond the periodic
+table so their distinct scattering factors are preserved.
+"""

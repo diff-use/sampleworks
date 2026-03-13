@@ -650,9 +650,7 @@ def reward_function_1vme(density_map_1vme, structure_1vme_density, device: torch
         setup_scattering_params,
     )
 
-    params = setup_scattering_params(
-        structure_1vme_density["asym_unit"], em_mode=False, device=device
-    )
+    params = setup_scattering_params(em_mode=False, device=device)
     rf = RealSpaceRewardFunction(density_map_1vme, params, torch.tensor([1], device=device))
     return rf
 

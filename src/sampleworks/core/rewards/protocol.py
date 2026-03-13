@@ -6,10 +6,8 @@ from typing import Protocol, runtime_checkable, TYPE_CHECKING
 import einx
 import numpy as np
 import torch
-from jaxtyping import Float
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
-    ELEMENT_TO_ATOMIC_NUM,
-)
+from jaxtyping import Float, Int
+from sampleworks.utils.elements import elements_to_scattering_indices
 
 
 if TYPE_CHECKING:
@@ -30,7 +28,7 @@ class RewardInputs:
     noise and setting occupancy to 1.0 for model-operated atoms).
     """
 
-    elements: Float[torch.Tensor, "*batch n_atoms"]
+    elements: Int[torch.Tensor, "*batch n_atoms"]
     b_factors: Float[torch.Tensor, "*batch n_atoms"]
     occupancies: Float[torch.Tensor, "*batch n_atoms"]
     input_coords: Float[torch.Tensor, "*batch n_atoms 3"]
@@ -76,7 +74,7 @@ class RewardInputs:
         if np.any((atom_array.occupancy <= 0) | (atom_array.occupancy > 1)):
             raise ValueError("Atom array contains invalid occupancy values.")
 
-        elements_list = [ELEMENT_TO_ATOMIC_NUM[e.title()] for e in atom_array.element]
+        elements_list = elements_to_scattering_indices(atom_array.element)
 
         total_batch_size = num_particles * ensemble_size if num_particles > 1 else ensemble_size
 
@@ -88,7 +86,10 @@ class RewardInputs:
         # b_factors across the particle dimension.
         if num_particles > 1:
             elements = einx.rearrange(
-                "n -> p e n", torch.Tensor(elements_list), p=num_particles, e=ensemble_size
+                "n -> p e n",
+                torch.tensor(elements_list, dtype=torch.long),
+                p=num_particles,
+                e=ensemble_size,
             )
             b_factors = einx.rearrange(
                 "n -> p e n",
@@ -103,7 +104,9 @@ class RewardInputs:
                 b=total_batch_size,
             )
         else:
-            elements = einx.rearrange("n -> b n", torch.Tensor(elements_list), b=ensemble_size)
+            elements = einx.rearrange(
+                "n -> b n", torch.tensor(elements_list, dtype=torch.long), b=ensemble_size
+            )
             b_factors = einx.rearrange(
                 "n -> b n",
                 torch.Tensor(atom_array.b_factor),
@@ -138,7 +141,7 @@ class RewardFunctionProtocol(Protocol):
     def __call__(
         self,
         coordinates: Float[torch.Tensor, "batch n_atoms 3"],
-        elements: Float[torch.Tensor, "batch n_atoms"],
+        elements: Int[torch.Tensor, "batch n_atoms"],
         b_factors: Float[torch.Tensor, "batch n_atoms"],
         occupancies: Float[torch.Tensor, "batch n_atoms"],
         unique_combinations: torch.Tensor | None = None,
@@ -181,8 +184,8 @@ class PrecomputableRewardFunctionProtocol(RewardFunctionProtocol, Protocol):
 
     def precompute_unique_combinations(
         self,
-        elements: torch.Tensor,
-        b_factors: torch.Tensor,
+        elements: Int[torch.Tensor, "batch n_atoms"],
+        b_factors: Float[torch.Tensor, "batch n_atoms"],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Pre-compute unique (element, b_factor) combinations.
 

@@ -222,7 +222,7 @@ class RF3Wrapper:
         Returns
         -------
         GenerativeModelInput[RF3Conditioning]
-            Model input with x_init and trunk conditioning.
+            Model input with ``x_init`` and trunk conditioning.
         """
         config = structure.get("_rf3_config", RF3Config())
         if isinstance(config, dict):
@@ -354,15 +354,19 @@ class RF3Wrapper:
             model_atom_array=model_aa,
         )
 
-        # x_init should be the reference coordinates for alignment purposes.
-        if true_atom_array is not None and len(true_atom_array) == num_atoms:
+        # x_init here is a shape-compatible reference carried with the featurized
+        # model input. During guided sampling, alignment/reference coordinates are
+        # built later via process_structure_to_trajectory_input() and AtomReconciler.
+        # TODO: figure out if this is necessary or if we should just remove x_init completely.
+        if len(true_atom_array) == num_atoms:
             x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
+            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size)
         else:
-            logger.warning(
-                "True structure not available or atom count mismatch; initializing "
-                "x_init from prior. This means align_to_input will not work properly,"
-                " and reward functions dependent on this won't be accurate."
+            logger.info(
+                f"Input structure has {len(true_atom_array)} atoms, but RF3 operates on "
+                f"{num_atoms} atoms after model-specific preprocessing. Initializing "
+                "x_init from prior to match model shape; guided sampling will "
+                "reconcile alignment and reward inputs later on the common atom subset."
             )
             x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
 

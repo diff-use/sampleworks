@@ -137,7 +137,7 @@ def compute_density_from_atomarray(
     if xmap is None:
         xmap = create_synthetic_grid(atom_array, resolution, padding=5.0)  # ty: ignore[invalid-argument-type] (resolution will not be None here)
 
-    scattering_params = setup_scattering_params(atom_array, em_mode, device)
+    scattering_params = setup_scattering_params(em_mode=em_mode, device=device)
 
     xmap_torch = XMap_torch(xmap, device=device)
     transformer = DifferentiableTransformer(

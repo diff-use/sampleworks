@@ -14,14 +14,99 @@ from functools import partial
 from typing import cast
 
 import einx
+import numpy as np
 import pytest
 import torch
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
+    ATOM_STRUCTURE_FACTORS,
     ELEMENT_TO_ATOMIC_NUM,
 )
 from sampleworks.core.rewards.real_space_density import (
+    extract_density_inputs_from_atomarray,
     RealSpaceRewardFunction,
+    setup_scattering_params,
 )
+
+
+class TestSetupScatteringParams:
+    """Test structure-independent scattering parameter lookup construction."""
+
+    def test_setup_scattering_params_covers_supported_elements(self, device):
+        """Every key in ATOM_STRUCTURE_FACTORS must have a nonzero row in the
+        scattering tensor, and its exact coefficients must match the table."""
+        from sampleworks.core.rewards.real_space_density import ELEMENT_TO_SCATTERING_INDEX
+
+        params = setup_scattering_params(em_mode=False, device=device)
+
+        assert params.shape[0] == max(ELEMENT_TO_SCATTERING_INDEX.values()) + 1
+
+        for element, coeffs in ATOM_STRUCTURE_FACTORS.items():
+            idx = ELEMENT_TO_SCATTERING_INDEX[element]
+            expected = torch.tensor(coeffs, dtype=torch.float32, device=device).T
+            torch.testing.assert_close(
+                params[idx],
+                expected,
+                msg=lambda m: f"Mismatch for '{element}': {m}",
+            )
+
+    def test_unknown_placeholder_row_is_zeros(self, device):
+        """The '?' placeholder occupies atomic number 0 and has no scattering factors,
+        so its row in the lookup table must be all zeros."""
+        params = setup_scattering_params(em_mode=False, device=device)
+        assert torch.all(params[ELEMENT_TO_ATOMIC_NUM["?"]] == 0)
+
+    def test_pdb_allcaps_elements_resolve_to_correct_atomic_numbers(
+        self, atom_array_with_nan_coords, device
+    ):
+        """PDB files store elements in all-caps (e.g. 'NA', 'CA', 'SE').
+        normalize_element must convert these to standard title-case symbols so they
+        map to the correct atomic number and carry nonzero scattering factors.
+        """
+        params = setup_scattering_params(em_mode=False, device=device)
+        aa = atom_array_with_nan_coords.copy()
+        aa.element = np.array(["NA", "C", "CA", "C", "SE"])
+        _, elements, _, _ = extract_density_inputs_from_atomarray(aa, device)
+        expected = torch.tensor(
+            [ELEMENT_TO_ATOMIC_NUM[e] for e in ["Na", "Ca", "Se"]],
+            dtype=torch.long,
+            device=device,
+        )
+        assert torch.equal(elements.squeeze(0), expected)
+        assert all(params[idx].sum().item() != 0 for idx in expected)
+
+    def test_ionic_element_gets_proper_density(self, atom_array_with_nan_coords, device):
+        """Ionic element symbols such as 'O1-' are present in ATOM_STRUCTURE_FACTORS
+        but absent from ELEMENT_TO_ATOMIC_NUM (which only holds neutral-atom symbols).
+        We need to detect this and return the proper scattering params."""
+        params = setup_scattering_params(em_mode=False, device=device)
+        aa = atom_array_with_nan_coords.copy()
+        aa.element = np.array(["O1-", "C", "FE2+", "C", "CL1-"])
+        _, elements, _, _ = extract_density_inputs_from_atomarray(aa, device)
+        surviving_elements = elements.squeeze(0)
+
+        assert all(idx.item() != 0 for idx in surviving_elements)
+
+        # Verify exact scattering factors from the ATOM_STRUCTURE_FACTORS table
+        for idx, ionic_key in zip(surviving_elements, ["O1-", "Fe2+", "Cl1-"]):
+            expected = torch.tensor(
+                ATOM_STRUCTURE_FACTORS[ionic_key],
+                dtype=torch.float32,
+                device=device,
+            ).T
+            torch.testing.assert_close(params[idx], expected)
+
+    def test_completely_unknown_element_falls_back_to_zero_density(
+        self, atom_array_with_nan_coords, device
+    ):
+        """An element symbol that is not recognised at all (neither in
+        ELEMENT_TO_ATOMIC_NUM nor in the structure factor table) falls back to
+        atomic number 0 and contributes zero density."""
+        params = setup_scattering_params(em_mode=False, device=device)
+        aa = atom_array_with_nan_coords.copy()
+        aa.element = np.array(["Xx", "C", "C", "C", "C"])
+        _, elements, _, _ = extract_density_inputs_from_atomarray(aa, device)
+        assert elements.squeeze(0)[0].item() == 0
+        assert params[0].sum().item() == 0
 
 
 @pytest.mark.gpu

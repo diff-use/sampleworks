@@ -12,56 +12,56 @@ from sampleworks.core.forward_models.xray.real_space_density import (
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import (
     ATOM_STRUCTURE_FACTORS,
     ELECTRON_SCATTERING_FACTORS,
-    ELEMENT_TO_ATOMIC_NUM,
+    ELEMENT_TO_SCATTERING_INDEX,
 )
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
     XMap,
 )
-from sampleworks.utils.elements import normalize_element
+from sampleworks.utils.elements import elements_to_scattering_indices
+from sampleworks.utils.framework_utils import match_batch
 from sampleworks.utils.torch_utils import try_gpu
 
 
-def setup_scattering_params(
-    atom_array: AtomArray | AtomArrayStack, em_mode: bool, device: torch.device
-) -> torch.Tensor:
+def setup_scattering_params(em_mode: bool, device: torch.device) -> torch.Tensor:
     """Set up atomic scattering parameters for density calculation.
+
+    The returned tensor is indexed by the values in
+    :data:`ELEMENT_TO_SCATTERING_INDEX`
+
+    Any element without a tabulated scattering factor is left as zeros and logged
+    as it indicates an unrecognised element in the input
 
     Parameters
     ----------
-    atom_array
-        Structure containing atoms with element information
     em_mode
-        If True, use electron scattering factors (for cryo-EM).
-        If False, use X-ray scattering factors.
+        If ``True``, use electron scattering factors for cryo-EM. If
+        ``False``, use X-ray scattering factors.
     device
-        PyTorch device to place the scattering parameter tensor on
+        PyTorch device that should own the returned lookup tensor.
 
     Returns
     -------
     torch.Tensor
-        Scattering parameter tensor of shape (max_atomic_num + 1, n_coeffs, 2)
-        containing scattering coefficients for each element type
+        Tensor of shape ``(n_indices, n_coeffs, 2)`` containing scattering
+        coefficients.
     """
-    elements = atom_array.element
-    unique_elements = sorted(set(normalize_element(e) for e in elements))
-    atomic_num_dict = {elem: ELEMENT_TO_ATOMIC_NUM[elem] for elem in unique_elements}
-
     structure_factors = ELECTRON_SCATTERING_FACTORS if em_mode else ATOM_STRUCTURE_FACTORS
-
-    max_atomic_num = max(atomic_num_dict.values())
     n_coeffs = len(structure_factors["C"][0])
-    dense_size = torch.Size([max_atomic_num + 1, n_coeffs, 2])
-    scattering_tensor = torch.zeros(dense_size, dtype=torch.float32, device=device)
+    n_elements = max(ELEMENT_TO_SCATTERING_INDEX.values()) + 1
+    scattering_tensor = torch.zeros((n_elements, n_coeffs, 2), dtype=torch.float32, device=device)
 
-    for elem in unique_elements:
-        atomic_num = atomic_num_dict[elem]
-        if elem in structure_factors:
-            factor = structure_factors[elem]
-        else:
-            logger.warning(f"Scattering factors for {elem} not found, using C")
-            factor = structure_factors["C"]
-        factor_tensor = torch.tensor(factor, dtype=torch.float32, device=device).T
-        scattering_tensor[atomic_num, :, :] = factor_tensor
+    for element, idx in ELEMENT_TO_SCATTERING_INDEX.items():
+        if element not in structure_factors or element == "?":
+            logger.warning(
+                f"Element '{element}' (scattering index {idx}) has no tabulated "
+                "scattering factors and will contribute zero density. This indicates "
+                "the scattering factor table is incomplete for this element."
+            )
+            continue
+        factor_tensor = torch.tensor(
+            structure_factors[element], dtype=torch.float32, device=device
+        ).T
+        scattering_tensor[idx] = factor_tensor
 
     return scattering_tensor
 
@@ -152,11 +152,8 @@ def extract_density_inputs_from_atomarray(
             )
 
     coords_tensor = torch.from_numpy(valid_coords.copy()).to(device, dtype=torch.float32)
-    elements_tensor = torch.tensor(
-        [ELEMENT_TO_ATOMIC_NUM[normalize_element(e)] for e in valid_elements],
-        device=device,
-        dtype=torch.long,
-    )
+    element_indices = elements_to_scattering_indices(valid_elements)
+    elements_tensor = torch.tensor(element_indices, device=device, dtype=torch.long)
     b_factors_tensor = torch.from_numpy(valid_b_factor.copy()).to(device, dtype=torch.float32)
 
     nan_b_factor_mask = torch.isnan(b_factors_tensor)
@@ -260,14 +257,29 @@ class RealSpaceRewardFunction:
 
     def structure_to_reward_input(self, structure: dict) -> dict[str, Float[torch.Tensor, "..."]]:
         atom_array = structure["asym_unit"]
-        atom_array = atom_array[:, atom_array.occupancy > 0]
-        elements = [ELEMENT_TO_ATOMIC_NUM[normalize_element(elem)] for elem in atom_array.element]
+        mask = atom_array.occupancy > 0
+        if isinstance(atom_array, AtomArrayStack):
+            atom_array = atom_array[:, mask]
+        else:
+            atom_array = atom_array[mask]
 
-        elements = torch.tensor(elements, device=self.device).unsqueeze(0)
+        element_indices = elements_to_scattering_indices(atom_array.element)
+
+        elements = torch.tensor(element_indices, device=self.device, dtype=torch.long).unsqueeze(0)
         b_factors = torch.from_numpy(atom_array.b_factor).to(self.device).unsqueeze(0)
         occupancies = torch.from_numpy(atom_array.occupancy).to(self.device).unsqueeze(0)
 
         coordinates = torch.from_numpy(atom_array.coord).to(self.device)
+        if coordinates.ndim == 2:
+            coordinates = coordinates.unsqueeze(0)
+
+        # AtomArrayStack: coord is (n_models, n_atoms, 3) but annotations are
+        # (n_atoms), so elements/b_factors/occupancies are (1, n_atoms) after
+        # unsqueeze while coordinates is (n_models, n_atoms, 3). Broadcast to match.
+        n_models = coordinates.shape[0]
+        elements = match_batch(elements, target_batch_size=n_models)
+        b_factors = match_batch(b_factors, target_batch_size=n_models)
+        occupancies = match_batch(occupancies, target_batch_size=n_models)
 
         return {
             "coordinates": coordinates,
@@ -279,7 +291,7 @@ class RealSpaceRewardFunction:
     def __call__(
         self,
         coordinates: Float[torch.Tensor, "batch n_atoms 3"],
-        elements: Float[torch.Tensor, "batch n_atoms"],
+        elements: Int[torch.Tensor, "batch n_atoms"],
         b_factors: Float[torch.Tensor, "batch n_atoms"],
         occupancies: Float[torch.Tensor, "batch n_atoms"],
         unique_combinations: torch.Tensor | None = None,
@@ -292,7 +304,7 @@ class RealSpaceRewardFunction:
         ----------
         coordinates: Float[torch.Tensor, "batch n_atoms 3"]
             Atomic coordinates
-        elements: Float[torch.Tensor, "batch n_atoms"]
+        elements: Int[torch.Tensor, "batch n_atoms"]
             Atomic elements
         b_factors: Float[torch.Tensor, "batch n_atoms"]
             Per-atom B-factor
