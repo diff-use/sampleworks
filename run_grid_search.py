@@ -30,7 +30,7 @@ class GridSearchConfig:
     ensemble_sizes: list[int]
     gradient_weights: list[float]
     gd_steps: list[int]
-    methods: list[str]
+    method: str
     proteins_file: str
     output_dir: str
 
@@ -244,10 +244,6 @@ def main(args: argparse.Namespace):
 
     log_args(args, gpus)
 
-    if len(args.methods.split(",")) > 1:
-        # this is designed to run one type of model per script, # TODO to allow multiple models
-        raise ValueError("Multiple --methods selected, this is not compatible with the new script!")
-
     filtered_jobs, job_statuses = generate_and_filter_jobs(args)
 
     if len(filtered_jobs) == 0:
@@ -260,7 +256,7 @@ def main(args: argparse.Namespace):
         ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
         gradient_weights=[float(x) for x in args.gradient_weights.split()],
         gd_steps=[int(x) for x in args.num_gd_steps.split()],
-        methods=[m.strip() for m in args.methods.split(",")],
+        method=args.method,
         proteins_file=args.proteins,
         output_dir=args.output_dir,
     )
@@ -286,7 +282,6 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     ensemble_sizes = [int(x) for x in args.ensemble_sizes.split()]
     gradient_weights = [float(x) for x in args.gradient_weights.split()]
     gd_steps_list = [int(x) for x in args.num_gd_steps.split()]
-    methods = [m.strip() for m in args.methods.split(",")]
 
     for protein in proteins:
         structure = protein.structure
@@ -294,49 +289,18 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
         resolution = protein.resolution
         protein_name = protein.name
 
-        model_methods = methods if model == StructurePredictor.BOLTZ_2 else []
-
-        for method in model_methods:
-            method_suffix = f"_{method.replace(' ', '_')}" if method else ""
-
-            for scaler in scalers:
-                if scaler == GuidanceType.FK_STEERING:
-                    for ens in ensemble_sizes:
-                        for gw in gradient_weights:
-                            for gd in gd_steps_list:
-                                output_dir = os.path.join(
-                                    args.output_dir,
-                                    protein_name,
-                                    f"{model}{method_suffix}",
-                                    scaler,
-                                    f"ens{ens}_gw{gw}_gd{gd}",
-                                )
-                                log_path = os.path.join(output_dir, "run.log")
-                                jobs.append(
-                                    JobConfig(
-                                        protein=protein_name,
-                                        structure_path=structure,
-                                        density_path=density,
-                                        resolution=resolution,
-                                        model=model,
-                                        scaler=scaler,
-                                        ensemble_size=ens,
-                                        gradient_weight=gw,
-                                        gd_steps=gd,
-                                        method=method,
-                                        output_dir=output_dir,
-                                        log_path=log_path,
-                                    )
-                                )
-                else:
-                    for ens in ensemble_sizes:
-                        for gw in gradient_weights:
+        method_suffix = f"_{args.method.replace(' ', '_')}" if args.method else ""
+        for scaler in scalers:
+            if scaler == GuidanceType.FK_STEERING:
+                for ens in ensemble_sizes:
+                    for gw in gradient_weights:
+                        for gd in gd_steps_list:
                             output_dir = os.path.join(
                                 args.output_dir,
                                 protein_name,
                                 f"{model}{method_suffix}",
                                 scaler,
-                                f"ens{ens}_gw{gw}",
+                                f"ens{ens}_gw{gw}_gd{gd}",
                             )
                             log_path = os.path.join(output_dir, "run.log")
                             jobs.append(
@@ -349,12 +313,39 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
                                     scaler=scaler,
                                     ensemble_size=ens,
                                     gradient_weight=gw,
-                                    gd_steps=1,
-                                    method=method,
+                                    gd_steps=gd,
+                                    method=args.method,
                                     output_dir=output_dir,
                                     log_path=log_path,
                                 )
                             )
+            else:
+                for ens in ensemble_sizes:
+                    for gw in gradient_weights:
+                        output_dir = os.path.join(
+                            args.output_dir,
+                            protein_name,
+                            f"{model}{method_suffix}",
+                            scaler,
+                            f"ens{ens}_gw{gw}",
+                        )
+                        log_path = os.path.join(output_dir, "run.log")
+                        jobs.append(
+                            JobConfig(
+                                protein=protein_name,
+                                structure_path=structure,
+                                density_path=density,
+                                resolution=resolution,
+                                model=model,
+                                scaler=scaler,
+                                ensemble_size=ens,
+                                gradient_weight=gw,
+                                gd_steps=1,
+                                method=args.method,
+                                output_dir=output_dir,
+                                log_path=log_path,
+                            )
+                        )
 
     return jobs
 
@@ -450,9 +441,10 @@ def parse_args() -> argparse.Namespace:
         help="Override the default checkpoint path for the selected model"
     )
     parser.add_argument(
-        "--methods",
+        "--method",
         default="X-RAY DIFFRACTION",
-        help="Comma-separated methods for Boltz2",
+        choices=["X-RAY DIFFRACTION", "MD"],
+        help="Method for Boltz2 ('X-RAY DIFFRACTION', 'MD')",
     )
 
     # Trajectory scaling arguments
@@ -548,7 +540,7 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info(f"Ensemble sizes: {args.ensemble_sizes}")
     log.info(f"Gradient weights: {args.gradient_weights}")
     log.info(f"GD steps: {args.num_gd_steps}")
-    log.info(f"Boltz2 methods: {args.methods}")
+    log.info(f"Boltz2 method: {args.method}")
     log.info(f"Output directory: {args.output_dir}")
     log.info(f"GPUs: {gpus}")
     log.info(f"Dry run: {args.dry_run}")
