@@ -239,7 +239,7 @@ def get_reward_function_and_structure(
     logger.debug("Setting up scattering parameters")
 
     atom_array = structure["asym_unit"]
-    scattering_params = setup_scattering_params(atom_array=atom_array, em_mode=em, device=device)
+    scattering_params = setup_scattering_params(em_mode=em, device=device)
 
     selection_mask = atom_array.occupancy > 0
     n_selected = selection_mask.sum()
