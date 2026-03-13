@@ -27,6 +27,7 @@ from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
+    NoScalingScaler,
     NoiseSpaceDPSScaler,
 )
 from sampleworks.utils.guidance_constants import (
@@ -431,17 +432,24 @@ def _run_guidance(
     )
 
     # Create step scaler for gradient-based guidance
-    use_tweedie = getattr(args, "use_tweedie", False)
-    if use_tweedie:
+    step_scaler_type = getattr(args, "step_scaler_type", "noisespace")
+    if step_scaler_type == "dataspace":
         step_scaler = DataSpaceDPSScaler(
             step_size=args.step_size,
             gradient_normalization=args.gradient_normalization,
         )
-    else:
+    elif step_scaler_type == "noisespace":
         step_scaler = NoiseSpaceDPSScaler(
             step_size=args.step_size,
             gradient_normalization=args.gradient_normalization,
         )
+    elif step_scaler_type == "none":
+        step_scaler = NoScalingScaler(
+            step_size=args.step_size,
+            gradient_normalization=args.gradient_normalization,
+        )
+    else:
+        raise ValueError(f"Invalid step_scaler_type: {step_scaler_type}")
 
     # TODO: this should be a config option
     num_steps = 200
