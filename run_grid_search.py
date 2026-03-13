@@ -483,7 +483,13 @@ def parse_args() -> argparse.Namespace:
         "--partial-diffusion-step", type=int, default=0, help="Partial diffusion step"
     )
     parser.add_argument("--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss")
-    parser.add_argument("--use-tweedie", action="store_true", help="Use Tweedie (pure guidance)")
+    parser.add_argument(
+        "--step-scaler-type",
+        type=str,
+        default="noisespace",
+        choices=["dataspace", "noisespace", "none"],
+        help="Type of step scaler to use (pure guidance only)",
+    )
     parser.add_argument(
         "--gradient-normalization",
         action="store_true",
