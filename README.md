@@ -40,3 +40,6 @@ To develop on OS X, ensure you have [homebrew](https://brew.sh/) installed and r
 There are different (and as yet untested) environments for `boltz`. `protenix` won't currently work on a Mac due to
 the strict requirement of `triton` which requires an NVIDIA GPU. You may find similar issues with other environments.
 Debug as needed.
+
+
+<!-- Automated minor fix for issue #155 -->
