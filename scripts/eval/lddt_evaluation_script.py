@@ -194,7 +194,7 @@ def translate_selection(selection: str) -> str:
 
 # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
 def main(args: argparse.Namespace):
-    all_experiments, protein_configs = setup_evaluation_parameters(args)
+    all_trials, protein_configs = setup_evaluation_parameters(args)
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     reference_atom_arrays = {}
