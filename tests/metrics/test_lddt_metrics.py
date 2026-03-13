@@ -25,6 +25,7 @@ def altlocB_backbone(structure_6b8x_with_altlocs) -> AtomArrayStack:
     return ensure_atom_array_stack(altlocB_bb)
 
 
+@pytest.mark.gpu
 def test_all_atom_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
     selection_string = "res_id > 179 and res_id < 190"
     allatom = AllAtomLDDT()
@@ -79,6 +80,7 @@ def test_all_atom_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
             )
 
 
+@pytest.mark.gpu
 def test_selected_lddt_end_to_end(altlocA_backbone, altlocB_backbone):
     import numpy as np
 

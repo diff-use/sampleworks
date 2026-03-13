@@ -147,6 +147,7 @@ class TestCreateSyntheticGrid:
         assert np.all(xmap.array == 0.0)
 
 
+@pytest.mark.gpu
 class TestComputeDensityFromAtomarray:
     """Tests for compute_density_from_atomarray function."""
 
@@ -335,6 +336,7 @@ class TestComputeDensityFromAtomarray:
         assert density_no_xmap.shape != density_xmap.shape  # different resolutions
 
 
+@pytest.mark.gpu
 class TestComputeDensityErrors:
     """Tests for error handling in compute_density_from_atomarray."""
 
@@ -418,6 +420,7 @@ class TestExtractDensityInputsFromAtomArrayStack:
         assert occupancies.shape == (1, n_atoms)
 
 
+@pytest.mark.gpu
 class TestComputeDensityFromAtomArrayStack:
     """Tests for compute_density_from_atomarray with AtomArrayStack input."""
 

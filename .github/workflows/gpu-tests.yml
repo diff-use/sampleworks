@@ -1,0 +1,47 @@
+name: GPU Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'pixi.lock'
+      - '.github/workflows/gpu-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'pixi.lock'
+      - '.github/workflows/gpu-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  gpu-tests:
+    runs-on: gpu-1
+    timeout-minutes: 30
+    environment: gpu-testing
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [boltz-dev, protenix-dev, rf3-dev]
+
+    name: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@19eac09b398e3d0c747adc7921926a6d802df4da # v0.8.8
+
+      - name: Build CUDA extensions
+        run: pixi run -e ${{ matrix.environment }} python3 -c "from sampleworks.core.forward_models.xray.real_space_density_deps.ops.csrc import dilate_points_cuda"
+
+      - name: Run tests
+        run: pixi run -e ${{ matrix.environment }} gpu-tests

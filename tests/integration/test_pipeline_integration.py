@@ -904,6 +904,7 @@ class TestSamplingDeterminism:
 # ============================================================================
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", get_slow_wrappers(), ids=lambda w: w.value)
 @pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))
@@ -1021,6 +1022,7 @@ class TestRealWrapperSamplerMatrix:
         assert step_output.state.device == device
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", get_slow_wrappers(), ids=lambda w: w.value)
 @pytest.mark.parametrize(
@@ -1069,6 +1071,7 @@ class TestRealTrajectoryScalerMatrix:
         assert len(result.trajectory) == 3
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", get_slow_wrappers(), ids=lambda w: w.value)
 @pytest.mark.parametrize("structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", ""))
@@ -1128,6 +1131,7 @@ class TestRealWrapperPreprocessing:
         )
 
 
+@pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("wrapper_type", get_slow_wrappers(), ids=lambda w: w.value)
 class TestRealWrapperNumericalStability:
