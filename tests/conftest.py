@@ -94,6 +94,11 @@ class ComponentInfo:
         For scalers, whether it requires a reward function.
     default_kwargs
         Default kwargs for instantiation in tests.
+    config_class_path
+        For components (e.g. AF3EDMSampler) whose constructor takes a config object,
+        the path to the config class. When set, default_kwargs are passed to the
+        config constructor, and the resulting config is then passed to the component
+        constructor.
     annotate_fn_path
         For wrappers, fully qualified path to the annotate function.
     conditioning_type_path
@@ -108,6 +113,7 @@ class ComponentInfo:
     is_trajectory_sampler: bool = False
     requires_reward: bool = False
     default_kwargs: tuple[tuple[str, Any], ...] = ()
+    config_class_path: str = ""
     annotate_fn_path: str = ""
     conditioning_type_path: str = ""
     requires_out_dir: bool = True
@@ -153,8 +159,8 @@ SAMPLER_REGISTRY: dict[TrajectorySamplers, ComponentInfo] = {
     TrajectorySamplers.AF3EDM: ComponentInfo(
         name="af3edm",
         module_path="sampleworks.core.samplers.edm.AF3EDMSampler",
+        config_class_path="sampleworks.core.samplers.edm.EDMSamplerConfig",
         is_trajectory_sampler=True,
-        default_kwargs=(("augmentation", True), ("align_to_input", True)),
     ),
 }
 
@@ -240,6 +246,14 @@ def create_sampler_from_type(
 ) -> Any:
     """Create sampler from TrajectorySamplers enum."""
     info = SAMPLER_REGISTRY[sampler_type]
+    if info.config_class_path:
+        config_cls = _import_from_path(info.config_class_path)
+        config_kwargs = dict(info.default_kwargs)
+        config_kwargs.update(extra_kwargs)
+        if device is not None:
+            config_kwargs["device"] = device
+        config = config_cls(**config_kwargs)
+        return create_component_from_info(info, config=config)
     return create_component_from_info(info, device=device, **extra_kwargs)
 
 
