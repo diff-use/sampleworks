@@ -22,7 +22,7 @@ from sampleworks.core.rewards.real_space_density import (
     RealSpaceRewardFunction,
     setup_scattering_params,
 )
-from sampleworks.core.samplers.edm import AF3EDMSampler
+from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import (
@@ -424,11 +424,14 @@ def _run_guidance(
     use_alignment_for_reverse_diffusion = is_boltz
 
     # Create sampler with model-appropriate settings
-    sampler = AF3EDMSampler(
+    sampler_config = EDMSamplerConfig(
         device=str(device),
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
         alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
+    )
+    sampler = AF3EDMSampler(
+        config=sampler_config,
     )
 
     # Create step scaler for gradient-based guidance

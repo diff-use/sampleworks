@@ -21,7 +21,7 @@ if str(_project_root) not in sys.path:
 from atomworks.io.parser import parse
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, stack
-from sampleworks.core.samplers.edm import AF3EDMSampler
+from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.samplers.protocol import StepParams
 from sampleworks.eval.structure_utils import SampleworksProcessedStructure
 from sampleworks.utils.atom_reconciler import AtomReconciler
@@ -981,11 +981,8 @@ def converging_mock_wrapper(device: torch.device) -> MockFlowModelWrapper:
 @pytest.fixture
 def edm_sampler(device: torch.device) -> AF3EDMSampler:
     """AF3EDMSampler configured for testing."""
-    return AF3EDMSampler(
-        device=device,
-        augmentation=False,
-        align_to_input=False,
-    )
+    config = EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+    return AF3EDMSampler(config)
 
 
 @pytest.fixture

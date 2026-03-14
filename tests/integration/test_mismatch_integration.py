@@ -12,7 +12,7 @@ import torch
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray
 from sampleworks.core.rewards.protocol import RewardInputs
-from sampleworks.core.samplers.edm import AF3EDMSampler
+from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.samplers.protocol import StepParams
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
@@ -720,13 +720,14 @@ class TestSamplerStep:
     @pytest.fixture
     def sampler(self) -> AF3EDMSampler:
         """Sampler configured for deterministic mismatch tests."""
-        return AF3EDMSampler(
+        config = EDMSamplerConfig(
             augmentation=False,
             align_to_input=True,
             alignment_reverse_diffusion=False,
             scale_guidance_to_diffusion=True,
             device="cpu",
         )
+        return AF3EDMSampler(config)
 
     def _context_with_reference(
         self,
@@ -782,13 +783,14 @@ class TestSamplerStep:
         state = torch.randn(1, mismatch_case.n_model, 3)
         context = self._context_with_reference(reconciler, reference)
 
-        sampler_no_align = AF3EDMSampler(
+        config_no_align = EDMSamplerConfig(
             augmentation=False,
             align_to_input=False,
             alignment_reverse_diffusion=False,
             scale_guidance_to_diffusion=True,
             device="cpu",
         )
+        sampler_no_align = AF3EDMSampler(config_no_align)
 
         torch.manual_seed(42)
         output_aligned = sampler.step(state.clone(), wrapper, context, features=features)
@@ -877,7 +879,8 @@ class TestTrajectoryScalers:
             "asym_unit": case.struct_atom_array.copy(),
             "metadata": {"id": case.id},
         }
-        sampler = AF3EDMSampler(augmentation=False, align_to_input=True, device="cpu")
+        config = EDMSamplerConfig(augmentation=False, align_to_input=True, device="cpu")
+        sampler = AF3EDMSampler(config)
         step_scaler = DataSpaceDPSScaler(step_size=0.01)
 
         if scaler_type == "pure_guidance":
