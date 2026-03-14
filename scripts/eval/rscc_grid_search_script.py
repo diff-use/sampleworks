@@ -64,9 +64,10 @@ def main(args: argparse.Namespace):
     logger.debug("Testing base map path resolution:")
     for _, config in protein_configs.items():
         for occ in args.occupancies:
-            path = config.get_base_map_path_for_occupancy(occ)  # will warn if not found
+            altloc_occ = {"A": occ, "B": 1.0 - occ}
+            path = config.get_base_map_path_for_occupancy(altloc_occ)  # will warn if not found
             if path:
-                logger.debug(f"  {config.protein} occ={occ}: {path}")
+                logger.debug(f"  {config.protein} occupancies={altloc_occ}: {path}")
 
     # Scan for trials (look for refined.cif files)
     all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
