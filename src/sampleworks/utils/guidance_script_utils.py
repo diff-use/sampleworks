@@ -566,12 +566,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
         # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
         model_key = str(template_job.model).lower().replace("structurepredictor.", "")
-        resolved = _resolve_checkpoint(model_key)
-        if not resolved:
-            raise ValueError(
-                f"Running guidance requires a model checkpoint for '{template_job.model}'. "
-                f"Provide --model-checkpoint or bake checkpoints into /checkpoints/."
-            )
+        resolved = _resolve_checkpoint(model_key)  # will raise if not found
         template_job.model_checkpoint = resolved
         # Propagate to all jobs in the queue
         for job in job_queue:

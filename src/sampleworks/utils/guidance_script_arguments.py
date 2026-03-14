@@ -37,7 +37,19 @@ def _resolve_checkpoint(model_key: str) -> str:
             return str(resolved)
     # Nothing found – return the primary (baked-in) path so the error message
     # points the user to the expected location.
-    return candidates[0] if candidates else ""
+    resolved = candidates[0] if candidates else ""
+    if not resolved:
+        raise ValueError(
+            f"Running guidance requires a model checkpoint for '{model_key}'. "
+            f"Provide --model-checkpoint or bake checkpoints into /checkpoints/."
+        )
+    if not Path(resolved).exists():
+        raise ValueError(
+            f"Model checkpoint '{resolved}' does not exist. "
+            f"Provide a valid path via --model-checkpoint."
+        )
+
+    return resolved
 
 
 
