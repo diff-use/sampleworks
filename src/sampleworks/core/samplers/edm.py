@@ -137,8 +137,9 @@ class EDMSamplerConfig:
 class AF3EDMSampler:
     """EDM-style sampler from AF3-like models.
 
-    All constants are configurable via constructor for model-specific values.
-    Default values match AF3 parameterization.
+    Initialized with a single :class:`EDMSamplerConfig` object that holds all
+    schedule hyperparameters and runtime options.  Default values in the config
+    match the AF3 parameterization.
 
     This sampler implements the EDM (Karras et al.) style sampling
     approach as used in AlphaFold3 and related models, which is the Euler
@@ -154,6 +155,18 @@ class AF3EDMSampler:
     """
 
     def __init__(self, config: EDMSamplerConfig) -> None:
+        """Initialize the sampler with a configuration object.
+
+        Parameters
+        ----------
+        config : EDMSamplerConfig
+            Configuration object containing all schedule hyperparameters
+            (``sigma_data``, ``s_max``, ``s_min``, ``p``, ``gamma_min``,
+            ``gamma_0``, ``noise_scale``, ``step_scale``) and runtime flags
+            (``augmentation``, ``align_to_input``,
+            ``alignment_reverse_diffusion``, ``scale_guidance_to_diffusion``,
+            ``device``).
+        """
         self.config = config
 
     def check_context(self, context: StepParams) -> None:
