@@ -124,7 +124,7 @@ class GuidanceConfig:
             self.ensemble_size = job.ensemble_size
         else:
             self.step_size = job.gradient_weight
-            self.use_tweedie = args.use_tweedie
+            self.step_scaler_type = args.step_scaler_type
             self.ensemble_size = job.ensemble_size
 
 
@@ -185,9 +185,11 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
 def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--step-size", type=float, default=0.1, help="Gradient step")
     parser.add_argument(
-        "--use-tweedie",
-        action="store_true",
-        help="Use Tweedie's formula for gradient computation (enables augmentation/alignment)",
+        "--step-scaler-type",
+        type=str,
+        default="noisespace",
+        choices=["dataspace", "noisespace", "none"],
+        help="Type of step scaler to use: dataspace (DataSpaceDPSScaler), noisespace (NoiseSpaceDPSScaler), or none (NoScalingScaler)",
     )
 
 
