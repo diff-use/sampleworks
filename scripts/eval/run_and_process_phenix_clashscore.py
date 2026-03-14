@@ -1,4 +1,3 @@
-import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -7,41 +6,10 @@ import joblib
 import pandas as pd
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import Trial
-from sampleworks.eval.grid_search_eval_utils import scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 
 
-# TODO unify this with the other parse_args most eval scripts use.
-#  https://github.com/diff-use/sampleworks/issues/110
-def parse_args() -> argparse.Namespace:
-    """
-    Arguments required for evaluating clashscores with phenix.
-    These are currently slightly different from the other eval scripts.
-    """
-    parser = argparse.ArgumentParser(
-        description="Crawl the workspace root for CIF files matching --target-filename and"
-        " run phenix.clashscore on them."
-    )
-    parser.add_argument(
-        "--workspace-root",
-        type=Path,
-        required=True,
-        help="Path containing the grid search results directory, e.g. if results are "
-        "at $HOME/grid_search_results, $HOME should be what you pass",
-    )
-    parser.add_argument(
-        "--n-jobs",
-        type=int,
-        help="Number of parallel jobs to run. -1 uses all CPUs.",
-        default=16,
-    )
-    parser.add_argument(
-        "--target-filename",
-        default="refined.cif",
-        help="Target filename for the CIF files to process",
-    )
-    return parser.parse_args()
-
-
+# TODO make more general: https://github.com/diff-use/sampleworks/issues/93
 def main(args) -> None:
     # check that phenix is installed and available, bail early if not.
     try:
@@ -51,13 +19,8 @@ def main(args) -> None:
             "phenix.clashscore is not available, make sure phenix is installed "
             " and that you have activated it, e.g. `source phenix-dir/phenix_env.sh`"
         )
-
-    workspace_root = Path(args.workspace_root)
-
-    # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
-    grid_search_dir = workspace_root / "grid_search_results"
-    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
-    logger.info(f"Found {len(all_trials)} trials with {args.target_filename} files")
+    # The dropped variable is a list of ProteinConfigs, not used yet in this script
+    all_trials, _ = setup_evaluation_parameters(args)
 
     # Now loop over trials with joblib and get back tuples of trial level metrics
     clashscore_metrics = joblib.Parallel(n_jobs=args.n_jobs)(
@@ -75,7 +38,7 @@ def main(args) -> None:
 
     clashscore_df = pd.concat(clashscore_metrics, ignore_index=True)
     clashscore_df.to_csv(
-        workspace_root / "grid_search_results" / "clashscore_metrics.csv", index=False
+        args.grid_search_results_path / "clashscore_metrics.csv", index=False
     )
 
 
@@ -93,11 +56,11 @@ def process_one_trial(trial: Trial) -> pd.DataFrame:
     if retcode != 0:
         raise RuntimeError(f"grep failed with code {retcode}, the command was {' '.join(grep_cmd)}")
 
-    # phenix needs to be installed and on path for this to work. Also sh won't work with
+    # phenix needs to be installed and on path for this to work. Also, sh won't work with
     # phenix.clashscore because of that pesky period in the name.
     with logfile.open("w") as fn:
-        # phenix.clashscore generates a JSON file with both per-model scores as well as per-model
-        # lists of clashes.
+        # phenix.clashscore generates a JSON file with both per-model scores,
+        # as well as per-model lists of clashes.
         retcode = subprocess.call(
             ["phenix.clashscore", str(file_with_no_nans), "--json-filename", str(json_output)],
             stderr=fn,
@@ -110,7 +73,7 @@ def process_one_trial(trial: Trial) -> pd.DataFrame:
 
 def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
     """
-    Opens the json output file `json_output` and parses out the
+    Opens the JSON output file `json_output` and parses out the
     "summary_results", flattening it into rows which include the "model_name" field
 
     """
@@ -118,7 +81,7 @@ def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
         json_data = json.load(f)
 
     model_name = json_data.get("model_name")
-    # For now we're only collecting model-level summary statistics, but
+    # For now, we're only collecting model-level summary statistics, but
     # there are lists of specific clashes in each model too.
     summary_results = json_data.get("summary_results", {})
 
@@ -136,5 +99,7 @@ def process_clashscore_json_output(json_output: Path) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    argparse_description = "Crawl the workspace root for CIF files matching "
+    argparse_description += "--target-filename and run phenix.clashscore on them."
+    eval_args = parse_eval_args(description=argparse_description)
+    main(eval_args)

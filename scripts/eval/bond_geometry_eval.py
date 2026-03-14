@@ -4,8 +4,6 @@
 # but static analysis can't always prove that.
 import argparse
 import itertools
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -14,7 +12,7 @@ from biotite.structure import AtomArray, BadStructureError, index_distance
 from biotite.structure.io.pdbx import CIFFile, get_structure
 from loguru import logger
 from peppr.bounds import get_distance_bounds
-from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 from scipy.special import comb
 from tqdm import tqdm
 
@@ -40,19 +38,9 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
     outlier_info : pd.DataFrame
         DataFrame containing information about the outliers, including atom indices and distances.
     """
-    if pose.array_length() == 0:
-        return np.nan, pd.DataFrame()
-
     try:
-        bounds = get_distance_bounds(pose)  # this fetches values from RDKit
-    except BadStructureError:
-        return np.nan, pd.DataFrame()
-
-    if not pose.bonds:
-        logger.error(
-            "Models must have bonds, use "
-            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
-        )
+        bounds = check_pose_and_get_bounds(pose)
+    except (ValueError, BadStructureError) as e:
         return np.nan, pd.DataFrame()
 
     bond_indices = np.sort(pose.bonds.as_array()[:, :2], axis=1)
@@ -99,6 +87,23 @@ def bond_length_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[flo
     return invalid_fraction, pd.DataFrame(outlier_info)
 
 
+def check_pose_and_get_bounds(pose: AtomArray):
+    if pose.array_length() == 0:
+        raise ValueError("The structure is empty.")
+
+    if not pose.bonds:
+        logger.error(
+            "Models must have bonds, use "
+            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
+        )
+        raise ValueError("The structure does not have bonds.")
+    
+    # this fetches values from RDKit, raises BadStructureError if the structure is bad
+    bounds = get_distance_bounds(pose)
+    return bounds
+
+
+
 def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[float, pd.DataFrame]:
     """
     Calculate the percentage of bonds that are outside acceptable ranges.
@@ -123,22 +128,10 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
     outlier_info : pd.DataFrame
         DataFrame containing information about the outliers, including atom indices and distances.
     """
-    if pose.array_length() == 0:
-        return np.nan, pd.DataFrame()
+    bounds = check_pose_and_get_bounds(pose)
 
-    try:
-        bounds = get_distance_bounds(pose)
-    except BadStructureError:
-        return np.nan, pd.DataFrame()
-
-    if not pose.bonds:
-        logger.error(
-            "Models must have bonds, use "
-            "`biotite.structure.io.pdbx.get_structure(..., include_bonds=True)`"
-        )
-        return np.nan, pd.DataFrame()
-
-    # in the original, bonds were fetched from the reference structure, but we don't have one here.
+    # in bond_length_violations, bonds are fetched from the reference structure,
+    # but we don't have one here.
     all_bonds, _ = pose.bonds.get_all_bonds()
     # For a bond angle 'ABC', this list contains the atom indices for 'A' and 'C'
     bond_indices = []
@@ -203,20 +196,8 @@ def bond_angle_violations(pose: AtomArray, tolerance: float = 0.1) -> tuple[floa
 
 
 def main(args: argparse.Namespace):
-    workspace_root = Path(args.workspace_root)
-    # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
-    grid_search_dir = workspace_root / "grid_search_results"
-    logger.info(f"Grid search directory: {grid_search_dir}")
-
-    # Scan for trials (look for refined.cif files)
-    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
-    logger.info(f"Found {len(all_trials)} trials with refined.cif files")
-
-    if all_trials:
-        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
-    else:
-        logger.error("No trials found in grid search directory. Exiting with status 1.")
-        sys.exit(1)
+    # The unused variable is a list of ProteinConfigs, not used yet in this script
+    all_trials, _ = setup_evaluation_parameters(args)
 
     all_bond_length_outliers = []
     all_bond_angle_outliers = []
@@ -254,6 +235,7 @@ def main(args: argparse.Namespace):
                 }
             )
 
+    grid_search_dir = args.grid_search_results_path
     pd.concat(all_bond_length_outliers).to_csv(
         grid_search_dir / "bond_length_outliers.csv", index=False
     )
@@ -269,5 +251,7 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    args = parse_args("Evaluate bond angle and length outliers on grid search results.")
-    main(args)
+    eval_args = parse_eval_args(
+        description="Evaluate bond angle and length outliers on grid search results."
+    )
+    main(eval_args)

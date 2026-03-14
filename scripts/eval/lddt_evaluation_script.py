@@ -1,9 +1,7 @@
 import argparse
 import itertools
 import re
-import sys
 import traceback
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -13,7 +11,7 @@ from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial
-from sampleworks.eval.grid_search_eval_utils import parse_args, scan_grid_search_results
+from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import filter_to_common_atoms, map_altlocs_to_stack
@@ -194,28 +192,9 @@ def translate_selection(selection: str) -> str:
     return new_selection
 
 
+# TODO make more general: https://github.com/diff-use/sampleworks/issues/93
 def main(args: argparse.Namespace):
-    workspace_root = Path(args.workspace_root)
-
-    # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
-    grid_search_dir = workspace_root / "grid_search_results"
-
-    # Protein configurations: base map paths, structure selections, and resolutions
-    protein_inputs_dir = args.grid_search_inputs_path or workspace_root
-    protein_configs = ProteinConfig.from_csv(protein_inputs_dir, args.protein_configs_csv)
-
-    logger.info(f"Grid search directory: {grid_search_dir}")
-    logger.info(f"Proteins configured: {list(protein_configs.keys())}")
-
-    # Scan for trials (look for refined.cif files)
-    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
-    logger.info(f"Found {len(all_trials)} trials with refined.cif files")
-
-    if all_trials:
-        all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins
-    else:
-        logger.error("No trials found in grid search directory. Exiting with status 1.")
-        sys.exit(1)
+    all_trials, protein_configs = setup_evaluation_parameters(args)
 
     logger.info("Pre-loading reference structures for each protein for coordinate extraction")
     reference_atom_arrays = {}
@@ -313,7 +292,7 @@ def main(args: argparse.Namespace):
     )
 
     df = pd.DataFrame(null_results + all_results)
-    df.to_csv(grid_search_dir / "lddt_results.csv", index=False)
+    df.to_csv(args.grid_search_results_path / "lddt_results.csv", index=False)
 
 
 def process_trial_with_selection(
@@ -378,5 +357,5 @@ def process_trial_with_selection(
 
 
 if __name__ == "__main__":
-    args = parse_args("Evaluate LDDT on grid search results.")
+    args = parse_eval_args("Evaluate LDDT on grid search results.")
     main(args)
