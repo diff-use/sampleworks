@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 import pytest
-from sampleworks.eval.eval_dataclasses import Trial, TrialList
+from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial, TrialList
 
 
 @pytest.fixture
@@ -131,3 +131,44 @@ class TestTrialList:
         tl = TrialList()
         with caplog.at_level(logging.INFO):
             tl.summarize()  # should not raise
+
+
+@pytest.fixture
+def protein_config(tmp_path: Path) -> ProteinConfig:
+    return ProteinConfig(
+        protein="test",
+        base_map_dir=tmp_path,
+        selection=["chain A"],
+        resolution=2.0,
+        map_pattern="{occ_str}.ccp4",
+    )
+
+
+class TestProteinConfigGetBaseMapPath:
+    """Tests for ProteinConfig.get_base_map_path_for_occupancy (accepts dict, not float)."""
+
+    def test_returns_path_when_file_exists(self, protein_config, tmp_path):
+        map_file = tmp_path / "0.5occA_0.5occB.ccp4"
+        map_file.touch()
+        assert protein_config.get_base_map_path_for_occupancy({"A": 0.5, "B": 0.5}) == map_file
+
+    def test_returns_none_when_file_missing(self, protein_config):
+        assert protein_config.get_base_map_path_for_occupancy({"A": 0.5, "B": 0.5}) is None
+
+    def test_zero_occ_altloc_dropped_from_filename(self, protein_config, tmp_path):
+        """{"A": 1.0, "B": 0.0} should resolve to "1.0occA.ccp4", drop the zero-occ altloc."""
+        map_file = tmp_path / "1.0occA.ccp4"
+        map_file.touch()
+        assert protein_config.get_base_map_path_for_occupancy({"A": 1.0, "B": 0.0}) == map_file
+
+    def test_all_zero_occupancies_returns_none_with_warning(self, protein_config, caplog):
+        """All-zero dict → occupancy_to_str raises → None + warning."""
+        result = protein_config.get_base_map_path_for_occupancy({"A": 0.0, "B": 0.0})
+        assert result is None
+        assert "Cannot determine occupancy string" in caplog.text
+
+    def test_sum_exceeds_one_returns_none_with_warning(self, protein_config, caplog):
+        """Sum > 1 → occupancy_to_str raises → None + warning."""
+        result = protein_config.get_base_map_path_for_occupancy({"A": 0.8, "B": 0.8})
+        assert result is None
+        assert "Cannot determine occupancy string" in caplog.text
