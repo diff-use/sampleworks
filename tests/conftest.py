@@ -253,7 +253,8 @@ def create_sampler_from_type(
         if device is not None:
             config_kwargs["device"] = device
         config = config_cls(**config_kwargs)
-        return create_component_from_info(info, config=config)
+        cls = _import_from_path(info.module_path)
+        return cls(config)
     return create_component_from_info(info, device=device, **extra_kwargs)
 
 
