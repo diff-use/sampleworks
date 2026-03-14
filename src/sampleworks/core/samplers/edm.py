@@ -133,26 +133,7 @@ class EDMSamplerConfig:
         if self.sigma_data <= 0:
             raise ValueError(f"sigma_data ({self.sigma_data}) must be positive")
 
-    def create_sampler(self) -> AF3EDMSampler:
-        """Create EDM sampler instance from this config."""
-        return AF3EDMSampler(
-            sigma_data=self.sigma_data,
-            s_max=self.s_max,
-            s_min=self.s_min,
-            p=self.p,
-            gamma_min=self.gamma_min,
-            gamma_0=self.gamma_0,
-            noise_scale=self.noise_scale,
-            step_scale=self.step_scale,
-            augmentation=self.augmentation,
-            align_to_input=self.align_to_input,
-            alignment_reverse_diffusion=self.alignment_reverse_diffusion,
-            scale_guidance_to_diffusion=self.scale_guidance_to_diffusion,
-            device=self.device,
-        )
 
-
-@dataclass
 class AF3EDMSampler:
     """EDM-style sampler from AF3-like models.
 
@@ -172,19 +153,8 @@ class AF3EDMSampler:
     https://www.nature.com/articles/s41586-024-07487-w
     """
 
-    sigma_data: float = 16.0  # assumed std dev of data distribution
-    s_max: float = 160.0  # upper noise schedule bound (in sigma_data units)
-    s_min: float = 4e-4  # lower noise schedule bound (in sigma_data units)
-    p: float = 7.0  # schedule exponent (rho in Karras et al.)
-    gamma_min: float = 0.2  # sigma threshold below which noise inflation is disabled
-    gamma_0: float = 0.8  # noise inflation factor (S_churn / num_steps)
-    noise_scale: float = 1.003  # stochastic noise multiplier (S_noise)
-    step_scale: float = 1.5  # Euler step size multiplier
-    augmentation: bool = True  # random SO(3) rotation + small translation before denoising
-    align_to_input: bool = True  # align to input reference frame
-    alignment_reverse_diffusion: bool = False  # also align noisy state to denoised
-    scale_guidance_to_diffusion: bool = True  # rescale guidance to match diffusion update magnitude
-    device: str | torch.device = "cpu"
+    def __init__(self, config: EDMSamplerConfig) -> None:
+        self.config = config
 
     def check_context(self, context: StepParams) -> None:
         """Validate that the provided StepParams is ready for step.
@@ -245,21 +215,25 @@ class AF3EDMSampler:
         EDMSchedule
             Schedule object with `sigma_tm`, `sigma_t`, `gamma`, `t_hat`, and `dt` arrays.
         """
-        t_values = torch.linspace(0, 1, num_steps + 1, device=self.device)
+        t_values = torch.linspace(0, 1, num_steps + 1, device=self.config.device)
 
         sigmas = (
-            self.sigma_data
+            self.config.sigma_data
             * (
-                self.s_max ** (1 / self.p)
-                + t_values * (self.s_min ** (1 / self.p) - self.s_max ** (1 / self.p))
+                self.config.s_max ** (1 / self.config.p)
+                + t_values
+                * (
+                    self.config.s_min ** (1 / self.config.p)
+                    - self.config.s_max ** (1 / self.config.p)
+                )
             )
-            ** self.p
+            ** self.config.p
         )
 
         gammas = torch.where(
-            sigmas > self.gamma_min,
-            torch.tensor(self.gamma_0, device=self.device),
-            torch.tensor(0.0, device=self.device),
+            sigmas > self.config.gamma_min,
+            torch.tensor(self.config.gamma_0, device=self.config.device),
+            torch.tensor(0.0, device=self.config.device),
         )
 
         sigma_tm = sigmas[:-1]
@@ -298,7 +272,7 @@ class AF3EDMSampler:
         t_hat = schedule.t_hat[step_index]  # ty: ignore[unresolved-attribute] (accessible after check_schedule)
         dt = schedule.dt[step_index]  # ty: ignore[unresolved-attribute]
         sigma_tm = schedule.sigma_tm[step_index]  # ty: ignore[unresolved-attribute]
-        eps_scale = self.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
+        eps_scale = self.config.noise_scale * torch.sqrt(t_hat**2 - sigma_tm**2)
 
         total_steps = len(schedule.sigma_t)  # ty: ignore[unresolved-attribute] (this will be accessible due to the check above)
 
@@ -357,7 +331,7 @@ class AF3EDMSampler:
                 guidance_direction, align_transform, rotation_only=True
             )
 
-        if self.scale_guidance_to_diffusion:
+        if self.config.scale_guidance_to_diffusion:
             delta_norm = torch.linalg.norm(delta, dim=(-1, -2), keepdim=True)
             # scaler handles any adjustment/clipping of guidance direction, but we have diffusion
             # update magnitude here, so can optionally scale to match
@@ -367,7 +341,7 @@ class AF3EDMSampler:
             einx.multiply("b, b n c -> b n c", guidance_weight, guidance_direction)
             / context.t_effective
         )
-        proposal_shift = self.step_scale * context.dt * scaled_delta_contribution  # ty: ignore[unsupported-operator] (dt will be Array if check_context didn't raise)
+        proposal_shift = self.config.step_scale * context.dt * scaled_delta_contribution  # ty: ignore[unsupported-operator] (dt will be Array if check_context didn't raise)
 
         result = delta + scaled_delta_contribution
         return torch.as_tensor(result), loss, torch.as_tensor(proposal_shift)
@@ -415,7 +389,7 @@ class AF3EDMSampler:
 
         transform = (
             create_random_transform(state_centered, center_before_rotation=False)
-            if self.augmentation
+            if self.config.augmentation
             else None
         )
 
@@ -460,14 +434,14 @@ class AF3EDMSampler:
                 target_batch_size=x_hat_0.shape[0],
             )
 
-        if self.align_to_input and alignment_reference is None:
+        if self.config.align_to_input and alignment_reference is None:
             logger.warning(
                 "align_to_input is True but no alignment_reference provided; "
                 "skipping alignment. Set alignment_reference on StepParams via "
                 "with_reconciler() to enable alignment."
             )
 
-        if self.align_to_input and alignment_reference is not None:
+        if self.config.align_to_input and alignment_reference is not None:
             if reconciler is not None:
                 x_hat_0_working_frame, align_transform = reconciler.align(
                     torch.as_tensor(x_hat_0),
@@ -485,7 +459,7 @@ class AF3EDMSampler:
                 torch.as_tensor(maybe_augmented_state), torch.as_tensor(eps), align_transform
             )
 
-        if self.alignment_reverse_diffusion:
+        if self.config.alignment_reverse_diffusion:
             noisy_state_working_frame = weighted_rigid_align_differentiable(
                 torch.as_tensor(noisy_state_working_frame),
                 torch.as_tensor(x_hat_0_working_frame),  # <-- this is what is being aligned to
@@ -527,7 +501,7 @@ class AF3EDMSampler:
 
         # Euler step: x_{t-1} = x_t + step_scale * dt * delta
         # ty sees dt as float | None, but it will be float if check_context didn't raise
-        next_state = noisy_state_working_frame_t + self.step_scale * dt * delta  # ty: ignore[unsupported-operator]
+        next_state = noisy_state_working_frame_t + self.config.step_scale * dt * delta  # ty: ignore[unsupported-operator]
 
         return SamplerStepOutput(
             state=next_state,

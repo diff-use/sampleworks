@@ -16,7 +16,7 @@ Tests are organized from fast (mock-based) to slow (real wrappers).
 import pytest
 import torch
 from sampleworks.core.rewards.protocol import RewardInputs
-from sampleworks.core.samplers.edm import AF3EDMSampler
+from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.samplers.protocol import SamplerStepOutput, StepParams
 from sampleworks.core.scalers.protocol import GuidanceOutput
 from sampleworks.core.scalers.step_scalers import (
@@ -453,7 +453,9 @@ class TestMockWrapperGroundTruth:
         num_atoms = 20
         target = torch.ones(batch_size, num_atoms, 3, device=device) * 2.0
         wrapper = MockFlowModelWrapper(num_atoms=num_atoms, device=device, target=target)
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
 
         features = wrapper.featurize({})
         torch.manual_seed(789)
@@ -478,7 +480,9 @@ class TestMockWrapperGroundTruth:
         batch_size = 1
         num_atoms = 20
         wrapper = MockFlowModelWrapper(num_atoms=num_atoms, device=device)
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
 
         features = wrapper.featurize({})
         torch.manual_seed(101)
@@ -685,7 +689,9 @@ class TestGuidanceEffectivenessMock:
         mock_gradient_reward: MockGradientRewardFunction,
     ):
         """All trajectory scalers complete with valid output."""
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
 
         trajectory_scaler = create_trajectory_scaler_from_type(
             trajectory_scaler_type,
@@ -750,7 +756,9 @@ class TestNumericalStabilityMock:
         """Guidance application produces finite values throughout."""
         from sampleworks.core.scalers.pure_guidance import PureGuidance
 
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
 
         trajectory_scaler = PureGuidance(
             ensemble_size=2,
@@ -875,7 +883,7 @@ class TestSamplingDeterminism:
     def test_sampling_determinism_with_seed(self, device: torch.device):
         """Sampling should be deterministic with fixed seed."""
         wrapper = MockFlowModelWrapper(num_atoms=20, device=device)
-        sampler = AF3EDMSampler(device=device)
+        sampler = AF3EDMSampler(EDMSamplerConfig(device=device))
 
         features = wrapper.featurize({})
 
@@ -948,7 +956,9 @@ class TestRealWrapperSamplerMatrix:
         features = wrapper.featurize(annotated)
         state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
         schedule = sampler.compute_schedule(num_steps=10)
         context = sampler.get_context_for_step(0, schedule)
 
@@ -978,7 +988,9 @@ class TestRealWrapperSamplerMatrix:
         features = wrapper.featurize(annotated)
         state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
         num_steps = 5
         schedule = sampler.compute_schedule(num_steps=num_steps)
 
@@ -1013,7 +1025,9 @@ class TestRealWrapperSamplerMatrix:
 
         assert state.device == device
 
-        sampler = AF3EDMSampler(device=device, augmentation=False, align_to_input=False)
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
         schedule = sampler.compute_schedule(num_steps=3)
         context = sampler.get_context_for_step(0, schedule)
 
