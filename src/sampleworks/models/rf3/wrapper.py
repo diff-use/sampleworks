@@ -344,6 +344,16 @@ class RF3Wrapper:
         model_aa.set_annotation("occupancy", np.ones(len(model_aa), dtype=np.float32))
         if not hasattr(model_aa, "b_factor") or model_aa.b_factor is None:
             model_aa.set_annotation("b_factor", np.full(len(model_aa), 20.0, dtype=np.float32))
+        else:
+            nan_b_mask = np.isnan(model_aa.b_factor)
+            if nan_b_mask.any():
+                b_factors = model_aa.b_factor.copy()
+                b_factors[nan_b_mask] = 20.0
+                model_aa.set_annotation("b_factor", b_factors)
+                logger.info(
+                    f"Replaced {int(nan_b_mask.sum())} NaN B-factors with default 20.0 "
+                    f"(from unresolved atoms added by add_missing_atoms)"
+                )
 
         conditioning = RF3Conditioning(
             s_inputs=pairformer_out["s_inputs"],

@@ -18,7 +18,7 @@ _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from atomworks.io.parser import parse
+from atomworks.io.parser import parse, parse_atom_array
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArray, AtomArrayStack, stack
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
@@ -418,6 +418,23 @@ def resources_dir() -> Path:
 @pytest.fixture(scope="session")
 def structure_1vme(resources_dir: Path) -> dict:
     return parse(resources_dir / "1vme" / "1vme_final.cif", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
+def atom_array_1vme_with_missing_atoms(structure_1vme) -> AtomArray:
+    """1VME atom array after parse_atom_array with add_missing_atoms=True.
+
+    This reproduces what RF3's InferenceInput.from_atom_array does internally.
+    """
+    parsed = parse_atom_array(
+        structure_1vme["asym_unit"],
+        add_missing_atoms=True,
+        hydrogen_policy="keep",
+    )
+    aa = parsed["asym_unit"]
+    if isinstance(aa, AtomArrayStack):
+        aa = aa[0]
+    return aa
 
 
 @pytest.fixture(scope="session")

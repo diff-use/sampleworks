@@ -69,9 +69,14 @@ class RewardInputs:
             raise ValueError("Atom array must have 'element' annotation.")
         if not hasattr(atom_array, "b_factor"):
             raise ValueError("Atom array must have 'b_factor' annotation.")
+        if np.any(np.isnan(atom_array.b_factor)):
+            raise ValueError(
+                "Atom array contains NaN B-factors. Wrappers must replace NaN "
+                "B-factors before constructing RewardInputs (e.g., with a default of 20.0)."
+            )
         if np.any(np.isnan(atom_array.coord)):
             raise ValueError("Atom array contains NaN coordinates.")
-        if np.any((atom_array.occupancy <= 0) | (atom_array.occupancy > 1)):
+        if np.any((atom_array.occupancy < 0) | (atom_array.occupancy > 1)):
             raise ValueError("Atom array contains invalid occupancy values.")
 
         elements_list = elements_to_scattering_indices(atom_array.element)
@@ -97,6 +102,7 @@ class RewardInputs:
                 p=num_particles,
                 e=ensemble_size,
             )
+            # TODO: eventually this should be configurable
             occupancies = torch.ones_like(b_factors) / ensemble_size
             input_coords = einx.rearrange(
                 "... -> b ...",
