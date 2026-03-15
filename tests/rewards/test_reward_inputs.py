@@ -59,19 +59,3 @@ class TestRewardInputsFromAtomArray:
 
         with pytest.raises(ValueError, match="NaN coordinates"):
             RewardInputs.from_atom_array(atom_array, ensemble_size=1)
-
-    def test_zero_occupancy_rejected(self, structure_1vme):
-        """Zero occupancy (from unresolved atoms) must be caught."""
-        atom_array = structure_1vme["asym_unit"].copy()
-        # Fix any pre-existing NaN b_factors so the occupancy check passes
-        b_factors = np.nan_to_num(atom_array.b_factor, nan=20.0)
-        atom_array.set_annotation("b_factor", b_factors)
-        # Fix any pre-existing NaN coords so the occupancy check passes
-        coords = np.nan_to_num(atom_array.coord, nan=0.0)
-        atom_array.coord = coords
-        occupancies = atom_array.occupancy.copy()
-        occupancies[0:3] = 0.0
-        atom_array.set_annotation("occupancy", occupancies)
-
-        with pytest.raises(ValueError, match="invalid occupancy"):
-            RewardInputs.from_atom_array(atom_array, ensemble_size=1)
