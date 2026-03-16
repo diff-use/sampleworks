@@ -247,8 +247,7 @@ def main(args: argparse.Namespace):
     if len(args.models.split()) > 1:
         # this is designed to run one type of model per script, # TODO to allow multiple models
         raise ValueError("Multiple --models selected, this is not compatible with the new script!")
-    if len(args.methods.split(",")) > 1:
-        # this is designed to run one type of model per script, # TODO to allow multiple models
+    if "," in args.method:
         raise ValueError("Only one --method can be selected.")
 
     filtered_jobs, job_statuses = generate_and_filter_jobs(args)
@@ -467,7 +466,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--method",
         default="X-RAY DIFFRACTION",
-        help="Comma-separated methods for Boltz2",
+        help="Method for Boltz2",
     )
 
     parser.add_argument("--num-particles", type=int, default=3, help="FK steering: num particles")
