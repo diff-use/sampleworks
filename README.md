@@ -89,7 +89,7 @@ Output files appear in `output/boltz2_pure_guidance/`: `refined.cif` (final ense
 pixi run -e boltz python run_grid_search.py \
     --proteins proteins.csv \
     --models boltz2 \                # options: boltz1, boltz2, protenix, rf3 (make sure env aligns!)
-    --methods "X-RAY DIFFRACTION" \  # only useful for Boltz-2, ignored otherwise
+    --method "X-RAY DIFFRACTION" \  # only useful for Boltz-2, ignored otherwise
     --scalers pure_guidance \        # options: pure_guidance, fk_steering, or both as space-separated list
     --ensemble-sizes "1 4" \
     --gradient-weights "0.1 0.2" \

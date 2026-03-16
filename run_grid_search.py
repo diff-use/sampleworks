@@ -249,7 +249,7 @@ def main(args: argparse.Namespace):
         raise ValueError("Multiple --models selected, this is not compatible with the new script!")
     if len(args.methods.split(",")) > 1:
         # this is designed to run one type of model per script, # TODO to allow multiple models
-        raise ValueError("Multiple --methods selected, this is not compatible with the new script!")
+        raise ValueError("Only one --method can be selected.")
 
     filtered_jobs, job_statuses = generate_and_filter_jobs(args)
 
@@ -263,7 +263,7 @@ def main(args: argparse.Namespace):
         ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
         gradient_weights=[float(x) for x in args.gradient_weights.split()],
         gd_steps=[int(x) for x in args.num_gd_steps.split()],
-        methods=[m.strip() for m in args.methods.split(",")],
+        methods=[args.method.strip()],
         proteins_file=args.proteins,
         output_dir=args.output_dir,
     )
@@ -289,7 +289,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     ensemble_sizes = [int(x) for x in args.ensemble_sizes.split()]
     gradient_weights = [float(x) for x in args.gradient_weights.split()]
     gd_steps_list = [int(x) for x in args.num_gd_steps.split()]
-    methods = [m.strip() for m in args.methods.split(",")]
+    methods=[args.method.strip()]
 
     for protein in proteins:
         structure = protein.structure
@@ -465,7 +465,7 @@ def parse_args() -> argparse.Namespace:
         help="Override the default checkpoint path for the selected model",
     )
     parser.add_argument(
-        "--methods",
+        "--method",
         default="X-RAY DIFFRACTION",
         help="Comma-separated methods for Boltz2",
     )
@@ -526,7 +526,7 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info(f"Ensemble sizes: {args.ensemble_sizes}")
     log.info(f"Gradient weights: {args.gradient_weights}")
     log.info(f"GD steps: {args.num_gd_steps}")
-    log.info(f"Boltz2 methods: {args.methods}")
+    log.info(f"Boltz2 methods: {args.method}")
     log.info(f"Output directory: {args.output_dir}")
     log.info(f"GPUs: {gpus}")
     log.info(f"Dry run: {args.dry_run}")
