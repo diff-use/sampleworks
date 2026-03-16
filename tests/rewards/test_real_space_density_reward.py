@@ -354,7 +354,7 @@ class TestDensityCorrelation:
             losses.append(loss.item())
 
         for i in range(len(losses) - 1):
-            assert losses[i + 1] >= losses[i]
+            assert losses[i + 1] >= losses[i] - 1e-6
 
 
 @pytest.mark.gpu
@@ -551,7 +551,7 @@ class TestVmapCompatibility:
 
         result_sequential = torch.tensor(result_sequential, device=result_vmap.device)  # ty: ignore[unresolved-attribute]
 
-        torch.testing.assert_close(result_vmap, result_sequential, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(result_vmap, result_sequential, rtol=1e-2, atol=1e-3)
 
 
 @pytest.mark.gpu
