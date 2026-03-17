@@ -270,7 +270,9 @@ class MSAManager:
 
             if not all([m.exists() for m in msa_path_dict.values()]):
                 # this will generate both a3m and csv files for us.
-                msa_path_dict = _compute_msa(
+                # do NOT capture this output, it will return paths to .csv files,
+                # which we don't necessarily want.
+                _ = _compute_msa(
                     data,
                     hash_key,  # this is the "target_id" argument to compute_msa
                     self.msa_dir,
@@ -285,9 +287,15 @@ class MSAManager:
             else:
                 self._cache_hits += 1
 
+            # Check again that the files exist, if not raise an error.
+            if not all([m.exists() for m in msa_path_dict.values()]):
+                raise FileNotFoundError(
+                    f"MSA files not found: {msa_path_dict}, check cache directory {self.msa_dir}"
+                )
+
         # Protenix needs special MSAs
         # This is a kind of hacky way to handle Protenix; I'm not sure what to do easily but
-        # use their pipeline, and just have it put everything in our cache directory.
+        # use their pipeline and just have it put everything in our cache directory.
         elif structure_predictor == StructurePredictor.PROTENIX:
             if not PROTENIX_AVAILABLE:
                 raise RuntimeError("Protenix is not installed, cannot use Protenix MSA tools.")
