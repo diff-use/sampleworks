@@ -27,7 +27,10 @@ class TestRewardInputsFromAtomArray:
         nan_coord_mask = np.any(np.isnan(aa.coord), axis=-1)
         if nan_coord_mask.any():
             resolved_coords = aa.coord[~nan_coord_mask]
-            centroid = resolved_coords.mean(axis=0)
+            if len(resolved_coords) > 0:
+                centroid = resolved_coords.mean(axis=0)
+            else:
+                centroid = np.zeros(3)
             n_nan = int(nan_coord_mask.sum())
             noise = np.random.normal(loc=0.0, scale=1.0, size=(n_nan, 3)).astype(np.float32)
             new_coords = aa.coord.copy()
