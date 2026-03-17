@@ -23,7 +23,7 @@ class RewardInputs:
     once and pass them to scale() methods without redundant extraction.
 
     The atom array passed to :meth:`from_atom_array` must already be clean:
-    all coordinates finite and all occupancies positive.  Wrappers are
+    all coordinates finite and all occupancies non-negative.  Wrappers are
     responsible for ensuring this (e.g. replacing NaN coordinates with
     noise and setting occupancy to 1.0 for model-operated atoms).
     """
@@ -44,7 +44,7 @@ class RewardInputs:
         """Construct RewardInputs from a Biotite AtomArray.
 
         The atom array must contain only valid atoms (finite coordinates,
-        positive occupancy).  Callers are responsible for filtering
+        non-negative occupancy).  Callers are responsible for filtering
         beforehand; no masking is applied here.
 
         Parameters
