@@ -58,8 +58,8 @@ docker run $DOCKER_OPTS \
     diffuseproject/sampleworks:latest \
     -e boltz run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
-    --models boltz2 \
-    --methods "X-RAY DIFFRACTION" \
+    --model boltz2 \
+    --method "X-RAY DIFFRACTION" \
     --scalers pure_guidance \
     --partial-diffusion-step 120 \
     --ensemble-sizes "8" \
@@ -80,8 +80,8 @@ docker run $DOCKER_OPTS \
     diffuseproject/sampleworks:latest \
     -e boltz run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
-    --models boltz2 \
-    --methods "MD" \
+    --model boltz2 \
+    --method "MD" \
     --scalers pure_guidance \
     --partial-diffusion-step 120 \
     --ensemble-sizes "8" \
@@ -102,7 +102,7 @@ docker run $DOCKER_OPTS \
     diffuseproject/sampleworks:latest \
     -e rf3 run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
-    --models rf3 \
+    --model rf3 \
     --partial-diffusion-step 120 \
     --scalers pure_guidance \
     --ensemble-sizes "8" \
@@ -123,7 +123,7 @@ docker run $DOCKER_OPTS \
     diffuseproject/sampleworks:latest \
     -e protenix run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
-    --models protenix \
+    --model protenix \
     --scalers pure_guidance \
     --partial-diffusion-step 120 \
     --ensemble-sizes "8" \

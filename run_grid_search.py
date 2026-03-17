@@ -432,7 +432,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="boltz2",
-        choices=["boltz2", "protenix", "rf3"],
+        choices=["boltz1", "boltz2", "protenix", "rf3"],
         help="The protein structure predictor model to use"
     )
     parser.add_argument(
@@ -536,11 +536,12 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info("=" * 50)
     log.info("Starting grid search")
     log.info(f"Model: {args.model}")
+    if args.model == "boltz2":
+        log.info(f"Boltz2 method: {args.method}")
     log.info(f"Scalers: {args.scalers}")
     log.info(f"Ensemble sizes: {args.ensemble_sizes}")
     log.info(f"Gradient weights: {args.gradient_weights}")
     log.info(f"GD steps: {args.num_gd_steps}")
-    log.info(f"Boltz2 method: {args.method}")
     log.info(f"Output directory: {args.output_dir}")
     log.info(f"GPUs: {gpus}")
     log.info(f"Dry run: {args.dry_run}")
