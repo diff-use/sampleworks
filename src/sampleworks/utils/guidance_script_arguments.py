@@ -188,6 +188,11 @@ class GuidanceConfig:
             self.step_scaler_type = args.step_scaler_type
             self.ensemble_size = job.ensemble_size
 
+    def as_dict(self):
+        """Return a dictionary representation of the guidance config, converting Path to strings"""
+        output = self.__dict__.copy()
+        output["density"] = str(self.density)
+        output["structure"] = str(self.structure)
 
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--structure", type=str, required=True, help="Input structure")

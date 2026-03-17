@@ -594,7 +594,8 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         job_result = run_guidance(job, job.guidance_type, model_wrapper, device)
         # write out the job parameters to a JSON file in the same directory as the refined.cif file
         with open(Path(job_result.output_dir) / "job_metadata.json", "w") as fp:
-            json.dump(job.__dict__, fp)
+            # use the GuidanceConfig's as_dict() method to avoid serializing PosixPath objects
+            json.dump(job.as_dict(), fp)
 
         job_results.append(job_result)
         torch.cuda.empty_cache()  # just in case
