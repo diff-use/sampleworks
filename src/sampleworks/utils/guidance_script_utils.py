@@ -27,6 +27,7 @@ from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
+    NoScalingScaler,
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
@@ -231,7 +232,7 @@ def get_reward_function_and_structure(
     logger.debug(f"Loading structure from {structure_path}")
     safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
     structure = parse(
-        safe_structure_path,
+        Path(safe_structure_path),
         hydrogen_policy="remove",
         add_missing_atoms=False,
         ccd_mirror_path=None,
@@ -426,17 +427,30 @@ def _run_guidance(
     wrapper_class_name = model_wrapper.__class__.__name__
     is_boltz = "Boltz" in wrapper_class_name
 
-    # Annotate structure with RF3 specific config if applicable
-    if wrapper_class_name == "RF3Wrapper":
+    # Annotate structure with model-specific configuration (including recycling_steps)
+    recycling_steps = getattr(args, "recycling_steps", None)
+    if "Protenix" in wrapper_class_name:
+        from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
+        structure = annotate_structure_for_protenix(
+            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+        )
+    elif "RF3" in wrapper_class_name:
         from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
-
         structure = annotate_structure_for_rf3(
             structure,
-            msa_path=getattr(args, "msa_path", None),
             ensemble_size=args.ensemble_size,
+            recycling_steps=recycling_steps,
+            msa_path=getattr(args, "msa_path", None),
             disable_chiral_features=getattr(args, "disable_chiral_features", False),
             track_chiral_features=getattr(args, "track_chiral_features", False),
         )
+    elif "Boltz" in wrapper_class_name:
+        from sampleworks.models.boltz.wrapper import process_structure_for_boltz
+        structure = process_structure_for_boltz(
+            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+        )
+    else:
+        raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
     # Boltz was trained with this, others might not have been.
     use_alignment_for_reverse_diffusion = is_boltz
