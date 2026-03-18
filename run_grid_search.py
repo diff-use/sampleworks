@@ -114,6 +114,7 @@ def build_args_for_process_pool(
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
         recycling_steps=args.recycling_steps,
+        num_diffusion_steps=args.num_diffusion_steps,
     )
     # given model_type and guidance_type, the GuidanceConfig class will set itself up
     # with defaults for remaining required args, but we want to set them further here.
@@ -445,6 +446,12 @@ def parse_args() -> argparse.Namespace:
         choices=["X-RAY DIFFRACTION", "MD"],
         help="Method for Boltz2 ('X-RAY DIFFRACTION', 'MD')",
     )
+    parser.add_argument(
+        "--recycling-steps",
+        type=int,
+        default=None,
+        help="Number of recycling steps for model inference (if not specified, uses model default)",
+    )
 
     # Trajectory scaling arguments
     parser.add_argument(
@@ -452,6 +459,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ensemble-sizes", default="1 2 4 8", help="Space-separated ensemble sizes"
+    )
+    parser.add_argument(
+        "--num-diffusion-steps", type=int, default=200, help="Number of diffusion steps"
     )
     parser.add_argument(
         "--gradient-weights",
@@ -490,14 +500,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--augmentation", action="store_true", help="Enable augmentation")
     parser.add_argument("--align-to-input", action="store_true", help="Align to input structure")
-
-    # Model-specific arguments
-    parser.add_argument(
-        "--recycling-steps",
-        type=int,
-        default=None,
-        help="Number of recycling steps for model inference (if not specified, uses model default)",
-    )
 
     # RF3-specific arguments
     parser.add_argument(

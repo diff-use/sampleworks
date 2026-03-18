@@ -138,6 +138,7 @@ class GuidanceConfig:
     augmentation: bool = False
     align_to_input: bool = False
     recycling_steps: int | None = None
+    num_diffusion_steps: int = 200
 
     # DO NOT remove the **kwargs, it is for compatibility with argparse.
     def add_argument(self, name: str, default: Any = None, **kwargs):

@@ -488,8 +488,7 @@ def _run_guidance(
     else:
         raise ValueError(f"Invalid step_scaler_type: {step_scaler_type}")
 
-    # TODO: this should be a config option
-    num_steps = 200
+    num_steps = args.num_diffusion_steps
 
     if guidance_type == GuidanceType.PURE_GUIDANCE:
         logger.info("Initializing pure guidance")

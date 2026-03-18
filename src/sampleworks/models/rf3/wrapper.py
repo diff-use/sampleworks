@@ -205,8 +205,6 @@ class RF3Wrapper:
         self.msa_manager = msa_manager
         self.msa_pairing_strategy = "greedy"
 
-        # TODO: expose num_steps, num_recycles to user
-
         self.inference_engine = RF3InferenceEngine(
             ckpt_path=str(self.checkpoint_path),
             diffusion_batch_size=1,
