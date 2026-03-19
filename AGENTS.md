@@ -295,7 +295,17 @@ Commits with types `docs`, `refactor`, `test`, `chore`, `ci`, or `style` do not 
 
 ### Version Strategy
 
-We use `major_on_zero = false`, meaning breaking changes bump minor (not major) while the version is 0.x. This will change when the team decides to release 1.0.
+We use `major_on_zero = false`, meaning breaking changes bump minor (not major) while the version is 0.x. This will change when we decide to release 1.0.
+
+### Merge Strategy
+
+Use **squash merge** for all PRs. This collapses a PR's commits into a single commit on `main`, with the PR title as the commit message. The PR title **must** follow Conventional Commits format and controls the version bump:
+
+- `feat(rewards): add cryo-EM image stack reward` → minor bump
+- `fix(boltz): correct OXT atom mapping` → patch bump
+- `docs: update installation guide` → no release
+
+This keeps the changelog clean (one entry per PR), the version history predictable (one potential bump per PR), and requires no discipline around individual commit messages during development. PRs should be focused on a single logical change — avoid PRs that bundle unrelated features and fixes.
 
 ## Testing Philosophy
 

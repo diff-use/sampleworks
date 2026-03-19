@@ -150,6 +150,7 @@ pixi run test-all            # run all tests across all environments
 
 ```bash
 pixi run -e [model]-dev prek install
+pixi run -e [model]-dev prek install --hook-type commit-msg
 pixi run -e [model]-dev prek run --all-files
 ```
 

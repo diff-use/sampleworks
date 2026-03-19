@@ -21,7 +21,7 @@ repos:
           - toml-sort==0.24.3
 
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.4.0
+    rev: v4.13.9
     hooks:
       - id: commitizen
         stages: [commit-msg]
