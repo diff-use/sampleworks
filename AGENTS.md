@@ -274,7 +274,7 @@ chore(ci): pin Docker build action to v5
 
 A **commitizen** pre-commit hook validates commit messages locally. Install it with:
 ```bash
-pixi run pre-commit install --hook-type commit-msg
+pixi run -e boltz-dev prek install --hook-type commit-msg
 ```
 
 ### How Releases Work
