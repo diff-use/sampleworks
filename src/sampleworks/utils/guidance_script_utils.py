@@ -27,17 +27,17 @@ from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
-    NoScalingScaler,
     NoiseSpaceDPSScaler,
+    NoScalingScaler,
 )
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
 )
 from sampleworks.utils.guidance_script_arguments import (
+    _resolve_checkpoint,
     GuidanceConfig,
     JobResult,
-    _resolve_checkpoint,
     validate_model_checkpoint,
 )
 from sampleworks.utils.msa import MSAManager
@@ -421,6 +421,18 @@ def _run_guidance(
     wrapper_class_name = model_wrapper.__class__.__name__
     is_boltz = "Boltz" in wrapper_class_name
 
+    # Annotate structure with RF3 specific config if applicable
+    if wrapper_class_name == "RF3Wrapper":
+        from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
+
+        structure = annotate_structure_for_rf3(
+            structure,
+            msa_path=getattr(args, "msa_path", None),
+            ensemble_size=args.ensemble_size,
+            disable_chiral_features=getattr(args, "disable_chiral_features", False),
+            track_chiral_features=getattr(args, "track_chiral_features", False),
+        )
+
     # Boltz was trained with this, others might not have been.
     use_alignment_for_reverse_diffusion = is_boltz
 
@@ -435,16 +447,21 @@ def _run_guidance(
         config=sampler_config,
     )
 
-    # Create step scaler for gradient-based guidance
+    # Create step scaler for gradient-based guidance.
+    # TODO: unify this arg, no need for both of them now
+    step_size = getattr(args, "step_size", None)
+    if step_size is None:
+        step_size = getattr(args, "guidance_weight", 0.01)
+
     step_scaler_type = getattr(args, "step_scaler_type", "noisespace")
     if step_scaler_type == "dataspace":
         step_scaler = DataSpaceDPSScaler(
-            step_size=args.step_size,
+            step_size=step_size,
             gradient_normalization=args.gradient_normalization,
         )
     elif step_scaler_type == "noisespace":
         step_scaler = NoiseSpaceDPSScaler(
-            step_size=args.step_size,
+            step_size=step_size,
             gradient_normalization=args.gradient_normalization,
         )
     elif step_scaler_type == "none":
@@ -531,6 +548,12 @@ def _run_guidance(
         final_state=torch.as_tensor(result.final_state),
         model_atom_array=model_atom_array,
     )
+
+    if hasattr(model_wrapper, "_chiral_grad_stats") and model_wrapper._chiral_grad_stats:
+        stats_path = Path(args.output_dir) / "chiral_grad_stats.json"
+        with open(stats_path, "w") as f:
+            json.dump(model_wrapper._chiral_grad_stats, f, indent=2)
+        logger.info(f"Saved chiral gradient stats to {stats_path}")
 
 
 def epoch_seconds(time_to_convert: datetime) -> float:

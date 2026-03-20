@@ -42,6 +42,8 @@ class RF3Conditioning:
         Raw feature dict (f tensor).
     true_atom_array : AtomArray | None
         The AtomArray of the true structure, used for determining proper atom counts.
+    model_atom_array : AtomArray | None
+        The AtomArray of the model's internal representation, used for atom reconciliation.
     """
 
     s_inputs: Tensor
@@ -68,11 +70,24 @@ class RF3Config:
         Number of samples to generate (batch dimension of x_init).
     recycling_steps : int | None
         Number of recycling steps to perform. If None, uses model default.
+    disable_chiral_features : bool
+        If True, zero out chiral_centers in features dict so the chiral gradient
+        feature contributes nothing to the atom single representation during
+        diffusion. Useful during guidance where reward gradients may push
+        coordinates into out-of-distribution chiral configurations.
+    track_chiral_features : bool
+        If True, log the chiral gradient L2 norm at each denoising step. The
+        chiral gradient (output of calc_chiral_grads_flat_impl on the
+        EDM scaled coordinates) is the input feature to the model's chiral
+        processing layer. Uses original features when disable_chiral_features is True to
+        determine if guidance would be breaking them.
     """
 
     msa_path: str | Path | dict | None = None
     ensemble_size: int = 1
     recycling_steps: int | None = None
+    disable_chiral_features: bool = False
+    track_chiral_features: bool = False
 
 
 def annotate_structure_for_rf3(
@@ -81,6 +96,8 @@ def annotate_structure_for_rf3(
     msa_path: str | Path | dict | None = None,
     ensemble_size: int = 1,
     recycling_steps: int | None = None,
+    disable_chiral_features: bool = False,
+    track_chiral_features: bool = False,
 ) -> dict:
     """Annotate an Atomworks structure with RF3-specific configuration.
 
@@ -94,6 +111,10 @@ def annotate_structure_for_rf3(
         Number of samples to generate (batch dimension of x_init).
     recycling_steps : int | None
         Number of recycling steps to perform. If None, uses model default.
+    disable_chiral_features : bool
+        If True, zero out chiral features during guidance.
+    track_chiral_features : bool
+        If True, log the chiral gradient L2 norm at each denoising step.
 
     Returns
     -------
@@ -104,6 +125,8 @@ def annotate_structure_for_rf3(
         msa_path=msa_path,
         ensemble_size=ensemble_size,
         recycling_steps=recycling_steps,
+        disable_chiral_features=disable_chiral_features,
+        track_chiral_features=track_chiral_features,
     )
     return {**structure, "_rf3_config": config}
 
@@ -190,6 +213,12 @@ class RF3Wrapper:
         self.model = self.inference_engine.trainer.state["model"]
         self._device = self.inference_engine.trainer.fabric.device
 
+        # Chiral feature state, set in featurize()
+        self._track_chiral_features: bool = False
+        self._chiral_grad_stats: list[dict[str, float]] = []
+        self._original_chiral_centers: torch.Tensor | None = None
+        self._original_chiral_dihedral_angles: torch.Tensor | None = None
+
     @property
     def device(self) -> torch.device:
         return self._device
@@ -227,6 +256,10 @@ class RF3Wrapper:
         config = structure.get("_rf3_config", RF3Config())
         if isinstance(config, dict):
             config = RF3Config(**config)
+
+        # Reset tracking state for this featurization run
+        self._track_chiral_features = config.track_chiral_features
+        self._chiral_grad_stats = []
 
         msa_path = config.msa_path
         ensemble_size = config.ensemble_size
@@ -364,6 +397,35 @@ class RF3Wrapper:
             model_atom_array=model_aa,
         )
 
+        # Store original chiral features for tracking before optionally zeroing them out
+        self._original_chiral_centers: torch.Tensor | None = conditioning.features.get(
+            "chiral_centers", None
+        )
+        self._original_chiral_dihedral_angles: torch.Tensor | None = conditioning.features.get(
+            "chiral_center_dihedral_angles", None
+        )
+
+        if config.disable_chiral_features:
+            # When chiral_centers.shape[0] == 0, calc_chiral_grads_flat_impl
+            # returns zeros, and process_ch in RF3 (linearNoBias layer) maps zeros to zeros,
+            # so the chiral contribution to Q_L is exactly zero.
+            chiral_disabled_features = dict(conditioning.features)
+            chiral_disabled_features["chiral_centers"] = torch.zeros(
+                (0, 4), dtype=torch.long, device=self.device
+            )
+            chiral_disabled_features["chiral_center_dihedral_angles"] = torch.zeros(
+                0, dtype=torch.float32, device=self.device
+            )
+            conditioning = RF3Conditioning(
+                s_inputs=conditioning.s_inputs,
+                s_trunk=conditioning.s_trunk,
+                z_trunk=conditioning.z_trunk,
+                features=chiral_disabled_features,
+                true_atom_array=conditioning.true_atom_array,
+                model_atom_array=conditioning.model_atom_array,
+            )
+            logger.info("Chiral features disabled: zeroed out chiral_centers in features dict")
+
         # x_init here is a shape-compatible reference carried with the featurized
         # model input. During guided sampling, alignment/reference coordinates are
         # built later via process_structure_to_trajectory_input() and AtomReconciler.
@@ -396,11 +458,8 @@ class RF3Wrapper:
             (raw features, not GenerativeModelInput).
         grad_needed: bool, optional
             Whether gradients are needed for this pass, by default False.
-        **kwargs: dict, optional
-            Additional arguments.
-
-            - recycling_steps: int
-                Number of recycling steps to perform. Defaults to n_recycles.
+        recycling_steps: int, optional
+            Number of recycling steps to perform. Defaults to 10.
 
         Returns
         -------
@@ -487,6 +546,43 @@ class RF3Wrapper:
                 S_trunk_I=cond.s_trunk,
                 Z_trunk_II=cond.z_trunk,
             )
+
+        # Track chiral gradient statistics using original features to report what the chiral
+        # gradient would have been for diagnostics
+        if (
+            self._track_chiral_features
+            and self._original_chiral_centers is not None
+            and self._original_chiral_dihedral_angles is not None
+            and self._original_chiral_centers.shape[0] > 0
+        ):
+            from rf3.loss.loss import calc_chiral_grads_flat_impl
+
+            sigma_data = self._inner_model.diffusion_module.sigma_data
+            f_pred = self._inner_model.diffusion_module.f_pred
+            if f_pred != "edm":
+                raise ValueError(f"Chiral tracking assumes EDM scaling, got {f_pred=}")
+            # DiffusionModule.forward(): R_noisy_L = X_noisy_L / sqrt(t^2 + sigma_data^2)
+            # t_tensor: (batch) to (batch, 1, 1) to broadcast with (batch, atoms, 3)
+            R_L = x_t.detach() / torch.sqrt(t_tensor[..., None, None] ** 2 + sigma_data**2)
+
+            chiral_grads = calc_chiral_grads_flat_impl(
+                R_L,
+                self._original_chiral_centers,
+                self._original_chiral_dihedral_angles,
+                self._inner_model.diffusion_module.atom_attention_encoder.no_grad_on_chiral_center,
+            ).nan_to_num()
+
+            # L2 norm per sample, then average across the batch
+            # chiral_grads: [batch, atoms, 3]
+            per_sample_norm = chiral_grads.flatten(1).norm(dim=1)  # [batch]
+            l2_norm = per_sample_norm.mean().item()
+
+            stats = {
+                "t": t_tensor[0].item(),
+                "l2_norm": l2_norm,
+            }
+            self._chiral_grad_stats.append(stats)
+            logger.debug(f"Chiral grad stats (t={stats['t']:.4f}): L2={l2_norm:.4f}")
 
         return atom_coords_denoised.float()
 

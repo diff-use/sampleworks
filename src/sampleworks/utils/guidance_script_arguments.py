@@ -52,7 +52,6 @@ def _resolve_checkpoint(model_key: str) -> str:
     return resolved
 
 
-
 def get_checkpoint(args: argparse.Namespace) -> str | None:
     """Resolve a model checkpoint path from an argparse namespace.
 
@@ -195,6 +194,7 @@ class GuidanceConfig:
         output["structure"] = str(self.structure)
         return output
 
+
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument("--structure", type=str, required=True, help="Input structure")
     parser.add_argument("--density", type=str, required=True, help="Input density map")
@@ -256,7 +256,8 @@ def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
         type=str,
         default="noisespace",
         choices=["dataspace", "noisespace", "none"],
-        help="Type of step scaler to use: dataspace (DataSpaceDPSScaler), noisespace (NoiseSpaceDPSScaler), or none (NoScalingScaler)",
+        help="Type of step scaler to use: dataspace (DataSpaceDPSScaler), noisespace "
+        "(NoiseSpaceDPSScaler), or none (NoScalingScaler)",
     )
 
 
@@ -347,6 +348,16 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
         type=str,
         default=None,
         help="Path to MSA file (dict, JSON, or .a3m format)",
+    )
+    parser.add_argument(
+        "--disable-chiral-features",
+        action="store_true",
+        help="Disable RF3 chiral gradient feature during guidance",
+    )
+    parser.add_argument(
+        "--track-chiral-features",
+        action="store_true",
+        help="Log chiral gradient statistics at each denoising step",
     )
 
 
