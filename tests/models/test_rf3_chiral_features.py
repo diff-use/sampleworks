@@ -3,7 +3,11 @@
 import pytest
 import torch
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
-from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
+from sampleworks.utils.imports import require_rf3, RF3_AVAILABLE
+
+
+if RF3_AVAILABLE:
+    from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
 
 
 def _make_sampler(device: torch.device) -> AF3EDMSampler:
@@ -32,6 +36,7 @@ def _run_steps(wrapper, features, num_steps: int, seed: int = 42):
 class TestRF3ChiralFeatures:
     """Validate chiral feature tracking and zeroing in RF3Wrapper."""
 
+    @require_rf3()
     def test_track_chiral_features_populates_stats(self, rf3_wrapper, structure_1vme):
         """track_chiral_features=True populates _chiral_grad_stats with one
         entry per denoising step, each containing 't' and 'l2_norm' keys."""
@@ -61,6 +66,7 @@ class TestRF3ChiralFeatures:
             # for a real protein L2 should be positive
             assert entry["l2_norm"] > 0.0
 
+    @require_rf3()
     def test_disable_chiral_features_zeros_features(self, rf3_wrapper, structure_1vme):
         """disable_chiral_features=True sets chiral_centers to an empty (0,4)
         tensor and chiral_center_dihedral_angles to empty (0,) tensor in the
@@ -84,6 +90,7 @@ class TestRF3ChiralFeatures:
             f"Expected chiral_center_dihedral_angles shape (0,), got {chiral_angles.shape}"
         )
 
+    @require_rf3()
     def test_tracking_consistent_across_disabled_and_enabled(self, rf3_wrapper, structure_1vme):
         """Run both chiral configs from the same seeded noise and compare.
 
@@ -137,6 +144,7 @@ class TestRF3ChiralFeatures:
                 f"(enabled={e['l2_norm']:.2f}, disabled={d['l2_norm']:.2f})"
             )
 
+    @require_rf3()
     def test_no_tracking_when_disabled(self, rf3_wrapper, structure_1vme):
         """With track_chiral_features=False, _chiral_grad_stats stays empty."""
         annotated = annotate_structure_for_rf3(
@@ -152,6 +160,7 @@ class TestRF3ChiralFeatures:
             "Stats should be empty when track_chiral_features=False"
         )
 
+    @require_rf3()
     def test_baseline_chiral_features_present(self, rf3_wrapper, structure_1vme):
         """1VME should have non-empty chiral features when
         disable_chiral_features=False."""
@@ -171,6 +180,7 @@ class TestRF3ChiralFeatures:
         chiral_angles = cond.features["chiral_center_dihedral_angles"]
         assert chiral_angles.shape[0] > 0
 
+    @require_rf3()
     def test_featurize_resets_tracking_state(self, rf3_wrapper, structure_1vme):
         """Each call to featurize() should reset _chiral_grad_stats to empty."""
 
