@@ -419,13 +419,11 @@ def save_results(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run grid search across scalers, and parameters for a single "
-                    "protein structure predictor model."
+        "protein structure predictor model."
     )
     # Experiment level arguments
     parser.add_argument(
-        "--proteins",
-        required=True,
-        help="CSV file with columns: structure,density,resolution,name"
+        "--proteins", required=True, help="CSV file with columns: structure,density,resolution,name"
     )
 
     # Model arguments
@@ -433,12 +431,12 @@ def parse_args() -> argparse.Namespace:
         "--model",
         default="boltz2",
         choices=["boltz1", "boltz2", "protenix", "rf3"],
-        help="The protein structure predictor model to use"
+        help="The protein structure predictor model to use",
     )
     parser.add_argument(
         "--model-checkpoint",
         default="",
-        help="Override the default checkpoint path for the selected model"
+        help="Override the default checkpoint path for the selected model",
     )
     parser.add_argument(
         "--method",
@@ -467,12 +465,8 @@ def parse_args() -> argparse.Namespace:
         default="20",
         help="Space-separated GD steps (FK steering only)",
     )
-    parser.add_argument(
-        "--num-particles", type=int, default=3, help="FK steering: num particles"
-    )
-    parser.add_argument(
-        "--fk-lambda", type=float, default=0.5, help="FK steering: lambda"
-    )
+    parser.add_argument("--num-particles", type=int, default=3, help="FK steering: num particles")
+    parser.add_argument("--fk-lambda", type=float, default=0.5, help="FK steering: lambda")
     parser.add_argument(
         "--fk-resampling-interval",
         type=int,
@@ -495,6 +489,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--augmentation", action="store_true", help="Enable augmentation")
     parser.add_argument("--align-to-input", action="store_true", help="Align to input structure")
+
+    # RF3-specific arguments
+    parser.add_argument(
+        "--disable-chiral-features",
+        action="store_true",
+        help="Disable RF3 chiral gradient feature during guidance",
+    )
+    parser.add_argument(
+        "--track-chiral-features",
+        action="store_true",
+        help="Log RF3 chiral gradient magnitudes at each denoising step",
+    )
 
     # Reward/Loss function arguments
     parser.add_argument("--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss")
@@ -538,6 +544,9 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info(f"Model: {args.model}")
     if args.model == "boltz2":
         log.info(f"Boltz2 method: {args.method}")
+    if args.model == "rf3":
+        log.info(f"Disable chiral features: {args.disable_chiral_features}")
+        log.info(f"Track chiral features: {args.track_chiral_features}")
     log.info(f"Scalers: {args.scalers}")
     log.info(f"Ensemble sizes: {args.ensemble_sizes}")
     log.info(f"Gradient weights: {args.gradient_weights}")

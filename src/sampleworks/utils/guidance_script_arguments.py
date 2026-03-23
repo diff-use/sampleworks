@@ -175,6 +175,10 @@ class GuidanceConfig:
         if job.model == StructurePredictor.BOLTZ_2 and job.method:
             self.method = job.method
 
+        if job.model == StructurePredictor.RF3:
+            self.disable_chiral_features = getattr(args, "disable_chiral_features", False)
+            self.track_chiral_features = getattr(args, "track_chiral_features", False)
+
         if job.scaler == GuidanceType.FK_STEERING:
             self.guidance_weight = job.gradient_weight
             self.num_gd_steps = job.gd_steps
