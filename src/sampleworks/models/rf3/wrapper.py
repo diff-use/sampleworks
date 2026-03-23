@@ -12,6 +12,7 @@ from biotite.structure import AtomArray, AtomArrayStack
 from jaxtyping import Float
 from loguru import logger
 from rf3.inference_engines import RF3InferenceEngine
+from rf3.loss.loss import calc_chiral_grads_flat_impl
 from rf3.model.RF3 import RF3WithConfidence
 from rf3.trainers.rf3 import assert_no_nans, RF3TrainerWithConfidence
 from rf3.utils.inference import InferenceInput, InferenceInputDataset
@@ -65,22 +66,23 @@ class RF3Config:
         - dict: chain_id -> MSA file path mapping
         - str/Path to .json: JSON file with chain_id -> MSA path mapping
         - str/Path to .a3m: Single MSA file applied to all protein chains
-        - None: No MSA information is used
+        - None (default): No MSA information is used
     ensemble_size : int
-        Number of samples to generate (batch dimension of x_init).
+        Number of samples to generate (batch dimension of x_init). Default is 1.
     recycling_steps : int | None
-        Number of recycling steps to perform. If None, uses model default.
+        Number of recycling steps to perform. Default is None, uses model default.
     disable_chiral_features : bool
         If True, zero out chiral_centers in features dict so the chiral gradient
         feature contributes nothing to the atom single representation during
         diffusion. Useful during guidance where reward gradients may push
-        coordinates into out-of-distribution chiral configurations.
+        coordinates into out-of-distribution chiral configurations. Default is False.
     track_chiral_features : bool
         If True, log the chiral gradient L2 norm at each denoising step. The
         chiral gradient (output of calc_chiral_grads_flat_impl on the
         EDM scaled coordinates) is the input feature to the model's chiral
         processing layer. Uses original features when disable_chiral_features is True to
-        determine if guidance would be breaking them.
+        determine if guidance would be breaking them (e.g. magnitude is much larger when guidance
+        is on than off). Default is False.
     """
 
     msa_path: str | Path | dict | None = None
@@ -106,15 +108,19 @@ def annotate_structure_for_rf3(
     structure : dict
         Atomworks structure dictionary.
     msa_path : str | Path | dict | None
-        MSA specification for RF3.
+        MSA specification. Can be:
+        - dict: chain_id -> MSA file path mapping
+        - str/Path to .json: JSON file with chain_id -> MSA path mapping
+        - str/Path to .a3m: Single MSA file applied to all protein chains
+        - None (default): No MSA information is used
     ensemble_size : int
-        Number of samples to generate (batch dimension of x_init).
+        Number of samples to generate (batch dimension of x_init). Default is 1.
     recycling_steps : int | None
-        Number of recycling steps to perform. If None, uses model default.
+        Number of recycling steps to perform. Default is None, uses model default.
     disable_chiral_features : bool
-        If True, zero out chiral features during guidance.
+        If True, zero out chiral features during guidance. Default is False.
     track_chiral_features : bool
-        If True, log the chiral gradient L2 norm at each denoising step.
+        If True, log the chiral gradient L2 norm at each denoising step. Default is False.
 
     Returns
     -------
@@ -555,8 +561,6 @@ class RF3Wrapper:
             and self._original_chiral_dihedral_angles is not None
             and self._original_chiral_centers.shape[0] > 0
         ):
-            from rf3.loss.loss import calc_chiral_grads_flat_impl
-
             sigma_data = self._inner_model.diffusion_module.sigma_data
             f_pred = self._inner_model.diffusion_module.f_pred
             if f_pred != "edm":
@@ -572,7 +576,8 @@ class RF3Wrapper:
                 self._inner_model.diffusion_module.atom_attention_encoder.no_grad_on_chiral_center,
             ).nan_to_num()
 
-            # L2 norm per sample, then average across the batch
+            # L2 norm per sample, then average across the batch. This tracks magnitudes,
+            # doesn't correspond to anything directly in the RF3 code.
             # chiral_grads: [batch, atoms, 3]
             per_sample_norm = chiral_grads.flatten(1).norm(dim=1)  # [batch]
             l2_norm = per_sample_norm.mean().item()
