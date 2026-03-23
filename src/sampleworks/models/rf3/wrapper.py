@@ -557,9 +557,9 @@ class RF3Wrapper:
         # gradient would have been for diagnostics
         if self._track_chiral_features:
             if (
-                self._original_chiral_centers is not None
-                and self._original_chiral_dihedral_angles is not None
-                and self._original_chiral_centers.shape[0] > 0
+                self._original_chiral_centers is None
+                or self._original_chiral_dihedral_angles is None
+                or self._original_chiral_centers.shape[0] == 0
             ):
                 raise ValueError(
                     "Chiral feature tracking is enabled, but original features are missing or empty"
