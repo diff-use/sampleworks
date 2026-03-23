@@ -555,12 +555,18 @@ class RF3Wrapper:
 
         # Track chiral gradient statistics using original features to report what the chiral
         # gradient would have been for diagnostics
-        if (
-            self._track_chiral_features
-            and self._original_chiral_centers is not None
-            and self._original_chiral_dihedral_angles is not None
-            and self._original_chiral_centers.shape[0] > 0
-        ):
+        if self._track_chiral_features:
+            if (
+                self._original_chiral_centers is not None
+                and self._original_chiral_dihedral_angles is not None
+                and self._original_chiral_centers.shape[0] > 0
+            ):
+                raise ValueError(
+                    "Chiral feature tracking is enabled, but original features are missing or empty"
+                    ". Cannot compute chiral gradients for tracking. This may be due to an upstream"
+                    " change in RF3 or RF3Wrapper.featurize()."
+                )
+
             sigma_data = self._inner_model.diffusion_module.sigma_data
             f_pred = self._inner_model.diffusion_module.f_pred
             if f_pred != "edm":
