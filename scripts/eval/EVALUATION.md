@@ -32,9 +32,11 @@ You can run the following command, which assumes:
   see the `--rcsb-pattern` argument which is a regex to match the RCSB PDB ID
 - the input PDB cif files are stored in `/home/ubuntu/grid_search_inputs` as required for running the
   the grid search (see GRID_SEARCH.md)
-- the input PDB cif files are stored in `/home/ubuntu/grid_search_inputs` as, e.g., 
-  `/home/ubuntu/grid_search_inputs/1VME/1VME_original.cif`, see the `--input-pdb-pattern` argument, which
-  is a python format string which must use the `pdb_id` variable to refer to the RCSB PDB ID.
+- the input PDB cif files are stored in `/home/ubuntu/grid_search_inputs` as required for running the
+  the grid search (see GRID_SEARCH.md). The files will have paths like, e.g., 
+  `/home/ubuntu/grid_search_inputs/1VME/1VME_original.cif`. See also the `--input-pdb-pattern` 
+  argument, which is a python format string which must use the `pdb_id` variable to refer to the 
+  RCSB PDB ID.
 
 ```shell
 pixi run -e analysis python scripts/patch_output_cif_files.py \
@@ -135,7 +137,7 @@ The output file, `rscc_metrics.csv`, contains one row per selection per output C
 | scaler               | the trajectory scaler                                                              | pure_guidance                                                                                                           |
 | ensemble_size        | The number of output models in the `refined_cif_path`                              | 8                                                                                                                       |
 | guidance_weight      |                                                                                    | 0.1                                                                                                                     |
-| gd_steps             | Deprecated.                                                                        |
+| gd_steps             | Deprecated.                                                                        | N/A                                                                                                                     |
 | trial_dir            | the output directory used in generation                                            | /data/sampleworks-exp/occ_sweep/grid_search_results/6DUR_1.0occA/boltz2_MD/pure_guidance/ens8_gw0.1                     |
 | refined_cif_path     | the exact CIF file containing generated models                                     | /data/sampleworks-exp/occ_sweep/grid_search_results/6DUR_1.0occA/boltz2_MD/pure_guidance/ens8_gw0.1/refined-patched.cif |
 | protein_dir_name     | the subdirectory in --grid-search-results-path containing results for this protein | 6DUR_1.0occA                                                                                                            |
@@ -153,7 +155,7 @@ This script produces a single file, `lddt_metrics.csv`, with each row as describ
 
 The script attempts to assign selections in each of the models in the CIF file to the altlocs defined
 in the input reference structure, using as a 
-psuedo-distance the LDDT scores computed over the selected atoms in each model. 
+pseudo-distance the LDDT scores computed over the selected atoms in each model. 
 In the example below, the CIF file is 
 ```shell
 /mnt/diffuse-private/raw/sampleworks/initial_dataset_40/grid_search_results/1VME_native_occ/boltz2_MD/pure_guidance/ens8_gw0.1/refined.cif
@@ -161,28 +163,28 @@ In the example below, the CIF file is
 and it has 8 models. The selection is over all atoms that have altlocs in the reference structure (1VME).
 This includes a loop movement, and 5/8 models are closer, in this LDDT sense, to altloc A, while 3/8
 are closer to altloc B. The script then computes a silhouette score for this assumed clustering, 
-which is reported as the `avg_silhouette` score. We also report a psuedo-silhouette score, which is
+which is reported as the `avg_silhouette` score. We also report a pseudo-silhouette score, which is
 a measure of how well the generated conformers match the reference altlocs. 1.0 is a perfect score, 
-and 0.0 indicates a poor clustering. In the example provided, the psuedo-silhouette score is 0.0034,
+and 0.0 indicates a poor clustering. In the example provided, the pseudo-silhouette score is 0.0034,
 indicating that the generated conformers are not well separated and do not reflect the reference altlocs.
 
-| column                | description                                                                                                                                                                | example value                                                                                                                              |
-|-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| protein               | an RCSB id                                                                                                                                                                 | 1vme                                                                                                                                       |
-| altloc_occupancies    | ta dictionary indicating occupancies used in the experiments                                                                                                               | {'A': 0.5}                                                                                                                                 |
-| model                 | the model used for structure generation                                                                                                                                    | boltz2                                                                                                                                     |
-| method                | (Boltz 2 only) the particular Boltz training method                                                                                                                        | MD                                                                                                                                         |
-| scaler                | the trajectory scaler used                                                                                                                                                 | pure_guidance                                                                                                                              |
-| ensemble_size         | the number of models in the output cif file                                                                                                                                | 8                                                                                                                                          |
-| guidance_weight       |                                                                                                                                                                            | 0.1                                                                                                                                        |
-| gd_steps              | Deprecated                                                                                                                                                                 |                                                                                                                                            |
-| trial_dir             | the directory containing generation results | /mnt/diffuse-private/raw/sampleworks/initial_dataset_40/grid_search_results/1VME_native_occ/boltz2_MD/pure_guidance/ens8_gw0.1             |
-| refined_cif_path      | the exact CIF file containing generated models                                                                                                                             | /mnt/diffuse-private/raw/sampleworks/initial_dataset_40/grid_search_results/1VME_native_occ/boltz2_MD/pure_guidance/ens8_gw0.1/refined.cif |
-| protein_dir_name      | the subdirectory in --grid-search-results-path containing results for this protein                                                                                         | 1VME_native_occ                                                                                                                            |
-| rscc                  | unused                                                                                                                                                                     |
-| base_map_path         | unused                                                                                                                                                                     |
-| error                 | any error, if the calculation cannot be completed                                                                                                                          |
-| selection             | the selection string that was used, described above (full string will be available, shortened here)                                                                        | chain_id == 'A' and ((res_id == 1) or ... or (res_id >= 316 and res_id <= 324) or (res_id == 326) or (res_id == 373))                      |
-| occupancies           | space-separated list of occupancies of the identified clustered states                                                                                                     | [0.625, 0.375]                                                                                                                             |
-| avg_silhouette        | the average silhoutte score for the clustered conformers/altlocs (see above)                                                                                               | 0.16082633177992867
-| avg_silhouette_to_ref | the psuedo-silhouette score of the generated structures to the reference altlocs in the original generation input                                                          | 0.003392312238469336                                                                                                                      |
+| column                | description                                                                                                       | example value                                                                                                                             |
+|-----------------------|-------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| protein               | an RCSB id                                                                                                        | 1vme                                                                                                                                      |
+| altloc_occupancies    | ta dictionary indicating occupancies used in the experiments                                                      | {'A': 0.5}                                                                                                                                |
+| model                 | the model used for structure generation                                                                           | boltz2                                                                                                                                    |
+| method                | (Boltz 2 only) the particular Boltz training method                                                               | MD                                                                                                                                        |
+| scaler                | the trajectory scaler used                                                                                        | pure_guidance                                                                                                                             |
+| ensemble_size         | the number of models in the output cif file                                                                       | 8                                                                                                                                         |
+| guidance_weight       |                                                                                                                   | 0.1                                                                                                                                       |
+| gd_steps              | Deprecated                                                                                                        |                                                                                                                                           |
+| trial_dir             | the directory containing generation results                                                                       | /mnt/diffuse-private/raw/sampleworks/initial_dataset_40/grid_search_results/1VME_native_occ/boltz2_MD/pure_guidance/ens8_gw0.1            |
+| refined_cif_path      | the exact CIF file containing generated models                                                                    | /mnt/diffuse-private/raw/sampleworks/initial_dataset_40/grid_search_results/1VME_native_occ/boltz2_MD/pure_guidance/ens8_gw0.1/refined.cif |
+| protein_dir_name      | the subdirectory in --grid-search-results-path containing results for this protein                                | 1VME_native_occ                                                                                                                           |
+| rscc                  | unused                                                                                                            | N/A                                                                                                                                       |
+| base_map_path         | unused                                                                                                            | N/A                                                                                                                                       |
+| error                 | any error, if the calculation cannot be completed                                                                 |                                                                                                                                           |
+| selection             | the selection string that was used, described above (full string will be available, shortened here)               | chain_id == 'A' and ((res_id == 1) or ... or (res_id >= 316 and res_id <= 324) or (res_id == 326) or (res_id == 373))                     |
+| occupancies           | space-separated list of occupancies of the identified clustered states                                            | [0.625, 0.375]                                                                                                                            |
+| avg_silhouette        | the average silhouette score for the clustered conformers/altlocs (see above)                                     | 0.16082633177992867                                                                                                                       |
+| avg_silhouette_to_ref | the pseudo-silhouette score of the generated structures to the reference altlocs in the original generation input | 0.003392312238469336                                                                                                                      |

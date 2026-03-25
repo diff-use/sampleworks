@@ -1,3 +1,4 @@
+import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -8,19 +9,27 @@ import pandas as pd
 from loguru import logger
 from pandas import DataFrame
 
-from sampleworks.eval.eval_dataclasses import Trial
 from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 
 
 # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
-def main(args) -> None:
-    # check that phenix is installed and available, bail early if not.
+def main(args: argparse.Namespace) -> None:
+    """
+    Run tortoize on all trial CIF files and output residue/protein-level CSV stats.
+
+    Parameters
+    ----------
+     args : argparse.Namespace
+         Parsed CLI arguments from sampleworks.eval.grid_search_eval_utils.parse_eval_args().
+    """
+
+    # check that tortoize is installed and available, bail early if not.
     try:
         subprocess.call("tortoize", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         raise RuntimeError(
             "tortoize is not available, make sure you have installed it."
-        )
+        ) from None
     # The dropped variable is a list of ProteinConfigs, not used yet in this script
     all_trials, _ = setup_evaluation_parameters(args)
 
@@ -98,14 +107,16 @@ def get_protein_level_z_scores(tortoize_json: dict[str, Any]) -> pd.DataFrame:
     See test/1cbs.json for an example of the tortoize output JSON
 
 
-    :param tortoize_json:
-    :return: pd.DataFrame with keys:
-      - model (e.g. "1")
-      - ramachandran_z_score
-      - torsion_z_score
-      - ramachandran_jackknife_sd
-      - torsion_jackknife_sd
-      - residue_count
+    Parameters
+    ----------
+    tortoize_json : dict[str, Any]
+        Parsed JSON output from tortoize command.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns: model, ramachandran_z_score, torsion_z_score,
+        ramachandran_jackknife_sd, torsion_jackknife_sd.
     """
 
     out: list[dict[str, Any]] = []
@@ -122,11 +133,24 @@ def get_protein_level_z_scores(tortoize_json: dict[str, Any]) -> pd.DataFrame:
 
 
 def get_stats_for_single_path(path: Path) -> tuple[DataFrame, DataFrame]:
+    """
+    Run tortoize on a single CIF file and extract residue/protein-level stats.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a CIF file to process.
+
+    Returns
+    -------
+    tuple[DataFrame, DataFrame]
+        (residue_df, protein_df). Both are empty DataFrames on failure.
+    """
     logger.info(f"Processing {path}")
     try:
-        output = subprocess.check_output(f"tortoize {path}".split())
+        output = subprocess.check_output(["tortoize", str(path)])
         result = json.loads(output)
-    except Exception as e:
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
         logger.error(f"Failed to process {path}: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
