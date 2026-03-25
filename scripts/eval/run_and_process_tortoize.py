@@ -34,11 +34,11 @@ def main(args) -> None:
 
     all_residue_results, all_protein_results = tuple(zip(*tortoize_results, strict=True))
 
-    output_file = f"tortoize_residues.csv"
+    output_file = "tortoize_residues.csv"
     pd.concat(all_residue_results).to_csv(output_file, index=False)
     logger.info(f"Residue results saved to {output_file}")
 
-    output_file = f"tortoize_protein_stats.csv"
+    output_file = "tortoize_protein_stats.csv"
     pd.concat(all_protein_results).to_csv(output_file, index=False)
     logger.info(f"Protein-level stats saved to {output_file}")
 
