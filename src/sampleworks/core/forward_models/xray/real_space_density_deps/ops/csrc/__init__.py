@@ -45,4 +45,5 @@ try:
     CUDA_AVAILABLE = True
 except Exception as e:
     print(f"CUDA extension loading failed: {e}")
+    dilate_points_cuda = None
     CUDA_AVAILABLE = False

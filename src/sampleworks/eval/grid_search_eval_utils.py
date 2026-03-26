@@ -11,7 +11,7 @@ from pathlib import Path
 
 from loguru import logger
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
-from sampleworks.eval.eval_dataclasses import Trial, TrialList, ProteinConfig
+from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial, TrialList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
 

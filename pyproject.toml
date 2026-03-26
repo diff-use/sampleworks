@@ -167,6 +167,9 @@ upload_to_vcs_release = true
 [tool.semantic_release.remote]
 type = "github"
 
+[tool.ty]
+exclude = ["src/sampleworks/core/forward_models/xray/real_space_density.py"]
+
 [tool.ty.environment]
 python-version = "3.11"
 
