@@ -52,8 +52,8 @@ def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
         raise FileNotFoundError(f"No A3M files found for hash {msa_hash} in {msa_dir}")
 
     # Validate that we have matching pairs
-    csv_indices = {int(f.stem.split('_')[-1]) for f in csv_files}
-    a3m_indices = {int(f.stem.split('_')[-1]) for f in a3m_files}
+    csv_indices = {int(f.stem.split("_")[-1]) for f in csv_files}
+    a3m_indices = {int(f.stem.split("_")[-1]) for f in a3m_files}
 
     if csv_indices != a3m_indices:
         raise ValueError(
@@ -67,16 +67,16 @@ def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
         a3m_path = msa_dir / f"{msa_hash}_{idx}.a3m"
 
         # Read CSV sequences (skip header, take second column)
-        with csv_path.open('r') as f:
+        with csv_path.open("r") as f:
             csv_lines = f.readlines()
 
         if not csv_lines or csv_lines[0].strip() != "key,sequence":
             raise ValueError(f"Invalid CSV header in {csv_path}")
 
-        csv_sequences = [line.strip().split(',', 1)[1] for line in csv_lines[1:] if line.strip()]
+        csv_sequences = [line.strip().split(",", 1)[1] for line in csv_lines[1:] if line.strip()]
 
         # Read A3M sequences (every other line, skipping headers)
-        with a3m_path.open('r') as f:
+        with a3m_path.open("r") as f:
             a3m_lines = f.readlines()
 
         # A3M format: header lines start with '>', sequences on alternating lines

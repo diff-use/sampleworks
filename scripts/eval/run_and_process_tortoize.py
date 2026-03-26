@@ -26,9 +26,7 @@ def main(args: argparse.Namespace) -> None:
     try:
         subprocess.call("tortoize", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
-        raise RuntimeError(
-            "tortoize is not available, make sure you have installed it."
-        ) from None
+        raise RuntimeError("tortoize is not available, make sure you have installed it.") from None
     # The dropped variable is a list of ProteinConfigs, not used yet in this script
     all_trials, _ = setup_evaluation_parameters(args)
 
@@ -121,13 +119,15 @@ def get_protein_level_z_scores(tortoize_json: dict[str, Any]) -> pd.DataFrame:
     out: list[dict[str, Any]] = []
     model_block = tortoize_json.get("model", {})
     for model_id, model_data in model_block.items():
-        out.append({
-            "model": str(model_id),
-            "ramachandran_z_score": model_data.get("ramachandran-z", None),
-            "ramachandran_jackknife_sd": model_data.get("ramachandran-jackknife-sd", None),
-            "torsion_z_score": model_data.get("torsion-z", None),
-            "torsion_jackknife_sd": model_data.get("torsion-jackknife-sd", None)
-        })
+        out.append(
+            {
+                "model": str(model_id),
+                "ramachandran_z_score": model_data.get("ramachandran-z", None),
+                "ramachandran_jackknife_sd": model_data.get("ramachandran-jackknife-sd", None),
+                "torsion_z_score": model_data.get("torsion-z", None),
+                "torsion_jackknife_sd": model_data.get("torsion-jackknife-sd", None),
+            }
+        )
     return pd.DataFrame(out)
 
 

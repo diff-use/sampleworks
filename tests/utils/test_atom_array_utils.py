@@ -930,7 +930,7 @@ class TestRemoveAtomsWithAnyNanCoords:
 
         with pytest.raises(ValueError, match="Cannot remove atoms from empty AtomArray\|Stack"):
             remove_atoms_with_any_nan_coords(atom_array)
-        
+
     def test_empty_atom_array_stack(self):
         """Test with empty AtomArrayStack."""
         atom_array = AtomArray(0)

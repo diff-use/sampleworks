@@ -37,9 +37,7 @@ def main(args) -> None:
         return
 
     clashscore_df = pd.concat(clashscore_metrics, ignore_index=True)
-    clashscore_df.to_csv(
-        args.grid_search_results_path / "clashscore_metrics.csv", index=False
-    )
+    clashscore_df.to_csv(args.grid_search_results_path / "clashscore_metrics.csv", index=False)
 
 
 def process_one_trial(trial: Trial) -> pd.DataFrame:

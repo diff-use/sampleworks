@@ -175,7 +175,7 @@ def parse_eval_args(description: str | None = None):
         type=Path,
         required=True,
         help="Path to the top-level grid search results directory, usu. called "
-             "``grid_search_results``",
+        "``grid_search_results``",
     )
     # not technically used everywhere yet, but requiring it future-proofs.
     parser.add_argument(
@@ -183,14 +183,14 @@ def parse_eval_args(description: str | None = None):
         type=Path,
         required=True,
         help="Path to the directory containing the grid search inputs, in particular "
-             "the protein configuration CSV file, maps, and reference structures.",
+        "the protein configuration CSV file, maps, and reference structures.",
         default=None,
     )
     parser.add_argument(
         "--protein-configs-csv",
         type=Path,
         help="Path to the CSV file containing protein configurations, like "
-             "``${HOME}/configs.csv``. Defaults to sampleworks/data/protein_configs.csv",
+        "``${HOME}/configs.csv``. Defaults to sampleworks/data/protein_configs.csv",
         default=files("sampleworks.data") / "protein_configs.csv",
     )
     parser.add_argument(
@@ -215,7 +215,7 @@ def parse_eval_args(description: str | None = None):
 
 
 def setup_evaluation_parameters(
-        args: argparse.Namespace
+    args: argparse.Namespace,
 ) -> tuple[TrialList, dict[str, ProteinConfig]]:
     grid_search_dir = Path(args.grid_search_results_path)
 
@@ -227,9 +227,7 @@ def setup_evaluation_parameters(
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
     # Scan for experiments (look for refined.cif files)
-    all_trials = scan_grid_search_results(
-        grid_search_dir, target_filename=args.target_filename
-    )
+    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
     logger.info(f"Found {len(all_trials)} experiments with refined.cif files")
 
     if all_trials:

@@ -23,7 +23,9 @@ def mock_protein_config(tmp_path: Path) -> ProteinConfig:
     return ProteinConfig(
         protein="test",
         base_map_dir=tmp_path,
-        selection=["chain A and resi 1-10", ],
+        selection=[
+            "chain A and resi 1-10",
+        ],
         resolution=2.0,
         map_pattern="{occ_str}.ccp4",
         structure_pattern="{occ_str}.cif",
@@ -256,7 +258,9 @@ class TestGetReferenceAtomArrayStack:
         config = ProteinConfig(
             protein="test",
             base_map_dir=tmp_path,
-            selection=["chain A", ],
+            selection=[
+                "chain A",
+            ],
             resolution=2.0,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="{occ_str}.cif",
@@ -272,7 +276,9 @@ class TestGetReferenceAtomArrayStack:
         config = ProteinConfig(
             protein="6b8x",
             base_map_dir=resources_dir / "6b8x",
-            selection=["chain A", ],
+            selection=[
+                "chain A",
+            ],
             resolution=1.74,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="6b8x_final.pdb",
@@ -299,7 +305,9 @@ class TestGetReferenceStructureCoords:
         config = ProteinConfig(
             protein="test",
             base_map_dir=tmp_path,
-            selection=["chain Z and resi 999", ],
+            selection=[
+                "chain Z and resi 999",
+            ],
             resolution=2.0,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="{occ_str}.cif",
@@ -314,7 +322,9 @@ class TestGetReferenceStructureCoords:
         config = ProteinConfig(
             protein="6b8x",
             base_map_dir=resources_dir / "6b8x",
-            selection=[selection_string, ],
+            selection=[
+                selection_string,
+            ],
             resolution=1.74,
             map_pattern="{occ_str}.ccp4",
             structure_pattern="6b8x_final.pdb",
