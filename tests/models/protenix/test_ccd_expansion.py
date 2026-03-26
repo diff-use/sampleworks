@@ -20,7 +20,11 @@ class TestExpandTildeCCDCode:
 
     def test_unique_match_expands(self):
         """~QS should expand uniquely to A1AQS."""
-        result = _expand_tilde_ccd_code("~QS")
+        fake_codes = ["A1AQS", "GLY", "ALA"]
+        _build_ccd_suffix_map.cache_clear()
+        with patch("protenix.data.ccd.get_all_ccd_code", return_value=fake_codes):
+            result = _expand_tilde_ccd_code("~QS")
+        _build_ccd_suffix_map.cache_clear()
         assert result == "A1AQS"
 
     def test_ambiguous_match_raises(self):
@@ -37,7 +41,11 @@ class TestExpandTildeCCDCode:
 
     def test_no_match_returns_original(self):
         """When no code matches the suffix, return the truncated code."""
-        result = _expand_tilde_ccd_code("~$$")
+        fake_codes = ["GLY", "ALA"]
+        _build_ccd_suffix_map.cache_clear()
+        with patch("protenix.data.ccd.get_all_ccd_code", return_value=fake_codes):
+            result = _expand_tilde_ccd_code("~$$")
+        _build_ccd_suffix_map.cache_clear()
         assert result == "~$$"
 
 
@@ -46,7 +54,11 @@ class TestStructureToProtenixJsonCCDExpansion:
 
     def test_9bn8_ligand_expanded(self, structure_9bn8):
         """9BN8 structure with ~QS ligand should produce CCD_A1AQS in JSON."""
-        json_dict = structure_to_protenix_json(structure_9bn8)
+        _build_ccd_suffix_map.cache_clear()
+        fake_codes = ["A1AQS", "GLY", "ALA"]
+        with patch("protenix.data.ccd.get_all_ccd_code", return_value=fake_codes):
+            json_dict = structure_to_protenix_json(structure_9bn8)
+        _build_ccd_suffix_map.cache_clear()
 
         ligand_entries = [
             entry["ligand"]["ligand"] for entry in json_dict["sequences"] if "ligand" in entry

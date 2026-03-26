@@ -167,9 +167,6 @@ upload_to_vcs_release = true
 [tool.semantic_release.remote]
 type = "github"
 
-[tool.ty]
-exclude = ["src/sampleworks/core/forward_models/xray/real_space_density.py"]
-
 [tool.ty.environment]
 python-version = "3.11"
 
@@ -178,6 +175,16 @@ include = ["src/sampleworks/eval/bond_angle_and_length_outlier_eval_script.py"]
 
 [tool.ty.overrides.rules]
 possibly-missing-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["src/sampleworks/core/forward_models/xray/real_space_density.py"]
+
+[tool.ty.overrides.rules]
+unused-ignore-comment = "ignore"
+invalid-parameter-default = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+no-matching-overload = "ignore"
 
 [tool.ty.rules]
 unresolved-import = "ignore"

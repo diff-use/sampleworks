@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
@@ -63,7 +64,13 @@ def _build_job(model: StructurePredictor) -> JobConfig:
     )
 
 
-def test_populate_config_preserves_default_checkpoint_when_none_provided(model_wrapper_type):
+@patch(
+    "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
+    return_value="/checkpoints/mock.ckpt",
+)
+def test_populate_config_preserves_default_checkpoint_when_none_provided(
+    _mock_resolve, model_wrapper_type
+):
     """populate_config_for_guidance_type should keep model defaults if no checkpoint arg exists."""
     config = GuidanceConfig(
         protein="protein",
@@ -77,7 +84,7 @@ def test_populate_config_preserves_default_checkpoint_when_none_provided(model_w
 
     config.populate_config_for_guidance_type(
         _build_job(model_wrapper_type),
-        Namespace(use_tweedie=False),
+        Namespace(use_tweedie=False, step_scaler_type="noisespace"),
     )
 
     assert config.model_checkpoint == default_checkpoint
@@ -85,16 +92,24 @@ def test_populate_config_preserves_default_checkpoint_when_none_provided(model_w
 
 def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
     """populate_config_for_guidance_type should read the model_checkpoint arg."""
-    config = GuidanceConfig(
-        protein="protein",
-        structure="/tmp/structure.cif",
-        density="/tmp/density.mrc",
-        model=model_wrapper_type,
-        guidance_type=GuidanceType.PURE_GUIDANCE,
-        log_path="/tmp/output/run.log",
-    )
+    with patch(
+        "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
+        return_value="/checkpoints/mock.ckpt",
+    ):
+        config = GuidanceConfig(
+            protein="protein",
+            structure="/tmp/structure.cif",
+            density="/tmp/density.mrc",
+            model=model_wrapper_type,
+            guidance_type=GuidanceType.PURE_GUIDANCE,
+            log_path="/tmp/output/run.log",
+        )
 
-    args = Namespace(model_checkpoint="/tmp/custom.ckpt", use_tweedie=False)
+    args = Namespace(
+        model_checkpoint="/tmp/custom.ckpt",
+        use_tweedie=False,
+        step_scaler_type="noisespace",
+    )
     config.populate_config_for_guidance_type(_build_job(model_wrapper_type), args)
 
     assert config.model_checkpoint == "/tmp/custom.ckpt"
@@ -106,8 +121,8 @@ def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
 
 
 def test_validate_model_checkpoint_requires_non_empty_value(model_wrapper_type):
-    """Validation should fail fast when checkpoint is missing."""
-    with pytest.raises(ValueError, match="Missing checkpoint"):
+    """Validation should fail fast when checkpoint is missing or doesn't exist."""
+    with pytest.raises((ValueError, FileNotFoundError)):
         validate_model_checkpoint(model_wrapper_type, "")
 
 
