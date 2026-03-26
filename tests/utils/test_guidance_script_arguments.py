@@ -68,10 +68,10 @@ def _build_job(model: StructurePredictor) -> JobConfig:
     "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
     return_value="/checkpoints/mock.ckpt",
 )
-def test_populate_config_preserves_default_checkpoint_when_none_provided(
+def test_populate_config_resolves_checkpoint_when_none_provided(
     _mock_resolve, model_wrapper_type
 ):
-    """populate_config_for_guidance_type should keep model defaults if no checkpoint arg exists."""
+    """populate_config_for_guidance_type should auto-resolve checkpoint if no arg exists."""
     config = GuidanceConfig(
         protein="protein",
         structure="/tmp/structure.cif",
@@ -80,14 +80,13 @@ def test_populate_config_preserves_default_checkpoint_when_none_provided(
         guidance_type=GuidanceType.PURE_GUIDANCE,
         log_path="/tmp/output/run.log",
     )
-    default_checkpoint = config.model_checkpoint
 
     config.populate_config_for_guidance_type(
         _build_job(model_wrapper_type),
         Namespace(use_tweedie=False, step_scaler_type="noisespace"),
     )
 
-    assert config.model_checkpoint == default_checkpoint
+    assert config.model_checkpoint == "/checkpoints/mock.ckpt"
 
 
 def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
@@ -120,9 +119,13 @@ def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
 # ============================================================================
 
 
-def test_validate_model_checkpoint_requires_non_empty_value(model_wrapper_type):
-    """Validation should fail fast when checkpoint is missing or doesn't exist."""
-    with pytest.raises((ValueError, FileNotFoundError)):
+@patch(
+    "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
+    side_effect=ValueError("no checkpoint found"),
+)
+def test_validate_model_checkpoint_requires_non_empty_value(_mock_resolve, model_wrapper_type):
+    """Validation should fail fast when checkpoint is missing and can't be auto-resolved."""
+    with pytest.raises(ValueError):
         validate_model_checkpoint(model_wrapper_type, "")
 
 

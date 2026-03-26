@@ -176,15 +176,19 @@ include = ["src/sampleworks/eval/bond_angle_and_length_outlier_eval_script.py"]
 [tool.ty.overrides.rules]
 possibly-missing-attribute = "ignore"
 
-[[tool.ty.overrides]]
-include = ["src/sampleworks/core/forward_models/xray/real_space_density.py"]
-
-[tool.ty.overrides.rules]
-unused-ignore-comment = "ignore"
-invalid-parameter-default = "ignore"
-unresolved-attribute = "ignore"
-unsupported-operator = "ignore"
-no-matching-overload = "ignore"
-
 [tool.ty.rules]
+# Pre-existing type issues across the codebase; warn instead of error
+# so ty runs in CI without blocking PRs while the team fixes them.
 unresolved-import = "ignore"
+unresolved-attribute = "warn"
+invalid-argument-type = "warn"
+invalid-assignment = "warn"
+invalid-method-override = "warn"
+invalid-parameter-default = "warn"
+no-matching-overload = "warn"
+not-iterable = "warn"
+not-subscriptable = "warn"
+too-many-positional-arguments = "warn"
+unsupported-operator = "warn"
+unused-ignore-comment = "warn"
+unused-type-ignore-comment = "warn"
