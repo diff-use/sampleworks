@@ -43,6 +43,8 @@ jobs:
 
       - name: Install pixi
         uses: prefix-dev/setup-pixi@19eac09b398e3d0c747adc7921926a6d802df4da # v0.8.8
+        with:
+          cache: false  # NFS-backed cache on self-hosted runner handles this
 
       - name: Build CUDA extensions
         run: pixi run -e ${{ matrix.environment }} python3 -c "from sampleworks.core.forward_models.xray.real_space_density_deps.ops.csrc import dilate_points_cuda"
