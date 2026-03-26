@@ -68,9 +68,7 @@ def _build_job(model: StructurePredictor) -> JobConfig:
     "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
     return_value="/checkpoints/mock.ckpt",
 )
-def test_populate_config_resolves_checkpoint_when_none_provided(
-    _mock_resolve, model_wrapper_type
-):
+def test_populate_config_resolves_checkpoint_when_none_provided(_mock_resolve, model_wrapper_type):
     """populate_config_for_guidance_type should auto-resolve checkpoint if no arg exists."""
     config = GuidanceConfig(
         protein="protein",
