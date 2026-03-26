@@ -483,6 +483,11 @@ def structure_9bn8_density(resources_dir: Path) -> dict:
 
 
 @pytest.fixture(scope="session")
+def structure_5i09_density(resources_dir: Path) -> dict:
+    return parse(resources_dir / "5I09" / "5I09_single_001_density_input.cif", ccd_mirror_path=None)
+
+
+@pytest.fixture(scope="session")
 def structure_6b8x_with_altlocs(resources_dir: Path) -> AtomArray | AtomArrayStack:
     return load_any(
         resources_dir / "6b8x" / "6b8x_final.pdb", altloc="all", extra_fields=["occupancy"]
