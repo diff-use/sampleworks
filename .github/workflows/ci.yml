@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'pixi.lock'
+      - '.github/workflows/ci.yml'
+      - '.pre-commit-config.yaml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'pixi.lock'
+      - '.github/workflows/ci.yml'
+      - '.pre-commit-config.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.8
+        with:
+          environments: boltz-dev
+
+      - name: Ruff lint
+        run: pixi run -e boltz-dev ruff check .
+
+      - name: Ruff format check
+        run: pixi run -e boltz-dev ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [boltz-dev, protenix-dev, rf3-dev]
+
+    name: typecheck (${{ matrix.environment }})
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.8
+        with:
+          environments: ${{ matrix.environment }}
+
+      - name: Run ty
+        run: pixi run -e ${{ matrix.environment }} ty check
+
+  cpu-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [boltz-dev, protenix-dev, rf3-dev]
+
+    name: tests (${{ matrix.environment }})
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.8
+        with:
+          environments: ${{ matrix.environment }}
+
+      - name: Run CPU tests
+        run: pixi run -e ${{ matrix.environment }} cpu-tests
