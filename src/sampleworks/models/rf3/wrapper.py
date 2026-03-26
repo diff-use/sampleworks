@@ -348,14 +348,22 @@ class RF3Wrapper:
 
         num_atoms = len(pairformer_out["features"]["atom_to_token_map"])
 
-        # Build model atom array from non-hydrogen InferenceInput atoms
-        model_aa = cast(
-            AtomArray, inference_input.atom_array[inference_input.atom_array.element != "H"]
-        )
-        # RF3 feature assembly preserves inference_input atom order after hydrogen filtering.
-        # Any excess atoms are trailing entries not represented in atom_to_token_map.
-        if len(model_aa) > num_atoms:
-            model_aa = cast(AtomArray, model_aa[:num_atoms])
+        # Use the pipeline output array that RF3's native inference
+        # uses (rf3/inference_engines/rf3.py line 594).  The pipeline removes
+        # atoms (H, OXT, etc.) that the model doesn't operate on automatically,
+        # so we will use this for the "model_atom_array" that refers to the set of
+        # atoms that the model operates on during sampling.
+        if "atom_array" not in pipeline_output:
+            raise ValueError(
+                "pipeline_output is missing 'atom_array' key, cannot determine model_atom_array"
+            )
+        model_aa = pipeline_output["atom_array"].copy()
+        if len(model_aa) != num_atoms:
+            raise ValueError(
+                f"model_atom_array has {len(model_aa)} atoms but the model's "
+                f"atom_to_token_map has {num_atoms} entries. These must match exactly "
+                "for correct coordinate-to-atom mapping."
+            )
 
         # atomworks's add_missing_atoms adds unresolved atoms with
         # occupancy=0.0 and NaN coordinates when we get our atom array with

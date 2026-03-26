@@ -113,7 +113,7 @@ class EDMSamplerConfig:
     s_max: float = 160.0
     s_min: float = 4e-4
     p: float = 7.0
-    gamma_min: float = 0.2
+    gamma_min: float = 0.2  # this is not the default value from AF3! AF3 uses 1.0
     gamma_0: float = 0.8
     noise_scale: float = 1.003
     step_scale: float = 1.5
@@ -139,7 +139,7 @@ class AF3EDMSampler:
 
     Initialized with a single :class:`EDMSamplerConfig` object that holds all
     schedule hyperparameters and runtime options.  Default values in the config
-    match the AF3 parameterization.
+    match the AF3 parameterization, except for ``gamma_min`` which is set to 0.2 instead of 1.0.
 
     This sampler implements the EDM (Karras et al.) style sampling
     approach as used in AlphaFold3 and related models, which is the Euler
