@@ -92,7 +92,7 @@ def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
     with patch(
         "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
         return_value="/checkpoints/mock.ckpt",
-    ):
+    ) as mock_resolve:
         config = GuidanceConfig(
             protein="protein",
             structure="/tmp/structure.cif",
@@ -101,13 +101,15 @@ def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
             guidance_type=GuidanceType.PURE_GUIDANCE,
             log_path="/tmp/output/run.log",
         )
+        mock_resolve.reset_mock()
 
-    args = Namespace(
-        model_checkpoint="/tmp/custom.ckpt",
-        use_tweedie=False,
-        step_scaler_type="noisespace",
-    )
-    config.populate_config_for_guidance_type(_build_job(model_wrapper_type), args)
+        args = Namespace(
+            model_checkpoint="/tmp/custom.ckpt",
+            use_tweedie=False,
+            step_scaler_type="noisespace",
+        )
+        config.populate_config_for_guidance_type(_build_job(model_wrapper_type), args)
+        mock_resolve.assert_not_called()
 
     assert config.model_checkpoint == "/tmp/custom.ckpt"
 
@@ -123,7 +125,7 @@ def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
 )
 def test_validate_model_checkpoint_requires_non_empty_value(_mock_resolve, model_wrapper_type):
     """Validation should fail fast when checkpoint is missing and can't be auto-resolved."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no checkpoint found"):
         validate_model_checkpoint(model_wrapper_type, "")
 
 
