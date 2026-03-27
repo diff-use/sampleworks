@@ -27,7 +27,7 @@ jobs:
   gpu-tests:
     runs-on: gpu-1
     timeout-minutes: 30
-    # environment: gpu-testing  # TEMPORARY: disabled to test NFS cache performance
+    environment: gpu-testing
     permissions:
       contents: read
     strategy:
