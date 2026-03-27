@@ -57,7 +57,8 @@ class EDMSamplerConfig:
     r"""Config for an EDM sampler.
 
     Default values match the AF3 parameterization of the EDM framework
-    (Karras et al., 2022).
+    (Karras et al., 2022) except for ``gamma_min``, which for now is set to 0.2
+    instead of 1.0.
 
     Parameters
     ----------

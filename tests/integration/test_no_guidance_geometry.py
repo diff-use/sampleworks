@@ -98,7 +98,7 @@ class TestNoGuidanceGeometry:
 
         # Generous bounds for a 20-step stochastic sample.
         # Ideal backbone bonds are 1.33–1.52 Å
-        # We're a little more generous because the short trajectory.
+        # We're a little more generous because of the short trajectory.
         con_mask = filter_linear_bond_continuity(bb, min_len=1.1, max_len=1.7)
         # Last element is always True (no next atom to compare), exclude it.
         n_valid = int(con_mask[:-1].sum())

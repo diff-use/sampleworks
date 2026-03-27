@@ -63,7 +63,7 @@ class TestRF3AtomOrdering:
     def test_no_oxt_atoms_in_model_atom_array(self, rf3_wrapper, structure_fixture, request):
         """model_atom_array must not contain OXT atoms.
 
-        The pipeline's ``RemoveTerminalOxygen`` transform removes these
+        The pipeline's ``RemoveTerminalOxygen`` transform removes these atoms.
         """
         structure = request.getfixturevalue(structure_fixture)
         annotated = annotate_structure_for_rf3(structure, ensemble_size=1)
