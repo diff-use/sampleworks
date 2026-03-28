@@ -33,8 +33,10 @@ class AltlocInfo:
     atom_masks: dict[str, np.ndarray[Any, np.dtype[np.bool_]]]
 
 
-def load_structure_with_altlocs(path: Path) -> AtomArray:
-    """Load a structure file with alternate conformations and occupancy data.
+def load_structure_with_altlocs(
+    path: Path, altloc: Literal["all", "occupancy", "first"] = "all"
+) -> AtomArray:
+    """Load a structure file with occupancy and B-factor data.
 
     Takes the first model if multiple models are present.
 
@@ -42,14 +44,21 @@ def load_structure_with_altlocs(path: Path) -> AtomArray:
     ----------
     path
         Path to the structure file (PDB, mmCIF, etc.)
+    altloc
+        How to handle alternate conformations (passed directly to biotite):
+
+        - ``"all"`` — keep every altloc as a separate atom (default); use for
+          density computation where all conformers should contribute.
+        - ``"occupancy"`` — keep the highest-occupancy altloc per residue; use
+          for tasks requiring a single unambiguous conformation (e.g. alignment).
+        - ``"first"`` — keep the first altloc ID appearing in each residue.
 
     Returns
     -------
     AtomArray
         Loaded structure with occupancy and B-factor data
     """
-    # Currently, we need to specify extra_fields=["occupancy"] to load altlocs properly
-    atom_array = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
+    atom_array = load_any(path, altloc=altloc, extra_fields=["occupancy", "b_factor"])
     if isinstance(atom_array, AtomArrayStack):
         atom_array = cast(AtomArray, atom_array[0])
     return atom_array

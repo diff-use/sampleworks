@@ -9719,8 +9719,8 @@ packages:
   timestamp: 1753407970803
 - pypi: ./
   name: sampleworks
-  version: 0.4.0
-  sha256: 5db03aab50df2b70618c97837dfeb5cda94af7877f98bbc922f7438fafc86e77
+  version: 0.4.1
+  sha256: 71a8650ab9088e0cd195579bf80abdf5ed4fbc90c35af2bace27c123238380eb
   requires_dist:
   - atomworks[ml]==2.1.1
   - python-dotenv
