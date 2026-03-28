@@ -1,5 +1,4 @@
 import itertools
-import os
 import tempfile
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -7,10 +6,14 @@ from pathlib import Path
 
 import numpy as np
 from atomworks.io.utils.io_utils import load_any
-from biotite.structure import AtomArray, AtomArrayStack
+from biotite.structure import AtomArrayStack
 from loguru import logger
 
-from sampleworks.utils.atom_array_utils import find_all_altloc_ids, save_structure_to_cif, select_altloc
+from sampleworks.utils.atom_array_utils import (
+    find_all_altloc_ids,
+    save_structure_to_cif,
+    select_altloc,
+)
 
 
 def find_altloc_selections(
@@ -181,7 +184,7 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
         original ``cif_path`` unchanged if no issues were found.
     """
     cif_path = Path(cif_path)
-    atom_array = load_any(str(cif_path), altloc="all", extra_fields=["occupancy", "b_factor"])
+    atom_array = load_any(cif_path, altloc="all", extra_fields=["occupancy", "b_factor"])
     if isinstance(atom_array, AtomArrayStack):
         atom_array = atom_array[0]
 
@@ -221,9 +224,13 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
         return cif_path
 
     fixed_array = atom_array[keep_mask]
-    tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".cif", prefix="sampleworks_fixed_cif_")
-    os.close(tmp_fd)
-    tmp_path = Path(tmp_path_str)
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".cif", prefix="sampleworks_fixed_cif_", delete=False
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+
+    save_structure_to_cif(fixed_array, tmp_path)
+    logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
     save_structure_to_cif(fixed_array, tmp_path)
     logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
     return tmp_path

@@ -6,8 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from atomworks.io.utils.io_utils import load_any
-from biotite.structure import Atom, array, AtomArray, AtomArrayStack
-
+from biotite.structure import array, Atom, AtomArray, AtomArrayStack
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
 from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
 
@@ -38,7 +37,7 @@ def _write_cif(atoms: list[Atom], path: Path) -> Path:
 
 
 def _load(path: Path) -> AtomArray:
-    result = load_any(str(path), altloc="all", extra_fields=["occupancy", "b_factor"])
+    result = load_any(path, altloc="all", extra_fields=["occupancy", "b_factor"])
     if isinstance(result, AtomArrayStack):
         return result[0]
     return result
@@ -70,7 +69,7 @@ def cif_mixed(tmp_path) -> Path:
         [
             _atom("A", 100, "VAL", hetero=False),
             _atom("A", 101, "CYS", hetero=False),  # canonical — keep
-            _atom("A", 101, "CSO", hetero=True),   # modified altloc — remove
+            _atom("A", 101, "CSO", hetero=True),  # modified altloc — remove
             _atom("A", 102, "ALA", hetero=False),
         ],
         tmp_path / "mixed.cif",
@@ -108,9 +107,9 @@ def cif_multiple_mixed(tmp_path) -> Path:
     return _write_cif(
         [
             _atom("A", 101, "CYS", hetero=False),  # chain A pos 101: canonical
-            _atom("A", 101, "CSO", hetero=True),   # chain A pos 101: modified
-            _atom("B", 50, "SER", hetero=False),   # chain B pos 50: canonical
-            _atom("B", 50, "SEP", hetero=True),    # chain B pos 50: phosphoserine
+            _atom("A", 101, "CSO", hetero=True),  # chain A pos 101: modified
+            _atom("B", 50, "SER", hetero=False),  # chain B pos 50: canonical
+            _atom("B", 50, "SEP", hetero=True),  # chain B pos 50: phosphoserine
         ],
         tmp_path / "multi_mixed.cif",
     )
@@ -122,7 +121,6 @@ def cif_multiple_mixed(tmp_path) -> Path:
 
 
 class TestResolveMixedHetatmAtomAltlocs:
-
     # --- No-op cases ---
 
     def test_clean_cif_returns_original_path(self, cif_clean):
