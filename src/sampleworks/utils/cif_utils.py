@@ -231,6 +231,5 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
 
     save_structure_to_cif(fixed_array, tmp_path)
     logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
-    save_structure_to_cif(fixed_array, tmp_path)
-    logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
+    return tmp_path
     return tmp_path
