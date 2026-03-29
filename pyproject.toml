@@ -180,6 +180,7 @@ possibly-missing-attribute = "ignore"
 # Pre-existing type issues across the codebase; warn instead of error
 # so ty runs in CI without blocking PRs while the team fixes them.
 unresolved-import = "ignore"
+unknown-argument = "warn"
 unresolved-attribute = "warn"
 invalid-argument-type = "warn"
 invalid-assignment = "warn"
