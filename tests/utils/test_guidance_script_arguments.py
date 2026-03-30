@@ -121,11 +121,14 @@ def test_populate_config_uses_model_checkpoint_argument(model_wrapper_type):
 
 @patch(
     "sampleworks.utils.guidance_script_arguments._resolve_checkpoint",
-    side_effect=ValueError("no checkpoint found"),
+    side_effect=ValueError(
+        "Running guidance requires a model checkpoint for 'model'. "
+        "Provide --model-checkpoint or bake checkpoints into /checkpoints/."
+    ),
 )
 def test_validate_model_checkpoint_requires_non_empty_value(_mock_resolve, model_wrapper_type):
     """Validation should fail fast when checkpoint is missing and can't be auto-resolved."""
-    with pytest.raises(ValueError, match="no checkpoint found"):
+    with pytest.raises(ValueError, match="requires a model checkpoint"):
         validate_model_checkpoint(model_wrapper_type, "")
 
 
