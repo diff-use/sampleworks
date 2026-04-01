@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: gpu-tests-${{ github.event.pull_request.number || github.ref }}
+  group: gpu-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -41,7 +41,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Install pixi
         uses: prefix-dev/setup-pixi@19eac09b398e3d0c747adc7921926a6d802df4da # v0.8.8
