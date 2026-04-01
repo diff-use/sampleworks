@@ -1,12 +1,19 @@
 import itertools
+import tempfile
 from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
 
+import numpy as np
 from atomworks.io.utils.io_utils import load_any
+from biotite.structure import AtomArrayStack
 from loguru import logger
 
-from sampleworks.utils.atom_array_utils import find_all_altloc_ids, select_altloc
+from sampleworks.utils.atom_array_utils import (
+    find_all_altloc_ids,
+    save_structure_to_cif,
+    select_altloc,
+)
 
 
 def find_altloc_selections(
@@ -147,3 +154,84 @@ def find_consecutive_residues(
                 current_membership = res_membership if len(res_membership) > 1 else None
         if start is not None and next_res_id:
             yield chain, start, next_res_id, current_membership
+
+
+def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
+    """Pre-process a CIF file where ATOM and HETATM records with different residue names
+    share the same (chain, residue) position via different altloc IDs.
+
+    This occurs when a residue has a modified form (e.g. CSO, cysteic acid) as some
+    altlocs and the canonical form (e.g. CYS) as another altloc at the same sequence
+    position. Atomworks treats these as two sequential residues rather than alternates,
+    inserting a spurious extra residue into the sequence fed to Boltz2.
+
+    Should Atomworks fix the underlying issue in the future, we should remove this method.
+
+    The fix: for each affected position, remove the HETATM (modified) records and keep
+    only the ATOM (canonical) records. Also cleans up the ``_struct_conn`` covale bonds
+    referencing the removed residues, since ``save_structure_to_cif`` only writes
+    ``_atom_site``.
+
+    A warning is logged for every affected (chain, residue) position.
+
+    Parameters
+    ----------
+    cif_path
+        Path to the input CIF file.
+
+    Returns
+    -------
+    Path
+        Path to a fixed temporary CIF file if any positions were modified, or the
+        original ``cif_path`` unchanged if no issues were found.
+    """
+    cif_path = Path(cif_path)
+    atom_array = load_any(cif_path, altloc="all", extra_fields=["occupancy", "b_factor"])
+    if isinstance(atom_array, AtomArrayStack):
+        atom_array = atom_array[0]
+
+    chain_id = atom_array.chain_id
+    res_id = atom_array.res_id
+    res_name = atom_array.res_name
+    hetero = atom_array.hetero
+
+    keep_mask = np.ones(len(atom_array), dtype=bool)
+    found_any = False
+
+    for chain in np.unique(chain_id):
+        for rid in np.unique(res_id[chain_id == chain]):
+            pos_mask = (chain_id == chain) & (res_id == rid)
+            has_no_hetatm = np.any(~hetero[pos_mask])
+            has_hetatm = np.any(hetero[pos_mask])
+
+            if not (has_no_hetatm and has_hetatm):
+                # there are either only HETATM or only ATOM records at this position, or none at all
+                continue
+
+            atom_res_names = np.unique(res_name[pos_mask & ~hetero])
+            hetatm_res_names = np.unique(res_name[pos_mask & hetero])
+
+            if set(atom_res_names) == set(hetatm_res_names):
+                continue  # Same residue name on both — not the case we're fixing
+
+            logger.warning(
+                f"Chain {chain}, residue {rid}: found mixed ATOM {list(atom_res_names)} "
+                f"and HETATM {list(hetatm_res_names)} records with different residue names "
+                f"at the same sequence position. Removing HETATM records to prevent "
+                f"atomworks from inserting a duplicate residue into the Boltz2 input sequence."
+            )
+            keep_mask[pos_mask & hetero] = False
+            found_any = True
+
+    if not found_any:
+        return cif_path
+
+    fixed_array = atom_array[keep_mask]
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".cif", prefix="sampleworks_fixed_cif_", delete=False
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+
+    save_structure_to_cif(fixed_array, tmp_path)
+    logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
+    return tmp_path

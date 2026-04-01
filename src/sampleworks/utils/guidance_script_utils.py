@@ -30,6 +30,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
+from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -228,12 +229,16 @@ def get_reward_function_and_structure(
     structure_path: str | Path,
 ) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
     logger.debug(f"Loading structure from {structure_path}")
+    safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
     structure = parse(
-        Path(structure_path),
+        safe_structure_path,
         hydrogen_policy="remove",
         add_missing_atoms=False,
         ccd_mirror_path=None,
     )
+
+    if safe_structure_path != structure_path:
+        safe_structure_path.unlink()  # delete the temporary file if it was created
 
     logger.debug(f"Loading density map from {density}")
     xmap = XMap.fromfile(density, resolution=resolution)
