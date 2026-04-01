@@ -47,7 +47,7 @@ jobs:
           # read-only token (contents: read), and reviewer sign-off before any
           # steps execute. Reviewers: validate security-sensitive changes before
           # approving.
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install pixi
         uses: prefix-dev/setup-pixi@19eac09b398e3d0c747adc7921926a6d802df4da # v0.8.8
