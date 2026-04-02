@@ -213,7 +213,7 @@ def main(args: argparse.Namespace):
                     f"Loaded ref structure for {protein_key} "
                     f"and occupancies {altloc_occ}: {ref_path}"
                 )
-                reference_protein_stack, _, _ = map_altlocs_to_stack(
+                reference_protein_stack, _ = map_altlocs_to_stack(
                     reference_proteins,
                     selection=translate_selection(sel),
                     return_full_array=True,

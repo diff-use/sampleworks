@@ -247,7 +247,7 @@ def map_altlocs_to_stack(
     atom_array: AtomArray | AtomArrayStack,
     selection: str | None = None,
     return_full_array: bool = True,
-) -> tuple[AtomArrayStack, np.ndarray, np.ndarray]:
+) -> tuple[AtomArrayStack, dict[str, np.ndarray]]:
     """Map alternate location indicators (altloc) to separate structures in a new AtomArrayStack.
 
     Note: This will raise an error if you pass an AtomArrayStack containing multiple structures.
@@ -269,8 +269,9 @@ def map_altlocs_to_stack(
         Tuple containing:
 
         - AtomArrayStack with separate structures for each altloc.
-        - Array of altloc IDs, corresponding to the order of structures in the stack.
-        - Array of occupancies for each atom in each stack.
+        - Dictionary of extra annotations that are removed to avoid conflicts, currently
+          'occupancy', 'altloc_id', and 'b_factor'. Each is returned as
+          n_altloc x n_res numpy arrays
     """
     if isinstance(atom_array, AtomArrayStack):
         if len(atom_array) > 1:
@@ -313,19 +314,18 @@ def map_altlocs_to_stack(
     # it's critical that we've updated the altloc id list above, or this will return only
     # residues with no altlocs in case one or more altloc ids is/are missing from the selection.
     atom_arrays = filter_to_common_atoms(*altloc_list)
-    altloc_ids = np.vstack([r.altloc_id for r in atom_arrays])
-    occupancies = np.vstack([r.occupancy for r in atom_arrays])
 
-    # remove those annotations or we cannot stack arrays.
-    for array in atom_arrays:
-        array.del_annotation("occupancy")
-        array.del_annotation("altloc_id")
+    # remove these annotations or we cannot stack arrays but save them as output.
+    extra_annotations = {}
+    for key in ("occupancy", "altloc_id", "b_factor"):
+        extra_annotations[key] = np.vstack([r.get_annotation(key) for r in atom_arrays])
+        [r.del_annotation(key) for r in atom_arrays]
 
     # filter_to_common_atoms() returns a tuple of AtomArrayStack, so we need to take the first
     # (there will only be one structure in each)
     output_atom_array_stack = stack([a[0] for a in atom_arrays])
 
-    return output_atom_array_stack, altloc_ids, occupancies
+    return output_atom_array_stack, extra_annotations
 
 
 def select_altloc(
