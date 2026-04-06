@@ -31,6 +31,11 @@ jobs:
 
       - run: git reset --hard ${{ github.sha }}
 
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.8
+        with:
+          run-install: false
+
       - name: Semantic Release
         id: release
         uses: python-semantic-release/python-semantic-release@v10.5.3
