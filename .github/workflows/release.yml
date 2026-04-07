@@ -36,17 +36,13 @@ jobs:
         with:
           run-install: false
 
-      - name: Semantic Release
-        id: release
-        uses: python-semantic-release/python-semantic-release@v10.5.3
-        with:
-          github_token: ${{ steps.app-token.outputs.token }}
-          git_committer_name: "github-actions"
-          git_committer_email: "actions@users.noreply.github.com"
+      - uses: astral-sh/setup-uv@v6
 
-      - name: Publish to GitHub Releases
-        if: steps.release.outputs.released == 'true'
-        uses: python-semantic-release/publish-action@v10.5.3
-        with:
-          github_token: ${{ steps.app-token.outputs.token }}
-          tag: ${{ steps.release.outputs.tag }}
+      - name: Semantic Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          uvx --from="python-semantic-release==10.5.3" semantic-release version || true
+          uvx --from="python-semantic-release==10.5.3" semantic-release publish
