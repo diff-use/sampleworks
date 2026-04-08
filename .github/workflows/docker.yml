@@ -7,7 +7,7 @@ name: Build and Push Docker Images
 
 on:
   push:
-    branches: [main]
+    branches: [main, speed-up-docker-build]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -54,12 +54,12 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=diffuseproject/sampleworks:buildcache
+          cache-to: type=registry,ref=diffuseproject/sampleworks:buildcache,mode=max
           provenance: false
 
       - name: Image digest
-        run: echo "Image pushed with digest ${{ steps.build-push.outputs.digest }}"
+        run: echo "Image built with digest ${{ steps.build-push.outputs.digest }}"
