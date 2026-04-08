@@ -68,6 +68,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=diffuseproject/sampleworks:buildcache
+          cache-to: type=registry,ref=diffuseproject/sampleworks:buildcache,mode=max
           provenance: false
 
       - name: Image digest
