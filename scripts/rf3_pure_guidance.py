@@ -1,17 +1,18 @@
-"""
-Run pure guidance with real-space density reward on the RF3 model.
-"""
+"""Run pure guidance with real-space density reward on the RF3 model."""
 
-from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
-from sampleworks.utils.guidance_script_arguments import parse_rf3_pure_guidance_args
+from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import get_model_and_device, run_guidance
 
 
-def main(args):
-    device, model_wrapper = get_model_and_device("", args.model_checkpoint, StructurePredictor.RF3)
-    run_guidance(args, GuidanceType.PURE_GUIDANCE, model_wrapper, device)
+def main():
+    config = GuidanceConfig.from_cli(model="rf3", guidance_type="pure_guidance")
+    device, model_wrapper = get_model_and_device(
+        config.device,
+        getattr(config, "model_checkpoint", None),
+        config.model,
+    )
+    run_guidance(config, config.guidance_type, model_wrapper, device)
 
 
 if __name__ == "__main__":
-    guidance_args = parse_rf3_pure_guidance_args()
-    main(guidance_args)
+    main()
