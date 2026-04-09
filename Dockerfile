@@ -113,10 +113,12 @@ RUN df -h /
 # ============================================================================
 # Install all three environments: boltz, protenix, rf3
 # ============================================================================
-# Split into separate layers so changing one env doesn't invalidate the others
-RUN df -h / && pixi install -e boltz --frozen && df -h /
-RUN df -h / && pixi install -e protenix --frozen && df -h /
-RUN df -h / && pixi install -e rf3 --frozen && df -h /
+# Single RUN to avoid layer accumulation — separate RUNs duplicate shared
+# packages across overlay layers, increasing peak disk usage.
+RUN df -h / && \
+    pixi install -e boltz --frozen && df -h / && \
+    pixi install -e protenix --frozen && df -h / && \
+    pixi install -e rf3 --frozen && df -h /
 
 # ============================================================================
 # Pre-compile CUDA extensions to avoid JIT compilation at runtime
