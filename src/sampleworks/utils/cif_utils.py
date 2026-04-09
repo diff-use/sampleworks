@@ -3,10 +3,12 @@ import tempfile
 from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArrayStack
+from biotite.structure.io.pdbx.cif import CIFCategory, CIFFile
 from loguru import logger
 
 from sampleworks.utils.atom_array_utils import (
@@ -235,3 +237,70 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
     save_structure_to_cif(fixed_array, tmp_path)
     logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
     return tmp_path
+
+
+def add_category_to_cif(
+    ciffile: CIFFile,
+    data: dict[str, Any],
+    category_name: str,
+    overwrite: bool = False,
+    block_name: str | None = None,
+) -> None:
+    """Add a custom category to a CIFFile.
+
+    Parameters
+    ----------
+    ciffile : CIFFile
+        The CIF file object to modify.
+    data : dict[str, Any]
+        Dictionary with column names as keys and column data as values.
+    category_name : str
+        Name of the category to add (e.g., "custom_data").
+    overwrite : bool, optional
+        If False and the category already exists, raise RuntimeError. Default is False.
+    block_name : str | None, optional
+        Name of the block to add the category to. If None, check that there is only
+        one block and add to that block. Default is None.
+
+    Raises
+    ------
+    RuntimeError
+        If category already exists and overwrite is False.
+    ValueError
+        If block_name is None but the file has multiple blocks, or if the specified
+        block_name does not exist.
+
+    Examples
+    --------
+    >>> from biotite.structure.io.pdbx.cif import CIFFile
+    >>> ciffile = CIFFile()
+    >>> data = {"id": [1, 2, 3], "value": ["a", "b", "c"]}
+    >>> add_category_to_cif(ciffile, data, "my_custom_data")
+    """
+    # Determine which block to use
+    if block_name is None:
+        blocks = list(ciffile.keys())
+        if len(blocks) == 0:
+            raise ValueError("CIFFile has no blocks. Cannot add category.")
+        elif len(blocks) > 1:
+            raise ValueError(
+                f"CIFFile has multiple blocks: {blocks}. "
+                "Please specify block_name parameter."
+            )
+        block = ciffile[blocks[0]]
+    else:
+        if block_name not in ciffile:
+            raise ValueError(f"Block '{block_name}' not found in CIFFile.")
+        block = ciffile[block_name]
+
+    # Check if category already exists
+    if category_name in block:
+        if not overwrite:
+            raise RuntimeError(
+                f"Category '{category_name}' already exists in block with value: "
+                f"{block[category_name]}"
+            )
+
+    # Create and add the category
+    category = CIFCategory(data)
+    block[category_name] = category

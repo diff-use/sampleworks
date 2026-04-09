@@ -7,8 +7,9 @@ import numpy as np
 import pytest
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import array, Atom, AtomArray, AtomArrayStack
+from biotite.structure.io.pdbx.cif import CIFCategory, CIFFile
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
-from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +211,157 @@ class TestResolveMixedHetatmAtomAltlocs:
             resolve_mixed_hetatm_atom_altlocs(cif_path)
         assert "101" in caplog.text
         assert "CSO" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Tests for add_category_to_cif
+# ---------------------------------------------------------------------------
+
+
+class TestAddCategoryToCif:
+    """Tests for add_category_to_cif function."""
+
+    def test_add_category_to_single_block_ciffile(self, tmp_path):
+        """Add a category to a CIFFile with a single block."""
+        # Create a simple CIF file with structure
+        atoms = [_atom("A", 1, "ALA", False), _atom("A", 2, "VAL", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+
+        # Read it back
+        ciffile = CIFFile.read(str(cif_path))
+
+        # Add a custom category
+        data = {"id": [1, 2, 3], "value": ["a", "b", "c"], "score": [1.0, 2.0, 3.0]}
+        add_category_to_cif(ciffile, data, "custom_data")
+
+        # Verify the category was added
+        block = ciffile[list(ciffile.keys())[0]]
+        assert "custom_data" in block
+        category = block["custom_data"]
+        assert list(category["id"]) == [1, 2, 3]
+        assert list(category["value"]) == ["a", "b", "c"]
+        assert list(category["score"]) == [1.0, 2.0, 3.0]
+
+    def test_add_category_with_explicit_block_name(self, tmp_path):
+        """Add a category to a specific block by name."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        block_name = list(ciffile.keys())[0]
+        data = {"id": [1]}
+        add_category_to_cif(ciffile, data, "custom_data", block_name=block_name)
+
+        assert "custom_data" in ciffile[block_name]
+
+    def test_category_already_exists_raises_error(self, tmp_path):
+        """Adding a category that already exists should raise RuntimeError."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        data = {"id": [1]}
+        add_category_to_cif(ciffile, data, "custom_data")
+
+        # Try to add the same category again
+        with pytest.raises(RuntimeError, match="Category 'custom_data' already exists"):
+            add_category_to_cif(ciffile, data, "custom_data")
+
+    def test_overwrite_existing_category(self, tmp_path):
+        """Overwriting an existing category should succeed when overwrite=True."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        # Add initial category
+        data1 = {"id": [1], "value": ["old"]}
+        add_category_to_cif(ciffile, data1, "custom_data")
+
+        # Overwrite with new data
+        data2 = {"id": [2, 3], "value": ["new1", "new2"]}
+        add_category_to_cif(ciffile, data2, "custom_data", overwrite=True)
+
+        # Verify the category was overwritten
+        block = ciffile[list(ciffile.keys())[0]]
+        category = block["custom_data"]
+        assert list(category["id"]) == [2, 3]
+        assert list(category["value"]) == ["new1", "new2"]
+
+    def test_multiple_blocks_without_block_name_raises_error(self, tmp_path):
+        """If CIFFile has multiple blocks and block_name is None, should raise ValueError."""
+        # Create a CIF file with two blocks manually
+        ciffile = CIFFile()
+        from biotite.structure.io.pdbx.cif import CIFBlock
+
+        ciffile["block1"] = CIFBlock()
+        ciffile["block2"] = CIFBlock()
+
+        data = {"id": [1]}
+        with pytest.raises(ValueError, match="multiple blocks"):
+            add_category_to_cif(ciffile, data, "custom_data")
+
+    def test_nonexistent_block_name_raises_error(self, tmp_path):
+        """Specifying a block_name that doesn't exist should raise ValueError."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        data = {"id": [1]}
+        with pytest.raises(ValueError, match="Block 'nonexistent' not found"):
+            add_category_to_cif(ciffile, data, "custom_data", block_name="nonexistent")
+
+    def test_write_and_read_back_category(self, tmp_path):
+        """Demonstrate that a custom category can be written to disk and read back."""
+        # Create initial CIF
+        atoms = [_atom("A", 1, "ALA", False), _atom("A", 2, "VAL", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+
+        # Read, add category, and write
+        ciffile = CIFFile.read(str(cif_path))
+        data = {
+            "experiment_id": [1, 2, 3],
+            "method": ["xray", "nmr", "em"],
+            "resolution": [2.5, None, 3.2],
+        }
+        add_category_to_cif(ciffile, data, "experiment_metadata")
+
+        output_path = tmp_path / "test_with_metadata.cif"
+        ciffile.write(str(output_path))
+
+        # Read back and verify
+        reloaded = CIFFile.read(str(output_path))
+        block = reloaded[list(reloaded.keys())[0]]
+        assert "experiment_metadata" in block
+
+        category = block["experiment_metadata"]
+        assert list(category["experiment_id"]) == [1, 2, 3]
+        assert list(category["method"]) == ["xray", "nmr", "em"]
+        # Note: None values in CIF become "?" or "."
+        assert category["resolution"][0] == 2.5
+        assert category["resolution"][2] == 3.2
+
+    def test_empty_data_dict(self, tmp_path):
+        """Adding a category with empty data should work."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        data = {}
+        add_category_to_cif(ciffile, data, "empty_category")
+
+        block = ciffile[list(ciffile.keys())[0]]
+        assert "empty_category" in block
+
+    def test_single_item_data(self, tmp_path):
+        """Adding a category with single items (not lists) should work."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        data = {"name": "test_structure", "version": 1.0}
+        add_category_to_cif(ciffile, data, "metadata")
+
+        block = ciffile[list(ciffile.keys())[0]]
+        category = block["metadata"]
+        assert "name" in category
+        assert "version" in category
