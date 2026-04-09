@@ -104,19 +104,25 @@ COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # ============================================================================
-# Bake in model checkpoints from pre-built base image on Docker Hub
-# ============================================================================
-# Checkpoints (~10 GB) rarely change, so this layer is placed before pixi
-# installs to stay cached even when dependencies update.
-COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
-
-# ============================================================================
 # Install all three environments: boltz, protenix, rf3
 # ============================================================================
-# Split into separate layers so changing one env doesn't invalidate the others
-RUN pixi install -e boltz --frozen
-RUN pixi install -e protenix --frozen
-RUN pixi install -e rf3 --frozen
+# Split into separate layers so changing one env doesn't invalidate the others.
+# Pixi installs MUST run before checkpoint COPY — the checkpoint image (~10 GB)
+# consumes too much disk on CI runners when materialized before pixi,
+# causing "No space left on device" during conda package extraction.
+RUN df -h / && pixi install -e boltz --frozen && df -h /
+RUN df -h / && pixi install -e protenix --frozen && df -h /
+RUN df -h / && pixi install -e rf3 --frozen && df -h /
+
+# ============================================================================
+# Bake in model checkpoints from pre-built base image on Docker Hub
+# ============================================================================
+# Placed after pixi installs to reduce peak disk usage during CI builds.
+# The checkpoint layer is pulled in parallel by BuildKit regardless of order,
+# but COPY materializes it into the build graph — doing this last avoids
+# competing for disk with conda package extraction.
+RUN df -h /
+COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
 
 # ============================================================================
 # Pre-compile CUDA extensions to avoid JIT compilation at runtime
