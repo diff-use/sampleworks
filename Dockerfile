@@ -104,11 +104,19 @@ COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # ============================================================================
+# Bake in model checkpoints from pre-built base image on Docker Hub
+# ============================================================================
+# Checkpoints (~10 GB) rarely change, so this layer is placed before pixi
+# installs to stay cached even when dependencies update.
+COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
+
+# ============================================================================
 # Install all three environments: boltz, protenix, rf3
 # ============================================================================
-RUN pixi install -e boltz --frozen && \
-    pixi install -e protenix --frozen && \
-    pixi install -e rf3 --frozen
+# Split into separate layers so changing one env doesn't invalidate the others
+RUN pixi install -e boltz --frozen
+RUN pixi install -e protenix --frozen
+RUN pixi install -e rf3 --frozen
 
 # ============================================================================
 # Pre-compile CUDA extensions to avoid JIT compilation at runtime
@@ -117,17 +125,6 @@ RUN pixi install -e boltz --frozen && \
 RUN pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
-
-# ============================================================================
-# Bake in model checkpoints from pre-built base image on Docker Hub
-# ============================================================================
-# All checkpoints (Boltz1, Boltz2, CCD, mols, RF3, Protenix) are pre-built
-# into diffuseproject/sampleworks-checkpoints:latest on Docker Hub.
-# This avoids downloading ~6GB from HuggingFace during build and removes the
-# need to have RF3/Protenix checkpoints in the build context.
-# Rebuild with: docker build -t diffuseproject/sampleworks-checkpoints:latest
-#               docker push diffuseproject/sampleworks-checkpoints:latest
-COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \
