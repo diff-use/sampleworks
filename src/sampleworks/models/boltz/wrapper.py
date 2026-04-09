@@ -331,7 +331,7 @@ def process_structure_for_boltz(
     out_dir: str | Path | None = None,
     num_workers: int = 8,
     ensemble_size: int = 1,
-    recycling_steps: int = 3,
+    recycling_steps: int | None = 3,
 ) -> dict:
     """Annotate an Atomworks structure with Boltz-specific configuration.
 
@@ -346,14 +346,20 @@ def process_structure_for_boltz(
         Number of parallel workers for preprocessing.
     ensemble_size : int
         Number of samples to generate (batch dimension of x_init).
-    recycling_steps : int
+    recycling_steps : int | None
         Number of recycling steps to perform during featurization Pairformer pass.
+        Will set to 3 if None.
 
     Returns
     -------
     dict
         Structure dict with "_boltz_config" key added.
     """
+    # Other models define a default deeper in their code,
+    # but Boltz requires an integer value, so fix it here.
+    if recycling_steps is None:
+        recycling_steps = 3
+
     config = BoltzConfig(
         out_dir=out_dir or structure.get("metadata", {}).get("id", "boltz_output"),
         num_workers=num_workers,
@@ -441,7 +447,7 @@ def create_boltz_input_from_structure(
             sequence_to_chains.setdefault(seq, []).append(chain_id)
 
         unique_chain_sequences = {chains[0]: seq for seq, chains in sequence_to_chains.items()}
-        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)
+        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)  # ty: ignore[invalid-argument-type]
 
         msa_paths = {}
         for seq, chains_with_seq in sequence_to_chains.items():
@@ -603,7 +609,7 @@ class Boltz2Wrapper:
 
         processed_dir = out_dir / "processed"
         processed = BoltzProcessedInput(
-            manifest=Manifest.load(processed_dir / "manifest.json"),  # type: ignore (Boltz repo doesn't have the right type hints?)
+            manifest=Manifest.load(processed_dir / "manifest.json"),
             targets_dir=processed_dir / "structures",
             msa_dir=processed_dir / "msa",
             constraints_dir=(processed_dir / "constraints")
@@ -783,27 +789,25 @@ class Boltz2Wrapper:
 
             if self.model.use_templates:
                 if self.model.is_template_compiled:
-                    template_module = (
-                        self.model.template_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
-                    )
+                    template_module = self.model.template_module._orig_mod
                 else:
                     template_module = self.model.template_module
 
-                z = z + template_module(z, features, pair_mask, use_kernels=self.model.use_kernels)  # type: ignore (Object will be callable here)
+                z = z + template_module(z, features, pair_mask, use_kernels=self.model.use_kernels)
 
             if self.model.is_msa_compiled:
-                msa_module = self.model.msa_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                msa_module = self.model.msa_module._orig_mod
             else:
                 msa_module = self.model.msa_module
 
-            z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)  # type: ignore (Object will be callable here)
+            z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)
 
             if self.model.is_pairformer_compiled:
-                pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                pairformer_module = self.model.pairformer_module._orig_mod
             else:
                 pairformer_module = self.model.pairformer_module
 
-            s, z = pairformer_module(s, z, mask=mask, pair_mask=pair_mask)  # type: ignore (Object will be callable here)
+            s, z = pairformer_module(s, z, mask=mask, pair_mask=pair_mask)
 
         q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
             self.model.diffusion_conditioning(
@@ -1068,7 +1072,7 @@ class Boltz1Wrapper:
 
         processed_dir = out_dir / "processed"
         processed = BoltzProcessedInput(
-            manifest=Manifest.load(processed_dir / "manifest.json"),  # type: ignore (Boltz repo doesn't have the right type hints?)
+            manifest=Manifest.load(processed_dir / "manifest.json"),
             targets_dir=processed_dir / "structures",
             msa_dir=processed_dir / "msa",
             constraints_dir=(processed_dir / "constraints")
@@ -1357,7 +1361,7 @@ class Boltz1Wrapper:
                 )
 
             if self.model.is_pairformer_compiled:
-                pairformer_module = self.model.pairformer_module._orig_mod  # type: ignore (compiled torch module has this attribute, type checker doesn't know)
+                pairformer_module = self.model.pairformer_module._orig_mod
             else:
                 pairformer_module = self.model.pairformer_module
 
@@ -1367,7 +1371,7 @@ class Boltz1Wrapper:
                 mask=mask,
                 pair_mask=pair_mask,
                 use_kernels=self.model.use_kernels,
-            )  # type: ignore (Object will be callable here)
+            )
 
         return {
             "s": s,

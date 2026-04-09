@@ -450,7 +450,15 @@ def parse_args() -> argparse.Namespace:
         "--recycling-steps",
         type=int,
         default=None,
-        help="Number of recycling steps for model inference (if not specified, uses model default)",
+        help="Number of recycling steps for model inference. If not specified, "
+        "uses model default, which can be found in each model's wrapper.py file",
+    )
+    parser.add_argument(
+        "--num-diffusion-steps",
+        type=int,
+        default=200,
+        help="Number of diffusion steps for model inference. If not specified, "
+        "uses model default, which can be found in each model's wrapper.py file",
     )
 
     # Trajectory scaling arguments
@@ -459,9 +467,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ensemble-sizes", default="1 2 4 8", help="Space-separated ensemble sizes"
-    )
-    parser.add_argument(
-        "--num-diffusion-steps", type=int, default=200, help="Number of diffusion steps"
     )
     parser.add_argument(
         "--gradient-weights",

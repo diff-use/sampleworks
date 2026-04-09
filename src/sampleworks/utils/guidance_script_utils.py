@@ -27,7 +27,6 @@ from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
-    NoScalingScaler,
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
@@ -232,7 +231,7 @@ def get_reward_function_and_structure(
     logger.debug(f"Loading structure from {structure_path}")
     safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
     structure = parse(
-        Path(safe_structure_path),
+        safe_structure_path,
         hydrogen_policy="remove",
         add_missing_atoms=False,
         ccd_mirror_path=None,
@@ -428,14 +427,22 @@ def _run_guidance(
     is_boltz = "Boltz" in wrapper_class_name
 
     # Annotate structure with model-specific configuration (including recycling_steps)
+    # See https://github.com/diff-use/sampleworks/issues/192 for a plan to organize this better.
     recycling_steps = getattr(args, "recycling_steps", None)
+    if recycling_steps is not None and recycling_steps <= 0:
+        raise ValueError("recycling_steps must be > 0")
+    if args.num_diffusion_steps is not None and args.num_diffusion_steps <= 0:
+        raise ValueError("num_diffusion_steps must be > 0")
+
     if "Protenix" in wrapper_class_name:
         from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
+
         structure = annotate_structure_for_protenix(
             structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
         )
     elif "RF3" in wrapper_class_name:
         from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
+
         structure = annotate_structure_for_rf3(
             structure,
             ensemble_size=args.ensemble_size,
@@ -446,6 +453,7 @@ def _run_guidance(
         )
     elif "Boltz" in wrapper_class_name:
         from sampleworks.models.boltz.wrapper import process_structure_for_boltz
+
         structure = process_structure_for_boltz(
             structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
         )
