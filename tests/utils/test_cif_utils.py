@@ -1,13 +1,14 @@
 """Tests for cif_utils module."""
 
 import logging
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import array, Atom, AtomArray, AtomArrayStack
-from biotite.structure.io.pdbx.cif import CIFCategory, CIFFile
+from biotite.structure.io.pdbx.cif import CIFFile, CIFColumn
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
 from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 
@@ -238,9 +239,9 @@ class TestAddCategoryToCif:
         block = ciffile[list(ciffile.keys())[0]]
         assert "custom_data" in block
         category = block["custom_data"]
-        assert list(category["id"]) == [1, 2, 3]
-        assert list(category["value"]) == ["a", "b", "c"]
-        assert list(category["score"]) == [1.0, 2.0, 3.0]
+        assert category["id"] == CIFColumn([1, 2, 3])
+        assert category["value"] == CIFColumn(["a", "b", "c"])
+        assert category["score"] == CIFColumn([1.0, 2.0, 3.0])
 
     def test_add_category_with_explicit_block_name(self, tmp_path):
         """Add a category to a specific block by name."""
@@ -284,8 +285,8 @@ class TestAddCategoryToCif:
         # Verify the category was overwritten
         block = ciffile[list(ciffile.keys())[0]]
         category = block["custom_data"]
-        assert list(category["id"]) == [2, 3]
-        assert list(category["value"]) == ["new1", "new2"]
+        assert category["id"] == CIFColumn([2, 3])
+        assert category["value"] == CIFColumn(["new1", "new2"])
 
     def test_multiple_blocks_without_block_name_raises_error(self, tmp_path):
         """If CIFFile has multiple blocks and block_name is None, should raise ValueError."""
@@ -321,7 +322,7 @@ class TestAddCategoryToCif:
         data = {
             "experiment_id": [1, 2, 3],
             "method": ["xray", "nmr", "em"],
-            "resolution": [2.5, None, 3.2],
+            "resolution": [2.5, 1.8, 3.2],
         }
         add_category_to_cif(ciffile, data, "experiment_metadata")
 
@@ -334,11 +335,9 @@ class TestAddCategoryToCif:
         assert "experiment_metadata" in block
 
         category = block["experiment_metadata"]
-        assert list(category["experiment_id"]) == [1, 2, 3]
-        assert list(category["method"]) == ["xray", "nmr", "em"]
-        # Note: None values in CIF become "?" or "."
-        assert category["resolution"][0] == 2.5
-        assert category["resolution"][2] == 3.2
+        assert category["experiment_id"] == CIFColumn([1, 2, 3])
+        assert category["method"] == CIFColumn(["xray", "nmr", "em"])
+        assert category["resolution"] == CIFColumn([2.5, 1.8, 3.2])
 
     def test_empty_data_dict(self, tmp_path):
         """Adding a category with empty data should work."""

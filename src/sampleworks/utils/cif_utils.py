@@ -246,7 +246,7 @@ def add_category_to_cif(
     overwrite: bool = False,
     block_name: str | None = None,
 ) -> None:
-    """Add a custom category to a CIFFile.
+    """Add a custom category in-place to a CIFFile.
 
     Parameters
     ----------
@@ -276,9 +276,22 @@ def add_category_to_cif(
     >>> ciffile = CIFFile()
     >>> data = {"id": [1, 2, 3], "value": ["a", "b", "c"]}
     >>> add_category_to_cif(ciffile, data, "my_custom_data")
+    >>> print(ciffile.block["my_custom_data"].serialize())
+    loop_
+    _my_custom_data.id
+    _my_custom_data.value
+    1 a
+    2 b
+    3 c
+    >>> data = {"sampleworks_version": "0.4.0", "pdb_id": "1L63"}
+    >>> add_category_to_cif(ciffile, data, "sampleworks_metadata")
+    >>> print(ciffile.block["sampleworks_metadata"].serialize())
+    _sampleworks_metadata.sampleworks_version 0.4.0
+    _sampleworks_metadata.pdb_id              1L63
     """
     # Determine which block to use
     if block_name is None:
+        # CIFFile is a Mapping, so inherits .keys(), which ultimately iterates over blocks
         blocks = list(ciffile.keys())
         if len(blocks) == 0:
             raise ValueError("CIFFile has no blocks. Cannot add category.")
@@ -293,14 +306,14 @@ def add_category_to_cif(
             raise ValueError(f"Block '{block_name}' not found in CIFFile.")
         block = ciffile[block_name]
 
-    # Check if category already exists
-    if category_name in block:
-        if not overwrite:
-            raise RuntimeError(
-                f"Category '{category_name}' already exists in block with value: "
-                f"{block[category_name]}"
-            )
+    # Check if a category with name category_name already exists
+    if category_name in block and not overwrite:
+        raise RuntimeError(
+            f"Category '{category_name}' already exists in block with value: {block[category_name]}"
+        )
 
-    # Create and add the category
-    category = CIFCategory(data)
+    # Create and add the category--remove any None values, CIF requires non-null values
+    category = CIFCategory(
+        columns={k: v if v is not None else "none" for k, v in data.items()}, name=category_name
+    )
     block[category_name] = category
