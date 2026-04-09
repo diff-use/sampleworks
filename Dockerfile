@@ -113,10 +113,13 @@ COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpo
 # ============================================================================
 # Install all three environments: boltz, protenix, rf3
 # ============================================================================
-# Split into separate layers so changing one env doesn't invalidate the others
-RUN pixi install -e boltz --frozen
-RUN pixi install -e protenix --frozen
-RUN pixi install -e rf3 --frozen
+# IMPORTANT: Must be a single RUN — separate RUNs create overlay layers that
+# duplicate shared conda packages (numpy, CUDA libs, etc.), using ~37 GB vs
+# ~14 GB in a single layer. This difference causes disk-full failures on
+# smaller CI runners (ubuntu-latest can be 72 GB or 145 GB).
+RUN pixi install -e boltz --frozen && \
+    pixi install -e protenix --frozen && \
+    pixi install -e rf3 --frozen
 
 # ============================================================================
 # Pre-compile CUDA extensions to avoid JIT compilation at runtime
