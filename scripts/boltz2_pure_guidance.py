@@ -1,5 +1,7 @@
 """Run pure guidance with real-space density reward on the Boltz2 model."""
 
+import sys
+
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import get_model_and_device, run_guidance
 
@@ -12,8 +14,9 @@ def main():
         config.model,
         method=getattr(config, "method", None),
     )
-    run_guidance(config, config.guidance_type, model_wrapper, device)
+    result = run_guidance(config, config.guidance_type, model_wrapper, device)
+    return result.exit_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

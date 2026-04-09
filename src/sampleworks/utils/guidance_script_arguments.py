@@ -128,13 +128,21 @@ _GUIDANCE_ARG_ADDERS: dict[str, Any] = {
 # from a parsed argparse.Namespace onto a GuidanceConfig instance.
 _DYNAMIC_ATTRS = [
     # pure guidance
-    "step_size", "step_scaler_type",
+    "step_size",
+    "step_scaler_type",
     # fk steering
-    "num_particles", "fk_resampling_interval", "fk_lambda",
-    "num_gd_steps", "guidance_weight", "guidance_interval",
+    "num_particles",
+    "fk_resampling_interval",
+    "fk_lambda",
+    "num_gd_steps",
+    "guidance_weight",
+    "guidance_interval",
     # model-specific
-    "model_checkpoint", "method", "msa_path",
-    "disable_chiral_features", "track_chiral_features",
+    "model_checkpoint",
+    "method",
+    "msa_path",
+    "disable_chiral_features",
+    "track_chiral_features",
     # generic (overridable)
     "ensemble_size",
 ]
@@ -188,19 +196,27 @@ class GuidanceConfig:
         """
         model_choices = [m.value for m in StructurePredictor]
         guidance_choices = [g.value for g in GuidanceType]
+        model_preset = model is not None
+        guidance_preset = guidance_type is not None
 
         # -- first pass: resolve model & guidance_type if not pre-set --------
-        if model is None or guidance_type is None:
+        if not model_preset or not guidance_preset:
             pre = argparse.ArgumentParser(add_help=False)
-            if model is None:
+            if not model_preset:
                 pre.add_argument(
-                    "--model", type=str, required=True, choices=model_choices,
+                    "--model",
+                    type=str,
+                    required=True,
+                    choices=model_choices,
                     help="Structure prediction model",
                 )
-            if guidance_type is None:
+            if not guidance_preset:
                 pre.add_argument(
-                    "--guidance-type", type=str, required=True,
-                    choices=guidance_choices, help="Guidance method",
+                    "--guidance-type",
+                    type=str,
+                    required=True,
+                    choices=guidance_choices,
+                    help="Guidance method",
                 )
             pre_args, _ = pre.parse_known_args(argv)
             model = model or pre_args.model
@@ -210,18 +226,26 @@ class GuidanceConfig:
         parser = argparse.ArgumentParser(
             description=f"Run {guidance_type} guidance with {model}",
         )
-        if model is not None:
+        if not model_preset:
             parser.add_argument(
-                "--model", type=str, default=model, choices=model_choices,
+                "--model",
+                type=str,
+                default=model,
+                choices=model_choices,
                 help="Structure prediction model",
             )
-        if guidance_type is not None:
+        if not guidance_preset:
             parser.add_argument(
-                "--guidance-type", type=str, default=guidance_type,
-                choices=guidance_choices, help="Guidance method",
+                "--guidance-type",
+                type=str,
+                default=guidance_type,
+                choices=guidance_choices,
+                help="Guidance method",
             )
         parser.add_argument(
-            "--protein", type=str, required=True,
+            "--protein",
+            type=str,
+            required=True,
             help="Protein identifier (must match naming used in grid search / evaluation)",
         )
         add_generic_args(parser)

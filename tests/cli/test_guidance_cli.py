@@ -7,11 +7,16 @@ from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 
 
 COMMON_ARGS = [
-    "--protein", "1VME",
-    "--structure", "test.cif",
-    "--density", "test.ccp4",
-    "--resolution", "1.8",
-    "--output-dir", "output",
+    "--protein",
+    "1VME",
+    "--structure",
+    "test.cif",
+    "--density",
+    "test.ccp4",
+    "--resolution",
+    "1.8",
+    "--output-dir",
+    "output",
 ]
 
 
@@ -38,25 +43,38 @@ class TestFromCliUnified:
 
     def test_model_specific_args_boltz2_method(self):
         argv = [
-            "--model", "boltz2", "--guidance-type", "pure_guidance",
-            "--method", "MD",
+            "--model",
+            "boltz2",
+            "--guidance-type",
+            "pure_guidance",
+            "--method",
+            "MD",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
         assert config.method == "MD"
 
     def test_model_specific_args_rf3_msa(self):
         argv = [
-            "--model", "rf3", "--guidance-type", "pure_guidance",
-            "--msa-path", "/data/msa.a3m",
+            "--model",
+            "rf3",
+            "--guidance-type",
+            "pure_guidance",
+            "--msa-path",
+            "/data/msa.a3m",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
         assert config.msa_path == "/data/msa.a3m"
 
     def test_guidance_specific_args_fk(self):
         argv = [
-            "--model", "boltz1", "--guidance-type", "fk_steering",
-            "--num-particles", "5",
-            "--fk-lambda", "2.0",
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "fk_steering",
+            "--num-particles",
+            "5",
+            "--fk-lambda",
+            "2.0",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
         assert config.num_particles == 5
@@ -64,9 +82,14 @@ class TestFromCliUnified:
 
     def test_guidance_specific_args_pure(self):
         argv = [
-            "--model", "boltz1", "--guidance-type", "pure_guidance",
-            "--step-size", "0.5",
-            "--step-scaler-type", "dataspace",
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--step-size",
+            "0.5",
+            "--step-scaler-type",
+            "dataspace",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
         assert config.step_size == 0.5
@@ -100,7 +123,9 @@ class TestFromCliLegacyScripts:
     @pytest.mark.parametrize("guidance_type", ["pure_guidance", "fk_steering"])
     def test_all_model_guidance_combos(self, model, guidance_type):
         config = GuidanceConfig.from_cli(
-            COMMON_ARGS, model=model, guidance_type=guidance_type,
+            COMMON_ARGS,
+            model=model,
+            guidance_type=guidance_type,
         )
         assert config.model == model
         assert config.guidance_type == guidance_type
@@ -111,10 +136,16 @@ class TestFromCliValidation:
 
     def test_missing_protein_errors(self):
         argv = [
-            "--model", "boltz2", "--guidance-type", "pure_guidance",
-            "--structure", "test.cif",
-            "--density", "test.ccp4",
-            "--resolution", "1.8",
+            "--model",
+            "boltz2",
+            "--guidance-type",
+            "pure_guidance",
+            "--structure",
+            "test.cif",
+            "--density",
+            "test.ccp4",
+            "--resolution",
+            "1.8",
         ]
         with pytest.raises(SystemExit):
             GuidanceConfig.from_cli(argv)
@@ -131,10 +162,16 @@ class TestFromCliValidation:
 
     def test_missing_required_structure_errors(self):
         argv = [
-            "--model", "boltz2", "--guidance-type", "pure_guidance",
-            "--protein", "1VME",
-            "--density", "test.ccp4",
-            "--resolution", "1.8",
+            "--model",
+            "boltz2",
+            "--guidance-type",
+            "pure_guidance",
+            "--protein",
+            "1VME",
+            "--density",
+            "test.ccp4",
+            "--resolution",
+            "1.8",
         ]
         with pytest.raises(SystemExit):
             GuidanceConfig.from_cli(argv)
@@ -156,8 +193,14 @@ class TestFromCliDefaults:
 
     def test_boolean_flags(self):
         argv = [
-            "--model", "boltz1", "--guidance-type", "pure_guidance",
-            "--augmentation", "--align-to-input", "--gradient-normalization", "--em",
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--augmentation",
+            "--align-to-input",
+            "--gradient-normalization",
+            "--em",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
         assert config.augmentation is True
