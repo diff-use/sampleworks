@@ -10,6 +10,8 @@ on:
     branches: [main]
     tags:
       - 'v*.*.*'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -38,6 +40,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -64,7 +68,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
