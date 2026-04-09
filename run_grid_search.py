@@ -113,6 +113,8 @@ def build_args_for_process_pool(
         gradient_normalization=args.gradient_normalization,
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
+        recycling_steps=args.recycling_steps,
+        num_diffusion_steps=args.num_diffusion_steps,
     )
     # given model_type and guidance_type, the GuidanceConfig class will set itself up
     # with defaults for remaining required args, but we want to set them further here.
@@ -443,6 +445,20 @@ def parse_args() -> argparse.Namespace:
         default="X-RAY DIFFRACTION",
         choices=["X-RAY DIFFRACTION", "MD"],
         help="Method for Boltz2 ('X-RAY DIFFRACTION', 'MD')",
+    )
+    parser.add_argument(
+        "--recycling-steps",
+        type=int,
+        default=None,
+        help="Number of recycling steps for model inference. If not specified, "
+        "uses model default, which can be found in each model's wrapper.py file",
+    )
+    parser.add_argument(
+        "--num-diffusion-steps",
+        type=int,
+        default=200,
+        help="Number of diffusion steps for model inference. If not specified, "
+        "uses model default, which can be found in each model's wrapper.py file",
     )
 
     # Trajectory scaling arguments

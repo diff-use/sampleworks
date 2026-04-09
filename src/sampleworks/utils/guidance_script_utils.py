@@ -426,17 +426,39 @@ def _run_guidance(
     wrapper_class_name = model_wrapper.__class__.__name__
     is_boltz = "Boltz" in wrapper_class_name
 
-    # Annotate structure with RF3 specific config if applicable
-    if wrapper_class_name == "RF3Wrapper":
+    # Annotate structure with model-specific configuration (including recycling_steps)
+    # See https://github.com/diff-use/sampleworks/issues/192 for a plan to organize this better.
+    recycling_steps = getattr(args, "recycling_steps", None)
+    if recycling_steps is not None and recycling_steps <= 0:
+        raise ValueError("recycling_steps must be > 0")
+    if args.num_diffusion_steps is not None and args.num_diffusion_steps <= 0:
+        raise ValueError("num_diffusion_steps must be > 0")
+
+    if "Protenix" in wrapper_class_name:
+        from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
+
+        structure = annotate_structure_for_protenix(
+            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+        )
+    elif "RF3" in wrapper_class_name:
         from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
 
         structure = annotate_structure_for_rf3(
             structure,
-            msa_path=getattr(args, "msa_path", None),
             ensemble_size=args.ensemble_size,
+            recycling_steps=recycling_steps,
+            msa_path=getattr(args, "msa_path", None),
             disable_chiral_features=getattr(args, "disable_chiral_features", False),
             track_chiral_features=getattr(args, "track_chiral_features", False),
         )
+    elif "Boltz" in wrapper_class_name:
+        from sampleworks.models.boltz.wrapper import process_structure_for_boltz
+
+        structure = process_structure_for_boltz(
+            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+        )
+    else:
+        raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
     # Boltz was trained with this, others might not have been.
     use_alignment_for_reverse_diffusion = is_boltz
@@ -474,8 +496,7 @@ def _run_guidance(
     else:
         raise ValueError(f"Invalid step_scaler_type: {step_scaler_type}")
 
-    # TODO: this should be a config option
-    num_steps = 200
+    num_steps = args.num_diffusion_steps
 
     if guidance_type == GuidanceType.PURE_GUIDANCE:
         logger.info("Initializing pure guidance")

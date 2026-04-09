@@ -687,9 +687,9 @@ class ProtenixWrapper:
             s_inputs=s_inputs,
             s_trunk=s_trunk,
             z_trunk=z_trunk,
-            pair_z=pair_z,  # ty: ignore[invalid-argument-type]
-            p_lm=p_lm,  # ty: ignore[invalid-argument-type]
-            c_l=c_l,  # ty: ignore[invalid-argument-type]
+            pair_z=pair_z,
+            p_lm=p_lm,
+            c_l=c_l,
         )
 
         # TODO: is there a way to handle this more cleanly?
