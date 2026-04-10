@@ -257,3 +257,249 @@ class TestCrossModelArgRejection:
         argv = ["--guidance-type", "fk_steering"] + COMMON_ARGS
         with pytest.raises(SystemExit):
             GuidanceConfig.from_cli(argv, model="boltz1", guidance_type="pure_guidance")
+
+    def test_fk_args_rejected_for_pure_guidance(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--num-particles",
+            "5",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_pure_args_rejected_for_fk_steering(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "fk_steering",
+            "--step-scaler-type",
+            "dataspace",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_msa_path_rejected_for_boltz2(self):
+        argv = [
+            "--model",
+            "boltz2",
+            "--guidance-type",
+            "pure_guidance",
+            "--msa-path",
+            "/data/msa.a3m",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_chiral_flags_rejected_for_boltz1(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--disable-chiral-features",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+
+class TestPresetMatchingAccepted:
+    """Matching preset values should not trigger false-positive rejection."""
+
+    def test_matching_model_accepted(self):
+        argv = ["--model", "boltz1"] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv, model="boltz1", guidance_type="fk_steering")
+        assert config.model == "boltz1"
+
+    def test_matching_guidance_type_accepted(self):
+        argv = ["--guidance-type", "pure_guidance"] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv, model="boltz2", guidance_type="pure_guidance")
+        assert config.guidance_type == "pure_guidance"
+
+
+class TestArgPassthrough:
+    """Test that non-default argument values propagate to GuidanceConfig."""
+
+    def test_model_checkpoint(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--model-checkpoint",
+            "/custom/path.ckpt",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.model_checkpoint == "/custom/path.ckpt"
+
+    def test_device(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--device",
+            "cpu",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.device == "cpu"
+
+    def test_output_dir_override(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--output-dir",
+            "/custom/output",
+            "--protein",
+            "1VME",
+            "--structure",
+            "test.cif",
+            "--density",
+            "test.ccp4",
+            "--resolution",
+            "1.8",
+        ]
+        config = GuidanceConfig.from_cli(argv)
+        assert config.output_dir == "/custom/output"
+
+    def test_partial_diffusion_step(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--partial-diffusion-step",
+            "50",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.partial_diffusion_step == 50
+
+    def test_log_path(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--log-path",
+            "/tmp/run.log",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.log_path == "/tmp/run.log"
+
+    def test_ensemble_size(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "fk_steering",
+            "--ensemble-size",
+            "8",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.ensemble_size == 8
+
+    def test_rf3_chiral_features(self):
+        argv = [
+            "--model",
+            "rf3",
+            "--guidance-type",
+            "pure_guidance",
+            "--disable-chiral-features",
+            "--track-chiral-features",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.disable_chiral_features is True
+        assert config.track_chiral_features is True
+
+    def test_loss_order(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--loss-order",
+            "1",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.loss_order == 1
+
+    def test_guidance_start(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--guidance-start",
+            "10",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.guidance_start == 10
+
+
+class TestValidationEdgeCases:
+    """Additional validation edge cases."""
+
+    def test_no_args_at_all(self):
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli([])
+
+    def test_missing_resolution(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--protein",
+            "1VME",
+            "--structure",
+            "test.cif",
+            "--density",
+            "test.ccp4",
+        ]
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_missing_density(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--protein",
+            "1VME",
+            "--structure",
+            "test.cif",
+            "--resolution",
+            "1.8",
+        ]
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_invalid_loss_order(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--loss-order",
+            "3",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_invalid_step_scaler_type(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--step-scaler-type",
+            "invalid",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
