@@ -1,14 +1,13 @@
 """Tests for cif_utils module."""
 
 import logging
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import array, Atom, AtomArray, AtomArrayStack
-from biotite.structure.io.pdbx.cif import CIFFile, CIFColumn
+from biotite.structure.io.pdbx.cif import CIFColumn, CIFFile
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
 from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 

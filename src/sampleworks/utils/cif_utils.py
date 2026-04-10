@@ -297,8 +297,7 @@ def add_category_to_cif(
             raise ValueError("CIFFile has no blocks. Cannot add category.")
         elif len(blocks) > 1:
             raise ValueError(
-                f"CIFFile has multiple blocks: {blocks}. "
-                "Please specify block_name parameter."
+                f"CIFFile has multiple blocks: {blocks}. Please specify block_name parameter."
             )
         block = ciffile[blocks[0]]
     else:
