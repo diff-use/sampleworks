@@ -187,6 +187,11 @@ class GuidanceConfig:
         model_preset = model is not None
         guidance_preset = guidance_type is not None
 
+        if model_preset and model not in model_choices:
+            raise ValueError(f"Unknown model type: {model}")
+        if guidance_preset and guidance_type not in guidance_choices:
+            raise ValueError(f"Unknown guidance type: {guidance_type}")
+
         # -- first pass: resolve model & guidance_type if not pre-set --------
         if not model_preset or not guidance_preset:
             pre = argparse.ArgumentParser(add_help=False)

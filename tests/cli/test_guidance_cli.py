@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 
@@ -503,3 +506,33 @@ class TestValidationEdgeCases:
         ] + COMMON_ARGS
         with pytest.raises(SystemExit):
             GuidanceConfig.from_cli(argv)
+
+
+class TestEntrypointSmoke:
+    """Smoke test the actual CLI entrypoint."""
+
+    def test_help_exits_zero(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "sampleworks.cli.guidance",
+                "--model",
+                "boltz1",
+                "--guidance-type",
+                "pure_guidance",
+                "--help",
+            ],
+            capture_output=True,
+        )
+        assert result.returncode == 0
+        assert b"--protein" in result.stdout
+        assert b"--structure" in result.stdout
+
+    def test_invalid_preset_model_raises(self):
+        with pytest.raises(ValueError, match="Unknown model type"):
+            GuidanceConfig.from_cli(COMMON_ARGS, model="typo", guidance_type="fk_steering")
+
+    def test_invalid_preset_guidance_type_raises(self):
+        with pytest.raises(ValueError, match="Unknown guidance type"):
+            GuidanceConfig.from_cli(COMMON_ARGS, model="boltz1", guidance_type="typo")
