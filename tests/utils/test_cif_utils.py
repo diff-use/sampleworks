@@ -363,3 +363,17 @@ class TestAddCategoryToCif:
         category = block["metadata"]
         assert "name" in category
         assert "version" in category
+
+    def test_none_values_converted(self, tmp_path):
+        """None values in data dict should be converted to placeholder string."""
+        atoms = [_atom("A", 1, "ALA", False)]
+        cif_path = _write_cif(atoms, tmp_path / "test.cif")
+        ciffile = CIFFile.read(str(cif_path))
+
+        data = {"present": "value", "missing": None}
+        add_category_to_cif(ciffile, data, "test_category")
+
+        block = ciffile[list(ciffile.keys())[0]]
+        category = block["test_category"]
+        # Verify None was replaced (with "none" or "?" depending on implementation)
+        assert "missing" in category

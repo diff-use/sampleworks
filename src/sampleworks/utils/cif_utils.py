@@ -313,6 +313,6 @@ def add_category_to_cif(
 
     # Create and add the category--remove any None values, CIF requires non-null values
     category = CIFCategory(
-        columns={k: v if v is not None else "none" for k, v in data.items()}, name=category_name
+        columns={k: v if v is not None else "?" for k, v in data.items()}, name=category_name
     )
     block[category_name] = category

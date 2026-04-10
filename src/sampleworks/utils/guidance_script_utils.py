@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import pickle
@@ -265,7 +264,7 @@ def get_reward_function_and_structure(
 
 
 def save_everything(
-    args: GuidanceConfig | argparse.Namespace,
+    args: GuidanceConfig,
     losses: list[Any],
     refined_structure: dict,
     traj_denoised: list[Any],
@@ -283,7 +282,7 @@ def save_everything(
 
     Parameters
     ----------
-    args : GuidanceConfig | argparse.Namespace
+    args : GuidanceConfig
         The arguments for the guidance run. This method directly uses args.output_dir,
         and creates that directory if it does not exist. The result of args.as_dict() is
         written to a JSON file in the same directory, and inserted into the output CIF file.
@@ -376,13 +375,13 @@ def save_everything(
 #####################
 # These args are passed from run_grid_search.py via GuidanceConfig.
 def run_guidance(
-    args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
+    args: GuidanceConfig, guidance_type: str, model_wrapper, device
 ) -> JobResult:
     """Wrapper around ``_run_guidance`` to redirect logs and generate a JobResult.
 
     Parameters
     ----------
-    args : GuidanceConfig | argparse.Namespace
+    args : GuidanceConfig
         Configuration for the guidance run.
     guidance_type : str
         Type of guidance/scaler to apply.
@@ -423,7 +422,7 @@ def run_guidance(
 
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(
-    args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
+    args: GuidanceConfig, guidance_type: str, model_wrapper, device
 ):
     reward_function, structure = get_reward_function_and_structure(
         args.density,  # str/path to a map file.
@@ -599,7 +598,7 @@ def epoch_seconds(time_to_convert: datetime) -> float:
 
 
 def get_job_result(
-    args: GuidanceConfig | argparse.Namespace,
+    args: GuidanceConfig,
     device: torch.device,
     started_at: datetime,
     ended_at: datetime,
