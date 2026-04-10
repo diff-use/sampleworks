@@ -100,7 +100,6 @@ Output files appear in `output/boltz2_pure_guidance/`: `refined.cif` (final ense
 
 Model-specific arguments (e.g. `--method` for boltz2, `--msa-path` for rf3) and guidance-type-specific arguments (e.g. `--num-particles` for fk_steering) are included automatically. Run `sampleworks-guidance --model <model> --guidance-type <type> --help` to see all available options.
 
-The individual scripts in `scripts/` (e.g. `boltz2_pure_guidance.py`) still work as shortcuts with `--model` and `--guidance-type` pre-set.
 
 
 ## Grid Search
