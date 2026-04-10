@@ -112,18 +112,6 @@ def validate_model_checkpoint(
     return str(checkpoint_path)
 
 
-_MODEL_ARG_ADDERS: dict[str, Any] = {
-    "boltz1": lambda p: add_boltz1_specific_args(p),
-    "boltz2": lambda p: add_boltz2_specific_args(p),
-    "protenix": lambda p: add_protenix_specific_args(p),
-    "rf3": lambda p: add_rf3_specific_args(p),
-}
-
-_GUIDANCE_ARG_ADDERS: dict[str, Any] = {
-    "pure_guidance": lambda p: add_pure_guidance_args(p),
-    "fk_steering": lambda p: add_fk_steering_args(p),
-}
-
 # Attributes set dynamically by add_*_args helpers that should be copied
 # from a parsed argparse.Namespace onto a GuidanceConfig instance.
 _DYNAMIC_ATTRS = [
@@ -226,22 +214,20 @@ class GuidanceConfig:
         parser = argparse.ArgumentParser(
             description=f"Run {guidance_type} guidance with {model}",
         )
-        if not model_preset:
-            parser.add_argument(
-                "--model",
-                type=str,
-                default=model,
-                choices=model_choices,
-                help="Structure prediction model",
-            )
-        if not guidance_preset:
-            parser.add_argument(
-                "--guidance-type",
-                type=str,
-                default=guidance_type,
-                choices=guidance_choices,
-                help="Guidance method",
-            )
+        parser.add_argument(
+            "--model",
+            type=str,
+            default=model,
+            choices=model_choices,
+            help=argparse.SUPPRESS if model_preset else "Structure prediction model",
+        )
+        parser.add_argument(
+            "--guidance-type",
+            type=str,
+            default=guidance_type,
+            choices=guidance_choices,
+            help=argparse.SUPPRESS if guidance_preset else "Guidance method",
+        )
         parser.add_argument(
             "--protein",
             type=str,
@@ -253,6 +239,17 @@ class GuidanceConfig:
         _GUIDANCE_ARG_ADDERS[guidance_type](parser)
 
         args = parser.parse_args(argv)
+
+        if model_preset and args.model != model:
+            parser.error(
+                f"This script is fixed to --model {model}."
+                f" Use sampleworks-guidance for other models."
+            )
+        if guidance_preset and args.guidance_type != guidance_type:
+            parser.error(
+                f"This script is fixed to --guidance-type {guidance_type}."
+                f" Use sampleworks-guidance for other guidance types."
+            )
 
         config = cls(
             protein=args.protein,
@@ -284,22 +281,14 @@ class GuidanceConfig:
 
     def __post_init__(self):
         """Set up guidance config for a given model and guidance type"""
-        if self.guidance_type == GuidanceType.PURE_GUIDANCE:
-            add_pure_guidance_args(self)
-        elif self.guidance_type == GuidanceType.FK_STEERING:
-            add_fk_steering_args(self)
-        else:
+        try:
+            _GUIDANCE_ARG_ADDERS[self.guidance_type](self)
+        except KeyError:
             raise ValueError(f"Unknown guidance type: {self.guidance_type}")
 
-        if self.model == StructurePredictor.BOLTZ_1:
-            add_boltz1_specific_args(self)
-        elif self.model == StructurePredictor.BOLTZ_2:
-            add_boltz2_specific_args(self)
-        elif self.model == StructurePredictor.PROTENIX:
-            add_protenix_specific_args(self)
-        elif self.model == StructurePredictor.RF3:
-            add_rf3_specific_args(self)
-        else:
+        try:
+            _MODEL_ARG_ADDERS[self.model](self)
+        except KeyError:
             raise ValueError(f"Unknown model type: {self.model}")
 
     def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
@@ -502,6 +491,19 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
         action="store_true",
         help="Log chiral gradient statistics at each denoising step",
     )
+
+
+_MODEL_ARG_ADDERS: dict[str, Any] = {
+    "boltz1": add_boltz1_specific_args,
+    "boltz2": add_boltz2_specific_args,
+    "protenix": add_protenix_specific_args,
+    "rf3": add_rf3_specific_args,
+}
+
+_GUIDANCE_ARG_ADDERS: dict[str, Any] = {
+    "pure_guidance": add_pure_guidance_args,
+    "fk_steering": add_fk_steering_args,
+}
 
 
 @dataclass

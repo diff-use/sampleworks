@@ -207,3 +207,53 @@ class TestFromCliDefaults:
         assert config.align_to_input is True
         assert config.gradient_normalization is True
         assert config.em is True
+
+
+class TestCrossModelArgRejection:
+    """Test that model-specific args are rejected for the wrong model."""
+
+    def test_method_rejected_for_protenix(self):
+        argv = [
+            "--model",
+            "protenix",
+            "--guidance-type",
+            "pure_guidance",
+            "--method",
+            "MD",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_method_rejected_for_rf3(self):
+        argv = [
+            "--model",
+            "rf3",
+            "--guidance-type",
+            "pure_guidance",
+            "--method",
+            "MD",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_msa_path_rejected_for_boltz1(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--msa-path",
+            "/data/msa.a3m",
+        ] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv)
+
+    def test_conflicting_model_in_preset_mode(self):
+        argv = ["--model", "boltz2"] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv, model="rf3", guidance_type="fk_steering")
+
+    def test_conflicting_guidance_type_in_preset_mode(self):
+        argv = ["--guidance-type", "fk_steering"] + COMMON_ARGS
+        with pytest.raises(SystemExit):
+            GuidanceConfig.from_cli(argv, model="boltz1", guidance_type="pure_guidance")
