@@ -21,6 +21,7 @@ from sampleworks.eval.structure_utils import process_structure_to_trajectory_inp
 from sampleworks.utils.atom_array_utils import make_normalized_atom_id
 from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.frame_transforms import apply_forward_transform
+from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import save_everything
 
 from tests.mocks import MismatchCase, MismatchCaseWrapper
@@ -1011,8 +1012,18 @@ class TestSave:
         refined = {"asym_unit": build_test_atom_array(n_atoms=n_struct)}
         model_atom_array = build_test_atom_array(n_atoms=n_model, with_occupancy=False)
 
+        args = GuidanceConfig(
+            protein="1l63",
+            structure=Path("dummy"),
+            density=Path("dummy"),
+            model="boltz2",
+            guidance_type="pure_guidance",
+            log_path="dummy",
+            output_dir=str(tmp_path),
+        )
+
         save_everything(
-            output_dir=tmp_path,
+            args,
             losses=[0.5, 0.3],
             refined_structure=refined,
             traj_denoised=[],

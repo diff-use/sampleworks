@@ -3,10 +3,12 @@ import tempfile
 from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import AtomArrayStack
+from biotite.structure.io.pdbx.cif import CIFCategory, CIFFile
 from loguru import logger
 
 from sampleworks.utils.atom_array_utils import (
@@ -235,3 +237,88 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
     save_structure_to_cif(fixed_array, tmp_path)
     logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
     return tmp_path
+
+
+def add_category_to_cif(
+    ciffile: CIFFile,
+    data: dict[str, Any],
+    category_name: str,
+    overwrite: bool = False,
+    block_name: str | None = None,
+) -> None:
+    """Add a custom category in-place to a CIFFile.
+
+    Parameters
+    ----------
+    ciffile : CIFFile
+        The CIF file object to modify.
+    data : dict[str, Any]
+        Dictionary with column names as keys and column data as values.
+    category_name : str
+        Name of the category to add (e.g., "custom_data").
+    overwrite : bool, optional
+        If False and the category already exists, raise RuntimeError. Default is False.
+    block_name : str | None, optional
+        Name of the block to add the category to. If None, check that there is only
+        one block and add to that block. Default is None.
+
+    Raises
+    ------
+    RuntimeError
+        If category already exists and overwrite is False.
+    ValueError
+        If block_name is None but the file has multiple blocks, or if the specified
+        block_name does not exist.
+
+    Examples
+    --------
+    >>> from biotite.structure.io.pdbx.cif import CIFFile
+    >>> ciffile = CIFFile.read("example.cif")  # assuming it contains a single block
+    >>> data = {"id": [1, 2, 3], "value": ["a", "b", "c"]}
+    >>> add_category_to_cif(ciffile, data, "my_custom_data")
+    >>> print(ciffile.block["my_custom_data"].serialize())
+    loop_
+    _my_custom_data.id
+    _my_custom_data.value
+    1 a
+    2 b
+    3 c
+    >>> data = {"sampleworks_version": "0.4.0", "pdb_id": "1L63"}
+    >>> add_category_to_cif(ciffile, data, "sampleworks_metadata")
+    >>> print(ciffile.block["sampleworks_metadata"].serialize())
+    _sampleworks_metadata.sampleworks_version 0.4.0
+    _sampleworks_metadata.pdb_id              1L63
+    """
+    # Determine which block to use
+    if block_name is None:
+        # CIFFile is a Mapping, so inherits .keys(), which ultimately iterates over blocks
+        blocks = list(ciffile.keys())
+        if len(blocks) == 0:
+            raise ValueError("CIFFile has no blocks. Cannot add category.")
+        elif len(blocks) > 1:
+            raise ValueError(
+                f"CIFFile has multiple blocks: {blocks}. Please specify block_name parameter."
+            )
+        block = ciffile[blocks[0]]
+    else:
+        if block_name not in ciffile:
+            raise ValueError(f"Block '{block_name}' not found in CIFFile.")
+        block = ciffile[block_name]
+
+    # Check if a category with name category_name already exists
+    if category_name in block and not overwrite:
+        raise RuntimeError(
+            f"Category '{category_name}' already exists in block with value: {block[category_name]}"
+        )
+
+    # Create and add the category--remove any None values, CIF requires non-null values
+    category = CIFCategory(
+        columns={k: _normalize_nulls(v) for k, v in data.items()}, name=category_name
+    )
+    block[category_name] = category
+
+
+def _normalize_nulls(value: Any) -> Any:
+    if isinstance(value, Iterable) and not isinstance(value, str | bytes):
+        return ["?" if item is None else item for item in value]
+    return "?" if value is None else value
