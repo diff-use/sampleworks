@@ -133,6 +133,8 @@ _DYNAMIC_ATTRS = [
     "track_chiral_features",
     # generic (overridable)
     "ensemble_size",
+    "recycling_steps",
+    "num_diffusion_steps",
 ]
 
 
@@ -380,6 +382,18 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
         type=int,
         default=4,
         help="Ensemble size to generate (per particle for FK-steering)",
+    )
+    parser.add_argument(
+        "--recycling-steps",
+        type=int,
+        default=None,
+        help="Number of recycling steps for the model (default: model-specific)",
+    )
+    parser.add_argument(
+        "--num-diffusion-steps",
+        type=int,
+        default=200,
+        help="Number of diffusion denoising steps (default: 200)",
     )
 
 

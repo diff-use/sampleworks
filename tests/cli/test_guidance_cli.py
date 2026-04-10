@@ -443,6 +443,40 @@ class TestArgPassthrough:
         config = GuidanceConfig.from_cli(argv)
         assert config.guidance_start == 10
 
+    def test_recycling_steps(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--recycling-steps",
+            "3",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.recycling_steps == 3
+
+    def test_num_diffusion_steps(self):
+        argv = [
+            "--model",
+            "boltz1",
+            "--guidance-type",
+            "pure_guidance",
+            "--num-diffusion-steps",
+            "100",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.num_diffusion_steps == 100
+
+    def test_recycling_steps_default_none(self):
+        argv = ["--model", "boltz1", "--guidance-type", "pure_guidance"] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.recycling_steps is None
+
+    def test_num_diffusion_steps_default(self):
+        argv = ["--model", "boltz1", "--guidance-type", "pure_guidance"] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert config.num_diffusion_steps == 200
+
 
 class TestValidationEdgeCases:
     """Additional validation edge cases."""
