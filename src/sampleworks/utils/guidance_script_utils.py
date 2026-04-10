@@ -374,9 +374,7 @@ def save_everything(
 # Methods for running model guidance in separate processes, avoiding reloading of the model.
 #####################
 # These args are passed from run_grid_search.py via GuidanceConfig.
-def run_guidance(
-    args: GuidanceConfig, guidance_type: str, model_wrapper, device
-) -> JobResult:
+def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device) -> JobResult:
     """Wrapper around ``_run_guidance`` to redirect logs and generate a JobResult.
 
     Parameters
@@ -421,9 +419,7 @@ def run_guidance(
 
 
 # "guidance_type" is also called "scaler" in many places
-def _run_guidance(
-    args: GuidanceConfig, guidance_type: str, model_wrapper, device
-):
+def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     reward_function, structure = get_reward_function_and_structure(
         args.density,  # str/path to a map file.
         device,  # this needs to come from the global context, not the args object.
