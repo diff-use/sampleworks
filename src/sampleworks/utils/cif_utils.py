@@ -273,7 +273,7 @@ def add_category_to_cif(
     Examples
     --------
     >>> from biotite.structure.io.pdbx.cif import CIFFile
-    >>> ciffile = CIFFile()
+    >>> ciffile = CIFFile.read("example.cif")  # assuming it contains a single block
     >>> data = {"id": [1, 2, 3], "value": ["a", "b", "c"]}
     >>> add_category_to_cif(ciffile, data, "my_custom_data")
     >>> print(ciffile.block["my_custom_data"].serialize())
@@ -313,6 +313,12 @@ def add_category_to_cif(
 
     # Create and add the category--remove any None values, CIF requires non-null values
     category = CIFCategory(
-        columns={k: v if v is not None else "?" for k, v in data.items()}, name=category_name
+        columns={k: _normalize_nulls(v) for k, v in data.items()}, name=category_name
     )
     block[category_name] = category
+
+
+def _normalize_nulls(value: Any) -> Any:
+    if isinstance(value, Iterable) and not isinstance(value, str | bytes):
+        return ["?" if item is None else item for item in value]
+    return "?" if value is None else value
