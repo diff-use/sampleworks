@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 from sampleworks.utils.guidance_script_arguments import (
+    _remap_container_path,
     get_checkpoint,
     GuidanceConfig,
     JobConfig,
@@ -154,3 +155,176 @@ def test_validate_model_checkpoint_returns_resolved_path(model_wrapper_type, tmp
     validated = validate_model_checkpoint(model_wrapper_type, str(checkpoint))
 
     assert validated == str(checkpoint.resolve())
+
+
+# ============================================================================
+# _remap_container_path tests
+# ============================================================================
+
+
+def test_remap_noop_when_no_env_vars(monkeypatch):
+    for var in (
+        "SAMPLEWORKS_HOST_INPUT_DIR",
+        "SAMPLEWORKS_HOST_RESULTS_DIR",
+        "SAMPLEWORKS_HOST_DIR",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    assert _remap_container_path("/data/inputs/structure.cif") == "/data/inputs/structure.cif"
+    assert _remap_container_path("/data/results/output") == "/data/results/output"
+
+
+def test_remap_data_dir_env(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/mnt/nfs/proteins")
+    assert _remap_container_path("/data/inputs/1abc.cif") == "/mnt/nfs/proteins/1abc.cif"
+    # results path should pass through (no env var for it)
+    assert _remap_container_path("/data/results/run1") == "/data/results/run1"
+
+
+def test_remap_results_dir_env(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_INPUT_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+
+    monkeypatch.setenv("SAMPLEWORKS_HOST_RESULTS_DIR", "/results/exp1")
+    result = _remap_container_path("/data/results/protein/boltz2/run.log")
+    assert result == "/results/exp1/protein/boltz2/run.log"
+    # inputs path should pass through
+    assert _remap_container_path("/data/inputs/1abc.cif") == "/data/inputs/1abc.cif"
+
+
+def test_remap_catchall_dir_env(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_INPUT_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+
+    monkeypatch.setenv("SAMPLEWORKS_HOST_DIR", "/mnt/storage")
+    assert _remap_container_path("/data/inputs/1abc.cif") == "/mnt/storage/inputs/1abc.cif"
+    assert _remap_container_path("/data/results/output") == "/mnt/storage/results/output"
+
+
+def test_remap_specific_env_takes_priority_over_catchall(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/specific/data")
+    monkeypatch.setenv("SAMPLEWORKS_HOST_DIR", "/general")
+    assert _remap_container_path("/data/inputs/foo.cif") == "/specific/data/foo.cif"
+    # /data/results has no specific env var, so catch-all applies
+    assert _remap_container_path("/data/results/bar") == "/general/results/bar"
+
+
+def test_remap_leaves_checkpoint_unchanged(monkeypatch):
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/host/data")
+    monkeypatch.setenv("SAMPLEWORKS_HOST_RESULTS_DIR", "/host/results")
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+
+    assert _remap_container_path("/checkpoints/boltz2.ckpt") == "/checkpoints/boltz2.ckpt"
+
+
+def test_remap_trailing_slash_normalization(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/mnt/data/")
+    assert _remap_container_path("/data/inputs/foo.cif") == "/mnt/data/foo.cif"
+
+
+def test_remap_exact_prefix_match(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/mnt/data")
+    assert _remap_container_path("/data/inputs") == "/mnt/data"
+
+
+def test_remap_ignores_empty_env_var(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "")
+    assert _remap_container_path("/data/inputs/foo.cif") == "/data/inputs/foo.cif"
+
+
+def test_remap_whitespace_padded_env_var(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", " /mnt/data ")
+    assert _remap_container_path("/data/inputs/foo.cif") == "/mnt/data/foo.cif"
+
+
+def test_remap_root_env_var(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/")
+    assert _remap_container_path("/data/inputs/foo.cif") == "/foo.cif"
+    assert _remap_container_path("/data/inputs") == "/"
+
+
+# ============================================================================
+# as_dict path remapping tests
+# ============================================================================
+
+
+def test_as_dict_remaps_all_four_path_fields(monkeypatch):
+    monkeypatch.setenv("SAMPLEWORKS_HOST_INPUT_DIR", "/host/data")
+    monkeypatch.setenv("SAMPLEWORKS_HOST_RESULTS_DIR", "/host/results")
+    monkeypatch.delenv("SAMPLEWORKS_HOST_DIR", raising=False)
+
+    config = GuidanceConfig(
+        protein="1abc",
+        structure="/data/inputs/structures/1abc.cif",
+        density="/data/inputs/maps/1abc.ccp4",
+        model=StructurePredictor.BOLTZ_2,
+        guidance_type=GuidanceType.PURE_GUIDANCE,
+        log_path="/data/results/1abc/boltz2/run.log",
+        output_dir="/data/results/1abc/boltz2",
+    )
+    d = config.as_dict()
+    assert d["structure"] == "/host/data/structures/1abc.cif"
+    assert d["density"] == "/host/data/maps/1abc.ccp4"
+    assert d["output_dir"] == "/host/results/1abc/boltz2"
+    assert d["log_path"] == "/host/results/1abc/boltz2/run.log"
+    # Non-path fields unchanged
+    assert d["protein"] == "1abc"
+
+
+def test_as_dict_unchanged_when_no_env_vars(monkeypatch):
+    for var in (
+        "SAMPLEWORKS_HOST_INPUT_DIR",
+        "SAMPLEWORKS_HOST_RESULTS_DIR",
+        "SAMPLEWORKS_HOST_DIR",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    config = GuidanceConfig(
+        protein="1abc",
+        structure="/data/inputs/structures/1abc.cif",
+        density="/data/inputs/maps/1abc.ccp4",
+        model=StructurePredictor.BOLTZ_2,
+        guidance_type=GuidanceType.PURE_GUIDANCE,
+        log_path="/data/results/1abc/run.log",
+        output_dir="/data/results/1abc",
+    )
+    d = config.as_dict()
+    assert d["structure"] == "/data/inputs/structures/1abc.cif"
+    assert d["density"] == "/data/inputs/maps/1abc.ccp4"
+    assert d["output_dir"] == "/data/results/1abc"
+    assert d["log_path"] == "/data/results/1abc/run.log"
+
+
+def test_as_dict_remaps_with_catchall_host_dir(monkeypatch):
+    monkeypatch.delenv("SAMPLEWORKS_HOST_INPUT_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_HOST_RESULTS_DIR", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_HOST_DIR", "/mnt/storage")
+    config = GuidanceConfig(
+        protein="1abc",
+        structure="/data/inputs/structures/1abc.cif",
+        density="/data/inputs/maps/1abc.ccp4",
+        model=StructurePredictor.BOLTZ_2,
+        guidance_type=GuidanceType.PURE_GUIDANCE,
+        log_path="/data/results/1abc/run.log",
+        output_dir="/data/results/1abc",
+    )
+    d = config.as_dict()
+    assert d["structure"] == "/mnt/storage/inputs/structures/1abc.cif"
+    assert d["density"] == "/mnt/storage/inputs/maps/1abc.ccp4"
+    assert d["output_dir"] == "/mnt/storage/results/1abc"
+    assert d["log_path"] == "/mnt/storage/results/1abc/run.log"
+    assert d["protein"] == "1abc"

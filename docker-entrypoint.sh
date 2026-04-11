@@ -160,6 +160,24 @@ BAKED-IN CHECKPOINTS:
       --partial-diffusion-step N  Diffusion step to start from (default: 0)
       --loss-order N              L1 (1) or L2 (2) loss (default: 2)
 
+METADATA HOST PATH REMAPPING:
+    By default, job_metadata.json records container-internal paths (e.g.
+    /data/inputs/..., /data/results/...). To record host paths instead, pass
+    one or more of these environment variables:
+
+    Split mounts (-v $DATA:/data/inputs -v $RESULTS:/data/results):
+      SAMPLEWORKS_HOST_INPUT_DIR       Host path mounted at /data/inputs
+      SAMPLEWORKS_HOST_RESULTS_DIR    Host path mounted at /data/results
+
+    Single mount (-v /host/path:/data):
+      SAMPLEWORKS_HOST_DIR            Host path mounted at /data
+
+    Example (split mounts):
+      docker run -v /mnt/data:/data/inputs:ro -v /results:/data/results \
+        -e SAMPLEWORKS_HOST_INPUT_DIR=/mnt/data \
+        -e SAMPLEWORKS_HOST_RESULTS_DIR=/results \
+        sampleworks -e boltz run_grid_search.py ...
+
 PROTEINS CSV FORMAT:
     The --proteins CSV file must have the following columns:
       name        - Protein identifier

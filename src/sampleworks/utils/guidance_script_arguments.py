@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,47 @@ def _resolve_checkpoint(model_key: str) -> str:
         )
 
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# Container-to-host path remapping (for job_metadata.json serialization)
+# ---------------------------------------------------------------------------
+
+_ENV_VAR_MAPPINGS = [
+    # Order matters: most-specific container prefix first.
+    ("SAMPLEWORKS_HOST_INPUT_DIR", "/data/inputs"),
+    ("SAMPLEWORKS_HOST_RESULTS_DIR", "/data/results"),
+    ("SAMPLEWORKS_HOST_DIR", "/data"),
+]
+
+
+def _remap_container_path(path_str: str) -> str:
+    """Remap a container-internal path to its host equivalent.
+
+    Uses environment variables to determine the mapping:
+
+    * ``SAMPLEWORKS_HOST_INPUT_DIR``    replaces ``/data/inputs``
+    * ``SAMPLEWORKS_HOST_RESULTS_DIR`` replaces ``/data/results``
+    * ``SAMPLEWORKS_HOST_DIR``         replaces ``/data``  (fallback for single-mount setups)
+
+    When none of these env vars are set, the path is returned unchanged.
+    Paths that don't match any known container prefix (e.g. ``/checkpoints/``)
+    are also returned unchanged.
+    """
+    env_pairs: list[tuple[str, str]] = []
+    for env_var, container_prefix in _ENV_VAR_MAPPINGS:
+        host_dir = os.environ.get(env_var)
+        if host_dir is not None and host_dir.strip():
+            host_dir = host_dir.strip()
+            normalized_host = "/" if host_dir == "/" else host_dir.rstrip("/")
+            env_pairs.append((container_prefix.rstrip("/"), normalized_host))
+
+    for container_prefix, host_prefix in env_pairs:
+        if path_str == container_prefix or path_str.startswith(container_prefix + "/"):
+            result = host_prefix + path_str[len(container_prefix) :]
+            return result[1:] if result.startswith("//") else result
+
+    return path_str
 
 
 def get_checkpoint(args: argparse.Namespace) -> str | None:
@@ -327,10 +369,17 @@ class GuidanceConfig:
             self.ensemble_size = job.ensemble_size
 
     def as_dict(self) -> dict[str, Any]:
-        """Return a dictionary representation of the guidance config, converting Path to strings"""
+        """Return a dictionary representation of the guidance config, converting Path to strings.
+
+        When host-path env vars are set, container-internal paths are remapped
+        to their host equivalents so that
+        ``job_metadata.json`` is reproducible outside the container.
+        """
         output = self.__dict__.copy()
-        output["density"] = str(self.density)
-        output["structure"] = str(self.structure)
+        output["density"] = _remap_container_path(str(self.density))
+        output["structure"] = _remap_container_path(str(self.structure))
+        output["output_dir"] = _remap_container_path(str(self.output_dir))
+        output["log_path"] = _remap_container_path(str(self.log_path))
         return output
 
 
