@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import pickle
@@ -30,7 +29,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
-from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -265,7 +264,7 @@ def get_reward_function_and_structure(
 
 
 def save_everything(
-    output_dir: str | Path,
+    args: GuidanceConfig,
     losses: list[Any],
     refined_structure: dict,
     traj_denoised: list[Any],
@@ -283,8 +282,10 @@ def save_everything(
 
     Parameters
     ----------
-    output_dir : str | Path
-        Directory to write all output files into. Created if it doesn't exist.
+    args : GuidanceConfig
+        The arguments for the guidance run. This method directly uses args.output_dir,
+        and creates that directory if it does not exist. The result of args.as_dict() is
+        written to a JSON file in the same directory, and inserted into the output CIF file.
     losses : list[Any]
         Per-step loss values (may contain ``None`` entries for unguided steps).
     refined_structure : dict
@@ -304,7 +305,7 @@ def save_everything(
         Optional model-space atom template. When provided (mismatch runs),
         this template is used for final structure and trajectory saving.
     """
-    output_dir = Path(output_dir)
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Saving results")
@@ -327,9 +328,19 @@ def save_everything(
     else:
         atom_array = base_atom_array
 
+    metadata = args.as_dict()
+
     final_structure = CIFFile()
     set_structure(final_structure, atom_array)
+    add_category_to_cif(final_structure, metadata, category_name="sampleworks")
     final_structure.write(str(output_dir / "refined.cif"))
+
+    # write out the job parameters to a JSON file in the same directory as the refined.cif file
+    # Even though this is technically duplicated, keep it around as a backup in case metadata
+    # is lost in some CIF transform.
+    with open(Path(output_dir) / "job_metadata.json", "w") as fp:
+        # use the GuidanceConfig's as_dict() method to avoid serializing PosixPath objects
+        json.dump(metadata, fp)
 
     # Two calls to save_trajectory, very similar, but saving different trajectories!
     save_trajectory(
@@ -363,14 +374,12 @@ def save_everything(
 # Methods for running model guidance in separate processes, avoiding reloading of the model.
 #####################
 # These args are passed from run_grid_search.py via GuidanceConfig.
-def run_guidance(
-    args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
-) -> JobResult:
+def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device) -> JobResult:
     """Wrapper around ``_run_guidance`` to redirect logs and generate a JobResult.
 
     Parameters
     ----------
-    args : GuidanceConfig | argparse.Namespace
+    args : GuidanceConfig
         Configuration for the guidance run.
     guidance_type : str
         Type of guidance/scaler to apply.
@@ -410,9 +419,7 @@ def run_guidance(
 
 
 # "guidance_type" is also called "scaler" in many places
-def _run_guidance(
-    args: GuidanceConfig | argparse.Namespace, guidance_type: str, model_wrapper, device
-):
+def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     reward_function, structure = get_reward_function_and_structure(
         args.density,  # str/path to a map file.
         device,  # this needs to come from the global context, not the args object.
@@ -565,7 +572,7 @@ def _run_guidance(
     model_atom_array = result.metadata.get("model_atom_array") if result.metadata else None
 
     save_everything(
-        args.output_dir,
+        args,
         losses,
         refined_structure,
         traj_denoised,
@@ -587,7 +594,7 @@ def epoch_seconds(time_to_convert: datetime) -> float:
 
 
 def get_job_result(
-    args: GuidanceConfig | argparse.Namespace,
+    args: GuidanceConfig,
     device: torch.device,
     started_at: datetime,
     ended_at: datetime,
@@ -641,10 +648,6 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         logger.info(f"Running job {i + 1}/{len(job_queue)}: {job}")
 
         job_result = run_guidance(job, job.guidance_type, model_wrapper, device)
-        # write out the job parameters to a JSON file in the same directory as the refined.cif file
-        with open(Path(job_result.output_dir) / "job_metadata.json", "w") as fp:
-            # use the GuidanceConfig's as_dict() method to avoid serializing PosixPath objects
-            json.dump(job.as_dict(), fp)
 
         job_results.append(job_result)
         torch.cuda.empty_cache()  # just in case

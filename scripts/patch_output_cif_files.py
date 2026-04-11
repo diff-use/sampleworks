@@ -1,5 +1,6 @@
 # utility script to put all header information from original PDB entry into our CIF files
 import fnmatch
+import json
 import re
 from argparse import ArgumentParser
 from pathlib import Path
@@ -12,6 +13,7 @@ from biotite.database.rcsb import fetch
 from biotite.structure.io.pdbx import CIFColumn, CIFFile, set_structure
 from loguru import logger
 from sampleworks.utils.atom_array_utils import remove_atoms_with_any_nan_coords
+from sampleworks.utils.cif_utils import add_category_to_cif
 
 
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
@@ -73,7 +75,11 @@ def parse_args():
     )
     parser.add_argument("--grid-search-input-dir", required=True)
     parser.add_argument(
-        "--input-pdb-pattern", default="{pdb_id}/{pdb_id}_single_001_density_input.cif"
+        "--input-pdb-pattern",
+        default="{pdb_id}/{pdb_id}_single_001_density_input.cif",
+        help="Pattern used by fnmatch/glob for input pdb files. The complete path of the input "
+        "pdb must match f'{grid-search-input-dir}/{input-pdb-pattern}'. Defaults to "
+        "'{pdb_id}/{pdb_id}_single_001_density_input.cif'",
     )
     args = parser.parse_args()
     return args
@@ -159,8 +165,22 @@ def patch_individual_cif_file(
     atom_keys = list(zip(asym_unit.chain_id.tolist(), asym_unit.res_id.tolist()))
     asym_unit.res_id = np.array([mapping[k] for k in atom_keys], dtype=asym_unit.res_id.dtype)
 
-    # load the actual PDB, we'll copy the new coordinates to it.
+    # load the actual PDB, we'll copy the new coordinates and metadata into it.
     template = CIFFile.read(rcsb_path)
+
+    # Write sampleworks trial metadata to the CIF file, if we can find it
+    cif_data = CIFFile.read(cif_path)
+    if "sampleworks" in cif_data.block:
+        template.block["sampleworks"] = cif_data.block["sampleworks"]
+    elif (metadata_path := cif_path.parent / "job_metadata.json").exists():
+        with open(metadata_path, "r") as fp:
+            metadata = json.load(fp)
+        if metadata is not None:
+            add_category_to_cif(template, metadata, "sampleworks")
+        else:
+            logger.warning(f"Sampleworks metadata file at {metadata_path} is empty")
+    else:
+        logger.warning(f"No sampleworks metadata found for {cif_path}")
 
     # remove any atoms with nan coordinates--these seem to come in because we sometimes use parse
     # (from AtomWorks) which creates them. Still, we'll do this here just in case.

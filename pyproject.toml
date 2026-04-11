@@ -33,7 +33,7 @@ dependencies = [
 ]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
-version = "0.4.4"
+version = "0.5.0"
 
 [project.scripts]
 sampleworks-guidance = "sampleworks.cli.guidance:main"
