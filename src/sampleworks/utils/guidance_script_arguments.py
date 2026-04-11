@@ -112,9 +112,34 @@ def validate_model_checkpoint(
     return str(checkpoint_path)
 
 
+# Attributes set dynamically by add_*_args helpers that should be copied
+# from a parsed argparse.Namespace onto a GuidanceConfig instance.
+_DYNAMIC_ATTRS = [
+    # pure guidance
+    "step_size",
+    "step_scaler_type",
+    # fk steering
+    "num_particles",
+    "fk_resampling_interval",
+    "fk_lambda",
+    "num_gd_steps",
+    "guidance_weight",
+    "guidance_interval",
+    # model-specific
+    "model_checkpoint",
+    "method",
+    "msa_path",
+    "disable_chiral_features",
+    "track_chiral_features",
+    # generic (overridable)
+    "ensemble_size",
+    "recycling_steps",
+    "num_diffusion_steps",
+]
+
+
 @dataclass
 class GuidanceConfig:
-    # TODO add a class method to set this up completely from args and job config.
     """
     Class to hold guidance config arguments, compatible with argparse, but which
     also can do some basic validation.
@@ -145,24 +170,132 @@ class GuidanceConfig:
         """Add an argument to the guidance config, in a form compatible with argparse"""
         setattr(self, name.lstrip("-").replace("-", "_"), default)
 
+    @classmethod
+    def from_cli(
+        cls,
+        argv: list[str] | None = None,
+        model: str | None = None,
+        guidance_type: str | None = None,
+    ) -> GuidanceConfig:
+        """Parse CLI arguments and return a fully populated GuidanceConfig.
+
+        When *model* and *guidance_type* are provided (e.g. from legacy
+        scripts), they are used directly and ``--model`` / ``--guidance-type``
+        are not required on the command line.  Otherwise they are parsed as
+        required CLI arguments.
+        """
+        model_choices = [m.value for m in StructurePredictor]
+        guidance_choices = [g.value for g in GuidanceType]
+        model_preset = model is not None
+        guidance_preset = guidance_type is not None
+
+        if model_preset and model not in model_choices:
+            raise ValueError(f"Unknown model type: {model}")
+        if guidance_preset and guidance_type not in guidance_choices:
+            raise ValueError(f"Unknown guidance type: {guidance_type}")
+
+        # -- first pass: resolve model & guidance_type if not pre-set --------
+        if not model_preset or not guidance_preset:
+            pre = argparse.ArgumentParser(add_help=False)
+            if not model_preset:
+                pre.add_argument(
+                    "--model",
+                    type=str,
+                    required=True,
+                    choices=model_choices,
+                    help="Structure prediction model",
+                )
+            if not guidance_preset:
+                pre.add_argument(
+                    "--guidance-type",
+                    type=str,
+                    required=True,
+                    choices=guidance_choices,
+                    help="Guidance method",
+                )
+            pre_args, _ = pre.parse_known_args(argv)
+            model = model or pre_args.model
+            guidance_type = guidance_type or pre_args.guidance_type
+
+        # -- full parser -----------------------------------------------------
+        parser = argparse.ArgumentParser(
+            description=f"Run {guidance_type} guidance with {model}",
+        )
+        parser.add_argument(
+            "--model",
+            type=str,
+            default=model,
+            choices=model_choices,
+            help=argparse.SUPPRESS if model_preset else "Structure prediction model",
+        )
+        parser.add_argument(
+            "--guidance-type",
+            type=str,
+            default=guidance_type,
+            choices=guidance_choices,
+            help=argparse.SUPPRESS if guidance_preset else "Guidance method",
+        )
+        parser.add_argument(
+            "--protein",
+            type=str,
+            required=True,
+            help="Protein identifier (must match naming used in grid search / evaluation)",
+        )
+        add_generic_args(parser)
+        _MODEL_ARG_ADDERS[model](parser)
+        _GUIDANCE_ARG_ADDERS[guidance_type](parser)
+
+        args = parser.parse_args(argv)
+
+        if model_preset and args.model != model:
+            parser.error(
+                f"This script is fixed to --model {model}."
+                f" Use sampleworks-guidance for other models."
+            )
+        if guidance_preset and args.guidance_type != guidance_type:
+            parser.error(
+                f"This script is fixed to --guidance-type {guidance_type}."
+                f" Use sampleworks-guidance for other guidance types."
+            )
+
+        config = cls(
+            protein=args.protein,
+            structure=args.structure,
+            density=args.density,
+            model=model,
+            guidance_type=guidance_type,
+            log_path=getattr(args, "log_path", None) or "",
+            output_dir=args.output_dir,
+            partial_diffusion_step=args.partial_diffusion_step,
+            loss_order=args.loss_order,
+            resolution=args.resolution,
+            device=getattr(args, "device", "") or "",
+            gradient_normalization=args.gradient_normalization,
+            em=args.em,
+            guidance_start=args.guidance_start,
+            augmentation=args.augmentation,
+            align_to_input=args.align_to_input,
+        )
+
+        # __post_init__ already set defaults for model/guidance-specific
+        # attrs; override with any explicit CLI values.
+        for attr in _DYNAMIC_ATTRS:
+            val = getattr(args, attr, None)
+            if val is not None:
+                setattr(config, attr, val)
+
+        return config
+
     def __post_init__(self):
         """Set up guidance config for a given model and guidance type"""
-        if self.guidance_type == GuidanceType.PURE_GUIDANCE:
-            add_pure_guidance_args(self)
-        elif self.guidance_type == GuidanceType.FK_STEERING:
-            add_fk_steering_args(self)
-        else:
+        try:
+            _GUIDANCE_ARG_ADDERS[self.guidance_type](self)
+        except KeyError:
             raise ValueError(f"Unknown guidance type: {self.guidance_type}")
 
-        if self.model == StructurePredictor.BOLTZ_1:
-            add_boltz1_specific_args(self)
-        elif self.model == StructurePredictor.BOLTZ_2:
-            add_boltz2_specific_args(self)
-        elif self.model == StructurePredictor.PROTENIX:
-            add_protenix_specific_args(self)
-        elif self.model == StructurePredictor.RF3:
-            add_rf3_specific_args(self)
-        else:
+        try:
+            _MODEL_ARG_ADDERS[self.model](self)
+        except KeyError:
             raise ValueError(f"Unknown model type: {self.model}")
 
     def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
@@ -249,6 +382,18 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
         type=int,
         default=4,
         help="Ensemble size to generate (per particle for FK-steering)",
+    )
+    parser.add_argument(
+        "--recycling-steps",
+        type=int,
+        default=None,
+        help="Number of recycling steps for the model (default: model-specific)",
+    )
+    parser.add_argument(
+        "--num-diffusion-steps",
+        type=int,
+        default=200,
+        help="Number of diffusion denoising steps (default: 200)",
     )
 
 
@@ -367,90 +512,17 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     )
 
 
-##############
-#  Use these methods to parse arguments in scripts which load the model themselves.
-##############
-def parse_boltz2_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Boltz-2 and real-space density"
-    )
-    add_generic_args(parser)
-    add_boltz2_specific_args(parser)
-    add_pure_guidance_args(parser)
+_MODEL_ARG_ADDERS: dict[str, Any] = {
+    "boltz1": add_boltz1_specific_args,
+    "boltz2": add_boltz2_specific_args,
+    "protenix": add_protenix_specific_args,
+    "rf3": add_rf3_specific_args,
+}
 
-    return parser.parse_args()
-
-
-def parse_boltz1_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Boltz-1 and real-space density"
-    )
-    add_generic_args(parser)
-    add_boltz1_specific_args(parser)
-    add_pure_guidance_args(parser)
-
-    return parser.parse_args()
-
-
-def parse_protenix_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with Protenix and real-space density"
-    )
-    add_generic_args(parser)
-    add_protenix_specific_args(parser)
-    add_pure_guidance_args(parser)
-
-    return parser.parse_args()
-
-
-def parse_protenix_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with Protenix and real-space density"
-    )
-    add_protenix_specific_args(parser)
-    add_generic_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
-
-
-def parse_boltz2_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with Boltz-2 and real-space density"
-    )
-    add_boltz2_specific_args(parser)
-    add_generic_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
-
-
-def parse_boltz1_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with Boltz-1 and real-space density"
-    )
-    add_boltz1_specific_args(parser)
-    add_generic_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
-
-
-def parse_rf3_pure_guidance_args():
-    parser = argparse.ArgumentParser(
-        description="Pure guidance refinement with RF3 and real-space density"
-    )
-    add_generic_args(parser)
-    add_rf3_specific_args(parser)
-    add_pure_guidance_args(parser)
-    return parser.parse_args()
-
-
-def parse_rf3_fk_steering_args():
-    parser = argparse.ArgumentParser(
-        description="FK steering refinement with RF3 and real-space density"
-    )
-    add_generic_args(parser)
-    add_rf3_specific_args(parser)
-    add_fk_steering_args(parser)
-    return parser.parse_args()
+_GUIDANCE_ARG_ADDERS: dict[str, Any] = {
+    "pure_guidance": add_pure_guidance_args,
+    "fk_steering": add_fk_steering_args,
+}
 
 
 @dataclass

@@ -159,25 +159,13 @@ src/sampleworks/
 
 ## Running Guidance Pipelines
 
-The `scripts/` directory contains ready-to-run guidance scripts for each supported model and trajectory scaler:
-
-```
-scripts/
-├── boltz1_pure_guidance.py     # Boltz-1 + pure guidance
-├── boltz2_pure_guidance.py     # Boltz-2 + pure guidance
-├── boltz2_fk_steering.py       # Boltz-2 + Feynman-Kaç steering
-├── protenix_pure_guidance.py   # Protenix + pure guidance
-├── protenix_fk_steering.py     # Protenix + FK steering
-├── rf3_pure_guidance.py        # RF3 + pure guidance
-├── rf3_fk_steering.py          # RF3 + FK steering
-├── run_guidance_pipeline.py    # Generic pipeline runner
-└── eval/                       # Evaluation scripts (RSCC, lDDT, clashscore)
-```
-
-Each script follows the same pattern: load a model wrapper, then call `run_guidance()` from `utils/guidance_script_utils.py`. Example invocation:
+Use the unified `sampleworks-guidance` CLI to run guidance with any supported model and trajectory scaler:
 
 ```bash
-pixi run -e boltz python scripts/boltz2_pure_guidance.py \
+pixi run -e boltz sampleworks-guidance \
+    --model boltz2 \
+    --guidance-type pure_guidance \
+    --protein 1VME \
     --model-checkpoint ~/.boltz/boltz2_conf.ckpt \
     --output-dir output/boltz2_pure_guidance \
     --structure tests/resources/1vme/1vme_final_carved_edited_0.5occA_0.5occB.cif \
@@ -187,6 +175,8 @@ pixi run -e boltz python scripts/boltz2_pure_guidance.py \
     --guidance-start 130 \
     --augmentation --align-to-input
 ```
+
+Run `sampleworks-guidance --model <model> --guidance-type <type> --help` to see all available options.
 
 The `run_guidance()` function in `utils/guidance_script_utils.py` is the central orchestrator. It wires together the model wrapper, sampler (`AF3EDMSampler`), step scaler (`DataSpaceDPSScaler` or `NoiseSpaceDPSScaler`), trajectory scaler (`PureGuidance` or `FKSteering`), and reward function. When adding a new model or guidance strategy, this is the best reference for how components compose in practice.
 

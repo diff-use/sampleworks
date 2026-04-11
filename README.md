@@ -66,7 +66,10 @@ download_boltz2(cache)
 Run Boltz-2 pure guidance on the included 1VME example:
 
 ```bash
-pixi run -e boltz python scripts/boltz2_pure_guidance.py \
+pixi run -e boltz sampleworks-guidance \
+    --model boltz2 \
+    --guidance-type pure_guidance \
+    --protein 1VME \
     --model-checkpoint ~/.boltz/boltz2_conf.ckpt \
     --structure tests/resources/1vme/1vme_final_carved_edited_0.5occA_0.5occB.cif \
     --density tests/resources/1vme/1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4 \
@@ -78,7 +81,25 @@ pixi run -e boltz python scripts/boltz2_pure_guidance.py \
     --align-to-input
 ```
 
-Output files appear in `output/boltz2_pure_guidance/`: `refined.cif` (final ensemble), `losses.txt`, `trajectory/`, `run.log`. See [`scripts/README.md`](scripts/README.md) for all scripts and arguments.
+Output files appear in `output/boltz2_pure_guidance/`: `refined.cif` (final ensemble), `losses.txt`, `trajectory/`, `run.log`.
+
+### CLI reference
+
+`sampleworks-guidance` is the unified command-line interface for running guidance on a single structure.
+
+**Required arguments:**
+
+| Argument | Description |
+|---|---|
+| `--model` | `boltz1`, `boltz2`, `protenix`, or `rf3` |
+| `--guidance-type` | `pure_guidance` or `fk_steering` |
+| `--protein` | Protein identifier (should match naming used in grid search / evaluation) |
+| `--structure` | Path to input structure file (CIF) |
+| `--density` | Path to density map (CCP4/MRC/MAP) |
+| `--resolution` | Map resolution in Angstroms |
+
+Model-specific arguments (e.g. `--method` for boltz2, `--msa-path` for rf3) and guidance-type-specific arguments (e.g. `--num-particles` for fk_steering) are included automatically. Run `sampleworks-guidance --model <model> --guidance-type <type> --help` to see all available options.
+
 
 
 ## Grid Search

@@ -9720,7 +9720,7 @@ packages:
 - pypi: ./
   name: sampleworks
   version: 0.5.0
-  sha256: cb4cf99c106ad969bd73884c85871ee5e904e995536cff6ce0c4ccb98255a582
+  sha256: 0990d4d0a4685b902656605abb1c0803231b65d12bb405c23e797f78a102ec3b
   requires_dist:
   - atomworks[ml]==2.1.1
   - python-dotenv
