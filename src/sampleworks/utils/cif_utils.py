@@ -19,13 +19,16 @@ from sampleworks.utils.atom_array_utils import (
 
 
 def find_altloc_selections(
-    cif_file: Path | str, altloc_label: str = "label_alt_id", min_span: int = 5
+    cif_file: Path | str,
+    altloc_label: str = "label_alt_id",
+    min_span: int = 5,
+    include_all_altlocs: bool = True,
 ) -> Iterable[str]:
     """Find alternative location selections in a CIF file.
 
     Individual spans at least ``min_span`` residues long are yielded as selection strings.
-    A final batch of selection strings is also yielded that contains all residues with
-    altlocs, one selection per chain.
+    Optionally, a final batch of selection strings is also yielded that contains all residues
+    with altlocs, one selection per chain.
 
     Parameters
     ----------
@@ -37,7 +40,10 @@ def find_altloc_selections(
     min_span : int
         Minimum number of consecutive residues to consider an altloc selection.
         Spans of altlocs shorter than this are not yielded as selection strings, but ARE
-        included in the final selections which includes all residues with altlocs in each chain.
+        included in the final selections which includes all residues with altlocs in each chain when ``include_all_altlocs=True``.
+    include_all_altlocs : bool
+        If True (default), yield a final per-chain selection string containing all residues
+        with altlocs regardless of span length.
 
     Yields
     ------
@@ -72,12 +78,13 @@ def find_altloc_selections(
             # FIXME use new style selection https://github.com/diff-use/sampleworks/issues/56
             yield f"chain {chain} and resi {start}-{end}"  # old style, more compact, selection
 
-        if chain not in all_altloc_selections:
-            all_altloc_selections[chain] = []
-        if start == end:
-            all_altloc_selections[chain].append(f"(res_id == {start})")
-        else:
-            all_altloc_selections[chain].append(f"(res_id >= {start} and res_id <= {end})")
+        if include_all_altlocs:
+            if chain not in all_altloc_selections:
+                all_altloc_selections[chain] = []
+            if start == end:
+                all_altloc_selections[chain].append(f"(res_id == {start})")
+            else:
+                all_altloc_selections[chain].append(f"(res_id >= {start} and res_id <= {end})")
 
     for chain, selections in all_altloc_selections.items():
         yield f"chain_id == '{chain}' and ({' or '.join(selections)})"
