@@ -146,12 +146,17 @@ def test_compute_msa_calls_run_mmseqs2_with_correct_arguments(tmp_path: Path):
         "X-Custom-Key": "secret",
     }
 
-    # Unpaired call.
+    # Unpaired call: should forward the same env/auth flags as the paired call.
     assert unpaired_call.args[0] == ["AAA", "BBB"]
     assert unpaired_call.args[1] == str(tmp_path / f"{target_id}_unpaired_tmp")
     assert unpaired_call.kwargs["use_pairing"] is False
+    assert unpaired_call.kwargs["use_env"] is True
     assert unpaired_call.kwargs["host_url"] == "https://example.org/api"
     assert unpaired_call.kwargs["pairing_strategy"] == "greedy"
+    assert unpaired_call.kwargs["auth_headers"] == {
+        "Content-Type": "application/json",
+        "X-Custom-Key": "secret",
+    }
 
 
 # ============================================================================
