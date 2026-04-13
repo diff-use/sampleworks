@@ -40,7 +40,8 @@ def find_altloc_selections(
     min_span : int
         Minimum number of consecutive residues to consider an altloc selection.
         Spans of altlocs shorter than this are not yielded as selection strings, but ARE
-        included in the final selections which includes all residues with altlocs in each chain when ``include_all_altlocs=True``.
+        included in the final selections which includes all residues with altlocs in each chain when
+        ``include_all_altlocs=True``.
     include_all_altlocs : bool
         If True (default), yield a final per-chain selection string containing all residues
         with altlocs regardless of span length.
