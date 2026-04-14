@@ -55,6 +55,8 @@ docker run $DOCKER_OPTS \
     -v "$DATA_DIR:/data/inputs:ro" \
     -v "$RESULTS_DIR:/data/results" \
     -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
+    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
+    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
     diffuseproject/sampleworks:latest \
     -e boltz run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
@@ -77,6 +79,8 @@ docker run $DOCKER_OPTS \
     -v "$DATA_DIR:/data/inputs:ro" \
     -v "$RESULTS_DIR:/data/results" \
     -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
+    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
+    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
     diffuseproject/sampleworks:latest \
     -e boltz run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
@@ -99,6 +103,8 @@ docker run $DOCKER_OPTS \
     -v "$DATA_DIR:/data/inputs:ro" \
     -v "$RESULTS_DIR:/data/results" \
     -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
+    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
+    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
     diffuseproject/sampleworks:latest \
     -e rf3 run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
@@ -120,6 +126,8 @@ docker run $DOCKER_OPTS \
     -v "$DATA_DIR:/data/inputs:ro" \
     -v "$RESULTS_DIR:/data/results" \
     -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
+    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
+    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
     diffuseproject/sampleworks:latest \
     -e protenix run_grid_search.py \
     --proteins "/data/inputs/proteins.csv" \
