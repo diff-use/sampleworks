@@ -43,11 +43,12 @@ selections.
 import argparse
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from biotite.structure import AtomArray
+from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
 from sampleworks.eval.structure_utils import (
@@ -59,10 +60,9 @@ from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import (
     BACKBONE_ATOM_TYPES,
     BLANK_ALTLOC_IDS,
+    build_pairwise_altloc_arrays,
     detect_altlocs,
-    filter_to_common_atoms,
     load_structure_with_altlocs,
-    select_altloc,
 )
 
 
@@ -111,47 +111,9 @@ def _chain_from_selection(selection: str) -> str | None:
     return chain_id
 
 
-def _build_pairwise_altloc_arrays(
-    atom_array, altloc_ids: list[str]
-) -> dict[tuple[str, str], tuple[AtomArray, AtomArray]]:
-    """Return ``{(id_i, id_j): (array_i, array_j)}`` pre-filtered to common atoms.
-
-    For each unordered altloc pair we build the two per-altloc AtomArrays
-    (via ``select_altloc(return_full_array=True)``, which includes blank-altloc
-    atoms as shared context) and then run ``filter_to_common_atoms`` so the two
-    inputs have identical atom order and count.
-
-    We build per-pair rather than using ``map_altlocs_to_stack`` so residues whose
-    altloc set is a subset of those in the whole structure (e.g. 2YL0 res 60–64
-    carry only altlocs A and B, not C) still get scored for the pairs where they
-    exist. A stack level ``filter_to_common_atoms`` would drop them entirely.
-
-    TODO: this helper hits the broader issue in how we
-    handle structures with >2 altlocs.
-    Fixing that upstream would let us replace this helper
-    with a direct ``map_altlocs_to_stack`` call and remove a source of
-    duplication.
-    """
-    pairs: dict[tuple[str, str], tuple[AtomArray, AtomArray]] = {}
-    for i in range(len(altloc_ids)):
-        for j in range(i + 1, len(altloc_ids)):
-            a_i = select_altloc(atom_array, altloc_ids[i], return_full_array=True)
-            a_j = select_altloc(atom_array, altloc_ids[j], return_full_array=True)
-            try:
-                f_i, f_j = filter_to_common_atoms(a_i, a_j)
-            except RuntimeError as e:
-                logger.warning(
-                    f"could not match atoms between altlocs "
-                    f"{altloc_ids[i]} and {altloc_ids[j]}: {e}"
-                )
-                continue
-            pairs[(altloc_ids[i], altloc_ids[j])] = (f_i, f_j)
-    return pairs
-
-
 def _mean_residue_lddt_for_pair(
-    gt_array: AtomArray,
-    pred_array: AtomArray,
+    gt_array: AtomArray | AtomArrayStack | None,
+    pred_array: AtomArray | AtomArrayStack | None,
     chain: str,
     residues: list[int],
 ) -> float:
@@ -187,7 +149,9 @@ def _mean_residue_lddt_for_pair(
 
 def _classify_selection(
     atom_array: AtomArray,
-    pair_arrays: dict[tuple[str, str], tuple[AtomArray, AtomArray]],
+    pair_arrays: Mapping[
+        tuple[str, str], tuple[AtomArray, AtomArray] | tuple[AtomArrayStack, AtomArrayStack]
+    ],
     altloc_ids: list[str],
     selection_str: str,
     protein: str,
@@ -320,18 +284,18 @@ def _classify_selection(
 
 
 def _process_structure(
-    row: pd.Series,
+    input_row: pd.Series,
     cif_root: Path | None,
     domain_shift_min_span: int,
     loop_lddt_threshold: float,
 ) -> list[dict]:
-    protein = str(row["protein"])
-    cif_path = resolve_cif_path(row, cif_root)
+    protein = str(input_row["protein"])
+    cif_path = resolve_cif_path(input_row, cif_root)
     if not cif_path.exists():
         logger.error(f"[{protein}] CIF file not found: {cif_path}")
         return []
 
-    selection_field = row.get("selection", "")
+    selection_field = input_row.get("selection", "")
     if not isinstance(selection_field, str) or not selection_field.strip():
         logger.warning(f"[{protein}] no selections in CSV row for {cif_path}")
         return []
@@ -345,7 +309,7 @@ def _process_structure(
         )
         return []
 
-    pair_arrays = _build_pairwise_altloc_arrays(atom_array, altloc_info.altloc_ids)
+    pair_arrays = build_pairwise_altloc_arrays(atom_array, altloc_info.altloc_ids)
 
     structure_altloc_mask = ~np.isin(atom_array.altloc_id, list(BLANK_ALTLOC_IDS))
     structure_backbone_mask = np.isin(atom_array.atom_name, BACKBONE_ATOM_TYPES)
@@ -356,6 +320,8 @@ def _process_structure(
         # find_altloc_selections.py appends a combined all altloc selection
         # (atomworks-style with " or " clauses) at the end of each row. That one is
         # a union over every span we already processed individually, so skip it.
+        # NOTE: This will need to be addressed when we
+        # migrate to atomworks-style selections for everything
         if " or " in selection_str:
             continue
         out = _classify_selection(
@@ -371,8 +337,8 @@ def _process_structure(
         )
         if out is None:
             continue
-        row, covered = out
-        rows.append(row)
+        result_row, covered = out
+        rows.append(result_row)
         classified_res_ids.update(covered)
 
     # residues across all classified spans should equal total unique
@@ -408,7 +374,7 @@ def main(args: argparse.Namespace) -> None:
     for _, row in input_df.iterrows():
         all_rows.extend(
             _process_structure(
-                row=row,
+                input_row=row,
                 cif_root=args.cif_root,
                 domain_shift_min_span=args.domain_shift_min_span,
                 loop_lddt_threshold=args.loop_lddt_threshold,

@@ -751,3 +751,41 @@ def filter_to_common_atoms(
     if return_indices:
         return result_arrays, tuple(index_arrays)
     return result_arrays
+
+
+def build_pairwise_altloc_arrays(
+    atom_array: AtomArray, altloc_ids: list[str]
+) -> dict[tuple[str, str], tuple[AtomArrayStack, AtomArrayStack]]:
+    """Return ``{(id_i, id_j): (array_i, array_j)}`` pre-filtered to common atoms.
+
+    For each unordered altloc pair we build the two per-altloc AtomArrays
+    via ``select_altloc(return_full_array=True)``, which includes blank-altloc
+    atoms as shared context and then run ``filter_to_common_atoms`` so the two
+    inputs have identical atom order and count.
+
+    We build per-pair rather than using ``map_altlocs_to_stack`` so residues whose
+    altloc set is a subset of those in the whole structure (e.g. 2YL0 res 60–64
+    carry only altlocs A and B, not C) still get scored for the pairs where they
+    exist. A stack level ``filter_to_common_atoms`` would drop them entirely.
+
+    TODO: this helper hits the broader issue in how we
+    handle structures with >2 altlocs.
+    Fixing that upstream would let us replace this helper
+    with a direct ``map_altlocs_to_stack`` call and remove a source of
+    duplication.
+    """
+    pairs: dict[tuple[str, str], tuple[AtomArrayStack, AtomArrayStack]] = {}
+    for i in range(len(altloc_ids)):
+        for j in range(i + 1, len(altloc_ids)):
+            a_i = select_altloc(atom_array, altloc_ids[i], return_full_array=True)
+            a_j = select_altloc(atom_array, altloc_ids[j], return_full_array=True)
+            try:
+                f_i, f_j = filter_to_common_atoms(a_i, a_j)
+            except RuntimeError as e:
+                logger.warning(
+                    f"could not match atoms between altlocs "
+                    f"{altloc_ids[i]} and {altloc_ids[j]}: {e}"
+                )
+                continue
+            pairs[(altloc_ids[i], altloc_ids[j])] = (f_i, f_j)
+    return pairs
