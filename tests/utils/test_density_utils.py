@@ -10,8 +10,10 @@ from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
 from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.core.rewards.real_space_density import extract_density_inputs_from_atomarray
 from sampleworks.utils.density_utils import (
+    build_density_transformer,
     compute_density_from_atomarray,
     create_synthetic_grid,
+    run_density_transformer,
 )
 
 
@@ -472,3 +474,59 @@ class TestComputeDensityFromAtomArrayStack:
 
         expected = sum(per_model_densities)
         torch.testing.assert_close(density_stack, expected, rtol=1e-4, atol=1e-6)
+
+
+@pytest.mark.gpu
+class TestSplitDensityHelpers:
+    """Tests for build_density_transformer and run_density_transformer."""
+
+    def test_split_helpers_match_wrapper(
+        self, simple_atom_array: AtomArray, device: torch.device
+    ):
+        """
+        Split helpers must produce the same density as the wrapper.
+        """
+        xmap = create_synthetic_grid(simple_atom_array, resolution=2.0)
+
+        ref_density, _ = compute_density_from_atomarray(
+            simple_atom_array, xmap=xmap, em_mode=False, device=device
+        )
+        transformer, _ = build_density_transformer(xmap, em_mode=False, device=device)
+        new_density = run_density_transformer(transformer, simple_atom_array, device)
+
+        torch.testing.assert_close(ref_density, new_density, rtol=1e-5, atol=1e-6)
+
+    def test_transformer_reuse_produces_identical_density(
+        self, simple_atom_array: AtomArray, device: torch.device
+    ):
+        """
+        Running the same transformer twice on the same input should produce the same results.
+        """
+        xmap = create_synthetic_grid(simple_atom_array, resolution=2.0)
+        transformer, _ = build_density_transformer(xmap, em_mode=False, device=device)
+
+        density_1 = run_density_transformer(transformer, simple_atom_array, device)
+        density_2 = run_density_transformer(transformer, simple_atom_array, device)
+
+        torch.testing.assert_close(density_1, density_2)
+
+    def test_transformer_reuse_across_different_structures(
+        self, simple_atom_array: AtomArray, device: torch.device
+    ):
+        """
+        Different atom arrays through the same transformer produce distinct
+        but deterministic densities
+        """
+        xmap = create_synthetic_grid(simple_atom_array, resolution=2.0)
+        transformer, _ = build_density_transformer(xmap, em_mode=False, device=device)
+
+        # Shift coords to make a different structure but reuse the grid.
+        shifted = simple_atom_array.copy()
+        shifted.coord = shifted.coord + 0.5
+
+        density_orig = run_density_transformer(transformer, simple_atom_array, device)
+        density_shifted = run_density_transformer(transformer, shifted, device)
+        density_orig_again = run_density_transformer(transformer, simple_atom_array, device)
+
+        assert not torch.allclose(density_orig, density_shifted)
+        torch.testing.assert_close(density_orig, density_orig_again)

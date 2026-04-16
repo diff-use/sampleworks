@@ -82,6 +82,91 @@ def create_synthetic_grid(
     return empty_xmap
 
 
+def build_density_transformer(
+    xmap: XMap,
+    em_mode: bool,
+    device: torch.device,
+) -> tuple[DifferentiableTransformer, XMap_torch]:
+    """Build a reusable DifferentiableTransformer bound to a grid.
+
+    Callers that compute density for many structures on the same grid can
+    build the transformer once and reuse it across calls, avoiding the cost
+    of GaussLegendreQuadrature setup and transform-matrix initialization
+    inside :class:`DifferentiableTransformer.__init__`.
+
+    Parameters
+    ----------
+    xmap : XMap
+        Map whose grid geometry (unit cell, voxel spacing, resolution,
+        origin) defines the output density grid.
+    em_mode : bool
+        If True, use electron scattering factors. If False, use X-ray factors.
+    device : torch.device
+        PyTorch device for computation.
+
+    Returns
+    -------
+    tuple[DifferentiableTransformer, XMap_torch]
+        The transformer and the XMap_torch it was built against.
+    """
+    scattering_params = setup_scattering_params(em_mode=em_mode, device=device)
+
+    xmap_torch = XMap_torch(xmap, device=device)
+    transformer = DifferentiableTransformer(
+        xmap=xmap_torch,
+        scattering_params=scattering_params,
+        em=em_mode,
+        device=device,
+        use_cuda_kernels=torch.cuda.is_available(),
+    )
+    return transformer, xmap_torch
+
+
+def run_density_transformer(
+    transformer: DifferentiableTransformer,
+    atom_array: AtomArray | AtomArrayStack,
+    device: torch.device,
+) -> torch.Tensor:
+    """Run a prebuilt density transformer on an atom array.
+
+    For :class:`~biotite.structure.AtomArrayStack` inputs, density is computed
+    independently for each model's coordinates and then summed.
+
+    Parameters
+    ----------
+    transformer : DifferentiableTransformer
+        Prebuilt transformer (see :func:`build_density_transformer`).
+    atom_array : AtomArray | AtomArrayStack
+        Structure to compute density for.
+    device : torch.device
+        PyTorch device for computation; must match the one used to build
+        ``transformer``.
+
+    Returns
+    -------
+    torch.Tensor
+        Computed electron density on the transformer's grid.
+    """
+    coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
+        atom_array, device
+    )
+
+    # need to make sure these all have the same batch dimension, or the transformer will fail.
+    elements = elements.expand(coords.shape[0], -1)
+    b_factors = b_factors.expand(coords.shape[0], -1)
+    occupancies = occupancies.expand(coords.shape[0], -1)
+
+    with torch.no_grad():
+        density = transformer(
+            coordinates=coords,
+            elements=elements,
+            b_factors=b_factors,
+            occupancies=occupancies,
+        )
+
+    return density.sum(dim=0)
+
+
 def compute_density_from_atomarray(
     atom_array: AtomArray | AtomArrayStack,
     xmap: XMap | None = None,
@@ -99,6 +184,10 @@ def compute_density_from_atomarray(
     independently for each model's coordinates and then summed. Occupancy
     values are taken directly from the structure annotations (shared across
     models in :class:`~biotite.structure.AtomArrayStack`).
+
+    For callers that repeatedly compute density on the same grid, use
+    :func:`build_density_transformer` and :func:`run_density_transformer`
+    directly to reuse the expensive transformer setup.
 
     Parameters
     ----------
@@ -137,32 +226,6 @@ def compute_density_from_atomarray(
     if xmap is None:
         xmap = create_synthetic_grid(atom_array, resolution, padding=5.0)  # ty: ignore[invalid-argument-type] (resolution will not be None here)
 
-    scattering_params = setup_scattering_params(em_mode=em_mode, device=device)
-
-    xmap_torch = XMap_torch(xmap, device=device)
-    transformer = DifferentiableTransformer(
-        xmap=xmap_torch,
-        scattering_params=scattering_params,
-        em=em_mode,
-        device=device,
-        use_cuda_kernels=torch.cuda.is_available(),
-    )
-
-    coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
-        atom_array, device
-    )
-
-    # need to make sure these all have the same batch dimension, or the transformer will fail.
-    elements = elements.expand(coords.shape[0], -1)
-    b_factors = b_factors.expand(coords.shape[0], -1)
-    occupancies = occupancies.expand(coords.shape[0], -1)
-
-    with torch.no_grad():
-        density = transformer(
-            coordinates=coords,
-            elements=elements,
-            b_factors=b_factors,
-            occupancies=occupancies,
-        )
-
-    return density.sum(dim=0), xmap_torch
+    transformer, xmap_torch = build_density_transformer(xmap, em_mode=em_mode, device=device)
+    density = run_density_transformer(transformer, atom_array, device)
+    return density, xmap_torch
