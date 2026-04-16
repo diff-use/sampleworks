@@ -183,6 +183,31 @@ def add_msa_to_chain_info(chain_info: dict, msa_path: str | Path | dict | None) 
     return updated_chain_info
 
 
+def _cuda_index(device: torch.device | str) -> int:
+    """Extract the CUDA device index from a ``torch.device`` or string.
+
+    Parameters
+    ----------
+    device: torch.device | str
+        Device spec, e.g. ``"cuda:3"``, ``torch.device("cuda", 2)``, or ``"cuda"``.
+
+    Returns
+    -------
+    int
+        Device index (``0`` when unspecified, matching Torch defaults).
+
+    Raises
+    ------
+    ValueError
+        If ``device`` is not a CUDA device. Currently, sampleworks only supports
+        CUDA systems, so non-CUDA devices will fail here.
+    """
+    dev = torch.device(device)
+    if dev.type != "cuda":
+        raise ValueError(f"RF3Wrapper requires a CUDA device, got {dev!r}")
+    return dev.index if dev.index is not None else 0
+
+
 class RF3Wrapper:
     """Wrapper for RosettaFold 3 (Baker Lab AlphaFold 3 replication)."""
 
@@ -190,6 +215,7 @@ class RF3Wrapper:
         self,
         checkpoint_path: str | Path,
         msa_manager: MSAManager | None = None,
+        device: torch.device | str | None = None,
     ):
         """
         Parameters
@@ -198,6 +224,16 @@ class RF3Wrapper:
             Filesystem path to the checkpoint containing trained weights.
         msa_manager: MSAManager | None
             MSA manager for retrieving MSAs for input structures.
+        device: torch.device | str | None
+            CUDA device to bind the underlying Lightning Fabric to (e.g. ``"cuda:3"``).
+            When ``None``, Fabric picks the first available device. Required for
+            parallel jobs that must target distinct GPUs — passing an ``int``
+            to Fabric (the default) always resolves to GPU 0, which serialises
+            otherwise-parallel workers onto a single device.
+
+            References: https://lightning.ai/docs/fabric/stable/fundamentals/launch.html
+              devices argument to fabric run
+            https://github.com/RosettaCommons/foundry/blob/b071919caa19ff334bc04b1b41145cac61eba819/src/foundry/trainers/fabric.py#L92
         """
         logger.info("Loading RF3 Inference Engine")
 
@@ -205,10 +241,14 @@ class RF3Wrapper:
         self.msa_manager = msa_manager
         self.msa_pairing_strategy = "greedy"
 
-        self.inference_engine = RF3InferenceEngine(
-            ckpt_path=str(self.checkpoint_path),
-            diffusion_batch_size=1,
-        )
+        engine_kwargs: dict[str, Any] = {
+            "ckpt_path": str(self.checkpoint_path),
+            "diffusion_batch_size": 1,
+        }
+        if device is not None:
+            engine_kwargs["devices_per_node"] = [_cuda_index(device)]
+
+        self.inference_engine = RF3InferenceEngine(**engine_kwargs)
         self.inference_engine.initialize()
 
         self.inference_engine.trainer = cast(

@@ -207,12 +207,10 @@ def get_model_and_device(
         model_wrapper = RF3Wrapper(
             checkpoint_path=validated_checkpoint_path,
             msa_manager=MSAManager(),
+            device=device,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
-
-    # RF3 currently manages its own device; prefer that when available.
-    device = getattr(model_wrapper, "device", device)
 
     # (pyright doesn't think Boltz1Wrapper etc are "Any")
     return device, model_wrapper
