@@ -199,8 +199,8 @@ def _cuda_index(device: torch.device | str) -> int:
     Raises
     ------
     ValueError
-        If ``device`` is not a CUDA device. RF3's Fabric-backed accelerator
-        only supports GPU execution.
+        If ``device`` is not a CUDA device. Currently, sampleworks only supports
+        CUDA systems, so non-CUDA devices will fail here.
     """
     dev = torch.device(device)
     if dev.type != "cuda":
@@ -230,6 +230,10 @@ class RF3Wrapper:
             parallel jobs that must target distinct GPUs — passing an ``int``
             to Fabric (the default) always resolves to GPU 0, which serialises
             otherwise-parallel workers onto a single device.
+            
+            References: https://lightning.ai/docs/fabric/stable/fundamentals/launch.html
+              devices argument to fabric run
+            https://github.com/RosettaCommons/foundry/blob/b071919caa19ff334bc04b1b41145cac61eba819/src/foundry/trainers/fabric.py#L92
         """
         logger.info("Loading RF3 Inference Engine")
 
