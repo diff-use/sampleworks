@@ -230,7 +230,7 @@ class RF3Wrapper:
             parallel jobs that must target distinct GPUs — passing an ``int``
             to Fabric (the default) always resolves to GPU 0, which serialises
             otherwise-parallel workers onto a single device.
-            
+
             References: https://lightning.ai/docs/fabric/stable/fundamentals/launch.html
               devices argument to fabric run
             https://github.com/RosettaCommons/foundry/blob/b071919caa19ff334bc04b1b41145cac61eba819/src/foundry/trainers/fabric.py#L92
