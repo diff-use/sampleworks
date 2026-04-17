@@ -48,6 +48,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from loguru import logger
+from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import (
     BACKBONE_ATOM_TYPES,
@@ -80,43 +81,6 @@ OUTPUT_COLUMNS = [
     "n_altlocs",
     "pair_lddts",
 ]
-
-
-def _resolve_cif_path(row: pd.Series, cif_root: Path | None) -> Path:
-    """Resolve a CIF path from a row, preferring ``structure`` then ``structure_pattern``.
-
-    When resolving ``structure_pattern`` against ``cif_root``, this tries both
-    ``{cif_root}/{pattern}`` (flat layout) and ``{cif_root}/{protein}/{pattern}``
-    (per-protein subdirectory layout, as used by the initial_dataset processed dir).
-    """
-    if "structure" in row and isinstance(row["structure"], str) and row["structure"]:
-        p = Path(row["structure"])
-        if p.is_absolute() or p.exists():
-            return p
-        if cif_root is not None:
-            return cif_root / p
-        return p
-
-    if "structure_pattern" not in row or not row["structure_pattern"]:
-        raise ValueError(f"Row has neither 'structure' nor 'structure_pattern': {row.to_dict()}")
-
-    pattern = Path(row["structure_pattern"])
-    if pattern.is_absolute():
-        return pattern
-    if cif_root is None:
-        return pattern
-
-    flat = cif_root / pattern
-    if flat.exists():
-        return flat
-
-    protein = row.get("protein", "")
-    if isinstance(protein, str) and protein:
-        for candidate in (cif_root / protein / pattern, cif_root / protein.upper() / pattern):
-            if candidate.exists():
-                return candidate
-
-    return flat  # fall back to flat so caller's existence check emits the right error
 
 
 def _max_contiguous_run(sorted_res_ids: list[int]) -> int:
@@ -310,7 +274,7 @@ def _process_structure(
     loop_lddt_threshold: float,
 ) -> list[dict]:
     protein = str(row["protein"])
-    cif_path = _resolve_cif_path(row, cif_root)
+    cif_path = resolve_cif_path(row, cif_root)
     if not cif_path.exists():
         logger.error(f"[{protein}] CIF file not found: {cif_path}")
         return []
