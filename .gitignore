@@ -228,3 +228,6 @@ initial_dataset_40*/
 *.tar.gz
 *.tgz
 *.csv
+
+# Reinclude
+!src/sampleworks/data/protein_configs.csv

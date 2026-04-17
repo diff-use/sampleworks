@@ -42,13 +42,16 @@ selections.
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
+from sampleworks.eval.structure_utils import (
+    ATOMWORKS_COMPARISON_OPS,
+    get_mask_from_old_selection_string,
+)
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import (
     BACKBONE_ATOM_TYPES,
@@ -58,10 +61,6 @@ from sampleworks.utils.atom_array_utils import (
     load_structure_with_altlocs,
     select_altloc,
 )
-
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lddt_evaluation_script import translate_selection
 
 
 # np.isin requires a sequence; BLANK_ALTLOC_IDS is a set. Cache the list form.
@@ -178,10 +177,11 @@ def _classify_selection(
     of (chain_id, res_id) pairs inside the selection that carry any altloc,
     used for the caller's residue-coverage invariant check.
     """
-    aw_selection = translate_selection(selection_str)
-
     try:
-        sel_mask = atom_array.mask(aw_selection)
+        if not any(op in selection_str for op in ATOMWORKS_COMPARISON_OPS):
+            sel_mask = get_mask_from_old_selection_string(atom_array, selection_str)
+        else:
+            sel_mask = atom_array.mask(selection_str)
     except Exception as e:
         logger.error(f"[{protein}] failed to apply selection '{selection_str}': {e}")
         return None
@@ -193,9 +193,14 @@ def _classify_selection(
     sel_res_ids = np.unique(atom_array.res_id[sel_mask])
     sel_chain_ids = np.unique(atom_array.chain_id[sel_mask])
     if len(sel_chain_ids) != 1:
-        logger.warning(
-            f"[{protein}] selection spans multiple chains {sel_chain_ids}, using first: "
-            f"{selection_str}"
+        # res_ids are per chain, so mixing chains would put residues from
+        # distinct chains into one list, corrupting backbone_altloc_res_ids,
+        # _max_contiguous_run, and the lDDT residue selection.
+        # find_altloc_selections.py emits per chain spans, so callers must split
+        # multi chain inputs upstream rather than have us guess.
+        raise RuntimeError(
+            f"[{protein}] selection '{selection_str}' spans multiple chains "
+            f"{sel_chain_ids.tolist()}. Split it per-chain upstream."
         )
     chain = str(sel_chain_ids[0])
 
