@@ -17,7 +17,6 @@ search results.
 import argparse
 import copy
 import traceback
-from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
@@ -149,13 +148,16 @@ def main(args: argparse.Namespace):
                 base_xmap = protein_config.load_map(base_map_path)
                 if base_xmap is None:
                     raise ValueError(f"Failed to load base map from {base_map_path}")
-                base_map_cache[group_key] = base_xmap
 
             transformer_entry = transformer_cache.get(group_key)
             if transformer_entry is None:
                 transformer, xmap_torch = build_density_transformer(
                     base_xmap, em_mode=False, device=device
                 )
+                # Only cache the base map once the transformer build has succeeded,
+                # so a failure leaves the group uncached rather than retrying a
+                # doomed transformer build per trial
+                base_map_cache[group_key] = base_xmap
                 transformer_cache[group_key] = (transformer, xmap_torch)
             else:
                 transformer, _ = transformer_entry
@@ -232,18 +234,23 @@ def main(args: argparse.Namespace):
             atom_array.coord = aligned_coords_torch.numpy()
 
             # Compute density from the aligned refined structure
-            computed_density = run_density_transformer(transformer, atom_array, device)
+            computed_density = run_density_transformer(transformer, atom_array)
             # Shallow-copy the base xmap so .array can be rebound without touching the cache.
             # XMap.extract_tight reads self.array live, so the two wrappers stay independent.
             computed_xmap = copy.copy(base_xmap)
             computed_xmap.array = computed_density.cpu().numpy()
-        except Exception as e:
+            if computed_xmap.array.shape != base_xmap.array.shape:
+                raise ValueError(
+                    f"density shape {computed_xmap.array.shape} does not match base map "
+                    f"shape {base_xmap.array.shape}"
+                )
+        except (FileNotFoundError, OSError, ValueError, RuntimeError) as e:
             logger.error(f"ERROR processing trial {trial.trial_dir}: {e}")
             logger.error(f"  Traceback: {traceback.format_exc()}")
             for selection in protein_config.selection:
                 if (protein, selection) not in ref_coords:
                     continue
-                row = asdict(trial)
+                row = trial.__dict__.copy()
                 row.update(
                     selection=selection,
                     error=e,
@@ -258,7 +265,7 @@ def main(args: argparse.Namespace):
             if (protein, selection) not in ref_coords:
                 continue
             sel_coords = ref_coords[(protein, selection)]
-            row = asdict(trial)
+            row = trial.__dict__.copy()
             row.update(selection=selection, error=None, base_map_path=base_map_path)
             try:
                 sel_key: SelectionKey = (protein, trial.occ_key, selection)

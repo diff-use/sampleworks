@@ -117,7 +117,7 @@ def build_density_transformer(
         scattering_params=scattering_params,
         em=em_mode,
         device=device,
-        use_cuda_kernels=torch.cuda.is_available(),
+        use_cuda_kernels=device.type == "cuda" and torch.cuda.is_available(),
     )
     return transformer, xmap_torch
 
@@ -125,7 +125,6 @@ def build_density_transformer(
 def run_density_transformer(
     transformer: DifferentiableTransformer,
     atom_array: AtomArray | AtomArrayStack,
-    device: torch.device,
 ) -> torch.Tensor:
     """Run a prebuilt density transformer on an atom array.
 
@@ -135,12 +134,11 @@ def run_density_transformer(
     Parameters
     ----------
     transformer : DifferentiableTransformer
-        Prebuilt transformer (see :func:`build_density_transformer`).
+        Prebuilt transformer (see :func:`build_density_transformer`). Inputs
+        are placed on ``transformer.device`` and the returned tensor is on the
+        same device.
     atom_array : AtomArray | AtomArrayStack
         Structure to compute density for.
-    device : torch.device
-        PyTorch device for computation; must match the one used to build
-        ``transformer``.
 
     Returns
     -------
@@ -148,13 +146,8 @@ def run_density_transformer(
         Computed electron density on the transformer's grid.
     """
     coords, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
-        atom_array, device
+        atom_array, transformer.device
     )
-
-    # need to make sure these all have the same batch dimension, or the transformer will fail.
-    elements = elements.expand(coords.shape[0], -1)
-    b_factors = b_factors.expand(coords.shape[0], -1)
-    occupancies = occupancies.expand(coords.shape[0], -1)
 
     with torch.no_grad():
         density = transformer(
@@ -227,5 +220,5 @@ def compute_density_from_atomarray(
         xmap = create_synthetic_grid(atom_array, resolution, padding=5.0)  # ty: ignore[invalid-argument-type] (resolution will not be None here)
 
     transformer, xmap_torch = build_density_transformer(xmap, em_mode=em_mode, device=device)
-    density = run_density_transformer(transformer, atom_array, device)
+    density = run_density_transformer(transformer, atom_array)
     return density, xmap_torch

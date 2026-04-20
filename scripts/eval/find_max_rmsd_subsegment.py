@@ -5,9 +5,10 @@ and, for each contiguous altloc span longer than ``--window-size`` residues,
 identifies the contiguous subsegment of that size with the highest
 RMSD between any pair of alternate conformations.
 
-Only residues with identical residue names across altlocs are considered.
-Windows containing compositional heterogeneity (different residue names, e.g. CYS vs CSO)
-are skipped.
+Residues are scored on the atoms shared across altlocs (via the per-pair common-atom
+filtering in ``build_pairwise_altloc_arrays``), so modified residues such as CYS/CSO are
+included rather than skipped. Selections may use either ``chain X and resi a-b`` or
+atomworks-style syntax.
 
 The primary output CSV preserves the setup expected by
 ``rscc_grid_search_script.py`` (one row per protein, semicolon joined
@@ -21,25 +22,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from biotite.structure import AtomArrayStack, get_residues, rmsd as biotite_rmsd
+from biotite.structure import AtomArrayStack, rmsd as biotite_rmsd
+from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
-from sampleworks.eval.structure_utils import (
-    ATOMWORKS_COMPARISON_OPS,
-    parse_selection_string,
-)
+from sampleworks.eval.structure_utils import selection_to_residues
 from sampleworks.utils.atom_array_utils import (
     build_pairwise_altloc_arrays,
     detect_altlocs,
     load_structure_with_altlocs,
 )
-
-
-def _has_compositional_heterogeneity(arr_i, arr_j, mask: np.ndarray) -> bool:
-    """Check if residues under *mask* have different names between two altloc arrays."""
-    _, names_i = get_residues(arr_i[mask])
-    _, names_j = get_residues(arr_j[mask])
-    return not np.array_equal(names_i, names_j)
 
 
 def _find_max_rmsd_window(
@@ -67,9 +59,9 @@ def _find_max_rmsd_window(
         ``(best_window_residues, best_rmsd, best_pair_str)`` or ``None``
         if no valid RMSD could be computed for any window.
     """
-    best_rmsd = -np.inf
-    best_window: list[int] | None = None
-    best_pair = ""
+    max_rmsd = -np.inf
+    max_window: list[int] | None = None
+    max_pair = ""
 
     for w in range(len(residues) - window_size + 1):
         window_res = residues[w : w + window_size]
@@ -78,22 +70,23 @@ def _find_max_rmsd_window(
             arr_i = stack_i[0]
             arr_j = stack_j[0]
 
+            # arr_i and arr_j come from build_pairwise_altloc_arrays, which already ran
+            # filter_to_common_atoms on the pair, so the same mask selects matched atoms in
+            # both. Scoring on these shared atoms includes modified residues (e.g. CYS/CSO)
+            # rather than skipping them.
             mask = (arr_i.chain_id == chain) & np.isin(arr_i.res_id, window_res)
             if mask.sum() == 0:
                 continue
 
-            if _has_compositional_heterogeneity(arr_i, arr_j, mask):
-                continue
-
             rmsd_val = float(biotite_rmsd(arr_i[mask], arr_j[mask]))
-            if np.isfinite(rmsd_val) and rmsd_val > best_rmsd:
-                best_rmsd = rmsd_val
-                best_window = window_res
-                best_pair = f"{alt_i}-{alt_j}"
+            if np.isfinite(rmsd_val) and rmsd_val > max_rmsd:
+                max_rmsd = rmsd_val
+                max_window = window_res
+                max_pair = f"{alt_i}-{alt_j}"
 
-    if best_window is None:
+    if max_window is None:
         return None
-    return best_window, float(best_rmsd), best_pair
+    return max_window, float(max_rmsd), max_pair
 
 
 def _process_structure(
@@ -129,27 +122,15 @@ def _process_structure(
 
     output_rows: list[dict] = []
     for sel_str in [s.strip() for s in selection_field.split(";") if s.strip()]:
-        # Skip atomworks-style catchall selections # NOTE: This will need to be addressed when we
-        # migrate to atomworks-style selections for everything, similar to classify_altloc_regions
-        if any(op in sel_str for op in ATOMWORKS_COMPARISON_OPS):
+        # Resolve the selection (legacy "chain X and resi a-b" or atomworks-style) to its
+        # residues. The window slides over one chain, so non-single-chain selections are skipped.
+        covered = selection_to_residues(atom_array, sel_str)
+        chains = {chain for chain, _ in covered}
+        if len(chains) != 1:
+            logger.warning(f"[{protein}] selection is empty or not single-chain: {sel_str}")
             continue
-
-        chain, start, end = parse_selection_string(sel_str)
-        if chain is None or start is None or end is None:
-            logger.warning(f"[{protein}] cannot parse selection: {sel_str}")
-            continue
-
-        # Get resids present in the structure for this range
-        range_mask = (
-            (atom_array.chain_id == chain)
-            & (atom_array.res_id >= start)
-            & (atom_array.res_id <= end)
-        )
-        actual_res_ids = sorted(set(int(r) for r in atom_array.res_id[range_mask]))
-
-        if not actual_res_ids:
-            logger.warning(f"[{protein}] selection matched no residues: {sel_str}")
-            continue
+        chain = chains.pop()
+        actual_res_ids = sorted(res_id for _, res_id in covered)
 
         out: dict = {
             "protein": protein,
@@ -172,10 +153,10 @@ def _process_structure(
                 out["max_rmsd"] = float("nan")
                 out["altloc_pair"] = ""
             else:
-                best_res, best_rmsd, best_pair = result
-                out["selection"] = f"chain {chain} and resi {best_res[0]}-{best_res[-1]}"
-                out["max_rmsd"] = best_rmsd
-                out["altloc_pair"] = best_pair
+                max_res, max_rmsd, max_pair = result
+                out["selection"] = f"chain {chain} and resi {max_res[0]}-{max_res[-1]}"
+                out["max_rmsd"] = max_rmsd
+                out["altloc_pair"] = max_pair
 
         output_rows.append(out)
 
@@ -189,11 +170,11 @@ def main(args: argparse.Namespace) -> None:
     if missing:
         raise ValueError(f"Input CSV missing required columns: {missing}")
 
-    all_rows: list[dict] = []
-    for _, row in input_df.iterrows():
-        all_rows.extend(
-            _process_structure(row=row, cif_root=args.cif_root, window_size=args.window_size)
-        )
+    results = Parallel(n_jobs=args.n_jobs)(
+        delayed(_process_structure)(row=row, cif_root=args.cif_root, window_size=args.window_size)
+        for _, row in input_df.iterrows()
+    )
+    all_rows: list[dict] = [r for rows in results for r in rows]
 
     detail_df = pd.DataFrame(all_rows)
 
@@ -217,19 +198,17 @@ def main(args: argparse.Namespace) -> None:
             )
         )
     else:
-        final_rows = []
-        for protein, group in detail_df.groupby("protein", sort=False):
-            final_rows.append(
-                {
-                    "protein": protein,
-                    "selection": ";".join(group["selection"]),
-                    "structure_pattern": group["structure_pattern"].iloc[0],
-                    "map_pattern": group["map_pattern"].iloc[0],
-                    "base_map_dir": group["base_map_dir"].iloc[0],
-                    "resolution": group["resolution"].iloc[0],
-                }
+        final_df = (
+            detail_df.groupby("protein", sort=False)
+            .agg(
+                selection=("selection", lambda s: ";".join(s)),
+                structure_pattern=("structure_pattern", "first"),
+                map_pattern=("map_pattern", "first"),
+                base_map_dir=("base_map_dir", "first"),
+                resolution=("resolution", "first"),
             )
-        final_df = pd.DataFrame(final_rows)
+            .reset_index()
+        )
 
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(args.output_file, index=False)
@@ -265,5 +244,13 @@ if __name__ == "__main__":
         help="Optional per-selection diagnostic CSV with RMSD details.",
     )
     parser.add_argument("--window-size", type=int, default=3)
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel workers for per-structure processing (-1 = all cores).",
+    )
     args = parser.parse_args()
+    if args.window_size <= 0:
+        parser.error("--window-size must be a positive integer")
     main(args)

@@ -768,6 +768,19 @@ def build_pairwise_altloc_arrays(
     carry only altlocs A and B, not C) still get scored for the pairs where they
     exist. A stack level ``filter_to_common_atoms`` would drop them entirely.
 
+    Parameters
+    ----------
+    atom_array
+        Input structure with ``altloc_id`` annotations.
+    altloc_ids
+        Altloc identifiers to enumerate over (unordered ``i < j`` pairs).
+
+    Returns
+    -------
+    dict[tuple[str, str], tuple[AtomArrayStack, AtomArrayStack]]
+        Mapping ``(id_i, id_j) -> (array_i, array_j)`` filtered to common atoms.
+        Pairs whose atoms cannot be matched are omitted (a warning is logged).
+
     TODO: this helper hits the broader issue in how we
     handle structures with >2 altlocs.
     Fixing that upstream would let us replace this helper

@@ -337,8 +337,8 @@ def _process_structure(
         )
         if out is None:
             continue
-        result_row, covered = out
-        rows.append(result_row)
+        classified_row, covered = out
+        rows.append(classified_row)
         classified_res_ids.update(covered)
 
     # residues across all classified spans should equal total unique

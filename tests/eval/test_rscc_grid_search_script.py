@@ -4,9 +4,9 @@ Integration tests for ``scripts/eval/rscc_grid_search_script.py``.
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -33,17 +33,6 @@ def rscc_script():
     return _load_script()
 
 
-def _make_args(fx) -> argparse.Namespace:
-    return argparse.Namespace(
-        grid_search_results_path=fx.grid_search_results_path,
-        grid_search_inputs_path=fx.grid_search_inputs_path,
-        protein_configs_csv=fx.protein_configs_csv,
-        occupancies=None,
-        target_filename="refined.cif",
-        n_jobs=1,
-    )
-
-
 def _read_results(fx) -> pd.DataFrame:
     return pd.read_csv(fx.grid_search_results_path / "rscc_results.csv")
 
@@ -56,7 +45,7 @@ def test_main_end_to_end_produces_csv(rscc_fixture_factory, rscc_script):
     """
     fx = rscc_fixture_factory(n_groups=2, trials_per_group=2)
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     df = _read_results(fx)
     assert len(df) == 2 * 2 * 2
@@ -98,7 +87,7 @@ def test_trial_parse_failure_emits_error_rows(rscc_fixture_factory, rscc_script,
 
     monkeypatch.setattr(rscc_script, "parse", flaky_parse)
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     df = _read_results(fx)
     assert len(df) == len(fx.selections)
@@ -115,19 +104,21 @@ def test_per_selection_failure_isolated(rscc_fixture_factory, rscc_script, monke
 
     real_rscc = rscc_script.rscc
 
-    def flaky_rscc(a, b, _sel=bad_selection):
-        if flaky_rscc.target_is_next:  # type: ignore[attr-defined]
-            flaky_rscc.target_is_next = False  # type: ignore[attr-defined]
+    target_is_next = True
+
+    def flaky_rscc(a, b):
+        nonlocal target_is_next
+        if target_is_next:
+            target_is_next = False
             raise RuntimeError("simulated rscc failure")
         return real_rscc(a, b)
 
     # The selection loop calls rscc once per selection, in the order configured
     # in the CSV. Fail on the first call (i.e. the first selection).
-    flaky_rscc.target_is_next = True  # type: ignore[attr-defined]
 
     monkeypatch.setattr(rscc_script, "rscc", flaky_rscc)
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     df = _read_results(fx).set_index("selection")
     assert len(df) == len(fx.selections)
@@ -154,7 +145,7 @@ def test_selections_missing_from_ref_coords_produce_no_row(rscc_fixture_factory,
     )
     fx = rscc_fixture_factory(n_groups=1, trials_per_group=1, selections=selections)
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     df = _read_results(fx)
     assert len(df) == 2
@@ -178,7 +169,7 @@ def test_caches_evict_on_group_transition(rscc_fixture_factory, rscc_script, mon
 
     monkeypatch.setattr(rscc_script, "build_density_transformer", counting_build)
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     assert len(calls) == 2, f"expected 2 builds (one per group), got {len(calls)}"
 
@@ -191,7 +182,7 @@ def test_trials_grouped_by_sort_order(rscc_fixture_factory, rscc_script):
         n_groups=2, trials_per_group=2, selections=("chain A and resi 326-339",)
     )
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     df = _read_results(fx)
     assert len(df) == 4
@@ -211,34 +202,48 @@ def test_trials_grouped_by_sort_order(rscc_fixture_factory, rscc_script):
 
 
 @pytest.mark.slow
-def test_cached_base_map_array_unchanged_across_trials(
-    rscc_fixture_factory, rscc_script, monkeypatch
-):
-    """``base_xmap.array`` in the cache must not be mutated across trials.
+def test_cached_base_map_unchanged_across_trials(rscc_fixture_factory, rscc_script, monkeypatch):
+    """The shared cached ``base_xmap`` must not be mutated across trials.
 
     The script relies on ``copy.copy(base_xmap)`` producing a wrapper whose
-    ``.array`` rebind doesn't touch the cached original. The cache eviction
-    counter does not catch mutation of a retained cached map. This test
-    does, by snapshotting ``.array`` after the first build and comparing
-    after ``main()`` finishes.
+    ``.array`` rebind doesn't touch the cached original. Snapshot both the
+    ``.array`` data and the metadata attributes the shallow copy shares by
+    reference (``origin``, ``resolution``, ``unit_cell``, ``grid_parameters``)
+    so that drift in *any* of them across trials is caught, not just inplace
+    mutation of ``.array``.
     """
     fx = rscc_fixture_factory(n_groups=1, trials_per_group=2)
 
     real_build = rscc_script.build_density_transformer
-    snapshot: dict[str, object] = {}
+    snapshot: dict[str, Any] = {}
 
     def capturing_build(base_xmap, *args, **kwargs):
         if "xmap" not in snapshot:
             snapshot["xmap"] = base_xmap
             snapshot["initial_array"] = base_xmap.array.copy()
+            snapshot["initial_origin"] = np.asarray(base_xmap.origin).copy()
+            snapshot["initial_resolution"] = base_xmap.resolution
+            snapshot["initial_unit_cell"] = base_xmap.unit_cell
+            snapshot["initial_grid_parameters"] = base_xmap.grid_parameters
         return real_build(base_xmap, *args, **kwargs)
 
     monkeypatch.setattr(rscc_script, "build_density_transformer", capturing_build)
 
-    rscc_script.main(_make_args(fx))
+    rscc_script.main(fx)
 
     xmap = snapshot["xmap"]
-    initial = snapshot["initial_array"]
-    assert np.array_equal(xmap.array, initial), (  # type: ignore[attr-defined]
+    assert np.array_equal(xmap.array, snapshot["initial_array"]), (
         "cached base_xmap.array was mutated across trials"
+    )
+    assert np.array_equal(np.asarray(xmap.origin), snapshot["initial_origin"]), (
+        "cached base_xmap.origin drifted across trials"
+    )
+    assert xmap.resolution is snapshot["initial_resolution"], (
+        "cached base_xmap.resolution reference replaced"
+    )
+    assert xmap.unit_cell is snapshot["initial_unit_cell"], (
+        "cached base_xmap.unit_cell reference replaced"
+    )
+    assert xmap.grid_parameters is snapshot["initial_grid_parameters"], (
+        "cached base_xmap.grid_parameters reference replaced"
     )

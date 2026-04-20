@@ -476,13 +476,12 @@ class TestComputeDensityFromAtomArrayStack:
         torch.testing.assert_close(density_stack, expected, rtol=1e-4, atol=1e-6)
 
 
+@pytest.mark.slow
 @pytest.mark.gpu
 class TestSplitDensityHelpers:
     """Tests for build_density_transformer and run_density_transformer."""
 
-    def test_split_helpers_match_wrapper(
-        self, simple_atom_array: AtomArray, device: torch.device
-    ):
+    def test_split_helpers_match_wrapper(self, simple_atom_array: AtomArray, device: torch.device):
         """
         Split helpers must produce the same density as the wrapper.
         """
@@ -492,9 +491,27 @@ class TestSplitDensityHelpers:
             simple_atom_array, xmap=xmap, em_mode=False, device=device
         )
         transformer, _ = build_density_transformer(xmap, em_mode=False, device=device)
-        new_density = run_density_transformer(transformer, simple_atom_array, device)
+        new_density = run_density_transformer(transformer, simple_atom_array)
 
-        torch.testing.assert_close(ref_density, new_density, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(ref_density, new_density)
+
+    def test_split_helpers_match_wrapper_on_stack(
+        self, simple_atom_array_stack: AtomArrayStack, device: torch.device
+    ):
+        """
+        Split helpers must produce the same density as the wrapper when called
+        directly with an AtomArrayStack. This is the shape that the RSCC
+        grid-search refactor relies on when caching a transformer across trials.
+        """
+        xmap = create_synthetic_grid(simple_atom_array_stack, resolution=2.0)
+
+        ref_density, _ = compute_density_from_atomarray(
+            simple_atom_array_stack, xmap=xmap, em_mode=False, device=device
+        )
+        transformer, _ = build_density_transformer(xmap, em_mode=False, device=device)
+        new_density = run_density_transformer(transformer, simple_atom_array_stack)
+
+        torch.testing.assert_close(ref_density, new_density)
 
     def test_transformer_reuse_produces_identical_density(
         self, simple_atom_array: AtomArray, device: torch.device
@@ -505,8 +522,8 @@ class TestSplitDensityHelpers:
         xmap = create_synthetic_grid(simple_atom_array, resolution=2.0)
         transformer, _ = build_density_transformer(xmap, em_mode=False, device=device)
 
-        density_1 = run_density_transformer(transformer, simple_atom_array, device)
-        density_2 = run_density_transformer(transformer, simple_atom_array, device)
+        density_1 = run_density_transformer(transformer, simple_atom_array)
+        density_2 = run_density_transformer(transformer, simple_atom_array)
 
         torch.testing.assert_close(density_1, density_2)
 
@@ -524,9 +541,9 @@ class TestSplitDensityHelpers:
         shifted = simple_atom_array.copy()
         shifted.coord = shifted.coord + 0.5
 
-        density_orig = run_density_transformer(transformer, simple_atom_array, device)
-        density_shifted = run_density_transformer(transformer, shifted, device)
-        density_orig_again = run_density_transformer(transformer, simple_atom_array, device)
+        density_orig = run_density_transformer(transformer, simple_atom_array)
+        density_shifted = run_density_transformer(transformer, shifted)
+        density_orig_again = run_density_transformer(transformer, simple_atom_array)
 
         assert not torch.allclose(density_orig, density_shifted)
         torch.testing.assert_close(density_orig, density_orig_again)

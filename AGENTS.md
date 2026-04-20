@@ -8,25 +8,27 @@ Code should be direct, readable, and maximize clarity without verbosity. Name va
 
 Respond in a measured, clear tone. Consider alternatives carefully. Include confidence estimates for claims (e.g., "I am about 75% confident").
 
-Code reuse is paramount. Whenever possible, locate high-quality open-source implementations for algorithms and use those instead of implementing something yourself. Chances are someone has already solved the problem.
+Code reuse is paramount. Whenever possible, locate high-quality implementations in this codebase or high-quality open-source implementations for algorithms and use those instead of implementing something yourself. Chances are someone has already solved the problem, no need to reinvent the wheel.
 
 ## Project Overview
 
 **sampleworks** is a Python framework for guiding generative biomolecular structure models with experimental data. It bridges the gap between structure prediction (single-state ML models) and experimental reality (thermodynamic ensembles).
 
-**The core insight**: Structure prediction models like Boltz, AlphaFold, and RosettaFold capture aspects of the underlying distribution of realistic macromolecular structures, but collapse ensembles to single states. By treating these models as physics-informed samplers and applying experimental constraints during generation, we can recover the conformational ensemble present in the experiment.
+**The core insight**: Structure prediction models like Boltz, AlphaFold, and RosettaFold capture aspects of the underlying distribution of realistic macromolecular structures, but collapse ensembles to single states. By treating these models as physics-informed samplers and applying experimental constraints and guidance during generation, we can recover the conformational ensemble present in the experiment.
 
 **The core problem solved**: Without sampleworks, integrating N generative models with M experimental data types requires O(N×M) bespoke implementations. Sampleworks reduces this to O(N+M) through protocol-driven decoupling.
 
 ### Atomworks
 
-[Atomworks](https://baker-laboratory.github.io/atomworks-dev/latest/) is sampleworks' core dependency for structure I/O and representation. It provides:
+[Atomworks](https://baker-laboratory.github.io/atomworks-dev/latest/) is sampleworks' core dependency for structure I/O and representation. Atomworks is built atop biotite, a bioinformatics Python library. It provides:
 
 - **`atomworks.parse()`**: The universal entry point for loading structure files (`.cif`, `.pdb`). Returns a dictionary containing an `"asym_unit"` key with a Biotite `AtomArray` or `AtomArrayStack`, plus metadata. This dictionary is the standard structure representation passed to `ModelWrapper.featurize()`.
 - **`AtomArray` / `AtomArrayStack`** (from [Biotite](https://www.biotite-python.org/)): Per-atom annotations (element, residue ID, chain ID, B-factor, occupancy, coordinates). `AtomArrayStack` is the multi-model variant used for ensembles.
 - **`atomworks.ml`**: ML utilities used by model wrappers for featurization.
 
 Whenever you see a `structure: dict` parameter in sampleworks, it refers to an atomworks-parsed dictionary. Use `atomworks.parse()` to create one from a file, and use `load_any()` to load a `.pdb` or `.cif` to an AtomArray or AtomArrayStack.
+
+Additionally, if you need to modify or transform coordinates or other atomic annotations, search Atomworks and biotite for the appropriate tools.
 
 ## Design Philosophy
 
