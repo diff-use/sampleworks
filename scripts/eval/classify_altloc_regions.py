@@ -42,15 +42,18 @@ selections.
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from biotite.structure import AtomArray
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
 from sampleworks.eval.structure_utils import (
     ATOMWORKS_COMPARISON_OPS,
     get_mask_from_old_selection_string,
+    parse_selection_string,
 )
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import (
@@ -63,8 +66,7 @@ from sampleworks.utils.atom_array_utils import (
 )
 
 
-# np.isin requires a sequence; BLANK_ALTLOC_IDS is a set. Cache the list form.
-_BLANK_ALTLOC_ID_LIST = list(BLANK_ALTLOC_IDS)
+_ATOMWORKS_CHAIN_RE = re.compile(r"chain_id\s*==\s*['\"]([^'\"]+)['\"]")
 
 
 OUTPUT_COLUMNS = [
@@ -82,21 +84,36 @@ OUTPUT_COLUMNS = [
 ]
 
 
-def _max_contiguous_run(sorted_res_ids: list[int]) -> int:
+def _max_contiguous_run(sorted_res_ids: np.ndarray | list[int]) -> int:
     """Return the length of the longest contiguous run of integers in a sorted list."""
-    if not sorted_res_ids:
+    arr = np.asarray(sorted_res_ids, dtype=int)
+    if arr.size == 0:
         return 0
-    best = cur = 1
-    for prev, r in zip(sorted_res_ids, sorted_res_ids[1:]):
-        cur = cur + 1 if r == prev + 1 else 1
-        if cur > best:
-            best = cur
-    return best
+    breaks = np.concatenate(([0], np.nonzero(np.diff(arr) != 1)[0] + 1, [arr.size]))
+    return int(np.diff(breaks).max())
+
+
+def _chain_from_selection(selection: str) -> str | None:
+    """Extract the chain_id named by a selection string, or None if absent.
+
+    Handles atomworks-style (``chain_id == 'A'``) and the legacy ``chain A``
+    syntax accepted by ``parse_selection_string``.
+
+    TODO: deprecate when we move all to atomworks style selections.
+    """
+    m = _ATOMWORKS_CHAIN_RE.search(selection)
+    if m is not None:
+        return m.group(1)
+    if any(op in selection for op in ATOMWORKS_COMPARISON_OPS):
+        # Atomworks style selection without a chain_id
+        return None
+    chain_id, _, _ = parse_selection_string(selection)
+    return chain_id
 
 
 def _build_pairwise_altloc_arrays(
     atom_array, altloc_ids: list[str]
-) -> dict[tuple[str, str], tuple[object, object]]:
+) -> dict[tuple[str, str], tuple[AtomArray, AtomArray]]:
     """Return ``{(id_i, id_j): (array_i, array_j)}`` pre-filtered to common atoms.
 
     For each unordered altloc pair we build the two per-altloc AtomArrays
@@ -104,11 +121,18 @@ def _build_pairwise_altloc_arrays(
     atoms as shared context) and then run ``filter_to_common_atoms`` so the two
     inputs have identical atom order and count.
 
-    We build per-pair so residues whose altloc set is a subset of those in the whole structure
-    (e.g. 2YL0 res 60–64 carry only altlocs A and B, not C) still get scored for the pairs where
-    they exist.
+    We build per-pair rather than using ``map_altlocs_to_stack`` so residues whose
+    altloc set is a subset of those in the whole structure (e.g. 2YL0 res 60–64
+    carry only altlocs A and B, not C) still get scored for the pairs where they
+    exist. A stack level ``filter_to_common_atoms`` would drop them entirely.
+
+    TODO: this helper hits the broader issue in how we
+    handle structures with >2 altlocs.
+    Fixing that upstream would let us replace this helper
+    with a direct ``map_altlocs_to_stack`` call and remove a source of
+    duplication.
     """
-    pairs: dict[tuple[str, str], tuple[object, object]] = {}
+    pairs: dict[tuple[str, str], tuple[AtomArray, AtomArray]] = {}
     for i in range(len(altloc_ids)):
         for j in range(i + 1, len(altloc_ids)):
             a_i = select_altloc(atom_array, altloc_ids[i], return_full_array=True)
@@ -126,15 +150,13 @@ def _build_pairwise_altloc_arrays(
 
 
 def _mean_residue_lddt_for_pair(
-    gt_array,
-    pred_array,
+    gt_array: AtomArray,
+    pred_array: AtomArray,
     chain: str,
     residues: list[int],
 ) -> float:
-    """
-    Equal weighted arithmetic mean of per residue backbone lDDT across the span.
-    """
-    if len(residues) < 2 or gt_array is None or pred_array is None:
+    """Equal weighted arithmetic mean of per residue lDDT across the span."""
+    if gt_array is None or pred_array is None or not residues:
         return float("nan")
 
     res_clause = " or ".join(f"res_id == {r}" for r in residues)
@@ -150,18 +172,22 @@ def _mean_residue_lddt_for_pair(
         return float("nan")
 
     residue_scores = result.get("residue_lddt_scores", {})
-    if not residue_scores:
+    keys = [f"{chain}{r}" for r in residues]
+    missing = [k for k in keys if k not in residue_scores]
+    if missing:
+        logger.warning(
+            f"lDDT result missing residues {missing} for chain {chain}. This means the result"
+            f"averaged only over the {len(keys) - len(missing)} residues it returned"
+        )
+    flat = [residue_scores[k][0] for k in keys if k in residue_scores]
+    if not flat:
         return float("nan")
-
-    flat = [
-        v[0] if isinstance(v, (list, tuple, np.ndarray)) else v for v in residue_scores.values()
-    ]
     return float(np.mean(flat))
 
 
 def _classify_selection(
-    atom_array,
-    pair_arrays: dict[tuple[str, str], tuple[object, object]],
+    atom_array: AtomArray,
+    pair_arrays: dict[tuple[str, str], tuple[AtomArray, AtomArray]],
     altloc_ids: list[str],
     selection_str: str,
     protein: str,
@@ -170,19 +196,36 @@ def _classify_selection(
     domain_shift_min_span: int,
     loop_lddt_threshold: float,
 ) -> tuple[dict, set[tuple[str, int]]] | None:
-    """Classify one contiguous altloc selection.
+    """Classify one contiguous altloc selection into a conformational type.
 
-    Returns ``(row_dict, covered_altloc_residues)`` on success or ``None`` if
-    the selection could not be applied. ``covered_altloc_residues`` is the set
-    of (chain_id, res_id) pairs inside the selection that carry any altloc,
-    used for the caller's residue-coverage invariant check.
+    1. If the span has no backbone altlocs anywhere, it is classified as ``side_chain_only``.
+    2. Else if the longest contiguous backbone altloc run exceeds
+       ``domain_shift_min_span``, it is classified as ``domain_shift``.
+    3. Else compute the per residue backbone lDDT for every altloc pair over
+       the backbone altloc residues in the span and take the minimum
+       pair mean. Compare against ``loop_lddt_threshold``, if it is above is is classified as
+       ``small_loop``. If it is below, it is classified as ``large_loop``.
+
+    Returns ``(row_dict, covered_altloc_residues)`` on success or ``None`` if the
+    selection could not be applied.
+
+    ``row_dict`` has the keys:
+    ``protein``, ``selection``, ``chain``, ``start_res``, ``end_res``,
+    ``span_length``, ``classification``, ``worst_pair_mean_backbone_lddt``,
+    ``n_backbone_altloc_residues``, ``n_altlocs``, and ``pair_lddts`` (a
+    JSON encoded ``{pair_label: mean_lddt}`` map so the dict can be loaded
+    through the CSV intact via ``json.loads``).
+
+    ``covered_altloc_residues`` is the set of ``(chain_id, res_id)`` pairs in the
+    span that carry any altloc, used for the caller's residue-coverage invariant
+    check.
     """
     try:
         if not any(op in selection_str for op in ATOMWORKS_COMPARISON_OPS):
             sel_mask = get_mask_from_old_selection_string(atom_array, selection_str)
         else:
             sel_mask = atom_array.mask(selection_str)
-    except Exception as e:
+    except (ValueError, SyntaxError) as e:
         logger.error(f"[{protein}] failed to apply selection '{selection_str}': {e}")
         return None
 
@@ -192,17 +235,27 @@ def _classify_selection(
 
     sel_res_ids = np.unique(atom_array.res_id[sel_mask])
     sel_chain_ids = np.unique(atom_array.chain_id[sel_mask])
-    if len(sel_chain_ids) != 1:
-        # res_ids are per chain, so mixing chains would put residues from
-        # distinct chains into one list, corrupting backbone_altloc_res_ids,
-        # _max_contiguous_run, and the lDDT residue selection.
-        # find_altloc_selections.py emits per chain spans, so callers must split
-        # multi chain inputs upstream rather than have us guess.
-        raise RuntimeError(
-            f"[{protein}] selection '{selection_str}' spans multiple chains "
-            f"{sel_chain_ids.tolist()}. Split it per-chain upstream."
-        )
-    chain = str(sel_chain_ids[0])
+
+    # Chain is taken from the selection string. Fall back to the
+    # mask-matched atoms when the selection has no chain clause.
+    chain_from_sel = _chain_from_selection(selection_str)
+    if chain_from_sel is None:
+        if len(sel_chain_ids) != 1:
+            logger.warning(
+                f"{protein} selection '{selection_str}' did not specify a chain and "
+                f"matched atoms that exist in these chains {sel_chain_ids.tolist()}, skipping"
+            )
+            return None
+        chain = str(sel_chain_ids[0])
+    else:
+        if not (len(sel_chain_ids) == 1 and str(sel_chain_ids[0]) == chain_from_sel):
+            logger.warning(
+                f"{protein} selection '{selection_str}' has chain "
+                f"'{chain_from_sel}' but mask matched atoms exist in chains "
+                f"{sel_chain_ids.tolist()} skipping"
+            )
+            return None
+        chain = chain_from_sel
 
     sel_altloc_mask = sel_mask & structure_altloc_mask
     covered_altloc_residues: set[tuple[str, int]] = {
@@ -225,6 +278,7 @@ def _classify_selection(
         "span_length": int(len(sel_res_ids)),
         "n_backbone_altloc_residues": n_backbone,
         "n_altlocs": len(altloc_ids),
+        # JSON encoded so the pair calculation can be loaded back through the CSV
         "pair_lddts": json.dumps({}),
         "worst_pair_mean_backbone_lddt": float("nan"),
         "classification": "",
@@ -240,14 +294,7 @@ def _classify_selection(
         row["classification"] = "domain_shift"
         return row, covered_altloc_residues
 
-    # Single residue backbone altlocs cannot yield a meaningful lDDT, since you need at least two
-    # residues for inter-residue distances. A lone backbone-altloc residue is
-    # a minor local perturbation by definition, which we label as small_loop.
-    if n_backbone < 2:
-        row["classification"] = "small_loop"
-        return row, covered_altloc_residues
-
-    # 3. Loop classification via pairwise lDDT across all altloc pairs
+    # Loop classification via pairwise lDDT across all altloc pairs
     pair_lddts: dict[str, float] = {}
     for i in range(len(altloc_ids)):
         for j in range(i + 1, len(altloc_ids)):
@@ -300,7 +347,7 @@ def _process_structure(
 
     pair_arrays = _build_pairwise_altloc_arrays(atom_array, altloc_info.altloc_ids)
 
-    structure_altloc_mask = ~np.isin(atom_array.altloc_id, _BLANK_ALTLOC_ID_LIST)
+    structure_altloc_mask = ~np.isin(atom_array.altloc_id, list(BLANK_ALTLOC_IDS))
     structure_backbone_mask = np.isin(atom_array.atom_name, BACKBONE_ATOM_TYPES)
 
     rows: list[dict] = []

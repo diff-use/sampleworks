@@ -32,7 +32,11 @@ def resolve_cif_path(row: pd.Series, cif_root: Path | None) -> Path:
             return cif_root / p
         return p
 
-    if "structure_pattern" not in row or not row["structure_pattern"]:
+    if (
+        "structure_pattern" not in row
+        or pd.isna(row["structure_pattern"])
+        or not row["structure_pattern"]
+    ):
         raise ValueError(f"Row has neither 'structure' nor 'structure_pattern': {row.to_dict()}")
 
     pattern = Path(row["structure_pattern"])
