@@ -20,6 +20,25 @@ from sampleworks.utils.guidance_constants import StructurePredictor
 def resolve_cif_path(row: pd.Series, cif_root: Path | None) -> Path:
     """Resolve a CIF path from a row, preferring ``structure`` then ``structure_pattern``.
 
+    Parameters
+    ----------
+    row : pd.Series
+        Row containing a ``structure`` and/or ``structure_pattern`` field.
+    cif_root : Path | None
+        Root directory used to resolve relative paths.
+
+    Returns
+    -------
+    Path
+        The resolved CIF path.
+
+    Raises
+    ------
+    ValueError
+        If the row has neither ``structure`` nor ``structure_pattern``.
+
+    Notes
+    -----
     When resolving ``structure_pattern`` against ``cif_root``, this tries both
     ``{cif_root}/{pattern}`` (flat layout) and ``{cif_root}/{protein}/{pattern}``
     (per-protein subdirectory layout, as used by the initial_dataset processed dir).
