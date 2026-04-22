@@ -224,4 +224,10 @@ checkpoints/
 # Large results from runs
 grid_search_results/
 outputs/
-initial_dataset_40/
+initial_dataset_40*/
+*.tar.gz
+*.tgz
+*.csv
+
+# Reinclude
+!src/sampleworks/data/protein_configs.csv

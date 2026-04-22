@@ -9,11 +9,72 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
+import pandas as pd
 from loguru import logger
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial, TrialList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
+
+
+def resolve_cif_path(row: pd.Series, cif_root: Path | None) -> Path:
+    """Resolve a CIF path from a row, preferring ``structure`` then ``structure_pattern``.
+
+    Parameters
+    ----------
+    row : pd.Series
+        Row containing a ``structure`` and/or ``structure_pattern`` field.
+    cif_root : Path | None
+        Root directory used to resolve relative paths.
+
+    Returns
+    -------
+    Path
+        The resolved CIF path.
+
+    Raises
+    ------
+    ValueError
+        If the row has neither ``structure`` nor ``structure_pattern``.
+
+    Notes
+    -----
+    When resolving ``structure_pattern`` against ``cif_root``, this tries both
+    ``{cif_root}/{pattern}`` (flat layout) and ``{cif_root}/{protein}/{pattern}``
+    (per-protein subdirectory layout, as used by the initial_dataset processed dir).
+    """
+    if "structure" in row and isinstance(row["structure"], str) and row["structure"]:
+        p = Path(row["structure"])
+        if p.is_absolute() or p.exists():
+            return p
+        if cif_root is not None:
+            return cif_root / p
+        return p
+
+    if (
+        "structure_pattern" not in row
+        or pd.isna(row["structure_pattern"])
+        or not row["structure_pattern"]
+    ):
+        raise ValueError(f"Row has neither 'structure' nor 'structure_pattern': {row.to_dict()}")
+
+    pattern = Path(row["structure_pattern"])
+    if pattern.is_absolute():
+        return pattern
+    if cif_root is None:
+        return pattern
+
+    flat = cif_root / pattern
+    if flat.exists():
+        return flat
+
+    protein = row.get("protein", "")
+    if isinstance(protein, str) and protein:
+        for candidate in (cif_root / protein / pattern, cif_root / protein.upper() / pattern):
+            if candidate.exists():
+                return candidate
+
+    return flat  # fall back to flat so caller's existence check emits the right error
 
 
 # TODO: this either (both) needs tests or (and) there needs to be a clearer "API"
