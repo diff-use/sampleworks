@@ -1,0 +1,342 @@
+# diffuse.yaml -- the contract between Sampleworks and Diffuse.
+#
+# Apply with: diffuse apply
+# Run with:   diffuse run trigger --profile boltz2-xrd
+#
+# Idempotent -- safe to apply repeatedly.
+
+version: 1
+
+type: sampleworks
+name: Sampleworks
+description: >
+  Protein structure prediction via grid search.
+  Runs Boltz2, Protenix, or RoseTTAFold3 models with configurable
+  gradient guidance, ensemble sizes, and diffusion parameters.
+
+profiles:
+  - slug: boltz2-xrd
+    name: Sampleworks Boltz2 (X-Ray Diffraction)
+    container:
+      image: diffuseproject/sampleworks
+      tag: latest
+      gpus:
+        min: 2
+    entrypoint: null
+    input_schema:
+      inputs:
+        - key: proteins_path
+          type: text
+          default: /data/input/proteins.csv
+        - key: models
+          type: enum
+          required: true
+          allowed_values: [boltz2]
+          default: boltz2
+        - key: methods
+          type: text
+          default: "X-RAY DIFFRACTION"
+        - key: scalers
+          type: text
+          default: pure_guidance
+        - key: partial_diffusion_step
+          type: number
+          default: "120"
+        - key: gradient_weights
+          type: text
+          default: "0.1 0.2 0.5"
+        - key: ensemble_sizes
+          type: text
+          default: "8"
+        - key: gradient_normalization
+          type: boolean
+          default: true
+        - key: augmentation
+          type: boolean
+          default: true
+        - key: align_to_input
+          type: boolean
+          default: true
+    run_config_defaults:
+      shared_memory_size: "16Gi"
+      image_pull_policy: IfNotPresent
+      poll_max_retries: 720
+      volumes:
+        - name: data-input
+          hostPath: /mnt/diffuse-private/raw/sampleworks/initial_dataset_40
+          mountPath: /data/input
+          readOnly: true
+        - name: data-results
+          hostPath: /home/ubuntu/sampleworks-exp/grid_search_results
+          mountPath: /data/results
+        - name: msa-cache
+          hostPath: /home/ubuntu/sampleworks-exp/msa_cache
+          mountPath: /root/.sampleworks/msa
+        - name: checkpoints
+          hostPath: /mnt/diffuse-private
+          mountPath: /mnt/diffuse-private
+          readOnly: true
+      args_template:
+        base_command: [-e, boltz, run_grid_search.py]
+        flag_args:
+          proteins_path: --proteins
+          models: --models
+          scalers: --scalers
+          partial_diffusion_step: --partial-diffusion-step
+          ensemble_sizes: --ensemble-sizes
+          gradient_weights: --gradient-weights
+          methods: --methods
+        boolean_args:
+          gradient_normalization: --gradient-normalization
+          augmentation: --augmentation
+          align_to_input: --align-to-input
+        static_args: [--output-dir, /data/results]
+
+  - slug: boltz2-md
+    name: Sampleworks Boltz2 (MD)
+    container:
+      image: diffuseproject/sampleworks
+      tag: latest
+      gpus:
+        min: 2
+    entrypoint: null
+    input_schema:
+      inputs:
+        - key: proteins_path
+          type: text
+          default: /data/input/proteins.csv
+        - key: models
+          type: enum
+          required: true
+          allowed_values: [boltz2]
+          default: boltz2
+        - key: methods
+          type: text
+          default: MD
+        - key: scalers
+          type: text
+          default: pure_guidance
+        - key: partial_diffusion_step
+          type: number
+          default: "120"
+        - key: gradient_weights
+          type: text
+          default: "0.1 0.2 0.5"
+        - key: ensemble_sizes
+          type: text
+          default: "8"
+        - key: gradient_normalization
+          type: boolean
+          default: true
+        - key: augmentation
+          type: boolean
+          default: true
+        - key: align_to_input
+          type: boolean
+          default: true
+    run_config_defaults:
+      shared_memory_size: "16Gi"
+      image_pull_policy: IfNotPresent
+      poll_max_retries: 720
+      volumes:
+        - name: data-input
+          hostPath: /mnt/diffuse-private/raw/sampleworks/initial_dataset_40
+          mountPath: /data/input
+          readOnly: true
+        - name: data-results
+          hostPath: /home/ubuntu/sampleworks-exp/grid_search_results
+          mountPath: /data/results
+        - name: msa-cache
+          hostPath: /home/ubuntu/sampleworks-exp/msa_cache
+          mountPath: /root/.sampleworks/msa
+        - name: checkpoints
+          hostPath: /mnt/diffuse-private
+          mountPath: /mnt/diffuse-private
+          readOnly: true
+      args_template:
+        base_command: [-e, boltz, run_grid_search.py]
+        flag_args:
+          proteins_path: --proteins
+          models: --models
+          scalers: --scalers
+          partial_diffusion_step: --partial-diffusion-step
+          ensemble_sizes: --ensemble-sizes
+          gradient_weights: --gradient-weights
+          methods: --methods
+        boolean_args:
+          gradient_normalization: --gradient-normalization
+          augmentation: --augmentation
+          align_to_input: --align-to-input
+        static_args: [--output-dir, /data/results]
+
+  - slug: protenix
+    name: Sampleworks Protenix
+    container:
+      image: diffuseproject/sampleworks
+      tag: latest
+      gpus:
+        min: 2
+    entrypoint: null
+    input_schema:
+      inputs:
+        - key: proteins_path
+          type: text
+          default: /data/input/proteins.csv
+        - key: models
+          type: enum
+          required: true
+          allowed_values: [protenix]
+          default: protenix
+        - key: scalers
+          type: text
+          default: pure_guidance
+        - key: partial_diffusion_step
+          type: number
+          default: "120"
+        - key: gradient_weights
+          type: text
+          default: "0.1 0.2 0.5"
+        - key: ensemble_sizes
+          type: text
+          default: "8"
+        - key: gradient_normalization
+          type: boolean
+          default: true
+        - key: augmentation
+          type: boolean
+          default: true
+        - key: align_to_input
+          type: boolean
+          default: true
+    run_config_defaults:
+      shared_memory_size: "16Gi"
+      image_pull_policy: IfNotPresent
+      poll_max_retries: 720
+      volumes:
+        - name: data-input
+          hostPath: /mnt/diffuse-private/raw/sampleworks/initial_dataset_40
+          mountPath: /data/input
+          readOnly: true
+        - name: data-results
+          hostPath: /home/ubuntu/sampleworks-exp/grid_search_results
+          mountPath: /data/results
+        - name: msa-cache
+          hostPath: /home/ubuntu/sampleworks-exp/msa_cache
+          mountPath: /root/.sampleworks/msa
+        - name: checkpoints
+          hostPath: /mnt/diffuse-private
+          mountPath: /mnt/diffuse-private
+          readOnly: true
+      args_template:
+        base_command: [-e, protenix, run_grid_search.py]
+        flag_args:
+          proteins_path: --proteins
+          models: --models
+          scalers: --scalers
+          partial_diffusion_step: --partial-diffusion-step
+          ensemble_sizes: --ensemble-sizes
+          gradient_weights: --gradient-weights
+        boolean_args:
+          gradient_normalization: --gradient-normalization
+          augmentation: --augmentation
+          align_to_input: --align-to-input
+        static_args:
+          - --output-dir
+          - /data/results
+          - --protenix-checkpoint
+          - /mnt/diffuse-private/raw/checkpoints/protenix_base_default_v0.5.0.pt
+
+  - slug: rf3
+    name: Sampleworks RoseTTAFold3
+    container:
+      image: diffuseproject/sampleworks
+      tag: latest
+      gpus:
+        min: 2
+    entrypoint: null
+    input_schema:
+      inputs:
+        - key: proteins_path
+          type: text
+          default: /data/input/proteins.csv
+        - key: models
+          type: enum
+          required: true
+          allowed_values: [rf3]
+          default: rf3
+        - key: scalers
+          type: text
+          default: pure_guidance
+        - key: partial_diffusion_step
+          type: number
+          default: "120"
+        - key: gradient_weights
+          type: text
+          default: "0.01 0.02 0.05"
+        - key: ensemble_sizes
+          type: text
+          default: "8"
+        - key: gradient_normalization
+          type: boolean
+          default: true
+        - key: augmentation
+          type: boolean
+          default: true
+        - key: align_to_input
+          type: boolean
+          default: true
+    run_config_defaults:
+      shared_memory_size: "16Gi"
+      image_pull_policy: IfNotPresent
+      poll_max_retries: 720
+      volumes:
+        - name: data-input
+          hostPath: /mnt/diffuse-private/raw/sampleworks/initial_dataset_40
+          mountPath: /data/input
+          readOnly: true
+        - name: data-results
+          hostPath: /home/ubuntu/sampleworks-exp/grid_search_results
+          mountPath: /data/results
+        - name: msa-cache
+          hostPath: /home/ubuntu/sampleworks-exp/msa_cache
+          mountPath: /root/.sampleworks/msa
+        - name: checkpoints
+          hostPath: /mnt/diffuse-private
+          mountPath: /mnt/diffuse-private
+          readOnly: true
+      args_template:
+        base_command: [-e, rf3, run_grid_search.py]
+        flag_args:
+          proteins_path: --proteins
+          models: --models
+          scalers: --scalers
+          partial_diffusion_step: --partial-diffusion-step
+          ensemble_sizes: --ensemble-sizes
+          gradient_weights: --gradient-weights
+        boolean_args:
+          gradient_normalization: --gradient-normalization
+          augmentation: --augmentation
+          align_to_input: --align-to-input
+        static_args:
+          - --output-dir
+          - /data/results
+          - --rf3-checkpoint
+          - /mnt/diffuse-private/raw/checkpoints/rf3_foundry_01_24_latest.ckpt
+
+fields:
+  - key: sampleworks_model
+    type: enum
+    display_name: Model
+    allowed_values: [boltz2, protenix, rf3]
+    required: true
+  - key: sampleworks_methods
+    type: text
+    display_name: Methods
+  - key: sampleworks_gradient_weights
+    type: text
+    display_name: Gradient Weights
+    default: "0.1 0.2 0.5"
+  - key: sampleworks_ensemble_sizes
+    type: text
+    display_name: Ensemble Sizes
+    default: "8"
