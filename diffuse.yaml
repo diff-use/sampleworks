@@ -41,7 +41,7 @@ profiles:
           default: pure_guidance
         - key: partial_diffusion_step
           type: number
-          default: "120"
+          default: 120
         - key: gradient_weights
           type: text
           default: "0.1 0.2 0.5"
@@ -80,12 +80,12 @@ profiles:
         base_command: [-e, boltz, run_grid_search.py]
         flag_args:
           proteins_path: --proteins
-          models: --models
+          models: --model
           scalers: --scalers
           partial_diffusion_step: --partial-diffusion-step
           ensemble_sizes: --ensemble-sizes
           gradient_weights: --gradient-weights
-          methods: --methods
+          methods: --method
         boolean_args:
           gradient_normalization: --gradient-normalization
           augmentation: --augmentation
@@ -118,7 +118,7 @@ profiles:
           default: pure_guidance
         - key: partial_diffusion_step
           type: number
-          default: "120"
+          default: 120
         - key: gradient_weights
           type: text
           default: "0.1 0.2 0.5"
@@ -157,12 +157,12 @@ profiles:
         base_command: [-e, boltz, run_grid_search.py]
         flag_args:
           proteins_path: --proteins
-          models: --models
+          models: --model
           scalers: --scalers
           partial_diffusion_step: --partial-diffusion-step
           ensemble_sizes: --ensemble-sizes
           gradient_weights: --gradient-weights
-          methods: --methods
+          methods: --method
         boolean_args:
           gradient_normalization: --gradient-normalization
           augmentation: --augmentation
@@ -192,7 +192,7 @@ profiles:
           default: pure_guidance
         - key: partial_diffusion_step
           type: number
-          default: "120"
+          default: 120
         - key: gradient_weights
           type: text
           default: "0.1 0.2 0.5"
@@ -231,7 +231,7 @@ profiles:
         base_command: [-e, protenix, run_grid_search.py]
         flag_args:
           proteins_path: --proteins
-          models: --models
+          models: --model
           scalers: --scalers
           partial_diffusion_step: --partial-diffusion-step
           ensemble_sizes: --ensemble-sizes
@@ -243,7 +243,7 @@ profiles:
         static_args:
           - --output-dir
           - /data/results
-          - --protenix-checkpoint
+          - --model-checkpoint
           - /mnt/diffuse-private/raw/checkpoints/protenix_base_default_v0.5.0.pt
 
   - slug: rf3
@@ -269,7 +269,7 @@ profiles:
           default: pure_guidance
         - key: partial_diffusion_step
           type: number
-          default: "120"
+          default: 120
         - key: gradient_weights
           type: text
           default: "0.01 0.02 0.05"
@@ -308,7 +308,7 @@ profiles:
         base_command: [-e, rf3, run_grid_search.py]
         flag_args:
           proteins_path: --proteins
-          models: --models
+          models: --model
           scalers: --scalers
           partial_diffusion_step: --partial-diffusion-step
           ensemble_sizes: --ensemble-sizes
@@ -320,7 +320,7 @@ profiles:
         static_args:
           - --output-dir
           - /data/results
-          - --rf3-checkpoint
+          - --model-checkpoint
           - /mnt/diffuse-private/raw/checkpoints/rf3_foundry_01_24_latest.ckpt
 
 fields:
