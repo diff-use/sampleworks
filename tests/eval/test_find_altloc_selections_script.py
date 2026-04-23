@@ -17,7 +17,8 @@ _SCRIPT_PATH = (
 )
 
 
-def _load_script():
+@pytest.fixture
+def find_altloc_script():
     """Import the script module by path so tests don't require it to be
     installed on ``sys.path``."""
     spec = importlib.util.spec_from_file_location("find_altloc_selections_script", _SCRIPT_PATH)
@@ -25,11 +26,6 @@ def _load_script():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
-
-
-@pytest.fixture
-def find_altloc_script():
-    return _load_script()
 
 
 def _altloc_input_csv(tmp_path: Path, resources_dir: Path, *, n_rows: int = 1) -> Path:

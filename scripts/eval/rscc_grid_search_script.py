@@ -9,14 +9,22 @@ search results.
 
 ## Workflow:
 1. Scan the `grid_search_results` directory for completed trials
-2. For each trial with a `refined.cif`, compute the electron density map
+2. For each trial with a `refined.cif`, compute the electron density map (trials are grouped
+   by ``(protein, occupancy_key)`` and processed in parallel, configure with ``--n-jobs``)
 3. Compare against the corresponding base map and calculate RSCC
 4. Aggregate and visualize results by ensemble size, guidance weight, and scaler type
+
+Depending on the GPU, --n-jobs=8-16 work well, and groups are spread round-robin across all
+visible GPUs. ``rscc`` is populated on success, and a row gets ``rscc=nan`` only when an error
+is caught (group setup, trial parsing, or during per-selection RSCC calculation), and the
+``error`` column holds the reason. A CUDA RuntimeError mid-worker may still cascade to other
+trials in that worker.
 """
 
 import argparse
 import copy
 import traceback
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -24,14 +32,10 @@ import torch
 
 # Import local modules for density calculation
 from atomworks.io.parser import parse
-from biotite.structure import AtomArray, AtomArrayStack
+from joblib import delayed, Parallel
 from loguru import logger
-from sampleworks.core.forward_models.xray.real_space_density import (
-    DifferentiableTransformer,
-    XMap_torch,
-)
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
 from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING
+from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial
 from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 from sampleworks.eval.metrics import rscc
 from sampleworks.eval.structure_utils import (
@@ -54,131 +58,100 @@ from sampleworks.utils.framework_utils import match_batch
 
 
 OccKey = tuple[tuple[str, float], ...]
-ProteinOccKey = tuple[str, OccKey]
-SelectionKey = tuple[str, OccKey, str]
 
 
-# TODO consolidate eval script logic: https://github.com/diff-use/sampleworks/issues/93
-def main(args: argparse.Namespace):
-    all_trials, protein_configs = setup_evaluation_parameters(args)
+def process_group(
+    trials: list[Trial],
+    protein: str,
+    protein_config: ProteinConfig,
+    group_ref_coords: dict[str, np.ndarray],
+    base_map_path: Path,
+    group_index: int,
+) -> list[dict]:
+    """
+    Process all trials sharing one (protein, occ_key) group.
 
-    logger.info("Pre-loading reference structures for each protein for coordinate extraction")
-    ref_coords: dict[tuple[str, str], np.ndarray] = {}
-    for protein_key, protein_config in protein_configs.items():
-        # NOTE THAT THIS will be by default include all altlocs, as we use them to create a mask
-        # for where to judge the maps' correlation.
-        protein_ref_coords = get_reference_structure_coords(protein_config, protein_key)
-        if protein_ref_coords is not None:
-            for selection in protein_ref_coords.keys():
-                ref_coords[(protein_key, selection)] = protein_ref_coords[selection]
+    Loads the base map, builds the transformer, and parses the reference
+    structure exactly once. Returns one row per (trial, valid selection),
+    with ``rscc=nan`` and ``error`` populated on failure.
 
-    # Calculate RSCC for all trials
-    logger.info("Calculating RSCC values for all trials...")
-    logger.warning(
-        "Note: RSCC is computed on the region around altloc residues (defined by selection)"
-    )
+    Parameters
+    ----------
+    trials : list[Trial]
+        The trials to process.
+    protein : str
+        The protein name.
+    protein_config : ProteinConfig
+        The protein configuration.
+    group_ref_coords : dict[str, np.ndarray]
+        The reference coordinates for the group.
+    base_map_path : Path
+        The path to the base map.
+    group_index : int
+        Position of this group in the dispatch order; used to round-robin the
+        group onto one of the available GPUs.
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Using device: {device}")
+    Returns
+    -------
+    list[dict]
+        A list of dictionaries populating the ``rscc`` and ``error`` fields for each trial.
 
-    # Sort so all trials sharing a (protein, occ_key) are contiguous, which lets us reuse
-    # loaded base maps, structures, and transformers.
-    sorted_trials = sorted(all_trials, key=lambda t: (t.protein, t.occ_key))
+    Raises
+    ------
+    ValueError
+        If the base map cannot be loaded.
+    """
+    valid_selections = [s for s in protein_config.selection if s in group_ref_coords]
+    rows: list[dict] = []
 
-    results: list[dict] = []
-    base_map_cache: dict[ProteinOccKey, XMap] = {}
-    transformer_cache: dict[ProteinOccKey, tuple[DifferentiableTransformer, XMap_torch]] = {}
-    ref_full_structure_cache: dict[ProteinOccKey, AtomArray | AtomArrayStack] = {}
-    extracted_base_cache: dict[SelectionKey, np.ndarray] = {}
-    current_group: ProteinOccKey | None = None
+    # Spread groups across available GPUs round-robin (CPU fallback if none). Device count is
+    # read in each worker so the parent never initializes CUDA before joblib forks.
+    n_gpus = torch.cuda.device_count()
+    device = torch.device(f"cuda:{group_index % n_gpus}") if n_gpus else torch.device("cpu")
 
-    # TODO parallelize this loop? It uses GPU, so be careful.
-    for i, trial in enumerate(sorted_trials):
-        prev_result_count = len(results)
-        if trial.protein in protein_configs:
-            protein = trial.protein
-        elif trial.protein.upper() in protein_configs:
-            protein = trial.protein.upper()
-        else:
-            logger.warning(f"Skipping protein with no configuration: {trial.protein}")
-            continue
-
-        protein_config = protein_configs[protein]
-
-        base_map_path = protein_config.get_base_map_path_for_occupancy(trial.altloc_occupancies)
-        if base_map_path is None:
-            logger.warning(
-                f"Skipping {trial.protein_dir_name}: base map for occupancy "
-                f"{trial.altloc_occupancies} not found"
-            )
-            continue
-
-        has_valid_selection = False
-        for selection in protein_config.selection:
-            # Check if we have reference coordinates for region extraction
-            if (protein, selection) not in ref_coords:
-                logger.warning(
-                    f"Skipping {trial.protein_dir_name}/{selection}: no reference structure "
-                    f"available for {trial.protein}, this may be due to a selection with zero "
-                    f"atoms or NaN/Inf coordinates. Check logs above."
-                )
-            else:
-                has_valid_selection = True
-        if not has_valid_selection:
-            continue
-
-        # clear caches when we move to a new (protein, occ_key) group
-        group_key: ProteinOccKey = (protein, trial.occ_key)
-        if current_group is not None and group_key != current_group:
-            base_map_cache.clear()
-            transformer_cache.clear()
-            ref_full_structure_cache.clear()
-            extracted_base_cache.clear()
-        current_group = group_key
-
-        # Load base map + transformer + reference once per (protein, occ_key)
-        # parse refined, align, and compute density once per trial.
-        # TODO: this needs to be better unified with what's in generate_synthetic_density
-        #
+    # Load base map + transformer + reference once for the whole group.
+    try:
         # Load base map for canonical unit cell,
         # don't overwrite the base map with selection map--we'll use the full map later too.
-        try:
-            base_xmap = base_map_cache.get(group_key)
-            if base_xmap is None:
-                base_xmap = protein_config.load_map(base_map_path)
-                if base_xmap is None:
-                    raise ValueError(f"Failed to load base map from {base_map_path}")
+        base_xmap = protein_config.load_map(base_map_path)
+        if base_xmap is None:
+            raise ValueError(f"Failed to load base map from {base_map_path}")
 
-            transformer_entry = transformer_cache.get(group_key)
-            if transformer_entry is None:
-                transformer, xmap_torch = build_density_transformer(
-                    base_xmap, em_mode=False, device=device
+        # The transformer is the differentiable forward model that turns atomic coordinates
+        # into an electron-density map on this base map's grid, built once per group and reused.
+        transformer, _ = build_density_transformer(base_xmap, em_mode=False, device=device)
+
+        # Load the reference structure (used to align refined structures so the calculated
+        # maps line up with the base map, for a correct RSCC calculation).
+        ref_path = protein_config.get_reference_structure_path(trials[0].altloc_occupancies)
+        if ref_path is None:
+            raise ValueError(
+                f"Could not find reference structure for occupancy {trials[0].altloc_occupancies}"
+            )
+        # parse() returns only the first altloc.
+        ref_structure = parse(ref_path, ccd_mirror_path=None)
+        ref_atom_array = get_asym_unit_from_structure(ref_structure)
+        ref_atom_array = remove_atoms_with_any_nan_coords(ref_atom_array)
+    except (FileNotFoundError, OSError, ValueError, RuntimeError, AttributeError, TypeError) as e:
+        logger.error(f"ERROR setting up group {protein}/{trials[0].altloc_occupancies}: {e}")
+        logger.error(f"  Traceback: {traceback.format_exc()}")
+        for trial in trials:
+            for selection in valid_selections:
+                row = trial.__dict__.copy()
+                row.update(
+                    selection=selection,
+                    error=str(e),
+                    rscc=np.nan,
+                    base_map_path=base_map_path,
                 )
-                # Only cache the base map once the transformer build has succeeded,
-                # so a failure leaves the group uncached rather than retrying a
-                # doomed transformer build per trial
-                base_map_cache[group_key] = base_xmap
-                transformer_cache[group_key] = (transformer, xmap_torch)
-            else:
-                transformer, _ = transformer_entry
+                rows.append(row)
+        return rows
 
-            # Align the refined structure to the reference structure so that the calculated
-            # maps are also aligned, for a correct RSCC calculation.
-            # 1. Get the reference structure path and load from cache if available.
-            ref_atom_array = ref_full_structure_cache.get(group_key)
-            if ref_atom_array is None:
-                ref_path = protein_config.get_reference_structure_path(trial.altloc_occupancies)
-                if ref_path is None:
-                    raise ValueError(
-                        f"Could not find reference structure for "
-                        f"occupancy {trial.altloc_occupancies}"
-                    )
-                # 2. Load the reference structure with parse() to get only the first altloc
-                ref_structure = parse(ref_path, ccd_mirror_path=None)
-                ref_atom_array = get_asym_unit_from_structure(ref_structure)
-                ref_atom_array = remove_atoms_with_any_nan_coords(ref_atom_array)
-                ref_full_structure_cache[group_key] = ref_atom_array
+    extracted_base_cache: dict[str, np.ndarray] = {}
 
+    # parse refined, align, and compute density once per trial.
+    for trial in trials:
+        try:
             structure = parse(trial.refined_cif_path, ccd_mirror_path=None)
             atom_array = get_asym_unit_from_structure(structure)
             if not hasattr(atom_array, "coord") or atom_array.coord is None:
@@ -191,11 +164,11 @@ def main(args: argparse.Namespace):
                 atom_array.set_annotation("b_factor", np.full(atom_array.coord.shape[-2], 20.0))
 
             atom_array = remove_atoms_with_any_nan_coords(atom_array)
-            # 3. Find the common atoms with non-nan coords between the reference
-            #    and the refined structure.
+            # Find the common atoms with non-nan coords between the reference
+            # and the refined structure.
             ref_common, pred_common = filter_to_common_atoms(ref_atom_array, atom_array)
 
-            # 4. Align the refined structure to the reference
+            # Align the refined structure to the reference
             # using weighted_rigid_align_differentiable.
             # Convert to torch tensors with batch dimension.
             ref_coords_torch = torch.from_numpy(ref_common.coord).float()  # [1, n_atoms, 3]
@@ -226,7 +199,7 @@ def main(args: argparse.Namespace):
                 allow_gradients=False,
             )
 
-            # 5. Apply the transform to the entire refined structure (atom_array)
+            # Apply the transform to the entire refined structure (atom_array)
             atom_array_coords_torch = torch.from_numpy(atom_array.coord)
             aligned_coords_torch = apply_forward_transform(
                 atom_array_coords_torch, transform, rotation_only=False
@@ -244,39 +217,41 @@ def main(args: argparse.Namespace):
                     f"density shape {computed_xmap.array.shape} does not match base map "
                     f"shape {base_xmap.array.shape}"
                 )
-        except (FileNotFoundError, OSError, ValueError, RuntimeError) as e:
+        except (
+            FileNotFoundError,
+            OSError,
+            ValueError,
+            RuntimeError,
+            AttributeError,
+            TypeError,
+        ) as e:
             logger.error(f"ERROR processing trial {trial.trial_dir}: {e}")
             logger.error(f"  Traceback: {traceback.format_exc()}")
-            for selection in protein_config.selection:
-                if (protein, selection) not in ref_coords:
-                    continue
+            for selection in valid_selections:
                 row = trial.__dict__.copy()
                 row.update(
                     selection=selection,
-                    error=e,
+                    error=str(e),
                     rscc=np.nan,
                     base_map_path=base_map_path,
                 )
-                results.append(row)
+                rows.append(row)
             continue
 
         # Per selection, extract base region (cache) + computed region, compute RSCC
-        for selection in protein_config.selection:
-            if (protein, selection) not in ref_coords:
-                continue
-            sel_coords = ref_coords[(protein, selection)]
+        for selection in valid_selections:
+            sel_coords = group_ref_coords[selection]
             row = trial.__dict__.copy()
             row.update(selection=selection, error=None, base_map_path=base_map_path)
             try:
-                sel_key: SelectionKey = (protein, trial.occ_key, selection)
-                extracted_base = extracted_base_cache.get(sel_key)
+                extracted_base = extracted_base_cache.get(selection)
                 if extracted_base is None:
                     _, extracted_base = base_xmap.extract_tight(
                         sel_coords, padding=DEFAULT_SELECTION_PADDING
                     )
                     if extracted_base is None or extracted_base.shape[0] == 0:
                         raise ValueError(f"Extracted base map empty for selection {selection}")
-                    extracted_base_cache[sel_key] = extracted_base
+                    extracted_base_cache[selection] = extracted_base
 
                 _, extracted_computed = computed_xmap.extract_tight(
                     sel_coords, padding=DEFAULT_SELECTION_PADDING
@@ -290,23 +265,87 @@ def main(args: argparse.Namespace):
                 row["rscc"] = rscc(extracted_base, extracted_computed)
             except Exception as e:
                 logger.error(f"ERROR processing {trial.trial_dir} selection {selection}: {e}")
-                row["error"] = e
+                row["error"] = str(e)
                 row["rscc"] = np.nan  # this is the default, but better to be explicit.
-            results.append(row)
+            rows.append(row)
 
-        if (i + 1) % 10 == 0 or i == 0:
-            if len(results) > prev_result_count:
-                latest_result = results[-1]
-                logger.debug(
-                    f"  [{i + 1}/{len(sorted_trials)}] "
-                    f"{latest_result.get('protein_dir_name', '?')} / "
-                    f"{latest_result.get('model', '?')} / {latest_result.get('scaler', '?')} / "
-                    f"ens{latest_result.get('ensemble_size', '?')}_gw"
-                    f"{latest_result.get('guidance_weight', '?')}: "
-                    f"RSCC = {latest_result.get('rscc', float('nan')):.4f}"
+    return rows
+
+
+def main(args: argparse.Namespace):
+    all_trials, protein_configs = setup_evaluation_parameters(args)
+
+    logger.info("Pre-loading reference structures for each protein for coordinate extraction")
+    ref_coords: dict[tuple[str, str], np.ndarray] = {}
+    for protein_key, protein_config in protein_configs.items():
+        # NOTE THAT THIS will be by default include all altlocs, as we use them to create a mask
+        # for where to judge the maps' correlation.
+        protein_ref_coords = get_reference_structure_coords(protein_config, protein_key)
+        if protein_ref_coords is not None:
+            for selection in protein_ref_coords.keys():
+                ref_coords[(protein_key, selection)] = protein_ref_coords[selection]
+
+    # Calculate RSCC for all trials
+    logger.info("Calculating RSCC values for all trials...")
+    logger.warning(
+        "Note: RSCC is computed on the region around altloc residues (defined by selection)"
+    )
+
+    # Sort so all trials sharing a (protein, occ_key) are contiguous, then build groups.
+    # Resolve protein name once per group and slice ref_coords for each protein.
+    groups: list[tuple[str, list[Trial], Path, dict[str, np.ndarray]]] = []
+    group_index: dict[tuple[str, OccKey], int] = {}
+    for trial in sorted(all_trials, key=lambda t: (t.protein, t.occ_key)):
+        if trial.protein in protein_configs:
+            protein = trial.protein
+        elif trial.protein.upper() in protein_configs:
+            protein = trial.protein.upper()
+        else:
+            logger.warning(f"Skipping protein with no configuration: {trial.protein}")
+            continue
+        key = (protein, trial.occ_key)
+        idx = group_index.get(key)
+        if idx is None:
+            protein_config = protein_configs[protein]
+            base_map_path = protein_config.get_base_map_path_for_occupancy(trial.altloc_occupancies)
+            if base_map_path is None:
+                logger.warning(
+                    f"Skipping group {protein}/{trial.altloc_occupancies}: base map not found"
                 )
-            else:
-                logger.debug(f"  [{i + 1}/{len(sorted_trials)}] did not add new result.")
+                group_index[key] = -1
+                continue
+            group_ref_coords = {
+                s: ref_coords[(protein, s)]
+                for s in protein_config.selection
+                if (protein, s) in ref_coords
+            }
+            dropped_selections = [
+                s for s in protein_config.selection if (protein, s) not in ref_coords
+            ]
+            if dropped_selections:
+                logger.warning(
+                    f"[{protein}] skipping {len(dropped_selections)} selection(s) with no "
+                    f"reference coords: {dropped_selections}"
+                )
+            if not group_ref_coords:
+                logger.warning(
+                    f"Skipping group {protein}/{trial.altloc_occupancies}: "
+                    f"no reference structure for any configured selection"
+                )
+                group_index[key] = -1
+                continue
+            group_index[key] = len(groups)
+            groups.append((protein, [trial], base_map_path, group_ref_coords))
+        elif idx >= 0:
+            groups[idx][1].append(trial)
+
+    group_results = Parallel(n_jobs=args.n_jobs, verbose=10)(
+        delayed(process_group)(
+            trials, protein, protein_configs[protein], group_ref_coords, base_map_path, i
+        )
+        for i, (protein, trials, base_map_path, group_ref_coords) in enumerate(groups)
+    )
+    results = [row for rows in group_results for row in rows]
 
     logger.info(f"\nCompleted RSCC calculation for {len(results)} trials")
 

@@ -89,6 +89,7 @@ def _populate(
         protein_configs_csv=configs_csv,
         depth=4,
         target_filename="refined.cif",
+        n_jobs=1,  # keep joblib in-process so test monkeypatches reach the work
         selections=tuple(selections),
     )
 
@@ -136,7 +137,10 @@ def synthetic_base_map(tmp_path_factory: pytest.TempPathFactory) -> Path:
         resolution=Resolution(high=_MAP_RESOLUTION, low=1000.0),
     )
     density, _ = compute_density_from_atomarray(
-        atom_array, xmap=xmap, em_mode=False, device=torch.device("cpu")
+        atom_array,
+        xmap=xmap,
+        em_mode=False,
+        device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
     )
     xmap.array = density.cpu().numpy()
     out_path = tmp_path_factory.mktemp("rscc_synthetic_map") / "base.ccp4"

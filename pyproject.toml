@@ -38,6 +38,7 @@ dependencies = [
   "python-dotenv",
   "jaxtyping",
   "jax",
+  "joblib",
   "einx<0.4",
   "hydra-core",
   "loguru",

@@ -5,8 +5,8 @@ Integration tests for ``scripts/eval/rscc_grid_search_script.py``.
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -18,19 +18,14 @@ _SCRIPT_PATH = (
 )
 
 
-def _load_script():
-    """Import the script module by path so tests don't require it to be
-    installed on ``sys.path``"""
+@pytest.fixture
+def rscc_script():
+    """Import the script module by path so tests don't require it on ``sys.path``."""
     spec = importlib.util.spec_from_file_location("rscc_grid_search_script", _SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
-
-
-@pytest.fixture
-def rscc_script():
-    return _load_script()
 
 
 def _read_results(fx) -> pd.DataFrame:
@@ -39,9 +34,11 @@ def _read_results(fx) -> pd.DataFrame:
 
 @pytest.mark.slow
 def test_main_end_to_end_produces_csv(rscc_fixture_factory, rscc_script):
-    """2 groups by 2 trials by 2 selections results in 8 success rows with non-NaN RSCC.
+    """2 groups x 2 trials x 2 selections -> 8 rows, each with near-perfect RSCC.
 
-    This is a smoke test.
+    refined.cif is identical to the reference whose density is the base map, so a
+    correct end-to-end run (parse, align, density, RSCC) must yield RSCC ~1.0.
+    Also pins the result columns and that identical trials yield identical RSCC.
     """
     fx = rscc_fixture_factory(n_groups=2, trials_per_group=2)
 
@@ -66,8 +63,19 @@ def test_main_end_to_end_produces_csv(rscc_fixture_factory, rscc_script):
     }
     assert expected_cols.issubset(df.columns)
 
-    assert df["rscc"].notna().all(), "all RSCC values should be non-NaN on happy path"
     assert df["error"].isna().all(), "no error rows expected on happy path"
+    # refined.cif == the reference whose density is the base map, so each selection's RSCC is a
+    # strong self-correlation: ~1.0 on CPU, but ~0.90 on GPU (the fixture builds the base map, which
+    # may be on CPU or GPU depending on the test environment), and the two forward-model kernels
+    # differ slightly — the smaller selection dips to ~0.897 on an H100). 0.89 keeps margin for
+    # CPU/GPU variation.
+    assert (df["rscc"] > 0.89).all(), f"expected strong self-correlation, got {df['rscc'].tolist()}"
+    # Identical refined.cif across trials must yield identical RSCC per selection (catches a
+    # cached base map being mutated/corrupted between trials).
+    for sel, grp in df.groupby("selection"):
+        assert np.allclose(grp["rscc"], grp["rscc"].iloc[0], atol=1e-6), (
+            f"RSCC drifted across identical trials for {sel}: {grp['rscc'].tolist()}"
+        )
     assert set(df["selection"]) == set(fx.selections)
 
 
@@ -104,19 +112,21 @@ def test_per_selection_failure_isolated(rscc_fixture_factory, rscc_script, monke
 
     real_rscc = rscc_script.rscc
 
-    target_is_next = True
+    class FlakyRSCC:
+        """Raise once on the first call, then delegate to the real rscc."""
 
-    def flaky_rscc(a, b):
-        nonlocal target_is_next
-        if target_is_next:
-            target_is_next = False
-            raise RuntimeError("simulated rscc failure")
-        return real_rscc(a, b)
+        def __init__(self, real):
+            self.real = real
+            self.target_is_next = True
 
-    # The selection loop calls rscc once per selection, in the order configured
-    # in the CSV. Fail on the first call (i.e. the first selection).
+        def __call__(self, a, b):
+            if self.target_is_next:
+                self.target_is_next = False
+                raise RuntimeError("simulated rscc failure")
+            return self.real(a, b)
 
-    monkeypatch.setattr(rscc_script, "rscc", flaky_rscc)
+    # The selection loop calls rscc once per selection, in CSV order. Fail the first call.
+    monkeypatch.setattr(rscc_script, "rscc", FlakyRSCC(real_rscc))
 
     rscc_script.main(fx)
 
@@ -131,12 +141,11 @@ def test_per_selection_failure_isolated(rscc_fixture_factory, rscc_script, monke
 
 
 @pytest.mark.slow
-def test_selections_missing_from_ref_coords_produce_no_row(rscc_fixture_factory, rscc_script):
-    """Selections absent from the reference structure produce no output row.
-
-    The valid selections still emit rows — the missing one is silently
-    skipped. Exercises the ``(protein, selection) not in ref_coords`` branch
-    at the per selection loop.
+def test_selections_missing_from_ref_coords_warn_and_produce_no_row(
+    rscc_fixture_factory, rscc_script, caplog
+):
+    """A selection absent from the reference structure is skipped with a warning,
+    while the valid selections still emit rows.
     """
     selections = (
         "chain A and resi 326-339",
@@ -145,105 +154,11 @@ def test_selections_missing_from_ref_coords_produce_no_row(rscc_fixture_factory,
     )
     fx = rscc_fixture_factory(n_groups=1, trials_per_group=1, selections=selections)
 
-    rscc_script.main(fx)
+    with caplog.at_level(logging.WARNING):
+        rscc_script.main(fx)
 
     df = _read_results(fx)
     assert len(df) == 2
     assert set(df["selection"]) == {selections[0], selections[1]}
     assert df["rscc"].notna().all()
-
-
-@pytest.mark.slow
-def test_caches_evict_on_group_transition(rscc_fixture_factory, rscc_script, monkeypatch):
-    """``build_density_transformer`` is called once per ``(protein, occ_key)``
-    group, not once per trial. Cache should hit inside a group and evict on
-    transition."""
-    fx = rscc_fixture_factory(n_groups=2, trials_per_group=2)
-
-    real_build = rscc_script.build_density_transformer
-    calls: list[object] = []
-
-    def counting_build(base_xmap, *args, **kwargs):
-        calls.append(base_xmap)
-        return real_build(base_xmap, *args, **kwargs)
-
-    monkeypatch.setattr(rscc_script, "build_density_transformer", counting_build)
-
-    rscc_script.main(fx)
-
-    assert len(calls) == 2, f"expected 2 builds (one per group), got {len(calls)}"
-
-
-@pytest.mark.slow
-def test_trials_grouped_by_sort_order(rscc_fixture_factory, rscc_script):
-    """Output rows for the same ``(protein, occ_key)`` are contiguous and
-    sorted, so trials aren't interleaved by filesystem scan order."""
-    fx = rscc_fixture_factory(
-        n_groups=2, trials_per_group=2, selections=("chain A and resi 326-339",)
-    )
-
-    rscc_script.main(fx)
-
-    df = _read_results(fx)
-    assert len(df) == 4
-
-    dir_names = df["protein_dir_name"].tolist()
-    assert dir_names == sorted(dir_names), (
-        f"expected output sorted by (protein, occ_key); got {dir_names}"
-    )
-
-    # Same-group rows are contiguous (no interleaving).
-    group_blocks = [
-        dir_names[i] for i in range(len(dir_names)) if i == 0 or dir_names[i] != dir_names[i - 1]
-    ]
-    assert len(group_blocks) == len(set(group_blocks)), (
-        f"group boundaries repeat — rows are interleaved: {dir_names}"
-    )
-
-
-@pytest.mark.slow
-def test_cached_base_map_unchanged_across_trials(rscc_fixture_factory, rscc_script, monkeypatch):
-    """The shared cached ``base_xmap`` must not be mutated across trials.
-
-    The script relies on ``copy.copy(base_xmap)`` producing a wrapper whose
-    ``.array`` rebind doesn't touch the cached original. Snapshot both the
-    ``.array`` data and the metadata attributes the shallow copy shares by
-    reference (``origin``, ``resolution``, ``unit_cell``, ``grid_parameters``)
-    so that drift in *any* of them across trials is caught, not just inplace
-    mutation of ``.array``.
-    """
-    fx = rscc_fixture_factory(n_groups=1, trials_per_group=2)
-
-    real_build = rscc_script.build_density_transformer
-    snapshot: dict[str, Any] = {}
-
-    def capturing_build(base_xmap, *args, **kwargs):
-        if "xmap" not in snapshot:
-            snapshot["xmap"] = base_xmap
-            snapshot["initial_array"] = base_xmap.array.copy()
-            snapshot["initial_origin"] = np.asarray(base_xmap.origin).copy()
-            snapshot["initial_resolution"] = base_xmap.resolution
-            snapshot["initial_unit_cell"] = base_xmap.unit_cell
-            snapshot["initial_grid_parameters"] = base_xmap.grid_parameters
-        return real_build(base_xmap, *args, **kwargs)
-
-    monkeypatch.setattr(rscc_script, "build_density_transformer", capturing_build)
-
-    rscc_script.main(fx)
-
-    xmap = snapshot["xmap"]
-    assert np.array_equal(xmap.array, snapshot["initial_array"]), (
-        "cached base_xmap.array was mutated across trials"
-    )
-    assert np.array_equal(np.asarray(xmap.origin), snapshot["initial_origin"]), (
-        "cached base_xmap.origin drifted across trials"
-    )
-    assert xmap.resolution is snapshot["initial_resolution"], (
-        "cached base_xmap.resolution reference replaced"
-    )
-    assert xmap.unit_cell is snapshot["initial_unit_cell"], (
-        "cached base_xmap.unit_cell reference replaced"
-    )
-    assert xmap.grid_parameters is snapshot["initial_grid_parameters"], (
-        "cached base_xmap.grid_parameters reference replaced"
-    )
+    assert selections[2] in caplog.text, "the missing selection should be named in a warning"
