@@ -1,7 +1,7 @@
 # diffuse.yaml -- the contract between Sampleworks and Diffuse.
 #
 # Apply with: diffuse apply
-# Run with:   diffuse run trigger --profile boltz2-xrd
+# Run with:   diffuse run start --profile boltz2-xrd
 #
 # Idempotent -- safe to apply repeatedly.
 
