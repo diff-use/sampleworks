@@ -26,8 +26,8 @@ protein structure, density map, and resolution columns, described below.
 ```bash
 pixi run -e boltz python run_grid_search.py \
     --proteins proteins.csv \
-    --models boltz2 \                # options: boltz1, boltz2, protenix, rf3 (make sure env aligns!)
-    --methods "X-RAY DIFFRACTION" \  # only useful for Boltz-2, ignored otherwise
+    --model boltz2 \                 # options: boltz1, boltz2, protenix, rf3 (make sure env aligns!)
+    --method "X-RAY DIFFRACTION" \   # only useful for Boltz-2, ignored otherwise
     --scalers pure_guidance \        # options: pure_guidance, fk_steering, or both as space-separated list
     --ensemble-sizes "1 4" \
     --gradient-weights "0.1 0.2" \
@@ -51,11 +51,11 @@ name,structure,density,resolution
 | Argument             | Description                                                | Default                     |
 |----------------------|------------------------------------------------------------|-----------------------------|
 | `--proteins`         | CSV with structure/density/resolution columns              | required                    |
-| `--models`           | Model to run. One of `boltz1`, `boltz2`, `protenix`, `rf3` | required                    |
+| `--model`            | Model to run. One of `boltz1`, `boltz2`, `protenix`, `rf3` | required                    |
 | `--scalers`          | Guidance method(s) to sweep                                | `pure_guidance fk_steering` |
 | `--ensemble-sizes`   | Space-separated values, e.g. `"1 4"`                       | `"1 2 4 8"`                 |
 | `--gradient-weights` | Space-separated values, e.g. `"0.1 0.2"`                   | `"0.01 0.1 0.2"`            |
-| `--methods`          | Boltz-2 sampling method (required for boltz2)              | `X-RAY DIFFRACTION`         |
+| `--method`           | Boltz-2 sampling method (required for boltz2)              | `X-RAY DIFFRACTION`         |
 | `--max-parallel`     | Parallel workers (default: number of GPUs)                 | `auto`                      |
 | `--dry-run`          | Print jobs without running them                            | off                         |
 | `--force-all`        | Re-run including already-successful jobs                   | off                         |
@@ -65,7 +65,7 @@ name,structure,density,resolution
 | `--track-chiral-features` | Track RF3 chiral gradient magnitude                   | off                         |
 
 > **Note**: Jobs are skipped if a `refined.cif` file already exists in the output directory.
-> Some flags (e.g., `--use-tweedie`, `--gradient-normalization`) are not reflected in the
+> Some flags (e.g., `--gradient-normalization`) are not reflected in the
 > directory structure, so changing them alone won't trigger a re-run. Use `--force-all` to
 > re-run all jobs regardless. This is under active development and will likely change soon.
 

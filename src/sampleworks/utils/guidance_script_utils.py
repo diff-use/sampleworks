@@ -41,6 +41,7 @@ from sampleworks.utils.guidance_script_arguments import (
     validate_model_checkpoint,
 )
 from sampleworks.utils.msa import MSAManager
+from sampleworks.utils.run_params import diffuse_runtime_metadata, sampleworks_runtime_metadata
 
 
 # The following imports aren't compatible with each other and are supported in separate
@@ -618,7 +619,10 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         # write out the job parameters to a JSON file in the same directory as the refined.cif file
         with open(Path(job_result.output_dir) / "job_metadata.json", "w") as fp:
             # use the GuidanceConfig's as_dict() method to avoid serializing PosixPath objects
-            json.dump(job.as_dict(), fp)
+            metadata_payload = job.as_dict()
+            metadata_payload["sampleworks"] = sampleworks_runtime_metadata()
+            metadata_payload["diffuse"] = diffuse_runtime_metadata()
+            json.dump(metadata_payload, fp, indent=2, sort_keys=True)
 
         job_results.append(job_result)
         torch.cuda.empty_cache()  # just in case

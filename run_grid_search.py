@@ -13,14 +13,21 @@ import subprocess
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from loguru import logger as log
-from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
+from sampleworks.utils.guidance_constants import Boltz2Method, GuidanceType, StructurePredictor
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobConfig, JobResult
 from sampleworks.utils.protein_input import ProteinInput
+from sampleworks.utils.run_params import (
+    apply_run_params,
+    has_params_mode,
+    write_params_artifacts,
+    write_run_summary,
+)
 
 
 @dataclass
@@ -113,6 +120,8 @@ def build_args_for_process_pool(
         gradient_normalization=args.gradient_normalization,
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
+        em=getattr(args, "em", False),
+        guidance_start=getattr(args, "guidance_start", -1),
     )
     # given model_type and guidance_type, the GuidanceConfig class will set itself up
     # with defaults for remaining required args, but we want to set them further here.
@@ -237,36 +246,72 @@ def main(args: argparse.Namespace):
     Args:
         args: Command-line arguments.
     """
-    gpus = detect_gpus()
-    log.info(f"Detected {len(gpus)} GPUs: {gpus}")
-    if args.max_parallel != "auto":
-        gpus = gpus[: int(args.max_parallel)]
+    started_at = datetime.now(UTC)
+    os.makedirs(args.output_dir, exist_ok=True)
+    write_params_artifacts(args, args.output_dir)
 
-    log_args(args, gpus)
+    try:
+        gpus = detect_gpus()
+        log.info(f"Detected {len(gpus)} GPUs: {gpus}")
+        if args.max_parallel != "auto":
+            gpus = gpus[: int(args.max_parallel)]
 
-    filtered_jobs, job_statuses = generate_and_filter_jobs(args)
+        log_args(args, gpus)
 
-    if len(filtered_jobs) == 0:
-        log.info("No jobs to run!")
-        return
+        filtered_jobs, job_statuses = generate_and_filter_jobs(args)
 
-    config = GridSearchConfig(
-        model=args.model,
-        scalers=args.scalers.split(),
-        ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
-        gradient_weights=[float(x) for x in args.gradient_weights.split()],
-        gd_steps=[int(x) for x in args.num_gd_steps.split()],
-        method=args.method,
-        proteins_file=args.proteins,
-        output_dir=args.output_dir,
-    )
+        if len(filtered_jobs) == 0:
+            log.info("No jobs to run!")
+            write_run_summary(
+                args=args,
+                output_dir=args.output_dir,
+                status="skipped",
+                started_at=started_at,
+                total_jobs=0,
+            )
+            return
 
-    start_time = time.time()
+        config = GridSearchConfig(
+            model=args.model,
+            scalers=args.scalers.split(),
+            ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
+            gradient_weights=[float(x) for x in args.gradient_weights.split()],
+            gd_steps=[int(x) for x in args.num_gd_steps.split()],
+            method=args.method,
+            proteins_file=args.proteins,
+            output_dir=args.output_dir,
+        )
 
-    results = run_grid_search(filtered_jobs, gpus, args, job_statuses=job_statuses)
+        start_time = time.time()
 
-    if not args.dry_run and results:
-        save_results(results, config, args.output_dir, time.time() - start_time)
+        results = run_grid_search(filtered_jobs, gpus, args, job_statuses=job_statuses)
+
+        if not args.dry_run and results:
+            save_results(results, config, args.output_dir, time.time() - start_time)
+
+        successful = sum(1 for result in results if result.status == "success")
+        failed = sum(1 for result in results if result.status == "failed")
+        status = "dry_run" if args.dry_run else "success"
+        if failed:
+            status = "failed"
+        write_run_summary(
+            args=args,
+            output_dir=args.output_dir,
+            status=status,
+            started_at=started_at,
+            total_jobs=len(filtered_jobs),
+            successful_jobs=successful,
+            failed_jobs=failed,
+        )
+    except Exception as exc:
+        write_run_summary(
+            args=args,
+            output_dir=args.output_dir,
+            status="failed",
+            started_at=started_at,
+            error=str(exc),
+        )
+        raise
 
     log.info("=" * 50)
     log.info("Grid search complete")
@@ -423,15 +468,24 @@ def parse_args() -> argparse.Namespace:
     )
     # Experiment level arguments
     parser.add_argument(
-        "--proteins", required=True, help="CSV file with columns: structure,density,resolution,name"
+        "--params",
+        default=None,
+        help="JSON params file. In params mode, Sampleworks owns validation and schema.",
+    )
+    parser.add_argument(
+        "--proteins",
+        required=False,
+        help="CSV file with columns: structure,density,resolution,name",
     )
 
     # Model arguments
     parser.add_argument(
         "--model",
+        "--models",
+        dest="model",
         default="boltz2",
         choices=["boltz1", "boltz2", "protenix", "rf3"],
-        help="The protein structure predictor model to use",
+        help="The protein structure predictor model to use. --models is a legacy alias.",
     )
     parser.add_argument(
         "--model-checkpoint",
@@ -440,10 +494,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--method",
+        "--methods",
+        dest="method",
         default="X-RAY DIFFRACTION",
-        choices=["X-RAY DIFFRACTION", "MD"],
-        help="Method for Boltz2 ('X-RAY DIFFRACTION', 'MD')",
+        choices=[method.value for method in Boltz2Method],
+        help="Method for Boltz2. --methods is a legacy alias.",
     )
+    parser.add_argument("--boltz1-checkpoint", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--boltz2-checkpoint", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--protenix-checkpoint", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--rf3-checkpoint", default=None, help=argparse.SUPPRESS)
 
     # Trajectory scaling arguments
     parser.add_argument(
@@ -504,9 +564,16 @@ def parse_args() -> argparse.Namespace:
 
     # Reward/Loss function arguments
     parser.add_argument("--loss-order", type=int, default=2, help="L1 (1) or L2 (2) loss")
+    parser.add_argument("--em", action="store_true", help="Use EM scattering factors")
+    parser.add_argument(
+        "--guidance-start",
+        type=int,
+        default=-1,
+        help="Step to start guidance (default: -1, starts immediately)",
+    )
 
     # Output arguments
-    parser.add_argument("--output-dir", default="./grid_search_results", help="Output directory")
+    parser.add_argument("--output-dir", default=None, help="Output directory")
 
     # Arguments for choosing what to run and what hardware to use.
     parser.add_argument(
@@ -535,7 +602,20 @@ def parse_args() -> argparse.Namespace:
         help="Run only un-run jobs, skip failed and successful jobs",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    checkpoint = getattr(args, f"{args.model}_checkpoint", None)
+    if checkpoint:
+        args.model_checkpoint = checkpoint
+    if has_params_mode(args):
+        try:
+            return apply_run_params(args)
+        except Exception as exc:
+            parser.error(str(exc))
+    if not args.proteins:
+        parser.error("--proteins is required unless --params is used")
+    if args.output_dir is None:
+        args.output_dir = "./grid_search_results"
+    return args
 
 
 def log_args(args: argparse.Namespace, gpus: list[str]):
@@ -552,6 +632,8 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
     log.info(f"Gradient weights: {args.gradient_weights}")
     log.info(f"GD steps: {args.num_gd_steps}")
     log.info(f"Output directory: {args.output_dir}")
+    if getattr(args, "_sampleworks_params_source", None):
+        log.info(f"Params source: {args._sampleworks_params_source}")
     log.info(f"GPUs: {gpus}")
     log.info(f"Dry run: {args.dry_run}")
     log.info("=" * 50)

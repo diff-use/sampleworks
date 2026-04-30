@@ -27,7 +27,6 @@
 #     --ensemble-sizes "1 4" \
 #     --gradient-weights "0.1 0.2" \
 #     --output-dir /data/results \
-#     --use-tweedie \
 #     --gradient-normalization \
 #     --augmentation \
 #     --align-to-input
@@ -41,8 +40,7 @@
 #     --methods "X-RAY DIFFRACTION" \
 #     --ensemble-sizes "1 4" \
 #     --gradient-weights "0.1 0.2" \
-#     --output-dir /data/results \
-#     --use-tweedie
+#     --output-dir /data/results
 #
 #   # Interactive shell
 #   docker run --gpus all -it sampleworks bash
@@ -64,6 +62,9 @@
 # ============================================================================
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS base
 
+ARG SAMPLEWORKS_GIT_SHA=unknown
+ARG SAMPLEWORKS_IMAGE_TAG=unknown
+
 ENV DEBIAN_FRONTEND=noninteractive \
     # Pixi configuration
     PIXI_HOME=/root/.pixi \
@@ -74,7 +75,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # Disable user site packages (isolation)
     PYTHONNOUSERSITE=1 \
     # Optimize CUDA compilation for H100
-    TORCH_CUDA_ARCH_LIST="9.0"
+    TORCH_CUDA_ARCH_LIST="9.0" \
+    SAMPLEWORKS_GIT_SHA=${SAMPLEWORKS_GIT_SHA} \
+    SAMPLEWORKS_IMAGE_TAG=${SAMPLEWORKS_IMAGE_TAG}
+
+LABEL org.opencontainers.image.revision=${SAMPLEWORKS_GIT_SHA} \
+      org.opencontainers.image.version=${SAMPLEWORKS_IMAGE_TAG}
 
 # Install system dependencies required for building scientific packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
