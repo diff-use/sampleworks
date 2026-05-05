@@ -479,8 +479,10 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
-    # Boltz was trained with this, others might not have been.
-    use_alignment_for_reverse_diffusion = is_boltz
+    # Boltz was trained with this, other models default to disabled, but the user
+    # can opt in via --alignment-reverse-diffusion.
+    override = getattr(args, "alignment_reverse_diffusion", None)
+    use_alignment_for_reverse_diffusion = is_boltz if override is None else override
 
     # Create sampler with model-appropriate settings
     sampler_config = EDMSamplerConfig(
