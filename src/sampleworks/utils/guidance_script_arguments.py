@@ -608,11 +608,17 @@ class JobResult:
     output_dir: str
 
     def as_dict(self) -> dict[str, Any]:
-        """Return a dictionary representation, remapping container paths to host paths.
+        """Return a dictionary representation of the job result.
 
-        Mirrors ``GuidanceConfig.as_dict``: when host-path env vars are set, ``output_dir``
-        and ``log_path`` are remapped so ``job_metadata.json`` is reproducible outside
-        the container.
+        Mirrors :py:meth:`GuidanceConfig.as_dict`: when host-path env vars are set,
+        ``output_dir`` and ``log_path`` are remapped to their host equivalents so
+        ``job_metadata.json`` is reproducible outside the container.
+
+        Returns
+        -------
+        dict[str, Any]
+            JobResult fields with ``output_dir`` and ``log_path`` remapped via
+            :py:func:`_remap_container_path`.
         """
         output = self.__dict__.copy()
         output["output_dir"] = _remap_container_path(str(self.output_dir))

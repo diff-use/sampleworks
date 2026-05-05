@@ -596,10 +596,20 @@ def _write_job_metadata(
 ) -> None:
     """Write ``job_metadata.json`` from a GuidanceConfig, optionally enriched with a JobResult.
 
-    Both ``args.as_dict()`` and ``job_result.as_dict()`` apply container-to-host path
-    remapping, so the merged file is consistent regardless of whether the JobResult was
-    populated. When ``job_result`` is provided, its fields (notably ``started_at``,
-    ``finished_at``, ``runtime_seconds``, ``status``, ``exit_code``) are merged on top.
+    Both :py:meth:`GuidanceConfig.as_dict` and :py:meth:`JobResult.as_dict` apply
+    container-to-host path remapping, so the merged file is consistent regardless of
+    whether the JobResult was populated.
+
+    Parameters
+    ----------
+    output_dir : str | Path
+        Directory in which to write ``job_metadata.json``. Created if missing.
+    args : GuidanceConfig
+        Configuration used for the guidance run. Provides the base metadata payload.
+    job_result : JobResult | None, optional
+        Completed job result. When provided, its fields (notably ``started_at``,
+        ``finished_at``, ``runtime_seconds``, ``status``, ``exit_code``) are merged
+        on top of the ``GuidanceConfig`` payload.
     """
     metadata = args.as_dict()
     if job_result is not None:
