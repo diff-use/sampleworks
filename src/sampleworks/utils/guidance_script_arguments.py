@@ -606,3 +606,15 @@ class JobResult:
     finished_at: str
     log_path: str
     output_dir: str
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dictionary representation, remapping container paths to host paths.
+
+        Mirrors ``GuidanceConfig.as_dict``: when host-path env vars are set, ``output_dir``
+        and ``log_path`` are remapped so ``job_metadata.json`` is reproducible outside
+        the container.
+        """
+        output = self.__dict__.copy()
+        output["output_dir"] = _remap_container_path(str(self.output_dir))
+        output["log_path"] = _remap_container_path(str(self.log_path))
+        return output

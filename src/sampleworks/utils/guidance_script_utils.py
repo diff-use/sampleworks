@@ -4,7 +4,6 @@ import json
 import os
 import pickle
 import traceback
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -597,14 +596,14 @@ def _write_job_metadata(
 ) -> None:
     """Write ``job_metadata.json`` from a GuidanceConfig, optionally enriched with a JobResult.
 
-    The base payload is ``args.as_dict()`` (so PosixPath values are stringified and host
-    paths are remapped). When ``job_result`` is provided, its dataclass fields (notably
-    ``started_at``, ``finished_at``, ``runtime_seconds``, ``status``, ``exit_code``) are
-    merged on top.
+    Both ``args.as_dict()`` and ``job_result.as_dict()`` apply container-to-host path
+    remapping, so the merged file is consistent regardless of whether the JobResult was
+    populated. When ``job_result`` is provided, its fields (notably ``started_at``,
+    ``finished_at``, ``runtime_seconds``, ``status``, ``exit_code``) are merged on top.
     """
     metadata = args.as_dict()
     if job_result is not None:
-        metadata.update(asdict(job_result))
+        metadata.update(job_result.as_dict())
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / "job_metadata.json", "w") as fp:
