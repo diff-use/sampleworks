@@ -4,6 +4,7 @@ import json
 import os
 import pickle
 import traceback
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -333,12 +334,11 @@ def save_everything(
     add_category_to_cif(final_structure, metadata, category_name="sampleworks")
     final_structure.write(str(output_dir / "refined.cif"))
 
-    # write out the job parameters to a JSON file in the same directory as the refined.cif file
-    # Even though this is technically duplicated, keep it around as a backup in case metadata
-    # is lost in some CIF transform.
-    with open(Path(output_dir) / "job_metadata.json", "w") as fp:
-        # use the GuidanceConfig's as_dict() method to avoid serializing PosixPath objects
-        json.dump(metadata, fp)
+    # Write out the job parameters to a JSON file alongside refined.cif. Even though this is
+    # technically duplicated with the CIF category, keep it around as a backup in case metadata
+    # is lost in some CIF transform. JobResult fields (timing, status) are appended later in
+    # run_guidance once the run finishes.
+    _write_job_metadata(output_dir, args)
 
     # Two calls to save_trajectory, very similar, but saving different trajectories!
     save_trajectory(
@@ -407,13 +407,16 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
         with logger.contextualize(special=True):
             _run_guidance(args, guidance_type, model_wrapper, device)
         logger.info("Guidance run successfully!")
-        return get_job_result(args, device, started_at, datetime.now(), 0, "success")
+        job_result = get_job_result(args, device, started_at, datetime.now(), 0, "success")
     except Exception as e:
         logger.error(f"Error running guidance: {e} consult logs ({log_path}) for real errors.")
         logger.error(traceback.format_exc())
-        return get_job_result(args, device, started_at, datetime.now(), 1, "failed")
+        job_result = get_job_result(args, device, started_at, datetime.now(), 1, "failed")
     finally:
         logger.remove(handle)
+
+    _write_job_metadata(args.output_dir, args, job_result)
+    return job_result
 
 
 # "guidance_type" is also called "scaler" in many places
@@ -585,6 +588,27 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         with open(stats_path, "w") as f:
             json.dump(model_wrapper._chiral_grad_stats, f, indent=2)
         logger.info(f"Saved chiral gradient stats to {stats_path}")
+
+
+def _write_job_metadata(
+    output_dir: str | Path,
+    args: GuidanceConfig,
+    job_result: JobResult | None = None,
+) -> None:
+    """Write ``job_metadata.json`` from a GuidanceConfig, optionally enriched with a JobResult.
+
+    The base payload is ``args.as_dict()`` (so PosixPath values are stringified and host
+    paths are remapped). When ``job_result`` is provided, its dataclass fields (notably
+    ``started_at``, ``finished_at``, ``runtime_seconds``, ``status``, ``exit_code``) are
+    merged on top.
+    """
+    metadata = args.as_dict()
+    if job_result is not None:
+        metadata.update(asdict(job_result))
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / "job_metadata.json", "w") as fp:
+        json.dump(metadata, fp)
 
 
 def epoch_seconds(time_to_convert: datetime) -> float:
