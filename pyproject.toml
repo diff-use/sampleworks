@@ -27,6 +27,7 @@ dependencies = [
   "jaxtyping",
   "jax",
   "einx<0.4",
+  "gemmi",
   "hydra-core",
   "loguru",
   "omegaconf"

@@ -322,3 +322,62 @@ def _normalize_nulls(value: Any) -> Any:
     if isinstance(value, Iterable) and not isinstance(value, str | bytes):
         return ["?" if item is None else item for item in value]
     return "?" if value is None else value
+
+
+def normalize_mmcif_with_gemmi(cif_path: Path | str) -> bool:
+    """Round-trip a CIF through gemmi to populate PDBx schema categories.
+
+    Biotite's ``set_structure`` writes a minimal mmCIF (essentially just
+    ``_atom_site``). Downstream libcifpp-based tools (e.g. tortoize, DSSP,
+    PDB-REDO) expect schema categories such as ``_entity``, ``_entity_poly``,
+    ``_entity_poly_seq``, ``_struct_asym``, and ``_chem_comp``. This helper
+    parses ``cif_path`` with gemmi, infers those categories from the atomic
+    data (``setup_entities``), and writes the file back in place using
+    ``update_mmcif_block`` so non-PDBx categories already present in the file
+    (e.g. the custom ``_sampleworks`` metadata block) are preserved.
+
+    The transformation is opportunistic: any exception during normalization
+    is logged and swallowed, leaving the original file untouched. Writes go
+    through a temporary path and an atomic rename to avoid partial output.
+
+    Parameters
+    ----------
+    cif_path : Path | str
+        Path to an mmCIF file to normalize in place.
+
+    Returns
+    -------
+    bool
+        ``True`` if normalization completed and overwrote ``cif_path``,
+        ``False`` if any step failed (file is left as-is).
+
+    Notes
+    -----
+    Requires ``gemmi``. Atom ordering and serial IDs may be normalized to
+    gemmi's canonical form. Coordinates, occupancies, B-factors, and altlocs
+    are preserved.
+    """
+    cif_path = Path(cif_path)
+    tmp_path = cif_path.with_suffix(cif_path.suffix + ".gemmi_tmp")
+    try:
+        import gemmi
+
+        doc = gemmi.cif.read(str(cif_path))
+        block = doc.sole_block()
+        structure = gemmi.make_structure_from_block(block)
+        structure.setup_entities()
+        structure.update_mmcif_block(block)
+        doc.write_file(str(tmp_path))
+        tmp_path.replace(cif_path)
+        return True
+    except Exception as exc:
+        logger.warning(
+            f"gemmi mmCIF normalization failed for {cif_path}: {exc}. "
+            "Leaving the original biotite-emitted file in place."
+        )
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        return False

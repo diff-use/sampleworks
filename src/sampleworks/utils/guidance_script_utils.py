@@ -29,7 +29,11 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
-from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.cif_utils import (
+    add_category_to_cif,
+    normalize_mmcif_with_gemmi,
+    resolve_mixed_hetatm_atom_altlocs,
+)
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -331,7 +335,13 @@ def save_everything(
     final_structure = CIFFile()
     set_structure(final_structure, atom_array)
     add_category_to_cif(final_structure, metadata, category_name="sampleworks")
-    final_structure.write(str(output_dir / "refined.cif"))
+    refined_cif_path = output_dir / "refined.cif"
+    final_structure.write(str(refined_cif_path))
+
+    # Round-trip through gemmi to populate PDBx schema categories (entity_poly, etc.)
+    # required by libcifpp-based downstream tools (tortoize, DSSP, PDB-REDO).
+    # update_mmcif_block preserves the custom _sampleworks block written above.
+    normalize_mmcif_with_gemmi(refined_cif_path)
 
     # write out the job parameters to a JSON file in the same directory as the refined.cif file
     # Even though this is technically duplicated, keep it around as a backup in case metadata

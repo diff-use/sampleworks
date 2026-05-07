@@ -51,6 +51,7 @@ pixi run -e boltz python -c "
 from boltz.main import download_boltz1, download_boltz2
 import pathlib
 cache = pathlib.Path('~/.boltz/').expanduser()
+cache.mkdir(parents=True, exist_ok=True)
 download_boltz1(cache)
 download_boltz2(cache)
 "
