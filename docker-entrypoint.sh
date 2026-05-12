@@ -4,6 +4,8 @@
 # Usage:
 #   docker run sampleworks -e <pixi_env> <script> [args...]
 #   docker run sampleworks -e boltz run_grid_search.py --proteins /data/proteins.csv ...
+#   docker run sampleworks run_grid_search_actl.sh --model rf3 --proteins /data/proteins.csv
+#   docker run sampleworks run_all_models_actl.sh  # native ACTL/Kubernetes run
 #   docker run sampleworks bash  # interactive shell
 #
 # Available pixi environments: boltz, protenix, rf3
@@ -29,6 +31,7 @@ Sampleworks - Protein structure prediction with diffusion model guidance
 
 USAGE:
     docker run --gpus all --shm-size=16g sampleworks -e <environment> <script> [arguments...]
+    docker run sampleworks run_all_models_actl.sh
     docker run sampleworks bash
     docker run sampleworks --help
 
@@ -39,6 +42,9 @@ OPTIONS:
     -e, --env <env>     Pixi environment to use (boltz, protenix, rf3)
     -h, --help          Show this help message
     bash                Start an interactive shell
+    run_grid_search_actl.sh
+                        Run run_grid_search.py natively inside this container
+    *_actl.sh           Run one of the bundled ACTL/Kubernetes-native wrappers
 
 ENVIRONMENTS:
     boltz       For boltz1 and boltz2 models
@@ -100,6 +106,13 @@ EXAMPLES:
 
     # Interactive shell
     docker run --gpus all --shm-size=16g -it sampleworks bash
+
+    # ACTL/Kubernetes-native all-model run. No Docker is started inside the container.
+    docker run --gpus all --shm-size=16g -v /data:/data sampleworks run_all_models_actl.sh
+
+    # ACTL/Kubernetes-native generic grid search launcher.
+    docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
+      run_grid_search_actl.sh --model rf3 --proteins /data/proteins.csv --output-dir /data/results
 
     # Run a custom script
     docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
@@ -206,6 +219,12 @@ if [ "$1" = "bash" ] || [ "$1" = "sh" ]; then
     exec "$@"
 fi
 
+# ACTL/Kubernetes-native runners are intended to run inside the already-started
+# sampleworks container and must not launch Docker-in-Docker.
+if [[ "$1" == *_actl.sh ]]; then
+    exec "$@"
+fi
+
 # Parse -e/--env argument
 ENV=""
 while [[ $# -gt 0 ]]; do
@@ -220,9 +239,10 @@ while [[ $# -gt 0 ]]; do
             break
             ;;
         *)
-            echo "Error: First argument must be -e <environment>, bash, or --help"
+            echo "Error: First argument must be -e <environment>, *_actl.sh, bash, or --help"
             echo ""
             echo "Usage: docker run sampleworks -e <env> <script> [args...]"
+            echo "       docker run sampleworks run_all_models_actl.sh"
             echo "       docker run sampleworks bash"
             echo "       docker run sampleworks --help"
             exit 1
@@ -239,6 +259,7 @@ if [[ -z "$ENV" ]]; then
     echo "Examples:"
     echo "  docker run sampleworks -e boltz run_grid_search.py --proteins /data/proteins.csv"
     echo "  docker run sampleworks -e rf3 run_grid_search.py --help"
+    echo "  docker run sampleworks run_all_models_actl.sh"
     echo "  docker run sampleworks bash"
     exit 1
 fi
