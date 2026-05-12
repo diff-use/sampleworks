@@ -106,8 +106,9 @@ COPY pyproject.toml pixi.lock ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY run_grid_search.py ./
+COPY *_actl.sh /usr/local/bin/
 COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/*_actl.sh
 
 # ============================================================================
 # Install all three environments: boltz, protenix, rf3
