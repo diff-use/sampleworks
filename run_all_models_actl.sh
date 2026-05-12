@@ -70,9 +70,12 @@ start_grid_search() {
     shift 4
 
     echo "[$(date)] Starting $name on GPUs $gpu_devices"
-    CUDA_VISIBLE_DEVICES="$gpu_devices" \
-        pixi run -e "$pixi_env" python /app/run_grid_search.py "$@" \
-        2>&1 | tee "$log_file" &
+    (
+        set -o pipefail
+        CUDA_VISIBLE_DEVICES="$gpu_devices" \
+            pixi run -e "$pixi_env" python /app/run_grid_search.py "$@" \
+            2>&1 | tee "$log_file"
+    ) &
     PIDS+=("$!")
     NAMES+=("$name")
     echo "[$(date)] $name job started (PID: ${PIDS[-1]})"
@@ -87,7 +90,7 @@ start_grid_search "Boltz2 X-ray" "0,1" "boltz" "$RESULTS_DIR/boltz2_xrd_run.log"
     --ensemble-sizes "8" \
     --gradient-weights "0.0 0.05 0.1 0.2 0.35 0.5" \
     --gradient-normalization --augmentation --align-to-input \
-    --output-dir "$RESULTS_DIR"
+    --output-dir "$RESULTS_DIR/boltz2_xrd"
 
 start_grid_search "Boltz2 MD" "2,3" "boltz" "$RESULTS_DIR/boltz2_md_run.log" \
     --proteins "$PROTEINS_CSV" \
@@ -98,7 +101,7 @@ start_grid_search "Boltz2 MD" "2,3" "boltz" "$RESULTS_DIR/boltz2_md_run.log" \
     --ensemble-sizes "8" \
     --gradient-weights "0.0 0.05 0.1 0.2 0.35 0.5" \
     --gradient-normalization --augmentation --align-to-input \
-    --output-dir "$RESULTS_DIR"
+    --output-dir "$RESULTS_DIR/boltz2_md"
 
 start_grid_search "RosettaFold3" "4,5" "rf3" "$RESULTS_DIR/rf3_run.log" \
     --proteins "$PROTEINS_CSV" \
@@ -108,7 +111,7 @@ start_grid_search "RosettaFold3" "4,5" "rf3" "$RESULTS_DIR/rf3_run.log" \
     --ensemble-sizes "8" \
     --gradient-weights "0.0 0.005 0.01 0.02 0.035 0.05 0.1" \
     --gradient-normalization --augmentation --align-to-input \
-    --output-dir "$RESULTS_DIR"
+    --output-dir "$RESULTS_DIR/rf3"
 
 start_grid_search "Protenix" "6,7" "protenix" "$RESULTS_DIR/protenix_run.log" \
     --proteins "$PROTEINS_CSV" \
@@ -118,7 +121,7 @@ start_grid_search "Protenix" "6,7" "protenix" "$RESULTS_DIR/protenix_run.log" \
     --ensemble-sizes "8" \
     --gradient-weights "0.0 0.05 0.1 0.2 0.35 0.5" \
     --gradient-normalization --augmentation --align-to-input \
-    --output-dir "$RESULTS_DIR"
+    --output-dir "$RESULTS_DIR/protenix"
 
 echo ""
 echo "=========================================="

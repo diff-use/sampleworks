@@ -8,13 +8,16 @@ show_help() {
 Run Sampleworks run_grid_search.py inside the already-running container.
 
 Usage:
-  run_grid_search_actl.sh [-e ENV] [run_grid_search.py args...]
+  run_grid_search_actl.sh [-e ENV] --proteins <csv> [run_grid_search.py args...]
   run_grid_search_actl.sh --model rf3 --proteins /data/input/proteins.csv --output-dir /data/results
 
 Options:
   -e, --env ENV   Pixi environment to use: boltz, protenix, or rf3.
-                  If omitted, inferred from --model/--models.
+                  If omitted, inferred from --model.
   -h, --help      Show this help message.
+
+Required:
+  --proteins CSV  Protein input CSV for run_grid_search.py.
 
 This script must be run from inside the Sampleworks image. It never starts Docker.
 EOF

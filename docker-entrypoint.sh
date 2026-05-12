@@ -15,13 +15,13 @@
 #   docker run --gpus all -v /data:/data sampleworks \
 #     -e rf3 run_grid_search.py \
 #     --proteins /data/proteins.csv \
-#     --models rf3 \
+#     --model rf3 \
 #     --scalers pure_guidance \
 #     --ensemble-sizes "1 4" \
 #     --gradient-weights "0.1 0.2" \
 #     --output-dir /data/results \
 #     --use-tweedie \
-#     --rf3-checkpoint /data/checkpoints/rf3.ckpt
+#     --model-checkpoint /data/checkpoints/rf3.ckpt
 
 set -e
 
@@ -56,7 +56,7 @@ EXAMPLES:
     docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
       -e rf3 run_grid_search.py \
       --proteins /data/proteins.csv \
-      --models rf3 \
+      --model rf3 \
       --scalers pure_guidance \
       --ensemble-sizes "1 4" \
       --gradient-weights "0.1 0.2" \
@@ -65,44 +65,44 @@ EXAMPLES:
       --gradient-normalization \
       --augmentation \
       --align-to-input \
-      --rf3-checkpoint /data/checkpoints/rf3_foundry_01_24_latest.ckpt
+      --model-checkpoint /data/checkpoints/rf3_foundry_01_24_latest.ckpt
 
     # Run grid search with Boltz1 model
     docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
       -e boltz run_grid_search.py \
       --proteins /data/proteins.csv \
-      --models boltz1 \
+      --model boltz1 \
       --scalers pure_guidance \
       --ensemble-sizes "1 4" \
       --gradient-weights "0.1 0.2" \
       --output-dir /data/results \
       --use-tweedie \
-      --boltz1-checkpoint /data/checkpoints/boltz1_conf.ckpt
+      --model-checkpoint /data/checkpoints/boltz1_conf.ckpt
 
     # Run grid search with Boltz2 model
     docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
       -e boltz run_grid_search.py \
       --proteins /data/proteins.csv \
-      --models boltz2 \
+      --model boltz2 \
       --scalers pure_guidance \
-      --methods "X-RAY DIFFRACTION" \
+      --method "X-RAY DIFFRACTION" \
       --ensemble-sizes "1 4" \
       --gradient-weights "0.1 0.2" \
       --output-dir /data/results \
       --use-tweedie \
-      --boltz2-checkpoint /data/checkpoints/boltz2_conf.ckpt
+      --model-checkpoint /data/checkpoints/boltz2_conf.ckpt
 
     # Run grid search with Protenix model
     docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
       -e protenix run_grid_search.py \
       --proteins /data/proteins.csv \
-      --models protenix \
+      --model protenix \
       --scalers pure_guidance \
       --ensemble-sizes "1 4" \
       --gradient-weights "0.1 0.2" \
       --output-dir /data/results \
       --use-tweedie \
-      --protenix-checkpoint /data/checkpoints/protenix_base_default_v0.5.0.pt
+      --model-checkpoint /data/checkpoints/protenix_base_default_v0.5.0.pt
 
     # Interactive shell
     docker run --gpus all --shm-size=16g -it sampleworks bash
@@ -126,7 +126,7 @@ GRID SEARCH ARGUMENTS (run_grid_search.py):
       --proteins FILE             CSV file with columns: structure,density,resolution,name
 
     Model selection:
-      --models MODEL              Model to use (boltz1, boltz2, protenix, rf3)
+      --model MODEL               Model to use (boltz1, boltz2, protenix, rf3)
                                   Note: Only one model per run currently supported
 
     Guidance configuration:
@@ -149,11 +149,8 @@ GRID SEARCH ARGUMENTS (run_grid_search.py):
       --max-parallel N            Max parallel jobs (default: auto = number of GPUs)
 
     Model-specific options:
-      --boltz1-checkpoint PATH    Path to Boltz1 checkpoint (default: /checkpoints/boltz1_conf.ckpt - BAKED IN)
-      --boltz2-checkpoint PATH    Path to Boltz2 checkpoint (default: /checkpoints/boltz2_conf.ckpt - BAKED IN)
-      --protenix-checkpoint PATH  Path to Protenix checkpoint
-      --rf3-checkpoint PATH       Path to RF3 checkpoint
-      --methods METHOD            Boltz2 sampling method (default: "X-RAY DIFFRACTION")
+      --model-checkpoint PATH     Path to model checkpoint
+      --method METHOD             Boltz2 sampling method (default: "X-RAY DIFFRACTION")
 
 BAKED-IN CHECKPOINTS:
     The following checkpoints are pre-installed in the image:

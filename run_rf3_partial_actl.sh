@@ -16,6 +16,7 @@ Environment overrides:
   MSA_CACHE_DIR  MSA cache directory
   PROTEINS_CSV   Explicit proteins CSV path
   GPU_DEVICES    CUDA_VISIBLE_DEVICES value
+  RF3_CHECKPOINT  RF3 checkpoint path
 EOF
     exit 0
 fi

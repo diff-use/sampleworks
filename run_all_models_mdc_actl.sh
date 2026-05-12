@@ -86,7 +86,10 @@ start_grid_search() {
     shift 3
 
     echo "[$(date)] Starting $name on GPUs $gpu_devices"
-    CUDA_VISIBLE_DEVICES="$gpu_devices" "$RUN_GRID_SEARCH_ACTL" "$@" 2>&1 | tee "$log_file" &
+    (
+        set -o pipefail
+        CUDA_VISIBLE_DEVICES="$gpu_devices" "$RUN_GRID_SEARCH_ACTL" "$@" 2>&1 | tee "$log_file"
+    ) &
     PIDS+=("$!")
     NAMES+=("$name")
     echo "[$(date)] $name job started (PID: ${PIDS[-1]})"
@@ -97,7 +100,7 @@ if [[ "$RUN_BOLTZ2_XRD" == true ]]; then
         --model boltz2 --method "X-RAY DIFFRACTION" --proteins "$PROTEINS_CSV" \
         --scalers pure_guidance --partial-diffusion-step 120 --ensemble-sizes "8" \
         --gradient-weights "0.1 0.2 0.5" --gradient-normalization --augmentation \
-        --align-to-input --output-dir "$RESULTS_DIR"
+        --align-to-input --output-dir "$RESULTS_DIR/boltz2_xrd"
 fi
 
 if [[ "$RUN_BOLTZ2_MD" == true ]]; then
@@ -105,21 +108,21 @@ if [[ "$RUN_BOLTZ2_MD" == true ]]; then
         --model boltz2 --method "MD" --proteins "$PROTEINS_CSV" \
         --scalers pure_guidance --partial-diffusion-step 120 --ensemble-sizes "8" \
         --gradient-weights "0.1 0.2 0.5" --gradient-normalization --augmentation \
-        --align-to-input --output-dir "$RESULTS_DIR"
+        --align-to-input --output-dir "$RESULTS_DIR/boltz2_md"
 fi
 
 if [[ "$RUN_RF3" == true ]]; then
     start_grid_search "RosettaFold3" "4,5" "$RESULTS_DIR/rf3_run.log" \
         --model rf3 --proteins "$PROTEINS_CSV" --scalers pure_guidance \
         --ensemble-sizes "8" --gradient-weights "0.01 0.02 0.05" \
-        --gradient-normalization --augmentation --align-to-input --output-dir "$RESULTS_DIR"
+        --gradient-normalization --augmentation --align-to-input --output-dir "$RESULTS_DIR/rf3"
 fi
 
 if [[ "$RUN_PROTENIX" == true ]]; then
     start_grid_search "Protenix" "6,7" "$RESULTS_DIR/protenix_run.log" \
         --model protenix --proteins "$PROTEINS_CSV" --scalers pure_guidance \
         --partial-diffusion-step 120 --ensemble-sizes "8" --gradient-weights "0.1 0.2 0.5" \
-        --gradient-normalization --augmentation --align-to-input --output-dir "$RESULTS_DIR"
+        --gradient-normalization --augmentation --align-to-input --output-dir "$RESULTS_DIR/protenix"
 fi
 
 if [[ ${#PIDS[@]} -eq 0 ]]; then
