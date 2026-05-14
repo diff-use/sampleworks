@@ -4,17 +4,16 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast, ClassVar
+from typing import ClassVar
 
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
-from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
 from sampleworks.eval.structure_utils import apply_selection
 from sampleworks.utils.atom_array_utils import (
-    AltlocInfo,
+    assign_occupancies,
     detect_altlocs,
     keep_amino_acids,
     keep_polymer,
@@ -95,79 +94,6 @@ class BatchRow:
             occ_values=occ_values,
             mapfile=row.get("mapfile") or None,
         )
-
-
-def assign_occupancies(
-    atom_array: AtomArray | AtomArrayStack,
-    altloc_info: AltlocInfo,
-    mode: str,
-    occ_values: list[float] | None = None,
-) -> AtomArray | AtomArrayStack:
-    """Assign occupancy values to atoms based on their altloc membership.
-
-    Parameters
-    ----------
-    atom_array
-        Structure to modify
-    altloc_info
-        Detected altloc information from detect_altlocs()
-    mode
-        Assignment mode: 'default' (no change), 'uniform' (1/n_altlocs each),
-        or 'custom' (user-specified values)
-    occ_values
-        For 'custom' mode: list of occupancy values [0.0-1.0] assigned to altlocs
-        in sorted order (e.g., [0.3, 0.7] assigns 0.3 to altloc 'A', 0.7 to 'B').
-        If fewer values than altlocs, remaining altlocs get occupancy 0.
-
-    Returns
-    -------
-    AtomArray | AtomArrayStack
-        Modified structure with updated occupancies
-
-    Raises
-    ------
-    ValueError
-        If 'custom' mode is requested but no altlocs exist, or if occ_values
-        is None in custom mode, or if any occupancy value is outside [0.0, 1.0]
-    """
-    if mode == "default":
-        return atom_array
-
-    if not altloc_info.altloc_ids:
-        if mode == "custom":
-            raise ValueError(
-                "Custom occupancy mode was requested, but the structure has no altlocs."
-            )
-        logger.warning("No altlocs detected, using default occupancies")
-        return atom_array
-
-    result = atom_array.copy()
-    occupancy = result.occupancy
-
-    if mode == "uniform":
-        n_altlocs = len(altloc_info.altloc_ids)
-        uniform_occ = 1.0 / n_altlocs
-        for altloc in altloc_info.altloc_ids:
-            occupancy[altloc_info.atom_masks[altloc]] = uniform_occ
-
-    elif mode == "custom":
-        if occ_values is None:
-            raise ValueError("occ_values required for custom mode")
-        for i, v in enumerate(occ_values):
-            if not 0.0 <= v <= 1.0:
-                raise ValueError(f"Occupancy value {v} at index {i} is out of range [0.0, 1.0]")
-
-        if len(occ_values) != len(altloc_info.altloc_ids):
-            logger.warning(
-                f"Expected {len(altloc_info.altloc_ids)} occupancy values, got {len(occ_values)}. "
-                "The missing values are automatically set to 0."
-            )
-            occ_values = occ_values + [0.0] * (len(altloc_info.altloc_ids) - len(occ_values))
-
-        for altloc, occ in zip(sorted(altloc_info.altloc_ids), occ_values):
-            occupancy[altloc_info.atom_masks[altloc]] = occ
-
-    return cast(AtomArray, result)
 
 
 def save_density(density: torch.Tensor, xmap_torch: XMap_torch, output_path: Path) -> None:
