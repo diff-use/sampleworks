@@ -5,10 +5,13 @@ PDB/mmCIF structure. v1 scope: protein-only structure factors, with optional
 per-row override of unit cell + space group and optional R-free flag column.
 """
 
+import argparse
+import csv
+import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import gemmi
 import numpy as np
@@ -16,6 +19,7 @@ import reciprocalspaceship as rs
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
+from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.utils.atom_array_utils import (
     assign_occupancies,
@@ -26,6 +30,7 @@ from sampleworks.utils.atom_array_utils import (
     load_structure_with_altlocs,
     remove_hydrogens,
 )
+from sampleworks.utils.torch_utils import try_gpu
 from SFC_Torch import SFcalculator
 from SFC_Torch.io import array2hier, PDBParser
 
@@ -51,7 +56,7 @@ class BatchRow:
 
     VALID_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".pdb", ".cif", ".mmcif", ".ent"})
 
-    filename: str
+    filename: Path | str
     mtzfile: str | None = None
     unit_cell: gemmi.UnitCell | None = None
     space_group: str | None = None
@@ -69,7 +74,7 @@ class BatchRow:
                 raise ValueError(f"Occupancy value {v} at index {i} is out of range [0.0, 1.0]")
 
     @classmethod
-    def from_dict(cls, row: dict[str, str]) -> "BatchRow":
+    def from_dict(cls, row: dict[str, Any]) -> "BatchRow":
         """Create a BatchRow from a CSV row dictionary.
 
         CSV columns: filename (required), mtzfile, unit_cell (six floats
@@ -214,7 +219,6 @@ def _process_single_row(
     output_dir: Path,
     dmin: float,
     mode: str,
-    anomalous: bool,
     occ_mode: str,
     test_fraction: float,
     seed: int | None,
@@ -225,6 +229,7 @@ def _process_single_row(
     simulate_solvent_and_scale: bool = False,
 ) -> None:
     """Compute synthetic protein structure factors for a single structure.
+    Assume no anomalous scattering.
 
     Parameters
     ----------
@@ -238,8 +243,6 @@ def _process_single_row(
         High-resolution limit in Angstroms
     mode
         SFcalculator mode: "xray" or "cryoem"
-    anomalous
-        If True, include anomalous scattering (keeps Friedel pairs separate)
     occ_mode
         Occupancy assignment mode: 'default' (keep file values), 'uniform'
         (1/n_altlocs each), or 'custom' (use per-row occ_values from BatchRow)
@@ -254,8 +257,11 @@ def _process_single_row(
     strip_waters
         If True, remove water molecules before computing structure factors. Default is False.
     strip_ligands
-        If True, keep only polymer amino-acid atoms (removes ligands and waters).
-        Equivalent to strip_ligands in generate_synthetic_density.py.
+        If True, remove ligand molecules (non-water heteroatoms) before computing structure
+        factors. Default is False.
+    simulate_solvent_and_scale
+        If True, compute bulk solvent and scale factors for Ftotal instead of Fprotein.
+        Default is False.
     """
     structure_path = base_dir / row.filename
     if not structure_path.exists():
@@ -323,9 +329,14 @@ def _process_single_row(
             mtzdata=None,
             dmin=dmin,
             mode=mode,
-            anomalous=anomalous,
+            anomalous=False,
             set_experiment=False,
             device=device,
+        )
+        logger.info(
+            f"SFC info for {row.filename}: cell: {sfc.unit_cell}, "
+            f"space group: {sfc.space_group.hm}, "
+            f"n_atoms: {len(sfc.atom_pos_orth)}"
         )
         sfc.calc_fprotein()
         if simulate_solvent_and_scale:
@@ -356,3 +367,263 @@ def _process_single_row(
             f"({type(e).__name__}): {e}\n"
             f"{''.join(traceback.format_tb(e.__traceback__))}"
         )
+
+
+def load_batch_csv(csv_path: Path) -> list[BatchRow]:
+    """Load and parse a CSV file for batch processing.
+
+    Parameters
+    ----------
+    csv_path
+        Path to CSV file with columns: filename (required), mtzfile, unit_cell,
+        space_group, occ_values (all optional)
+
+    Returns
+    -------
+    list[BatchRow]
+        List of validated batch processing rows
+
+    Raises
+    ------
+    KeyError
+        If the CSV is missing the required 'filename' column
+    """
+    rows = []
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None or "filename" not in reader.fieldnames:
+            raise KeyError(f"CSV file '{csv_path}' is missing required 'filename' column")
+        for row in reader:
+            rows.append(BatchRow.from_dict(row))
+    return rows
+
+
+def process_batch(
+    csv_path: Path,
+    base_dir: Path,
+    output_dir: Path,
+    dmin: float,
+    mode: str,
+    occ_mode: str,
+    test_fraction: float,
+    seed: int | None,
+    device: torch.device,
+    n_jobs: int = -1,
+    strip_hydrogens: bool = False,
+    strip_waters: bool = False,
+    strip_ligands: bool = False,
+    simulate_solvent_and_scale: bool = False,
+) -> None:
+    """Process multiple structures from a CSV file in batch mode.
+
+    Parameters
+    ----------
+    csv_path
+        Path to CSV file listing structures to process
+    base_dir
+        Base directory for resolving relative structure file paths
+    output_dir
+        Directory where output MTZ files will be written
+    dmin
+        High-resolution limit in Angstroms
+    mode
+        Scattering factor type: 'xray' or 'cryoem'
+    occ_mode
+        Occupancy assignment mode: 'default', 'uniform', or 'custom'
+    test_fraction
+        Fraction of reflections to mark as R-free test set (0 disables)
+    seed
+        Optional seed for reproducible R-free flag assignment
+    device
+        PyTorch device for computation
+    n_jobs
+        Number of parallel jobs. -1 means use all available CPUs.
+    strip_hydrogens
+        If True, remove hydrogen atoms before computing structure factors.
+    strip_waters
+        If True, remove water molecules before computing structure factors.
+    strip_ligands
+        If True, keep only polymer amino-acid atoms (removes ligands and waters).
+    simulate_solvent_and_scale
+        If True, compute bulk solvent and scale factors in addition to F_protein.
+    """
+    rows = load_batch_csv(csv_path)
+    logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
+
+    Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(_process_single_row)(
+            row=row,
+            base_dir=base_dir,
+            output_dir=output_dir,
+            dmin=dmin,
+            mode=mode,
+            occ_mode=occ_mode,
+            test_fraction=test_fraction,
+            seed=seed,
+            device=device,
+            strip_hydrogens=strip_hydrogens,
+            strip_waters=strip_waters,
+            strip_ligands=strip_ligands,
+            simulate_solvent_and_scale=simulate_solvent_and_scale,
+        )
+        for row in rows
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic structure factor amplitudes from atomic structures"
+    )
+
+    input_group = parser.add_argument_group("Input Options")
+    input_group.add_argument(
+        "--structure", "-s", type=Path, help="Path to input structure file (mmCIF or PDB)"
+    )
+    input_group.add_argument("--batch-csv", type=Path, help="Path to CSV file for batch processing")
+    input_group.add_argument(
+        "--base-dir",
+        type=Path,
+        default=Path("."),
+        help="Base directory for relative paths in CSV, not used in single-structure mode",
+    )
+
+    occ_group = parser.add_argument_group("Occupancy Options")
+    occ_group.add_argument(
+        "--occ-mode",
+        choices=["default", "uniform", "custom"],
+        default="default",
+        help="Occupancy assignment mode",
+    )
+    occ_group.add_argument(
+        "--occ-values",
+        type=str,
+        help="Colon-separated occupancy values for custom mode (e.g., '0.3:0.7')",
+    )
+
+    sf_group = parser.add_argument_group("Structure Factor Options")
+    sf_group.add_argument(
+        "--dmin", "-r", type=float, default=1.0, help="High-resolution limit in Angstroms"
+    )
+    sf_group.add_argument(
+        "--mode",
+        choices=["xray", "cryoem"],
+        default="xray",
+        help="Scattering factor type",
+    )
+    sf_group.add_argument(
+        "--simulate-solvent-and-scale",
+        action="store_true",
+        help="Compute bulk solvent and overall scale factors (outputs Ftotal instead of Fprotein)",
+    )
+    sf_group.add_argument(
+        "--remove-hydrogens",
+        action="store_true",
+        help="Remove hydrogen atoms before computing structure factors",
+    )
+    sf_group.add_argument(
+        "--remove-waters",
+        action="store_true",
+        help="Remove water molecules before computing structure factors",
+    )
+    sf_group.add_argument(
+        "--remove-ligands",
+        action="store_true",
+        help="Remove ligand molecules (non-water heteroatoms) before computing structure factors",
+    )
+
+    rfree_group = parser.add_argument_group("R-free Options")
+    rfree_group.add_argument(
+        "--test-fraction",
+        type=float,
+        default=0.05,
+        help="Fraction of reflections flagged as R-free test set (0 disables)",
+    )
+    rfree_group.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible R-free flag assignment",
+    )
+
+    crystal_group = parser.add_argument_group("Crystal Options (single-structure mode only)")
+    crystal_group.add_argument(
+        "--unit-cell",
+        type=str,
+        help="Unit cell as 'a:b:c:alpha:beta:gamma' (overrides CRYST1 record)",
+    )
+    crystal_group.add_argument(
+        "--space-group",
+        type=str,
+        help="Space group as Hermann-Mauguin string or number (overrides CRYST1 record)",
+    )
+
+    output_group = parser.add_argument_group("Output Options")
+    output_group.add_argument("--output", "-o", type=Path, help="Output MTZ file path")
+    output_group.add_argument(
+        "--output-dir", type=Path, default=Path("."), help="Output directory for batch mode"
+    )
+
+    parallel_group = parser.add_argument_group("Parallelization Options")
+    parallel_group.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel jobs for batch processing (-1 uses all CPUs)",
+    )
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    device = try_gpu()
+
+    if args.batch_csv:
+        process_batch(
+            csv_path=args.batch_csv,
+            base_dir=args.base_dir,
+            output_dir=args.output_dir,
+            dmin=args.dmin,
+            mode=args.mode,
+            occ_mode=args.occ_mode,
+            test_fraction=args.test_fraction,
+            seed=args.seed,
+            device=device,
+            n_jobs=args.n_jobs,
+            strip_hydrogens=args.remove_hydrogens,
+            strip_waters=args.remove_waters,
+            strip_ligands=args.remove_ligands,
+            simulate_solvent_and_scale=args.simulate_solvent_and_scale,
+        )
+    elif args.structure:
+        row = BatchRow.from_dict(
+            {
+                "filename": args.structure.name,
+                "mtzfile": args.output.name if args.output else None,
+                "unit_cell": args.unit_cell,
+                "space_group": args.space_group,
+                "occ_values": args.occ_values,
+            }
+        )
+        _process_single_row(
+            row=row,
+            base_dir=args.structure.parent,
+            output_dir=args.output.parent if args.output else Path("."),
+            dmin=args.dmin,
+            mode=args.mode,
+            occ_mode=args.occ_mode,
+            test_fraction=args.test_fraction,
+            seed=args.seed,
+            device=device,
+            strip_hydrogens=args.remove_hydrogens,
+            strip_waters=args.remove_waters,
+            strip_ligands=args.remove_ligands,
+            simulate_solvent_and_scale=args.simulate_solvent_and_scale,
+        )
+    else:
+        logger.error("Please specify --structure or --batch-csv")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
