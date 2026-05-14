@@ -19,7 +19,6 @@ import reciprocalspaceship as rs
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
-from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.utils.atom_array_utils import (
     assign_occupancies,
@@ -447,6 +446,8 @@ def process_batch(
     simulate_solvent_and_scale
         If True, compute bulk solvent and scale factors in addition to F_protein.
     """
+    from joblib import delayed, Parallel
+
     rows = load_batch_csv(csv_path)
     logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
 
