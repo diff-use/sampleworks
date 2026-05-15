@@ -12,8 +12,8 @@ pytest.importorskip("SFC_Torch", reason="SFC_Torch not available; run in analysi
 import gemmi
 from atomworks.io.transforms.atom_array import remove_waters
 from sampleworks.eval.generate_synthetic_sf import atomarray_to_gemmi
+from sampleworks.eval.synthetic_utils import assign_occupancies
 from sampleworks.utils.atom_array_utils import (
-    assign_occupancies,
     detect_altlocs,
     keep_amino_acids,
     keep_polymer,

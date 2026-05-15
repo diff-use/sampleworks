@@ -17,18 +17,10 @@ import gemmi
 import numpy as np
 import reciprocalspaceship as rs
 import torch
-from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
-from sampleworks.utils.atom_array_utils import (
-    assign_occupancies,
-    BLANK_ALTLOC_IDS,
-    detect_altlocs,
-    keep_amino_acids,
-    keep_polymer,
-    load_structure_with_altlocs,
-    remove_hydrogens,
-)
+from sampleworks.eval.synthetic_utils import load_structure_for_synthetic_reward
+from sampleworks.utils.atom_array_utils import BLANK_ALTLOC_IDS
 from sampleworks.utils.torch_utils import try_gpu
 from SFC_Torch import SFcalculator
 from SFC_Torch.io import array2hier, PDBParser
@@ -49,6 +41,8 @@ class BatchRow:
     space_group
         Optional space group (in Hermann-Mauguin string format) to override the
         one in the structure file.
+    selection
+        Optional atom selection string in pyMOL-like syntax (e.g., 'chain A and resi 10-50')
     occ_values
         Custom list of occupancy values for altlocs, must be in range [0.0, 1.0]
     """
@@ -59,6 +53,7 @@ class BatchRow:
     mtzfile: str | None = None
     unit_cell: gemmi.UnitCell | None = None
     space_group: str | None = None
+    selection: str | None = None
     occ_values: list[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -108,6 +103,7 @@ class BatchRow:
             mtzfile=row.get("mtzfile") or None,
             unit_cell=unit_cell,
             space_group=space_group,
+            selection=row.get("selection") or None,
             occ_values=occ_values,
         )
 
@@ -193,8 +189,9 @@ def write_amplitudes_to_mtz(
         is False, which uses Phenix convention (1 = test, 0 = working).
     sigf_scale: float
         Scale factor to make a fake SIGFP column from FP values so that
-        SFcalculator can load the output MTZ file without errors. Default
-        is 0.2. The actual SIGFP values only matter when computing R-factor.
+        SFcalculator can load the output MTZ file as synthetic reward
+        without errors. The actual SIGFP values only matter when
+        computing R-factor.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset = sfc.prepare_dataset(hkl_attr, f_attr)
@@ -226,6 +223,7 @@ def _process_single_row(
     strip_waters: bool = False,
     strip_ligands: bool = False,
     simulate_solvent_and_scale: bool = False,
+    save_structure: bool = False,
 ) -> None:
     """Compute synthetic protein structure factors for a single structure.
     Assume no anomalous scattering.
@@ -261,49 +259,24 @@ def _process_single_row(
     simulate_solvent_and_scale
         If True, compute bulk solvent and scale factors for Ftotal instead of Fprotein.
         Default is False.
+    save_structure
+        If True, save the processed structure (after selection and occupancy assignment)
+        as mmCIF to output_dir. Unit cell and space group are preserved. Default is False.
     """
     structure_path = base_dir / row.filename
-    if not structure_path.exists():
-        logger.error(f"Structure not found: {structure_path}")
+    atom_array = load_structure_for_synthetic_reward(
+        structure_path,
+        occ_mode=occ_mode,
+        occ_values=row.occ_values,
+        strip_hydrogens=strip_hydrogens,
+        strip_waters=strip_waters,
+        strip_ligands=strip_ligands,
+        selection=row.selection,
+    )
+    if atom_array is None:
         return
 
-    # Load structure and strip off unwanted atoms
-    try:
-        atom_array = load_structure_with_altlocs(structure_path)
-    except Exception as e:
-        logger.error(
-            f"Failed to load {row.filename} ({type(e).__name__}): {e}\n"
-            f"{''.join(traceback.format_tb(e.__traceback__))}"
-        )
-        return
-    atom_array = remove_hydrogens(atom_array) if strip_hydrogens else atom_array
-    atom_array = remove_waters(atom_array) if strip_waters else atom_array
-    atom_array = keep_polymer(keep_amino_acids(atom_array)) if strip_ligands else atom_array
-
-    # Altloc detection and occupancy assignment (reused from density script)
-    altloc_info = detect_altlocs(atom_array)  # ty: ignore[invalid-argument-type]
-    if row.occ_values:
-        if occ_mode != "custom":
-            logger.warning(
-                f"Custom occupancy values provided for {row.filename}, "
-                f"but occ_mode is '{occ_mode}'. Using 'custom' mode."
-            )
-        try:
-            atom_array = assign_occupancies(atom_array, altloc_info, "custom", row.occ_values)
-        except ValueError as e:
-            logger.error(f"Occupancy assignment error for {row.filename}: {e}")
-            raise
-    elif occ_mode in {"uniform", "default"}:
-        try:
-            atom_array = assign_occupancies(atom_array, altloc_info, occ_mode)
-        except ValueError as e:
-            logger.error(f"Occupancy assignment error for {row.filename}: {e}")
-            raise
-    else:
-        logger.error(f"Invalid occupancy mode '{occ_mode}' for {row.filename}")
-        raise ValueError(f"Invalid occupancy mode '{occ_mode}'")
-
-    # Convert to gemmi and initialize SFcalculator
+    # Convert to gemmi for SFcalculator
     try:
         unit_cell = row.unit_cell
         space_group = row.space_group
@@ -320,6 +293,18 @@ def _process_single_row(
             f"{''.join(traceback.format_tb(e.__traceback__))}"
         )
         return
+
+    if save_structure:
+        structure_output_path = output_dir / f"{structure_path.stem}_sf_input.cif"
+        structure_output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            gemmi_structure.make_mmcif_document().write_file(str(structure_output_path))
+            logger.info(f"Saved processed structure to {structure_output_path}")
+        except Exception as e:
+            logger.error(
+                f"Failed to save structure for {row.filename} ({type(e).__name__}): {e}\n"
+                f"{''.join(traceback.format_tb(e.__traceback__))}"
+            )
 
     # Compute structure factors
     try:
@@ -375,7 +360,7 @@ def load_batch_csv(csv_path: Path) -> list[BatchRow]:
     ----------
     csv_path
         Path to CSV file with columns: filename (required), mtzfile, unit_cell,
-        space_group, occ_values (all optional)
+        space_group, selection, occ_values (all optional)
 
     Returns
     -------
@@ -412,6 +397,7 @@ def process_batch(
     strip_waters: bool = False,
     strip_ligands: bool = False,
     simulate_solvent_and_scale: bool = False,
+    save_structure: bool = False,
 ) -> None:
     """Process multiple structures from a CSV file in batch mode.
 
@@ -445,6 +431,8 @@ def process_batch(
         If True, keep only polymer amino-acid atoms (removes ligands and waters).
     simulate_solvent_and_scale
         If True, compute bulk solvent and scale factors in addition to F_protein.
+    save_structure
+        If True, save each processed structure as mmCIF to output_dir.
     """
     from joblib import delayed, Parallel
 
@@ -466,6 +454,7 @@ def process_batch(
             strip_waters=strip_waters,
             strip_ligands=strip_ligands,
             simulate_solvent_and_scale=simulate_solvent_and_scale,
+            save_structure=save_structure,
         )
         for row in rows
     )
@@ -486,6 +475,13 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("."),
         help="Base directory for relative paths in CSV, not used in single-structure mode",
+    )
+
+    selection_group = parser.add_argument_group("Selection Options")
+    selection_group.add_argument(
+        "--selection",
+        type=str,
+        help="Atom selection (e.g., 'chain A and resi 10-50' or 'chain A and resi 10')",
     )
 
     occ_group = parser.add_argument_group("Occupancy Options")
@@ -559,6 +555,11 @@ def parse_args() -> argparse.Namespace:
     )
 
     output_group = parser.add_argument_group("Output Options")
+    output_group.add_argument(
+        "--save-structure",
+        action="store_true",
+        help="Save the processed structure (after selection, occupancy assignment) to CIF",
+    )
     output_group.add_argument("--output", "-o", type=Path, help="Output MTZ file path")
     output_group.add_argument(
         "--output-dir", type=Path, default=Path("."), help="Output directory for batch mode"
@@ -595,6 +596,7 @@ def main() -> None:
             strip_waters=args.remove_waters,
             strip_ligands=args.remove_ligands,
             simulate_solvent_and_scale=args.simulate_solvent_and_scale,
+            save_structure=args.save_structure,
         )
     elif args.structure:
         row = BatchRow.from_dict(
@@ -603,6 +605,7 @@ def main() -> None:
                 "mtzfile": args.output.name if args.output else None,
                 "unit_cell": args.unit_cell,
                 "space_group": args.space_group,
+                "selection": args.selection,
                 "occ_values": args.occ_values,
             }
         )
@@ -620,6 +623,7 @@ def main() -> None:
             strip_waters=args.remove_waters,
             strip_ligands=args.remove_ligands,
             simulate_solvent_and_scale=args.simulate_solvent_and_scale,
+            save_structure=args.save_structure,
         )
     else:
         logger.error("Please specify --structure or --batch-csv")
