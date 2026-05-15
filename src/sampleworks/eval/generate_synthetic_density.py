@@ -7,20 +7,11 @@ from pathlib import Path
 from typing import ClassVar
 
 import torch
-from atomworks.io.transforms.atom_array import remove_waters
 from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
-from sampleworks.eval.structure_utils import apply_selection
-from sampleworks.utils.atom_array_utils import (
-    assign_occupancies,
-    detect_altlocs,
-    keep_amino_acids,
-    keep_polymer,
-    load_structure_with_altlocs,
-    remove_hydrogens,
-    save_structure_to_cif,
-)
+from sampleworks.eval.synthetic_utils import load_structure_for_synthetic_reward
+from sampleworks.utils.atom_array_utils import save_structure_to_cif
 from sampleworks.utils.density_utils import compute_density_from_atomarray
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -187,53 +178,17 @@ def _process_single_row(
         If True, save the processed structure to a CIF file in the input directory. Default is True.
     """
     structure_path = base_dir / row.filename
-    if not structure_path.exists():
-        logger.error(f"Structure not found: {structure_path}")
+    atom_array = load_structure_for_synthetic_reward(
+        structure_path,
+        occ_mode=occ_mode,
+        occ_values=row.occ_values,
+        strip_hydrogens=strip_hydrogens,
+        strip_waters=strip_waters,
+        strip_ligands=strip_ligands,
+        selection=row.selection,
+    )
+    if atom_array is None:
         return
-
-    try:
-        atom_array = load_structure_with_altlocs(structure_path)
-    except Exception as e:
-        logger.error(
-            f"Failed to load {row.filename} ({type(e).__name__}): {e}\n"
-            f"{''.join(traceback.format_tb(e.__traceback__))}"
-        )
-        return
-
-    try:
-        atom_array = apply_selection(atom_array, row.selection)
-    except ValueError as e:
-        logger.error(f"Selection error for {row.filename}: {e}")
-        return
-
-    atom_array = remove_hydrogens(atom_array) if strip_hydrogens else atom_array
-    atom_array = remove_waters(atom_array) if strip_waters else atom_array
-    # This is currently a sort of hacky way to remove ligands by keeping only polymer atoms
-    # TODO: there's probably a more robust way to do this
-    atom_array = keep_polymer(keep_amino_acids(atom_array)) if strip_ligands else atom_array
-
-    altloc_info = detect_altlocs(atom_array)  # ty: ignore[invalid-argument-type]
-    if row.occ_values:
-        if occ_mode != "custom":
-            logger.warning(
-                f"Custom occupancy values provided for {row.filename}, "
-                f"but occ_mode is '{occ_mode}'. Using 'custom' mode."
-            )
-            occ_mode = "custom"
-        try:
-            atom_array = assign_occupancies(atom_array, altloc_info, "custom", row.occ_values)
-        except ValueError as e:
-            logger.error(f"Occupancy assignment error for {row.filename}: {e}")
-            raise
-    elif occ_mode in {"uniform", "default"}:
-        try:
-            atom_array = assign_occupancies(atom_array, altloc_info, occ_mode)
-        except ValueError as e:
-            logger.error(f"Occupancy assignment error for {row.filename}: {e}")
-            raise
-    else:
-        logger.error(f"Invalid occupancy mode '{occ_mode}' for {row.filename}")
-        raise ValueError(f"Invalid occupancy mode '{occ_mode}'")
 
     try:
         density, xmap_torch = compute_density_from_atomarray(
