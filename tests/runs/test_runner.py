@@ -25,9 +25,7 @@ def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> N
     argv = inv.argv
     assert argv[:6] == ["pixi", "run", "-e", "rf3", "python", "/app/run_grid_search.py"]
     pairs = _argv_to_dict(argv[6:])
-    assert pairs["--proteins"] == (
-        "/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps/proteins.csv"
-    )
+    assert pairs["--proteins"] == "/data/inputs/proteins.csv"
     assert pairs["--model"] == "rf3"
     assert pairs["--scalers"] == "pure_guidance"
     assert pairs["--partial-diffusion-step"] == "120"

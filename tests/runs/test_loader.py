@@ -40,8 +40,7 @@ def test_defaults_used_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("rf3_partial")
-    expected = "/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps"
-    assert preset.defaults["DATA_DIR"] == expected
+    assert preset.defaults["DATA_DIR"] == "/data/inputs"
 
 
 def test_set_override_at_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

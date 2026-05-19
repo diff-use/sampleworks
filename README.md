@@ -156,6 +156,14 @@ Instructions for running evaluation and metrics scripts are coming soon.
 
 For canonical multi-model/multi-GPU sweeps, the `sampleworks-runs` CLI orchestrates parallel `run_grid_search.py` jobs from a single TOML preset. Each preset declares its jobs (model, pixi env, GPU assignment, args); the runner launches them in parallel, tees per-job logs, and aggregates exit codes.
 
+**Pod-side prerequisite.** Bundled presets reference the canonical `/data/inputs`, `/data/results`, and `/root/.sampleworks` paths set up by the ACTL pod-init script. On a fresh sampleworks pod, run once per session:
+
+```bash
+bash /mnt/diffuse-shared/raw/sampleworks/actl_setup_sampleworks_paths.sh
+```
+
+That creates symlinks pointing the canonical paths at the shared mount (and namespaces `/data/results` by hostname or `$SAMPLEWORKS_ACTL_RUN_NAME`). Overrides via env var (`DATA_DIR=...`) or CLI (`--set defaults.DATA_DIR=...`) work without the symlinks.
+
 ```bash
 pixi run -e rf3 sampleworks-runs --list                          # bundled presets
 pixi run -e rf3 sampleworks-runs rf3_partial                     # run a preset

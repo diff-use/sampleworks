@@ -1,9 +1,9 @@
 description = "Run Protenix tiny and mini variants in parallel (different checkpoints, same sweep)."
 
 [defaults]
-DATA_DIR = "/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps"
-RESULTS_DIR = "/mnt/diffuse-shared/raw/sampleworks/actl_results/protenix_dual"
-MSA_CACHE_DIR = "/mnt/diffuse-shared/raw/sampleworks/actl_msa_cache"
+DATA_DIR = "/data/inputs"
+RESULTS_DIR = "/data/results/protenix_dual"
+MSA_CACHE_DIR = "/root/.sampleworks"
 PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
 PROTENIX_TINY_CHECKPOINT = "/extra_checkpoints/protenix_tiny_default_v0.5.0.pt"
 PROTENIX_MINI_CHECKPOINT = "/extra_checkpoints/protenix_mini_default_v0.5.0.pt"
