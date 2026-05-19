@@ -1,9 +1,9 @@
 description = "RF3 occ-sweep with --disable-chiral-features and a wider 10-weight sweep."
 
 [defaults]
-DATA_DIR = "/mnt/diffuse-private/raw/sampleworks/initial_dataset_40_occ_sweeps"
-RESULTS_DIR = "/data/sampleworks-exp/occ_sweep/grid_search_results_rf3_chiral_off"
-MSA_CACHE_DIR = "${HOME}/sampleworks-exp/msa_cache"
+DATA_DIR = "/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps"
+RESULTS_DIR = "/mnt/diffuse-shared/raw/sampleworks/actl_results/rf3_partial_chiral_off"
+MSA_CACHE_DIR = "/mnt/diffuse-shared/raw/sampleworks/actl_msa_cache"
 PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
 RF3_CHECKPOINT = "/checkpoints/rf3_foundry_01_24_latest.ckpt"
 

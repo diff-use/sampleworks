@@ -1,9 +1,9 @@
 description = "Run all 4 model grid searches in parallel across 8 GPUs (boltz2 X-ray, boltz2 MD, RF3, Protenix)."
 
 [defaults]
-DATA_DIR = "/data/input"
-RESULTS_DIR = "/data/results"
-MSA_CACHE_DIR = "${HOME}/.sampleworks/msa"
+DATA_DIR = "/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40"
+RESULTS_DIR = "/mnt/diffuse-shared/raw/sampleworks/actl_results/all_models"
+MSA_CACHE_DIR = "/mnt/diffuse-shared/raw/sampleworks/actl_msa_cache"
 PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
 
 [shared_args]
