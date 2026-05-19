@@ -152,6 +152,32 @@ Output layout: `grid_search_results/<protein>/<model>[_<method>]/<scaler>/ens<N>
 Instructions for running evaluation and metrics scripts are coming soon.
 
 
+## Preset experiments (`sampleworks-runs`)
+
+For canonical multi-model/multi-GPU sweeps, the `sampleworks-runs` CLI orchestrates parallel `run_grid_search.py` jobs from a single TOML preset. Each preset declares its jobs (model, pixi env, GPU assignment, args); the runner launches them in parallel, tees per-job logs, and aggregates exit codes.
+
+```bash
+pixi run -e rf3 sampleworks-runs --list                          # bundled presets
+pixi run -e rf3 sampleworks-runs rf3_partial                     # run a preset
+pixi run -e rf3 sampleworks-runs rf3_partial --show              # inspect resolved values
+pixi run -e rf3 sampleworks-runs rf3_partial --dry-run           # print pixi run commands, don't execute
+pixi run -e rf3 sampleworks-runs all_models --only rf3,protenix  # subset jobs
+
+# Override any value without editing the TOML:
+pixi run -e rf3 sampleworks-runs rf3_partial \
+    --set jobs.rf3.gpus=7 \
+    --set jobs.rf3.args.gradient-weights="0.0 0.01 0.02"
+```
+
+Bundled presets live in `src/sampleworks/runs/presets/*.toml`. Add a new preset by dropping a `.toml` file alongside them or pointing at any path:
+
+```bash
+sampleworks-runs ./my_experiment.toml
+```
+
+Env-var defaults (`DATA_DIR`, `RESULTS_DIR`, `MSA_CACHE_DIR`, `PROTEINS_CSV`) declared per preset are filled from the process environment when set, otherwise from the preset's `[defaults]` block.
+
+
 ## Docker
 
 TODO: Docker container documentation

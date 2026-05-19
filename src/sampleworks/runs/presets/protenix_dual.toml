@@ -1,0 +1,34 @@
+description = "Run Protenix tiny and mini variants in parallel (different checkpoints, same sweep)."
+
+[defaults]
+DATA_DIR = "/mnt/diffuse-private/raw/sampleworks/initial_dataset_40_occ_sweeps"
+RESULTS_DIR = "/data/sampleworks-exp/occ_sweep/grid_search_results"
+MSA_CACHE_DIR = "/data/sampleworks-exp/msa_cache"
+PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
+PROTENIX_TINY_CHECKPOINT = "/extra_checkpoints/protenix_tiny_default_v0.5.0.pt"
+PROTENIX_MINI_CHECKPOINT = "/extra_checkpoints/protenix_mini_default_v0.5.0.pt"
+
+[shared_args]
+proteins = "${PROTEINS_CSV}"
+model = "protenix"
+scalers = "pure_guidance"
+partial-diffusion-step = 120
+ensemble-sizes = "8"
+gradient-weights = "0.0 0.05 0.1 0.2 0.35 0.5"
+gradient-normalization = true
+augmentation = true
+align-to-input = true
+
+[[jobs]]
+name = "protenix_tiny"
+env = "protenix"
+gpus = "2,3"
+output_subdir = "protenix_tiny"
+args = { model-checkpoint = "${PROTENIX_TINY_CHECKPOINT}" }
+
+[[jobs]]
+name = "protenix_mini"
+env = "protenix"
+gpus = "6,7"
+output_subdir = "protenix_mini"
+args = { model-checkpoint = "${PROTENIX_MINI_CHECKPOINT}" }
