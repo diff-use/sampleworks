@@ -130,6 +130,13 @@ def test_set_without_equals_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         loader.load_preset("rf3_partial", overrides=["bogus_no_equals"])
 
 
+def test_set_with_unknown_top_level_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Typos like ``--set job.rf3.gpus=0`` (missing 's' in jobs) must not silently no-op."""
+    monkeypatch.setenv("HOME", "/home/test")
+    with pytest.raises(KeyError, match="unknown top-level key"):
+        loader.load_preset("rf3_partial", overrides=["job.rf3.gpus=0"])
+
+
 def test_bad_env_rejected(tmp_path: Path) -> None:
     bad = tmp_path / "bad.toml"
     bad.write_text(

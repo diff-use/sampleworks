@@ -64,9 +64,17 @@ def _apply_overrides(raw: dict[str, Any], overrides: list[str]) -> dict[str, Any
     return raw
 
 
+_TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
+
+
 def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
     """Set ``obj`` at ``a.b.c`` to ``value``. Job name lookup is allowed under ``jobs``."""
     parts = dotted.split(".")
+    if parts[0] not in _TOP_LEVEL_KEYS:
+        raise KeyError(
+            f"--set: unknown top-level key {parts[0]!r} in {dotted!r}. "
+            f"Valid top-level keys: {sorted(_TOP_LEVEL_KEYS)}"
+        )
     cursor: Any = obj
     for i, part in enumerate(parts[:-1]):
         cursor = _index(cursor, part, where=".".join(parts[: i + 1]))

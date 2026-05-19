@@ -87,6 +87,7 @@ def _filter_only(preset: Preset, only: str) -> Preset:
         name=preset.name,
         description=preset.description,
         defaults=preset.defaults,
+        shared_args=preset.shared_args,
         jobs=keep,
     )
 

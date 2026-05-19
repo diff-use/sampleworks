@@ -64,8 +64,24 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
         return 0
 
     _print_launch_summary(preset, invocations)
-    processes = [_spawn(inv) for inv in invocations]
+    processes: list[_RunningJob] = []
+    try:
+        for inv in invocations:
+            processes.append(_spawn(inv))
+    except BaseException:
+        _terminate_all(processes)
+        raise
     return _wait_all(processes)
+
+
+def _terminate_all(jobs: list[_RunningJob]) -> None:
+    """Terminate any already-launched jobs (used when a later spawn fails)."""
+    for j in jobs:
+        if j.proc.poll() is None:
+            j.proc.terminate()
+    for j in jobs:
+        j.proc.wait()
+        j.tee_thread.join()
 
 
 def _print_dry_run(inv: JobInvocation) -> None:
@@ -99,13 +115,17 @@ class _RunningJob:
 def _spawn(inv: JobInvocation) -> _RunningJob:
     inv.log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(inv.log_path, "wb")
-    proc = subprocess.Popen(
-        inv.argv,
-        env=inv.env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
-    )
+    try:
+        proc = subprocess.Popen(
+            inv.argv,
+            env=inv.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+    except BaseException:
+        log_file.close()
+        raise
     assert proc.stdout is not None
     thread = threading.Thread(
         target=_tee,
