@@ -18,6 +18,7 @@ from typing import Any
 
 from .schema import Job, Preset
 
+
 _BUNDLED_PRESETS_PACKAGE = "sampleworks.runs.presets"
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-
 from sampleworks.runs import loader
-from sampleworks.runs.schema import Preset
 
 
 BUNDLED = ["all_models", "rf3_partial", "rf3_partial_chiral_off", "protenix_dual", "rf3_protenix"]
@@ -34,7 +31,6 @@ def test_env_var_wins_over_defaults_block(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("DATA_DIR", "/from/env")
     preset = loader.load_preset("rf3_partial")
     assert preset.defaults["DATA_DIR"] == "/from/env"
-    rf3 = preset.job("rf3")
     # PROTEINS_CSV expands to ${DATA_DIR}/proteins.csv; DATA_DIR overridden by env
     proteins = preset.shared_args["proteins"]
     assert proteins == "/from/env/proteins.csv"
@@ -44,7 +40,8 @@ def test_defaults_used_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("rf3_partial")
-    assert preset.defaults["DATA_DIR"] == "/mnt/diffuse-private/raw/sampleworks/initial_dataset_40_occ_sweeps"
+    expected = "/mnt/diffuse-private/raw/sampleworks/initial_dataset_40_occ_sweeps"
+    assert preset.defaults["DATA_DIR"] == expected
 
 
 def test_set_override_at_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
