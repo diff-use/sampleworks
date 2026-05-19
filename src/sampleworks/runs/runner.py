@@ -18,8 +18,22 @@ from .schema import Job, Preset
 GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
 
 
-@dataclass
+@dataclass(frozen=True)
 class JobInvocation:
+    """The fully resolved command to launch for one job.
+
+    Parameters
+    ----------
+    job : Job
+        Originating :class:`Job` (kept for introspection in logs).
+    argv : list of str
+        Subprocess command line (starts with ``pixi run -e <env> python ...``).
+    env : dict of str to str
+        Process environment, including ``CUDA_VISIBLE_DEVICES``.
+    log_path : Path
+        File to tee stdout+stderr into.
+    """
+
     job: Job
     argv: list[str]
     env: dict[str, str]
@@ -27,7 +41,24 @@ class JobInvocation:
 
 
 def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocation]:
-    """Build the subprocess argv + env + log path for every job in the preset."""
+    """Build the subprocess invocation for every job in the preset.
+
+    Per-job ``args`` are merged on top of :attr:`Preset.shared_args`, with
+    ``--output-dir`` auto-injected from ``results_dir / job.output_subdir`` if
+    not already present.
+
+    Parameters
+    ----------
+    preset : Preset
+        Resolved preset to launch.
+    results_dir : Path
+        Root directory for outputs and per-job log files.
+
+    Returns
+    -------
+    list of JobInvocation
+        One :class:`JobInvocation` per job, in declaration order.
+    """
     invocations: list[JobInvocation] = []
     for job in preset.jobs:
         args = preset.effective_args(job)
@@ -40,6 +71,23 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
 
 
 def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
+    """Assemble the ``pixi run`` argv list for one job's args dict.
+
+    ``True`` bools become bare flags, ``False``/``None`` are dropped, all other
+    values are stringified.
+
+    Parameters
+    ----------
+    pixi_env : str
+        Pixi environment name passed to ``-e``.
+    args : dict of str to Any
+        Flag-name to value map (kebab-case keys, no leading ``--``).
+
+    Returns
+    -------
+    list of str
+        Subprocess argv.
+    """
     argv = ["pixi", "run", "-e", pixi_env, "python", GRID_SEARCH_SCRIPT]
     for key, value in args.items():
         flag = f"--{key}"
@@ -54,7 +102,26 @@ def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
 
 
 def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
-    """Launch every job in parallel; tee output to per-job logs; return 0 iff all succeed."""
+    """Launch every job in parallel and wait for completion.
+
+    Stdout+stderr from each job is teed to a per-job log file under
+    ``results_dir`` and also echoed to the driver's stderr with a ``[job_name]``
+    prefix.
+
+    Parameters
+    ----------
+    preset : Preset
+        Preset to launch.
+    results_dir : Path
+        Root directory for outputs and logs. Created if missing.
+    dry_run : bool, optional
+        If True, print the resolved commands instead of launching anything.
+
+    Returns
+    -------
+    int
+        ``0`` if all jobs exited 0 (or ``dry_run`` was set), ``1`` otherwise.
+    """
     results_dir.mkdir(parents=True, exist_ok=True)
     invocations = build_invocations(preset, results_dir=results_dir)
 
@@ -75,7 +142,14 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
 
 
 def _terminate_all(jobs: list[_RunningJob]) -> None:
-    """Terminate any already-launched jobs (used when a later spawn fails)."""
+    """Terminate any already-launched jobs (used when a later spawn fails).
+
+    Parameters
+    ----------
+    jobs : list of _RunningJob
+        Jobs whose subprocesses should be SIGTERM'd, waited on, and whose tee
+        threads should be joined.
+    """
     for j in jobs:
         if j.proc.poll() is None:
             j.proc.terminate()
@@ -85,6 +159,13 @@ def _terminate_all(jobs: list[_RunningJob]) -> None:
 
 
 def _print_dry_run(inv: JobInvocation) -> None:
+    """Print the exact command for one job without launching it.
+
+    Parameters
+    ----------
+    inv : JobInvocation
+        Invocation to print.
+    """
     print(f"# job: {inv.job.name}  (env={inv.job.env}, gpus={inv.job.gpus})", file=sys.stderr)
     print(f"# log: {inv.log_path}", file=sys.stderr)
     print(f"CUDA_VISIBLE_DEVICES={inv.job.gpus} {_shell_join(inv.argv)}")
@@ -92,6 +173,15 @@ def _print_dry_run(inv: JobInvocation) -> None:
 
 
 def _print_launch_summary(preset: Preset, invocations: list[JobInvocation]) -> None:
+    """Print a banner describing what is about to be launched.
+
+    Parameters
+    ----------
+    preset : Preset
+        Preset being launched.
+    invocations : list of JobInvocation
+        Jobs about to be spawned.
+    """
     bar = "=" * 60
     print(bar, file=sys.stderr)
     print(f"preset: {preset.name}", file=sys.stderr)
@@ -105,14 +195,44 @@ def _print_launch_summary(preset: Preset, invocations: list[JobInvocation]) -> N
     print(bar, file=sys.stderr)
 
 
-@dataclass
+@dataclass(frozen=True)
 class _RunningJob:
+    """Internal handle: a spawned subprocess and its log-tee thread.
+
+    Parameters
+    ----------
+    inv : JobInvocation
+        Originating invocation.
+    proc : subprocess.Popen
+        The subprocess (PIPE'd stdout merged with stderr).
+    tee_thread : threading.Thread
+        Daemon thread copying ``proc.stdout`` to the log file and to
+        ``sys.stderr`` with a per-job prefix.
+    """
+
     inv: JobInvocation
     proc: subprocess.Popen[bytes]
     tee_thread: threading.Thread
 
 
 def _spawn(inv: JobInvocation) -> _RunningJob:
+    """Start one subprocess and a thread to tee its output.
+
+    Parameters
+    ----------
+    inv : JobInvocation
+        Invocation to spawn.
+
+    Returns
+    -------
+    _RunningJob
+        Handle covering the subprocess and the tee thread.
+
+    Raises
+    ------
+    OSError
+        Propagated if the subprocess fails to start (e.g. binary missing).
+    """
     inv.log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(inv.log_path, "wb")
     try:
@@ -138,6 +258,18 @@ def _spawn(inv: JobInvocation) -> _RunningJob:
 
 
 def _wait_all(jobs: list[_RunningJob]) -> int:
+    """Wait for every job to exit and aggregate their exit codes.
+
+    Parameters
+    ----------
+    jobs : list of _RunningJob
+        Jobs to wait on.
+
+    Returns
+    -------
+    int
+        ``0`` if all jobs exited 0, ``1`` if any failed.
+    """
     failures = 0
     for j in jobs:
         exit_code = j.proc.wait()
@@ -151,6 +283,18 @@ def _wait_all(jobs: list[_RunningJob]) -> int:
 
 
 def _tee(prefix: str, src: Any, dest: Any) -> None:
+    """Copy bytes from ``src`` to ``dest`` and to stderr with a label.
+
+    Parameters
+    ----------
+    prefix : str
+        Per-line label prepended to the stderr echo (e.g. job name).
+    src : file-like
+        Readable byte stream (typically ``Popen.stdout`` with stderr merged).
+    dest : file-like
+        Writable byte stream for the on-disk log file. Closed when ``src`` is
+        exhausted.
+    """
     for line in iter(src.readline, b""):
         dest.write(line)
         dest.flush()
@@ -160,8 +304,21 @@ def _tee(prefix: str, src: Any, dest: Any) -> None:
 
 
 def _ts() -> str:
+    """Return the current local time as a ``YYYY-MM-DD HH:MM:SS`` string."""
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _shell_join(argv: list[str]) -> str:
+    """Quote ``argv`` so the result can be pasted into a POSIX shell.
+
+    Parameters
+    ----------
+    argv : list of str
+        Argument vector.
+
+    Returns
+    -------
+    str
+        Single shell-quoted command line.
+    """
     return shlex.join(argv)

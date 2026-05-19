@@ -21,16 +21,50 @@ from .schema import Job, Preset
 
 _BUNDLED_PRESETS_PACKAGE = "sampleworks.runs.presets"
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
 
 
 def list_bundled_presets() -> list[str]:
-    """Return the names (sans ``.toml``) of bundled presets, sorted."""
+    """List the names of all TOML presets shipped with the package.
+
+    Returns
+    -------
+    list of str
+        Preset names (filename stems, no ``.toml`` extension), sorted
+        alphabetically.
+    """
     files = resources.files(_BUNDLED_PRESETS_PACKAGE)
     return sorted(p.name.removesuffix(".toml") for p in files.iterdir() if p.name.endswith(".toml"))
 
 
 def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
-    """Load a preset by bundled name or filesystem path, applying ``--set`` overrides."""
+    """Load a preset by bundled name or filesystem path.
+
+    Parameters
+    ----------
+    name_or_path : str
+        Either the name of a bundled preset (as returned by
+        :func:`list_bundled_presets`) or a path ending in ``.toml``.
+    overrides : Iterable of str, optional
+        ``KEY=VALUE`` strings as accepted by ``--set``. Applied before
+        variable interpolation.
+
+    Returns
+    -------
+    Preset
+        Fully resolved preset ready for :func:`runner.run`.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``name_or_path`` matches no bundled preset and no file on disk.
+    KeyError
+        If an override path begins with an unknown top-level key, or if a
+        ``${VAR}`` reference cannot be resolved against the environment or
+        the ``[defaults]`` block.
+    ValueError
+        If an override is malformed (missing ``=``).
+    """
     raw = _read_toml(name_or_path)
     overrides_list = list(overrides)
     raw = _apply_overrides(raw, overrides_list)
@@ -39,6 +73,23 @@ def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
 
 
 def _read_toml(name_or_path: str) -> dict[str, Any]:
+    """Read raw TOML from a filesystem path or a bundled package resource.
+
+    Parameters
+    ----------
+    name_or_path : str
+        Bundled preset name or filesystem path ending in ``.toml``.
+
+    Returns
+    -------
+    dict of str to Any
+        Parsed TOML, before override application or interpolation.
+
+    Raises
+    ------
+    FileNotFoundError
+        If neither location yields a TOML file.
+    """
     path = Path(name_or_path)
     if path.suffix == ".toml" and path.exists():
         return tomllib.loads(path.read_text())
@@ -52,10 +103,44 @@ def _read_toml(name_or_path: str) -> dict[str, Any]:
 
 
 def _preset_name(name_or_path: str) -> str:
+    """Return the canonical preset name for a bundled name or path argument.
+
+    Parameters
+    ----------
+    name_or_path : str
+        Either a bundled name or a path ending in ``.toml``.
+
+    Returns
+    -------
+    str
+        Filename stem if ``name_or_path`` looks like a path; otherwise the
+        argument unchanged.
+    """
     return Path(name_or_path).stem if name_or_path.endswith(".toml") else name_or_path
 
 
 def _apply_overrides(raw: dict[str, Any], overrides: list[str]) -> dict[str, Any]:
+    """Apply each ``KEY=VALUE`` override to the raw preset dict in place.
+
+    Parameters
+    ----------
+    raw : dict of str to Any
+        Parsed TOML to mutate.
+    overrides : list of str
+        Each entry must contain exactly one ``=``.
+
+    Returns
+    -------
+    dict of str to Any
+        The same ``raw`` dict (mutated).
+
+    Raises
+    ------
+    ValueError
+        If an override is missing the ``=`` separator.
+    KeyError
+        If an override's top-level key is unknown.
+    """
     for spec in overrides:
         if "=" not in spec:
             raise ValueError(f"--set expects KEY=VALUE, got {spec!r}")
@@ -64,11 +149,29 @@ def _apply_overrides(raw: dict[str, Any], overrides: list[str]) -> dict[str, Any
     return raw
 
 
-_TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
-
-
 def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
-    """Set ``obj`` at ``a.b.c`` to ``value``. Job name lookup is allowed under ``jobs``."""
+    """Set a nested value in ``obj`` addressed by a dotted path.
+
+    Job-list elements can be addressed by job name or by integer index.
+
+    Parameters
+    ----------
+    obj : dict of str to Any
+        Root dict to mutate.
+    dotted : str
+        Dotted path, e.g. ``"jobs.rf3.args.gradient-weights"`` or
+        ``"defaults.DATA_DIR"``.
+    value : Any
+        Coerced value to write at the leaf.
+
+    Raises
+    ------
+    KeyError
+        If the first segment is not one of :data:`_TOP_LEVEL_KEYS`, or if a
+        list segment references a missing job name or index.
+    TypeError
+        If the path attempts to descend through a non-container value.
+    """
     parts = dotted.split(".")
     if parts[0] not in _TOP_LEVEL_KEYS:
         raise KeyError(
@@ -87,6 +190,27 @@ def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
 
 
 def _index(cursor: Any, part: str, *, where: str) -> Any:
+    """Descend one level into a dict or list, auto-creating empty intermediates.
+
+    Parameters
+    ----------
+    cursor : Any
+        Current node in the traversal.
+    part : str
+        Next segment of the dotted path.
+    where : str
+        Path so far, used in error messages.
+
+    Returns
+    -------
+    Any
+        The child node.
+
+    Raises
+    ------
+    TypeError
+        If ``cursor`` is neither a dict nor a list.
+    """
     if isinstance(cursor, list):
         return cursor[_find_in_list(cursor, part, where=where)]
     if isinstance(cursor, dict):
@@ -97,6 +221,28 @@ def _index(cursor: Any, part: str, *, where: str) -> Any:
 
 
 def _find_in_list(items: list[Any], key: str, *, where: str) -> int:
+    """Locate a list element by integer index or by ``name`` field.
+
+    Parameters
+    ----------
+    items : list of Any
+        List to search.
+    key : str
+        Numeric string (positive or negative index) or a name to match against
+        each element's ``"name"`` key.
+    where : str
+        Path so far, used in error messages.
+
+    Returns
+    -------
+    int
+        Index of the matching element.
+
+    Raises
+    ------
+    KeyError
+        If no element with the given name exists.
+    """
     if key.isdigit() or (key.startswith("-") and key[1:].isdigit()):
         return int(key)
     for i, item in enumerate(items):
@@ -106,6 +252,19 @@ def _find_in_list(items: list[Any], key: str, *, where: str) -> int:
 
 
 def _coerce(value: str) -> Any:
+    """Convert a string CLI override value to bool, int, float, or leave as str.
+
+    Parameters
+    ----------
+    value : str
+        Right-hand side of ``KEY=VALUE``.
+
+    Returns
+    -------
+    Any
+        ``True``/``False`` for ``"true"``/``"false"`` (case-insensitive);
+        ``int`` or ``float`` if parseable; otherwise the original string.
+    """
     if value.lower() in ("true", "false"):
         return value.lower() == "true"
     try:
@@ -120,10 +279,27 @@ def _coerce(value: str) -> Any:
 
 
 def _resolve_variables(raw: dict[str, Any]) -> dict[str, Any]:
-    """Expand ``${VAR}`` in every string. Env wins; defaults block fills gaps.
+    """Expand ``${VAR}`` references throughout the raw preset.
 
-    Defaults are resolved in TOML order, so later defaults can reference earlier ones
-    (e.g. ``PROTEINS_CSV = "${DATA_DIR}/proteins.csv"``).
+    Defaults are resolved in TOML order, so later defaults can reference
+    earlier ones (e.g. ``PROTEINS_CSV = "${DATA_DIR}/proteins.csv"``). Process
+    environment variables take precedence over the ``[defaults]`` block.
+
+    Parameters
+    ----------
+    raw : dict of str to Any
+        Parsed TOML, after override application.
+
+    Returns
+    -------
+    dict of str to Any
+        New dict with all string values fully expanded and ``defaults``
+        replaced with the resolved values.
+
+    Raises
+    ------
+    KeyError
+        If any ``${VAR}`` cannot be resolved.
     """
     defaults: dict[str, str] = dict(raw.get("defaults", {}))
     accumulated: dict[str, str] = dict(os.environ)
@@ -140,6 +316,20 @@ def _resolve_variables(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _walk(obj: Any, env: dict[str, str]) -> Any:
+    """Recursively expand ``${VAR}`` in every string within ``obj``.
+
+    Parameters
+    ----------
+    obj : Any
+        Arbitrary nested dict/list/scalar.
+    env : dict of str to str
+        Resolved variable map.
+
+    Returns
+    -------
+    Any
+        Structurally identical copy with strings expanded.
+    """
     if isinstance(obj, dict):
         return {k: _walk(v, env) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -150,6 +340,26 @@ def _walk(obj: Any, env: dict[str, str]) -> Any:
 
 
 def _expand(text: str, env: dict[str, str]) -> str:
+    """Substitute ``${VAR}`` references in ``text`` until a fixed point.
+
+    Parameters
+    ----------
+    text : str
+        String potentially containing ``${VAR}`` references.
+    env : dict of str to str
+        Variable map.
+
+    Returns
+    -------
+    str
+        Fully expanded string.
+
+    Raises
+    ------
+    KeyError
+        If a referenced variable is not in ``env``.
+    """
+
     def repl(match: re.Match[str]) -> str:
         var = match.group(1)
         if var not in env:
@@ -165,6 +375,26 @@ def _expand(text: str, env: dict[str, str]) -> str:
 
 
 def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:
+    """Construct a :class:`Preset` from a resolved raw dict.
+
+    Parameters
+    ----------
+    name : str
+        Preset name (assigned to :attr:`Preset.name`).
+    raw : dict of str to Any
+        Resolved TOML.
+
+    Returns
+    -------
+    Preset
+        Validated preset.
+
+    Raises
+    ------
+    ValueError
+        If ``raw['jobs']`` is not a list, or if any :class:`Job` /
+        :class:`Preset` invariant fails (see their docstrings).
+    """
     raw_jobs = raw.get("jobs", [])
     if not isinstance(raw_jobs, list):
         raise ValueError(f"Preset {name!r}: 'jobs' must be a list")

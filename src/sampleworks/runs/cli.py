@@ -12,6 +12,20 @@ from .schema import Preset
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``sampleworks-runs`` console script.
+
+    Parameters
+    ----------
+    argv : list of str or None, optional
+        Command-line arguments excluding the program name. When ``None``
+        (the default), :mod:`argparse` reads from :data:`sys.argv`.
+
+    Returns
+    -------
+    int
+        Exit code suitable for ``sys.exit``: ``0`` on success, non-zero on
+        job failure or fatal CLI error.
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -36,6 +50,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Construct the :mod:`argparse` parser for ``sampleworks-runs``.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Parser covering preset selection, overrides, and execution flags.
+    """
     parser = argparse.ArgumentParser(
         prog="sampleworks-runs",
         description=(
@@ -78,6 +99,26 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _filter_only(preset: Preset, only: str) -> Preset:
+    """Return a new :class:`Preset` containing only the named jobs.
+
+    Parameters
+    ----------
+    preset : Preset
+        Source preset.
+    only : str
+        Comma-separated list of job names to keep.
+
+    Returns
+    -------
+    Preset
+        New preset with the same ``description``, ``defaults``, and
+        ``shared_args`` and only the filtered jobs.
+
+    Raises
+    ------
+    SystemExit
+        If any name in ``only`` does not match a job in ``preset``.
+    """
     names = [n.strip() for n in only.split(",") if n.strip()]
     keep = [j for j in preset.jobs if j.name in names]
     missing = set(names) - {j.name for j in keep}
@@ -93,6 +134,13 @@ def _filter_only(preset: Preset, only: str) -> Preset:
 
 
 def _print_show(preset: Preset) -> None:
+    """Print a human-readable rendering of a resolved preset to stdout.
+
+    Parameters
+    ----------
+    preset : Preset
+        Resolved preset to display (used by ``--show``).
+    """
     print(f"name: {preset.name}")
     if preset.description:
         print(f"description: {preset.description}")
@@ -112,6 +160,23 @@ def _print_show(preset: Preset) -> None:
 
 
 def _default_results_dir(preset: Preset) -> str:
+    """Pick a sensible default ``--results-dir`` when none is given.
+
+    Order of preference:
+      1. The preset's ``[defaults]`` ``RESULTS_DIR``.
+      2. The ``RESULTS_DIR`` environment variable.
+      3. ``./grid_search_results``.
+
+    Parameters
+    ----------
+    preset : Preset
+        Resolved preset (its ``defaults`` have already been merged with env).
+
+    Returns
+    -------
+    str
+        Path to use as the run's root output directory.
+    """
     return (
         preset.defaults.get("RESULTS_DIR")
         or os.environ.get("RESULTS_DIR")
