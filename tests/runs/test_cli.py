@@ -36,9 +36,7 @@ def test_dry_run_does_not_invoke_subprocess(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    exit_code = cli.main(
-        ["rf3_partial", "--dry-run", "--results-dir", str(tmp_path)]
-    )
+    exit_code = cli.main(["rf3_partial", "--dry-run", "--results-dir", str(tmp_path)])
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "pixi run -e rf3 python /app/run_grid_search.py" in out
