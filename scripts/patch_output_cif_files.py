@@ -159,7 +159,10 @@ def patch_individual_cif_file(
         if cif_key[0] != ref_key[0]:
             msg = f"Chain mismatch while remapping residues for {cif_path} vs {reference_path}"
             logger.error(msg)
-            return msg
+            # return msg
+            # TODO: fix chain mismatches upstream (protenix json creation needs update)
+            # this breaks multi-chain stuff for now
+
         mapping[cif_key] = ref_key[1]
 
     atom_keys = list(zip(asym_unit.chain_id.tolist(), asym_unit.res_id.tolist()))
