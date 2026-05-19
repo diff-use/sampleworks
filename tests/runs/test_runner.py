@@ -92,6 +92,27 @@ def test_rf3_partial_chiral_off_flag_present(monkeypatch: pytest.MonkeyPatch) ->
     assert "--force-all" in inv.argv
 
 
+def test_build_invocations_records_output_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`run_grid_search.py` assumes its --output-dir exists; the runner must mkdir it."""
+    monkeypatch.setenv("HOME", "/home/test")
+    preset = loader.load_preset("rf3_partial")
+    inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
+    assert inv.output_dir == Path("/r/rf3")
+
+
+def test_dry_run_does_not_create_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--dry-run prints commands but never touches the filesystem."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    results_dir = tmp_path / "results"
+    preset = loader.load_preset("rf3_partial")
+    runner.run(preset, results_dir=results_dir, dry_run=True)
+    # results_dir gets created by run() (for log file location) but per-job
+    # output subdirs must NOT exist after dry-run.
+    assert not (results_dir / "rf3").exists()
+
+
 def _argv_to_dict(tail: list[str]) -> dict[str, object]:
     """Turn ``[--a, 1, --b, --c, 2]`` into ``{'--a': '1', '--b': True, '--c': '2'}``."""
     out: dict[str, object] = {}

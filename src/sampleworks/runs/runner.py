@@ -32,12 +32,16 @@ class JobInvocation:
         Process environment, including ``CUDA_VISIBLE_DEVICES``.
     log_path : Path
         File to tee stdout+stderr into.
+    output_dir : Path
+        Resolved ``--output-dir`` value (mkdir'd by the runner before launch
+        because ``run_grid_search.py`` assumes its existence).
     """
 
     job: Job
     argv: list[str]
     env: dict[str, str]
     log_path: Path
+    output_dir: Path
 
 
 def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocation]:
@@ -66,7 +70,10 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
         argv = _build_argv(job.env, args)
         env = {**os.environ, "CUDA_VISIBLE_DEVICES": job.gpus}
         log_path = results_dir / f"{job.name}_run.log"
-        invocations.append(JobInvocation(job=job, argv=argv, env=env, log_path=log_path))
+        output_dir = Path(args["output-dir"])
+        invocations.append(
+            JobInvocation(job=job, argv=argv, env=env, log_path=log_path, output_dir=output_dir)
+        )
     return invocations
 
 
@@ -234,6 +241,7 @@ def _spawn(inv: JobInvocation) -> _RunningJob:
         Propagated if the subprocess fails to start (e.g. binary missing).
     """
     inv.log_path.parent.mkdir(parents=True, exist_ok=True)
+    inv.output_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(inv.log_path, "wb")
     try:
         proc = subprocess.Popen(
