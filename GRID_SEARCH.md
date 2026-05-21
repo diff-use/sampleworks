@@ -6,7 +6,7 @@ and how to find and read logs if you need to debug the process.
 
 ## Optional: Setting up the docker container
 It is often useful to have a docker container with all the dependencies installed.
-Our script `run_all_models.sh` for instance uses a docker container to manage all
+Our script `run_experiments` for instance uses a docker container to manage all
 dependencies. To run that script, you will need to have docker installed. Build
 the container with
 ```shell

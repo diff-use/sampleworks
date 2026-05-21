@@ -129,10 +129,12 @@ RUN pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
 
-COPY run_all_models.sh ./
-RUN chmod +x /app/run_all_models.sh \
+COPY run_experiments run_experiments.sh run_all_models.sh ./
+RUN chmod +x /app/run_experiments /app/run_experiments.sh /app/run_all_models.sh \
+    && printf '#!/usr/bin/env bash\nexec /app/run_experiments "$@"\n' > /usr/local/bin/run_experiments \
+    && printf '#!/usr/bin/env bash\nexec /app/run_experiments.sh "$@"\n' > /usr/local/bin/run_experiments.sh \
     && printf '#!/usr/bin/env bash\nexec /app/run_all_models.sh "$@"\n' > /usr/local/bin/run_all_models.sh \
-    && chmod +x /usr/local/bin/run_all_models.sh \
+    && chmod +x /usr/local/bin/run_experiments /usr/local/bin/run_experiments.sh /usr/local/bin/run_all_models.sh \
     && printf '\n# ACTL scientist workflow: land in the baked Sampleworks app.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /app ]; then\n    cd /app\nfi\n' >> /root/.bashrc
 
 # Set default checkpoint paths via environment variables

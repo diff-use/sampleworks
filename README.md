@@ -152,53 +152,31 @@ Output layout: `grid_search_results/<protein>/<model>[_<method>]/<scaler>/ens<N>
 Instructions for running evaluation and metrics scripts are coming soon.
 
 
-## ACTL preset experiments (`run_all_models.sh` / `sampleworks-runs`)
+## ACTL preset experiments (`run_experiments`)
 
-For canonical multi-model/multi-GPU sweeps, `sampleworks-runs` orchestrates parallel `run_grid_search.py` jobs from a single TOML preset. Each preset declares the model, pixi env, GPU assignment, output subdir, and CLI args. The runner launches jobs in parallel, tees per-job logs, and aggregates exit codes.
-
-On ACTL, start the pod with the prebuilt image and shared storage, then run one command inside the pod shell:
+Use ACTL to get a ready-to-run Sampleworks pod with 8 GPUs and the shared data PVC:
 
 ```bash
 actl pod up sampleworks-pr236 --profile 8x --image sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
-
-# inside the ACTL pod shell
-# the sampleworks image drops interactive shells in /app
-run_all_models.sh --dry-run   # inspect commands first
-run_all_models.sh             # run /app/src/sampleworks/runs/presets/all_models.toml
 ```
 
-The wrapper keeps the TOML preset as the source of truth. It only supplies ACTL-friendly defaults:
-
-- `DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps`
-- `RESULTS_DIR=/mnt/diffuse-shared/results/sampleworks/<pod>/all_models`
-- `MSA_CACHE_DIR=/mnt/diffuse-shared/cache/sampleworks/msa`
-- `PYTHONPATH=/app/src`, using the copy baked into the sampleworks image
-- direct `/app/.pixi/envs/<env>/bin/python` execution, so it reuses the environments baked into the sampleworks image without refreshing pixi caches
-- `/tmp` pixi/uv caches for any missing environment preparation, avoiding shared-storage Git cache issues
-
-Common commands:
+Inside the pod shell (`/app`), run:
 
 ```bash
-run_all_models.sh --list                         # bundled presets
-run_all_models.sh all_models --show              # inspect resolved values
-run_all_models.sh all_models --only rf3,protenix # subset jobs
-run_all_models.sh rf3_partial                    # run a smaller preset
-
-# Override paths or parameters without editing TOML:
-DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/my_dataset run_all_models.sh rf3_partial
-run_all_models.sh rf3_partial \
-    --set jobs.rf3.gpus=0 \
-    --set jobs.rf3.args.gradient-weights="0.0 0.01 0.02"
+run_experiments --dry-run
+run_experiments all_models
 ```
 
-Bundled presets live in `src/sampleworks/runs/presets/*.toml`. You can also copy one, edit it, and run it by path:
+`run_experiments` is a thin wrapper around `sampleworks-runs`: it reads TOML presets and launches the requested `run_grid_search.py` jobs in parallel, with `CUDA_VISIBLE_DEVICES` set per job. The default preset is `all_models`, which splits GPUs across Boltz2 XRD, Boltz2 MD, RF3, and Protenix.
+
+Presets live in `/app/src/sampleworks/runs/presets/*.toml` (same path in the repo: `src/sampleworks/runs/presets/`). To change an experiment, either edit/copy a preset or override values at launch:
 
 ```bash
-cp src/sampleworks/runs/presets/all_models.toml my_experiment.toml
-run_all_models.sh ./my_experiment.toml
+run_experiments all_models --only rf3,protenix
+run_experiments rf3_partial --set jobs.rf3.gpus=0
 ```
 
-Env-var defaults (`DATA_DIR`, `RESULTS_DIR`, `MSA_CACHE_DIR`, `PROTEINS_CSV`) declared per preset are filled from the process environment when set, otherwise from the preset's `[defaults]` block.
+The shared inputs are under `/mnt/diffuse-shared/raw/sampleworks/...`; checkpoints are in `/mnt/diffuse-shared/raw/checkpoints`; default results go to `/mnt/diffuse-shared/results/sampleworks/<pod>/<preset>/`; MSA caches go to `/mnt/diffuse-shared/cache/sampleworks/msa`. Set `DATA_DIR`, `RESULTS_DIR`, or `MSA_CACHE_DIR` before running to change these locations. `run_all_models.sh` remains as a compatibility alias.
 
 
 ## Docker
