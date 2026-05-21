@@ -223,14 +223,84 @@ def run_guidance_queue_script(args: tuple[str, int, str, int]):
     job_queue_path, max_workers, model, worker_num = args
     pixi_env = get_pixi_env(model)
     script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
-    cmd = f"pixi run -e {pixi_env} python {script_path} --job-queue-path {job_queue_path}"
-    cmd = cmd.split()
+    env_python = get_pixi_env_python(pixi_env)
+    if env_python:
+        cmd = [env_python, str(script_path), "--job-queue-path", job_queue_path]
+        env = get_pixi_env_process_env(env_python)
+    else:
+        cmd = [
+            "pixi",
+            "run",
+            "-e",
+            pixi_env,
+            "python",
+            str(script_path),
+            "--job-queue-path",
+            job_queue_path,
+        ]
+        env = os.environ.copy()
     log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
-    # env = os.environ.copy()
 
     with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
-        result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+        result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, env=env)
     return result
+
+
+def get_pixi_env_process_env(env_python: str) -> dict[str, str]:
+    """Return process environment values for a direct pixi Python executable.
+
+    Parameters
+    ----------
+    env_python : str
+        Python executable under ``.pixi/envs/<env>/bin/python``.
+
+    Returns
+    -------
+    dict of str to str
+        Environment with the env's ``bin`` directory, ``CONDA_PREFIX``, and
+        ``CUDA_HOME`` set so compiled extensions can find tools such as
+        ``ninja`` and the CUDA toolkit without going through ``pixi run``.
+    """
+    env_dir = Path(env_python).resolve().parent.parent
+    bin_dir = env_dir / "bin"
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["CONDA_PREFIX"] = str(env_dir)
+    env.setdefault("CUDA_HOME", str(env_dir))
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def get_pixi_env_python(pixi_env: str) -> str | None:
+    """Return a direct Python binary for a preinstalled pixi environment.
+
+    The ACTL sampleworks image bakes environments under ``/app/.pixi``. Using
+    those interpreters directly avoids a runtime ``pixi run`` cache refresh on
+    shared storage. Set ``SAMPLEWORKS_FORCE_PIXI=1`` to force the old behavior.
+
+    Parameters
+    ----------
+    pixi_env : str
+        Pixi environment name such as ``boltz``, ``protenix``, or ``rf3``.
+
+    Returns
+    -------
+    str or None
+        Path to the environment's Python executable, or ``None`` to use pixi.
+    """
+    if os.environ.get("SAMPLEWORKS_FORCE_PIXI", "").lower() in {"1", "true", "yes"}:
+        return None
+
+    env_key = pixi_env.upper().replace("-", "_")
+    override = os.environ.get(f"SAMPLEWORKS_{env_key}_PYTHON")
+    if override:
+        return override
+
+    pixi_project_dir = Path(os.environ.get("SAMPLEWORKS_PIXI_PROJECT_DIR", "/app"))
+    candidate = pixi_project_dir / ".pixi" / "envs" / pixi_env / "bin" / "python"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
 
 
 def main(args: argparse.Namespace):

@@ -1,7 +1,7 @@
 """Dataclasses for the preset schema.
 
 A preset describes one or more parallel ``run_grid_search.py`` jobs. Each job
-is launched as ``pixi run -e <env> python /app/run_grid_search.py <args>`` with
+is launched as ``pixi run -e <env> python <run_grid_search.py> <args>`` with
 ``CUDA_VISIBLE_DEVICES`` set to the job's GPU assignment.
 """
 

@@ -1,164 +1,145 @@
-#!/bin/bash
-# Run all 4 model grid searches in parallel, 2 GPUs each
-# Total: 8 GPUs used (4 jobs x 2 GPUs each)
+#!/usr/bin/env bash
+# ACTL-native entry point for Sampleworks preset runs.
 #
-# Models:
-#   - Boltz2 X-ray diffraction (GPUs 0,1)
-#   - Boltz2 MD               (GPUs 2,3)
-#   - RosettaFold3             (GPUs 4,5)
-#   - Protenix                 (GPUs 6,7)
-#
-# Checkpoints are BAKED INTO the Docker image at /checkpoints/.
-# If missing, the code auto-falls back to mounted paths.
-#
-# Usage:
-#   ./run_all_models.sh
+# The TOML preset is the source of truth. This wrapper only supplies smooth
+# pod defaults: persistent /mnt paths, the synced PR source tree on PYTHONPATH,
+# and direct use of the prebuilt pixi environments from the image at /app.
 
-set -e
+set -euo pipefail
 
-# Configuration
-DATA_DIR="/mnt/diffuse-private/raw/sampleworks/initial_dataset_40_occ_sweeps"
-RESULTS_DIR="${RESULTS_DIR:-/data/sampleworks-exp/occ_sweep/grid_search_results}"
-MSA_CACHE_DIR="${MSA_CACHE_DIR:-/data/sampleworks-exp/msa_cache}"
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+    script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+    script_target="$(readlink "$script_path")"
+    if [[ "$script_target" == /* ]]; then
+        script_path="$script_target"
+    else
+        script_path="$script_dir/$script_target"
+    fi
+done
+script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+repo_root="${SAMPLEWORKS_APP_DIR:-$script_dir}"
 
-# Create directories
-mkdir -p "$RESULTS_DIR"
-mkdir -p "$MSA_CACHE_DIR"
+preset="${SAMPLEWORKS_PRESET:-all_models}"
+if [[ $# -gt 0 && "$1" != -* ]]; then
+    preset="$1"
+    shift
+fi
 
-# Pull latest image (no-op if already up to date)
-echo "Pulling latest Docker image..."
-docker pull diffuseproject/sampleworks:latest
+if [[ "$preset" == *.toml || "$preset" == */* ]]; then
+    if [[ "$preset" != /* ]]; then
+        preset="$repo_root/$preset"
+    fi
+fi
+preset_label="${preset##*/}"
+preset_label="${preset_label%.toml}"
 
-# Common docker options
-DOCKER_OPTS="--rm --shm-size=16g"
+run_name="${SAMPLEWORKS_ACTL_RUN_NAME:-$(hostname -s 2>/dev/null || printf 'sampleworks')}"
+default_data_dir="/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps"
+default_results_dir="/mnt/diffuse-shared/results/sampleworks/${run_name}/${preset_label}"
+default_msa_cache_dir="/mnt/diffuse-shared/cache/sampleworks/msa"
 
-echo "=========================================="
-echo "Starting all model grid searches (4 jobs x 2 GPUs)"
-echo "Data: $DATA_DIR"
-echo "Results: $RESULTS_DIR"
-echo "MSA Cache: $MSA_CACHE_DIR"
-echo "Checkpoints: BAKED INTO IMAGE (with mount fallback)"
-echo ""
-echo "Models:"
-echo "  - Boltz2 X-ray (GPUs 0,1)"
-echo "  - Boltz2 MD    (GPUs 2,3)"
-echo "  - RF3          (GPUs 4,5)"
-echo "  - Protenix     (GPUs 6,7)"
-echo "=========================================="
+export DATA_DIR="${DATA_DIR:-${SAMPLEWORKS_DATA_DIR:-$default_data_dir}}"
+export RESULTS_DIR="${RESULTS_DIR:-${SAMPLEWORKS_RESULTS_DIR:-$default_results_dir}}"
+export MSA_CACHE_DIR="${MSA_CACHE_DIR:-${SAMPLEWORKS_MSA_CACHE_DIR:-$default_msa_cache_dir}}"
+export SAMPLEWORKS_GRID_SEARCH_SCRIPT="${SAMPLEWORKS_GRID_SEARCH_SCRIPT:-$repo_root/run_grid_search.py}"
+export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
+export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-/tmp/pixi-cache}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 
-PIDS=()
+shared_checkpoint_dir="/mnt/diffuse-shared/raw/checkpoints"
+for checkpoint_var_and_file in \
+    "BOLTZ1_CHECKPOINT boltz1_conf.ckpt" \
+    "BOLTZ2_CHECKPOINT boltz2_conf.ckpt" \
+    "RF3_CHECKPOINT rf3_foundry_01_24_latest.ckpt" \
+    "PROTENIX_CHECKPOINT protenix_base_default_v0.5.0.pt"; do
+    read -r checkpoint_var checkpoint_file <<<"$checkpoint_var_and_file"
+    checkpoint_path="$shared_checkpoint_dir/$checkpoint_file"
+    if [[ -z "${!checkpoint_var:-}" && -f "$checkpoint_path" ]]; then
+        export "$checkpoint_var=$checkpoint_path"
+    fi
+done
 
-# --- Boltz2 X-ray Diffraction (GPUs 0,1) ---
-echo "[$(date)] Starting Boltz2 X-ray on GPUs 0,1"
-docker run $DOCKER_OPTS \
-    --gpus '"device=0,1"' \
-    -v "$DATA_DIR:/data/inputs:ro" \
-    -v "$RESULTS_DIR:/data/results" \
-    -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
-    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
-    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
-    diffuseproject/sampleworks:latest \
-    -e boltz run_grid_search.py \
-    --proteins "/data/inputs/proteins.csv" \
-    --model boltz2 \
-    --method "X-RAY DIFFRACTION" \
-    --scalers pure_guidance \
-    --partial-diffusion-step 120 \
-    --ensemble-sizes "8" \
-    --gradient-weights "0.1 0.2 0.5" \
-    --gradient-normalization --augmentation --align-to-input \
-    --output-dir /data/results \
-    2>&1 | tee "$RESULTS_DIR/boltz2_xrd_run.log" &
-PIDS+=($!)
-echo "[$(date)] Boltz2 X-ray job started (PID: ${PIDS[-1]})"
+source_proteins_csv="${PROTEINS_CSV:-$DATA_DIR/proteins.csv}"
+if [[ -f "$source_proteins_csv" ]]; then
+    # The shared proteins.csv currently contains absolute /data/inputs paths,
+    # while ACTL mounts the dataset at /mnt/diffuse-shared. Rewrite a per-run
+    # manifest instead of requiring non-root scientists to create /data symlinks.
+    manifest_dir="$RESULTS_DIR/_input_manifest"
+    manifest_proteins_csv="$manifest_dir/proteins.csv"
+    mkdir -p "$manifest_dir"
+    legacy_data_dir="/data/inputs"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        printf '%s\n' "${line//$legacy_data_dir/$DATA_DIR}"
+    done <"$source_proteins_csv" >"$manifest_proteins_csv"
+    export PROTEINS_CSV="$manifest_proteins_csv"
+fi
 
-# --- Boltz2 MD (GPUs 2,3) ---
-echo "[$(date)] Starting Boltz2 MD on GPUs 2,3"
-docker run $DOCKER_OPTS \
-    --gpus '"device=2,3"' \
-    -v "$DATA_DIR:/data/inputs:ro" \
-    -v "$RESULTS_DIR:/data/results" \
-    -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
-    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
-    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
-    diffuseproject/sampleworks:latest \
-    -e boltz run_grid_search.py \
-    --proteins "/data/inputs/proteins.csv" \
-    --model boltz2 \
-    --method "MD" \
-    --scalers pure_guidance \
-    --partial-diffusion-step 120 \
-    --ensemble-sizes "8" \
-    --gradient-weights "0.1 0.2 0.5" \
-    --gradient-normalization --augmentation --align-to-input \
-    --output-dir /data/results \
-    2>&1 | tee "$RESULTS_DIR/boltz2_md_run.log" &
-PIDS+=($!)
-echo "[$(date)] Boltz2 MD job started (PID: ${PIDS[-1]})"
+runner_env="${SAMPLEWORKS_RUNNER_ENV:-rf3}"
+pixi_project_dir="${SAMPLEWORKS_PIXI_PROJECT_DIR:-}"
+if [[ -z "$pixi_project_dir" ]]; then
+    if [[ -f /app/pyproject.toml && -d /app/.pixi ]]; then
+        pixi_project_dir="/app"
+    else
+        pixi_project_dir="$repo_root"
+    fi
+fi
+runner_python="${SAMPLEWORKS_RUNNER_PYTHON:-$pixi_project_dir/.pixi/envs/$runner_env/bin/python}"
 
-# --- RosettaFold3 (GPUs 4,5) ---
-echo "[$(date)] Starting RosettaFold3 on GPUs 4,5"
-docker run $DOCKER_OPTS \
-    --gpus '"device=4,5"' \
-    -v "$DATA_DIR:/data/inputs:ro" \
-    -v "$RESULTS_DIR:/data/results" \
-    -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
-    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
-    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
-    diffuseproject/sampleworks:latest \
-    -e rf3 run_grid_search.py \
-    --proteins "/data/inputs/proteins.csv" \
-    --model rf3 \
-    --partial-diffusion-step 120 \
-    --scalers pure_guidance \
-    --ensemble-sizes "8" \
-    --gradient-weights "0.01 0.02 0.05" \
-    --gradient-normalization --augmentation --align-to-input \
-    --output-dir /data/results \
-    2>&1 | tee "$RESULTS_DIR/rf3_run.log" &
-PIDS+=($!)
-echo "[$(date)] RosettaFold3 job started (PID: ${PIDS[-1]})"
+needs_runtime_paths=1
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|--show|--list|-h|--help)
+            needs_runtime_paths=0
+            ;;
+    esac
+done
 
-# --- Protenix (GPUs 6,7) ---
-echo "[$(date)] Starting Protenix on GPUs 6,7"
-docker run $DOCKER_OPTS \
-    --gpus '"device=6,7"' \
-    -v "$DATA_DIR:/data/inputs:ro" \
-    -v "$RESULTS_DIR:/data/results" \
-    -v "$MSA_CACHE_DIR:/root/.sampleworks/msa" \
-    -e SAMPLEWORKS_HOST_INPUT_DIR="$DATA_DIR" \
-    -e SAMPLEWORKS_HOST_RESULTS_DIR="$RESULTS_DIR" \
-    diffuseproject/sampleworks:latest \
-    -e protenix run_grid_search.py \
-    --proteins "/data/inputs/proteins.csv" \
-    --model protenix \
-    --scalers pure_guidance \
-    --partial-diffusion-step 120 \
-    --ensemble-sizes "8" \
-    --gradient-weights "0.1 0.2 0.5" \
-    --gradient-normalization --augmentation --align-to-input \
-    --output-dir /data/results \
-    2>&1 | tee "$RESULTS_DIR/protenix_run.log" &
-PIDS+=($!)
-echo "[$(date)] Protenix job started (PID: ${PIDS[-1]})"
+if [[ "$needs_runtime_paths" -eq 1 ]]; then
+    if [[ ! -f "${PROTEINS_CSV:-$source_proteins_csv}" ]]; then
+        cat >&2 <<EOF
+Sampleworks input dataset was not found.
 
-echo ""
-echo "=========================================="
-echo "All 4 jobs launched! PIDs: ${PIDS[*]}"
-echo "Logs:"
-echo "  - $RESULTS_DIR/boltz2_xrd_run.log"
-echo "  - $RESULTS_DIR/boltz2_md_run.log"
-echo "  - $RESULTS_DIR/rf3_run.log"
-echo "  - $RESULTS_DIR/protenix_run.log"
-echo ""
-echo "Monitor GPU usage: nvidia-smi -l 1"
-echo "Waiting for all jobs to complete..."
-echo "=========================================="
+Expected: $source_proteins_csv
 
-# Wait for all background jobs
-wait
+On an ACTL sampleworks pod, make sure the diffuse-shared PVC is mounted at
+/mnt/diffuse-shared, or override the dataset path, for example:
 
-echo ""
-echo "=========================================="
-echo "[$(date)] All jobs completed!"
-echo "=========================================="
+  DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/<dataset> ./run_all_models.sh
+
+EOF
+        exit 2
+    fi
+    mkdir -p "$RESULTS_DIR" "$MSA_CACHE_DIR"
+fi
+
+cat >&2 <<EOF
+Sampleworks preset run
+  preset:        $preset
+  data:          $DATA_DIR
+  results:       $RESULTS_DIR
+  msa cache:     $MSA_CACHE_DIR
+  source:        $repo_root
+  pixi project:  $pixi_project_dir
+  runner env:    $runner_env
+  runner python: $runner_python
+
+EOF
+
+cd "$pixi_project_dir"
+if [[ -x "$runner_python" ]]; then
+    runner_env_dir="$(cd -- "$(dirname -- "$runner_python")/.." && pwd)"
+    export PATH="$runner_env_dir/bin${PATH:+:$PATH}"
+    export CONDA_PREFIX="$runner_env_dir"
+    export CUDA_HOME="${CUDA_HOME:-$runner_env_dir}"
+    export PYTHONNOUSERSITE=1
+    exec "$runner_python" -m sampleworks.runs.cli \
+        "$preset" \
+        --results-dir "$RESULTS_DIR" \
+        "$@"
+fi
+
+exec pixi run -e "$runner_env" python -m sampleworks.runs.cli \
+    "$preset" \
+    --results-dir "$RESULTS_DIR" \
+    "$@"

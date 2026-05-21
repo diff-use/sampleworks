@@ -15,7 +15,7 @@ from typing import Any
 from .schema import Job, Preset
 
 
-GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
+DEFAULT_GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
         args = preset.effective_args(job)
         args.setdefault("output-dir", str(results_dir / job.output_subdir))
         argv = _build_argv(job.env, args)
-        env = {**os.environ, "CUDA_VISIBLE_DEVICES": job.gpus}
+        env = _job_env(job.env, {**os.environ, "CUDA_VISIBLE_DEVICES": job.gpus})
         log_path = results_dir / f"{job.name}_run.log"
         output_dir = Path(args["output-dir"])
         invocations.append(
@@ -95,7 +95,11 @@ def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
     list of str
         Subprocess argv.
     """
-    argv = ["pixi", "run", "-e", pixi_env, "python", GRID_SEARCH_SCRIPT]
+    env_python = _pixi_env_python(pixi_env)
+    if env_python:
+        argv = [env_python, _grid_search_script()]
+    else:
+        argv = ["pixi", "run", "-e", pixi_env, "python", _grid_search_script()]
     for key, value in args.items():
         flag = f"--{key}"
         if isinstance(value, bool):
@@ -106,6 +110,101 @@ def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
         else:
             argv.extend([flag, str(value)])
     return argv
+
+
+def _pixi_env_python(pixi_env: str) -> str | None:
+    """Return the direct Python binary for a baked pixi environment when available.
+
+    The sampleworks ACTL image already contains fully-installed environments at
+    ``/app/.pixi/envs/<env>``. Calling those Python binaries directly avoids
+    ``pixi run`` trying to refresh Git/PyPI caches on shared pod storage.
+
+    Parameters
+    ----------
+    pixi_env : str
+        Pixi environment name from the preset job.
+
+    Returns
+    -------
+    str or None
+        Executable Python path, or ``None`` to fall back to ``pixi run``.
+    """
+    if os.environ.get("SAMPLEWORKS_FORCE_PIXI", "").lower() in {"1", "true", "yes"}:
+        return None
+
+    env_key = pixi_env.upper().replace("-", "_")
+    override = os.environ.get(f"SAMPLEWORKS_{env_key}_PYTHON")
+    if override:
+        return override
+
+    candidate = _pixi_project_dir() / ".pixi" / "envs" / pixi_env / "bin" / "python"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
+
+
+def _job_env(pixi_env: str, env: dict[str, str]) -> dict[str, str]:
+    """Return an environment equivalent to activating a direct pixi env.
+
+    Parameters
+    ----------
+    pixi_env : str
+        Pixi environment name used by the job.
+    env : dict of str to str
+        Base process environment.
+
+    Returns
+    -------
+    dict of str to str
+        Environment with the pixi env's ``bin`` directory and compiler/CUDA
+        paths exposed when the job runs a direct Python binary.
+    """
+    env_python = _pixi_env_python(pixi_env)
+    if env_python is None:
+        return env
+
+    env_dir = Path(env_python).resolve().parent.parent
+    bin_dir = env_dir / "bin"
+    activated = dict(env)
+    activated["PATH"] = f"{bin_dir}{os.pathsep}{activated.get('PATH', '')}"
+    activated["CONDA_PREFIX"] = str(env_dir)
+    activated.setdefault("CUDA_HOME", str(env_dir))
+    activated["PYTHONNOUSERSITE"] = "1"
+    return activated
+
+
+def _pixi_project_dir() -> Path:
+    """Return the pixi project directory for env lookup and fallback pixi runs.
+
+    Returns
+    -------
+    Path
+        Project directory, defaulting to ``/app`` for the sampleworks image or
+        the current working directory outside that image.
+    """
+    override = os.environ.get("SAMPLEWORKS_PIXI_PROJECT_DIR")
+    if override:
+        return Path(override)
+    app = Path("/app")
+    if (app / "pyproject.toml").exists():
+        return app
+    return Path.cwd()
+
+
+def _grid_search_script() -> str:
+    """Return the ``run_grid_search.py`` path used by worker jobs.
+
+    Resolution is intentionally simple for the ACTL sampleworks image: the
+    baked image keeps a stable copy at :data:`DEFAULT_GRID_SEARCH_SCRIPT`, while
+    synced PR worktrees can point the runner at their checkout with
+    ``SAMPLEWORKS_GRID_SEARCH_SCRIPT=/home/dev/workspace/run_grid_search.py``.
+
+    Returns
+    -------
+    str
+        Path to execute with ``python`` inside each pixi environment.
+    """
+    return os.environ.get("SAMPLEWORKS_GRID_SEARCH_SCRIPT", DEFAULT_GRID_SEARCH_SCRIPT)
 
 
 def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
@@ -137,6 +236,11 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
             _print_dry_run(inv)
         return 0
 
+    pixi_envs = sorted({inv.job.env for inv in invocations})
+    for pixi_env in pixi_envs:
+        _prepare_pixi_env(pixi_env)
+    invocations = build_invocations(preset, results_dir=results_dir)
+
     _print_launch_summary(preset, invocations)
     processes: list[_RunningJob] = []
     try:
@@ -163,6 +267,43 @@ def _terminate_all(jobs: list[_RunningJob]) -> None:
     for j in jobs:
         j.proc.wait()
         j.tee_thread.join()
+
+
+def _prepare_pixi_env(pixi_env: str) -> None:
+    """Prepare a pixi environment before parallel job launch.
+
+    ``pixi run`` is deliberately called once per env even when the interpreter
+    directory already exists, because pixi may still need to materialize PyPI
+    packages into that environment after image startup.
+
+    Parameters
+    ----------
+    pixi_env : str
+        Pixi environment to prepare.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If pixi cannot prepare the environment.
+    """
+    if os.environ.get("SAMPLEWORKS_SKIP_ENV_PREPARE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return
+
+    env = {
+        **os.environ,
+        "PIXI_CACHE_DIR": os.environ.get("PIXI_CACHE_DIR", "/tmp/pixi-cache"),
+        "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
+    }
+    cmd = ["pixi", "run", "-e", pixi_env, "python", "-c", "print('ready')"]
+    print(
+        f"[{_ts()}] preparing pixi env {pixi_env!r} with {shlex.join(cmd)}",
+        file=sys.stderr,
+    )
+    subprocess.run(cmd, cwd=str(_pixi_project_dir()), env=env, check=True)
 
 
 def _print_dry_run(inv: JobInvocation) -> None:

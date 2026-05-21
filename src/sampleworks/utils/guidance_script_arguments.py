@@ -9,16 +9,34 @@ from typing import Any
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 
 
-# Baked-in checkpoint paths (Docker image) with legacy fallbacks
+# Baked-in checkpoint paths (Docker image), ACTL shared-storage paths, and
+# legacy fallbacks. Environment variables win when present.
+_CHECKPOINT_ENV_VARS = {
+    "boltz1": "BOLTZ1_CHECKPOINT",
+    "boltz2": "BOLTZ2_CHECKPOINT",
+    "rf3": "RF3_CHECKPOINT",
+    "protenix": "PROTENIX_CHECKPOINT",
+}
+
 _CHECKPOINT_CANDIDATES = {
-    "boltz1": ["/checkpoints/boltz1_conf.ckpt", "~/.boltz/boltz1_conf.ckpt"],
-    "boltz2": ["/checkpoints/boltz2_conf.ckpt", "~/.boltz/boltz2_conf.ckpt"],
+    "boltz1": [
+        "/checkpoints/boltz1_conf.ckpt",
+        "/mnt/diffuse-shared/raw/checkpoints/boltz1_conf.ckpt",
+        "~/.boltz/boltz1_conf.ckpt",
+    ],
+    "boltz2": [
+        "/checkpoints/boltz2_conf.ckpt",
+        "/mnt/diffuse-shared/raw/checkpoints/boltz2_conf.ckpt",
+        "~/.boltz/boltz2_conf.ckpt",
+    ],
     "rf3": [
         "/checkpoints/rf3_foundry_01_24_latest.ckpt",
+        "/mnt/diffuse-shared/raw/checkpoints/rf3_foundry_01_24_latest.ckpt",
         "~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt",
     ],
     "protenix": [
         "/checkpoints/protenix_base_default_v0.5.0.pt",
+        "/mnt/diffuse-shared/raw/checkpoints/protenix_base_default_v0.5.0.pt",
         ".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
     ],
 }
@@ -31,7 +49,11 @@ def _resolve_checkpoint(model_key: str) -> str:
     legacy development paths.  If none are found the first candidate is returned
     so that downstream validation produces a clear error message.
     """
-    candidates = _CHECKPOINT_CANDIDATES.get(model_key, [])
+    env_var = _CHECKPOINT_ENV_VARS.get(model_key)
+    candidates = []
+    if env_var and os.environ.get(env_var):
+        candidates.append(os.environ[env_var])
+    candidates.extend(_CHECKPOINT_CANDIDATES.get(model_key, []))
     for candidate in candidates:
         resolved = Path(candidate).expanduser()
         if resolved.exists():
@@ -45,9 +67,10 @@ def _resolve_checkpoint(model_key: str) -> str:
             f"Provide --model-checkpoint or bake checkpoints into /checkpoints/."
         )
     if not Path(resolved).exists():
+        env_hint = _CHECKPOINT_ENV_VARS.get(model_key, "a checkpoint env var")
         raise ValueError(
-            f"Model checkpoint '{resolved}' does not exist. "
-            f"Provide a valid path via --model-checkpoint."
+            f"Model checkpoint for '{model_key}' was not found. Checked: {candidates}. "
+            f"Provide --model-checkpoint or set {env_hint}."
         )
 
     return resolved

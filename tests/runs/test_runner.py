@@ -100,6 +100,40 @@ def test_build_invocations_records_output_dir(monkeypatch: pytest.MonkeyPatch) -
     assert inv.output_dir == Path("/r/rf3")
 
 
+def test_grid_search_script_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ACTL wrappers can run the synced checkout instead of the baked /app copy."""
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setenv("SAMPLEWORKS_GRID_SEARCH_SCRIPT", "/home/dev/workspace/run_grid_search.py")
+    preset = loader.load_preset("rf3_partial")
+    inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
+    assert inv.argv[:6] == [
+        "pixi",
+        "run",
+        "-e",
+        "rf3",
+        "python",
+        "/home/dev/workspace/run_grid_search.py",
+    ]
+
+
+def test_uses_baked_env_python_when_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACTL image runs bypass pixi cache refreshes by calling env Python directly."""
+    monkeypatch.delenv("SAMPLEWORKS_FORCE_PIXI", raising=False)
+    monkeypatch.setenv("HOME", "/home/test")
+    pixi_project = tmp_path / "app"
+    python_bin = pixi_project / ".pixi" / "envs" / "rf3" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True)
+    python_bin.write_text("#!/bin/sh\n")
+    python_bin.chmod(0o755)
+    monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(pixi_project))
+
+    preset = loader.load_preset("rf3_partial")
+    inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
+    assert inv.argv[:2] == [str(python_bin), "/app/run_grid_search.py"]
+
+
 def test_dry_run_does_not_create_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

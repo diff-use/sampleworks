@@ -43,6 +43,15 @@ def test_defaults_used_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     assert preset.defaults["DATA_DIR"] == "/data/inputs"
 
 
+def test_all_models_uses_canonical_inputs_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flagship preset must use /data/inputs, matching the ACTL wrapper."""
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setenv("HOME", "/home/test")
+    preset = loader.load_preset("all_models")
+    assert preset.defaults["DATA_DIR"] == "/data/inputs"
+    assert preset.shared_args["proteins"] == "/data/inputs/proteins.csv"
+
+
 def test_set_override_at_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.setenv("HOME", "/home/test")

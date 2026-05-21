@@ -459,8 +459,14 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     elif "Boltz" in wrapper_class_name:
         from sampleworks.models.boltz.wrapper import process_structure_for_boltz
 
+        # Boltz preprocessing writes manifest/NPZ/MSA files as a side effect.
+        # Keep those under the per-job output directory so concurrent grid jobs
+        # for the same protein do not race on a shared metadata-derived path.
         structure = process_structure_for_boltz(
-            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+            structure,
+            out_dir=args.output_dir,
+            ensemble_size=args.ensemble_size,
+            recycling_steps=recycling_steps,
         )
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")

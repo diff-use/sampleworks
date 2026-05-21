@@ -7,8 +7,8 @@
 # Build:
 #   docker build -t sampleworks .
 #
-# CI builds pull checkpoints automatically from Docker Hub via:
-#   COPY --from=diffuseproject/sampleworks-checkpoints:latest
+# CI builds pull checkpoints automatically from Harbor via:
+#   COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest
 # No checkpoint files are needed in the build context or on the CI runner.
 #
 # To rebuild the checkpoints base image (only needed when checkpoints change):
@@ -56,7 +56,7 @@
 #   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model (~1.4GB)
 #
 # Checkpoints base image:
-#   All checkpoints live in diffuseproject/sampleworks-checkpoints:latest on Docker Hub.
+#   All checkpoints live in harbor.astera.sh/library/sampleworks-checkpoints:latest.
 #   To rebuild that image, see /data/users/diffuse/checkpoint-build/ on the GPU server.
 
 # ============================================================================
@@ -108,7 +108,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # ============================================================================
 # Checkpoints (~10 GB) rarely change, so this layer is placed before pixi
 # installs to stay cached even when dependencies update.
-COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
+COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
 
 # ============================================================================
 # Install all three environments: boltz, protenix, rf3
@@ -128,6 +128,12 @@ RUN pixi install -e boltz --frozen && \
 RUN pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
+
+COPY run_all_models.sh ./
+RUN chmod +x /app/run_all_models.sh \
+    && printf '#!/usr/bin/env bash\nexec /app/run_all_models.sh "$@"\n' > /usr/local/bin/run_all_models.sh \
+    && chmod +x /usr/local/bin/run_all_models.sh \
+    && printf '\n# ACTL scientist workflow: land in the baked Sampleworks app.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /app ]; then\n    cd /app\nfi\n' >> /root/.bashrc
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \

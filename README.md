@@ -152,35 +152,50 @@ Output layout: `grid_search_results/<protein>/<model>[_<method>]/<scaler>/ens<N>
 Instructions for running evaluation and metrics scripts are coming soon.
 
 
-## Preset experiments (`sampleworks-runs`)
+## ACTL preset experiments (`run_all_models.sh` / `sampleworks-runs`)
 
-For canonical multi-model/multi-GPU sweeps, the `sampleworks-runs` CLI orchestrates parallel `run_grid_search.py` jobs from a single TOML preset. Each preset declares its jobs (model, pixi env, GPU assignment, args); the runner launches them in parallel, tees per-job logs, and aggregates exit codes.
+For canonical multi-model/multi-GPU sweeps, `sampleworks-runs` orchestrates parallel `run_grid_search.py` jobs from a single TOML preset. Each preset declares the model, pixi env, GPU assignment, output subdir, and CLI args. The runner launches jobs in parallel, tees per-job logs, and aggregates exit codes.
 
-**Pod-side prerequisite.** Bundled presets reference the canonical `/data/inputs`, `/data/results`, and `/root/.sampleworks` paths set up by the ACTL pod-init script. On a fresh sampleworks pod, run once per session:
+On ACTL, start the pod with the prebuilt image and shared storage, then run one command inside the pod shell:
 
 ```bash
-bash /mnt/diffuse-shared/raw/sampleworks/actl_setup_sampleworks_paths.sh
+actl pod up sampleworks-pr236 --profile 8x --image sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+
+# inside the ACTL pod shell
+# the sampleworks image drops interactive shells in /app
+run_all_models.sh --dry-run   # inspect commands first
+run_all_models.sh             # run /app/src/sampleworks/runs/presets/all_models.toml
 ```
 
-That creates symlinks pointing the canonical paths at the shared mount (and namespaces `/data/results` by hostname or `$SAMPLEWORKS_ACTL_RUN_NAME`). Overrides via env var (`DATA_DIR=...`) or CLI (`--set defaults.DATA_DIR=...`) work without the symlinks.
+The wrapper keeps the TOML preset as the source of truth. It only supplies ACTL-friendly defaults:
+
+- `DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps`
+- `RESULTS_DIR=/mnt/diffuse-shared/results/sampleworks/<pod>/all_models`
+- `MSA_CACHE_DIR=/mnt/diffuse-shared/cache/sampleworks/msa`
+- `PYTHONPATH=/app/src`, using the copy baked into the sampleworks image
+- direct `/app/.pixi/envs/<env>/bin/python` execution, so it reuses the environments baked into the sampleworks image without refreshing pixi caches
+- `/tmp` pixi/uv caches for any missing environment preparation, avoiding shared-storage Git cache issues
+
+Common commands:
 
 ```bash
-pixi run -e rf3 sampleworks-runs --list                          # bundled presets
-pixi run -e rf3 sampleworks-runs rf3_partial                     # run a preset
-pixi run -e rf3 sampleworks-runs rf3_partial --show              # inspect resolved values
-pixi run -e rf3 sampleworks-runs rf3_partial --dry-run           # print pixi run commands, don't execute
-pixi run -e rf3 sampleworks-runs all_models --only rf3,protenix  # subset jobs
+run_all_models.sh --list                         # bundled presets
+run_all_models.sh all_models --show              # inspect resolved values
+run_all_models.sh all_models --only rf3,protenix # subset jobs
+run_all_models.sh rf3_partial                    # run a smaller preset
 
-# Override any value without editing the TOML:
-pixi run -e rf3 sampleworks-runs rf3_partial \
-    --set jobs.rf3.gpus=7 \
+# Override paths or parameters without editing TOML:
+DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/my_dataset run_all_models.sh rf3_partial
+run_all_models.sh rf3_partial \
+    --set jobs.rf3.gpus=0 \
     --set jobs.rf3.args.gradient-weights="0.0 0.01 0.02"
 ```
 
-Bundled presets live in `src/sampleworks/runs/presets/*.toml`. Add a new preset by dropping a `.toml` file alongside them or pointing at any path:
+Bundled presets live in `src/sampleworks/runs/presets/*.toml`. You can also copy one, edit it, and run it by path:
 
 ```bash
-sampleworks-runs ./my_experiment.toml
+cp src/sampleworks/runs/presets/all_models.toml my_experiment.toml
+run_all_models.sh ./my_experiment.toml
 ```
 
 Env-var defaults (`DATA_DIR`, `RESULTS_DIR`, `MSA_CACHE_DIR`, `PROTEINS_CSV`) declared per preset are filled from the process environment when set, otherwise from the preset's `[defaults]` block.
