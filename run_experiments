@@ -106,6 +106,11 @@ export SAMPLEWORKS_GRID_SEARCH_SCRIPT="${SAMPLEWORKS_GRID_SEARCH_SCRIPT:-$repo_r
 export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
 export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-/tmp/pixi-cache}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
+# The ACTL image is expected to provide ready-to-use pixi envs under /app/.pixi.
+# Do not let sampleworks.runs.runner call `pixi run` just to "prepare" envs;
+# that can reinstall the CUDA stack inside the pod, especially when the synced
+# workspace source is older than this wrapper.
+export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-1}"
 
 shared_checkpoint_dir="/mnt/diffuse-shared/raw/checkpoints"
 for checkpoint_var_and_file in \
