@@ -415,6 +415,9 @@ def _prepare_pixi_env(pixi_env: str) -> None:
     subprocess.CalledProcessError
         If pixi cannot prepare the environment.
     """
+    if _pixi_env_python(pixi_env) is not None:
+        return
+
     if os.environ.get("SAMPLEWORKS_SKIP_ENV_PREPARE", "").lower() in {
         "1",
         "true",

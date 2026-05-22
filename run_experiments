@@ -199,6 +199,18 @@ if [[ -x "$runner_python" ]]; then
         "$@"
 fi
 
+if [[ "${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-}" =~ ^(1|true|yes)$ ]]; then
+    cat >&2 <<EOF
+Prebuilt pixi environment is missing: $runner_python
+
+This image is supposed to contain ready-to-use pixi environments under /app/.pixi.
+Refusing to run 'pixi run' because that would reinstall CUDA packages inside the pod.
+Use a rebuilt pixi-with-checkpoints image or unset SAMPLEWORKS_REQUIRE_PREBUILT_PIXI
+if you intentionally want runtime pixi installation.
+EOF
+    exit 2
+fi
+
 exec pixi run -e "$runner_env" python -m sampleworks.runs.cli \
     "$preset" \
     --results-dir "$RESULTS_DIR" \

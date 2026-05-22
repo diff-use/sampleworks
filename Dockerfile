@@ -139,7 +139,8 @@ COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh /usr/local
 RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' >> /root/.bashrc
 
 ENV SAMPLEWORKS_PIXI_PROJECT_DIR=/app \
-    SAMPLEWORKS_APP_DIR=
+    SAMPLEWORKS_APP_DIR= \
+    SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=1
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \
