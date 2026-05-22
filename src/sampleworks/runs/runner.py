@@ -221,6 +221,8 @@ def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
     env_python = _pixi_env_python(pixi_env)
     if env_python:
         argv = [env_python, _grid_search_script()]
+    elif _require_prebuilt_envs():
+        raise RuntimeError(_missing_prebuilt_env_message(pixi_env))
     else:
         argv = ["pixi", "run", "-e", pixi_env, "python", _grid_search_script()]
     for key, value in args.items():
@@ -264,6 +266,60 @@ def _pixi_env_python(pixi_env: str) -> str | None:
     if candidate.is_file() and os.access(candidate, os.X_OK):
         return str(candidate)
     return None
+
+
+def _truthy_env(name: str) -> bool:
+    """Return True when an environment variable is set to a truthy value.
+
+    Parameters
+    ----------
+    name : str
+        Environment variable name to inspect.
+
+    Returns
+    -------
+    bool
+        True for ``1``, ``true``, or ``yes`` values, case-insensitive.
+    """
+    return os.environ.get(name, "").lower() in {"1", "true", "yes"}
+
+
+def _require_prebuilt_envs() -> bool:
+    """Return True when runtime pixi fallback must be disabled.
+
+    Returns
+    -------
+    bool
+        True when the ACTL wrapper/image requires baked pixi environments and
+        the caller has not explicitly opted into runtime pixi installation.
+    """
+    return _truthy_env("SAMPLEWORKS_REQUIRE_PREBUILT_PIXI") and not _truthy_env(
+        "SAMPLEWORKS_ALLOW_RUNTIME_PIXI"
+    )
+
+
+def _missing_prebuilt_env_message(pixi_env: str) -> str:
+    """Build the error message for a missing baked pixi environment.
+
+    Parameters
+    ----------
+    pixi_env : str
+        Required pixi environment name.
+
+    Returns
+    -------
+    str
+        Human-readable error message explaining how to fix the pod/image.
+    """
+    expected = _pixi_project_dir() / ".pixi" / "envs" / pixi_env / "bin" / "python"
+    return (
+        f"Prebuilt pixi environment is missing for job env {pixi_env!r}: {expected}. "
+        "The pixi-with-checkpoints image must contain ready-to-use boltz, "
+        "protenix, and rf3 environments. Refusing to fall back to 'pixi run' "
+        "because that would install or refresh packages inside the pod. "
+        "Recreate the pod with the current image, or set "
+        "SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1 only when intentionally debugging pixi."
+    )
 
 
 def _job_env(pixi_env: str, env: dict[str, str]) -> dict[str, str]:
@@ -417,6 +473,9 @@ def _prepare_pixi_env(pixi_env: str) -> None:
     """
     if _pixi_env_python(pixi_env) is not None:
         return
+
+    if _require_prebuilt_envs():
+        raise RuntimeError(_missing_prebuilt_env_message(pixi_env))
 
     if os.environ.get("SAMPLEWORKS_SKIP_ENV_PREPARE", "").lower() in {
         "1",

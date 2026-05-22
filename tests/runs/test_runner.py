@@ -171,6 +171,20 @@ def test_uses_baked_env_python_when_available(
     assert inv.argv[:2] == [str(python_bin), "/app/run_grid_search.py"]
 
 
+def test_prebuilt_env_required_rejects_runtime_pixi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACTL runs fail clearly instead of installing missing pixi envs at runtime."""
+    monkeypatch.delenv("SAMPLEWORKS_FORCE_PIXI", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_REQUIRE_PREBUILT_PIXI", "1")
+    monkeypatch.delenv("SAMPLEWORKS_ALLOW_RUNTIME_PIXI", raising=False)
+    monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(tmp_path / "app"))
+
+    preset = loader.load_preset("rf3_partial")
+    with pytest.raises(RuntimeError, match="Refusing to fall back to 'pixi run'"):
+        runner.build_invocations(preset, results_dir=Path("/r"))
+
+
 def test_dry_run_does_not_create_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

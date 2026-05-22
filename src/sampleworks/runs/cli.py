@@ -46,7 +46,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     results_dir = Path(args.results_dir or _default_results_dir(preset))
-    return runner.run(preset, results_dir=results_dir, dry_run=args.dry_run)
+    try:
+        return runner.run(preset, results_dir=results_dir, dry_run=args.dry_run)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 def _build_parser() -> argparse.ArgumentParser:

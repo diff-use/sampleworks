@@ -154,22 +154,33 @@ Instructions for running evaluation and metrics scripts are coming soon.
 
 ## ACTL preset experiments (`run_experiments`)
 
-Use ACTL to get a ready-to-run pod with baked pixi environments, checkpoints,
-and the shared data PVC:
+Use ACTL to get one 8-GPU pod with baked pixi environments, checkpoints, the
+shared data PVC, and your local checkout synced to `/home/dev/workspace`:
 
 ```bash
-actl pod up sampleworks-pr236 --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:latest --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks-pr240 --fresh --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:latest --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
-ACTL syncs your local checkout to `/home/dev/workspace`; interactive shells land
-there. Run experiments from that synced checkout, not from `/app`:
+Keep that `actl pod up` terminal open so sync/SSH stays alive. In another
+terminal, copy the `ssh:` line from `actl pod status sampleworks-pr240`, then:
 
 ```bash
+ssh workspace.actl-ws-<user>-sampleworks-pr240.devspace
+cd /home/dev/workspace
 run_experiments --dry-run
 run_experiments all_models
 ```
 
-`run_experiments` is a thin wrapper around `sampleworks-runs`: it reads TOML presets and launches the requested `run_grid_search.py` jobs in parallel, with `CUDA_VISIBLE_DEVICES` set per job. The default preset is `all_models`, which splits GPUs across Boltz2 XRD, Boltz2 MD, RF3, and Protenix.
+`run_experiments` is the entrypoint. It uses the synced source tree from
+`/home/dev/workspace`, but runs the baked interpreters from
+`/app/.pixi/envs/{boltz,protenix,rf3}/bin/python` directly. It should not run
+`pixi install` or pull packages at runtime; if an env is missing, recreate the
+pod with the current `pixi-with-checkpoints` image.
+
+`run_experiments` reads TOML presets and launches the requested
+`run_grid_search.py` jobs in parallel, with `CUDA_VISIBLE_DEVICES` set per job.
+The default preset is `all_models`, which splits GPUs across Boltz2 XRD, Boltz2
+MD, RF3, and Protenix.
 
 Presets live in the synced repo at `src/sampleworks/runs/presets/*.toml`. To change an experiment, either edit/copy a preset locally and let ACTL sync it, or override values at launch:
 

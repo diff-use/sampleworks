@@ -110,6 +110,7 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 # Do not let sampleworks.runs.runner call `pixi run` just to "prepare" envs;
 # that can reinstall the CUDA stack inside the pod, especially when the synced
 # workspace source is older than this wrapper.
+export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI="${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-1}"
 export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-1}"
 
 shared_checkpoint_dir="/mnt/diffuse-shared/raw/checkpoints"
@@ -204,14 +205,16 @@ if [[ -x "$runner_python" ]]; then
         "$@"
 fi
 
-if [[ "${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-}" =~ ^(1|true|yes)$ ]]; then
+if [[ ! "${SAMPLEWORKS_ALLOW_RUNTIME_PIXI:-}" =~ ^(1|true|yes)$ ]]; then
     cat >&2 <<EOF
-Prebuilt pixi environment is missing: $runner_python
+Prebuilt runner pixi environment is missing: $runner_python
 
-This image is supposed to contain ready-to-use pixi environments under /app/.pixi.
-Refusing to run 'pixi run' because that would reinstall CUDA packages inside the pod.
-Use a rebuilt pixi-with-checkpoints image or unset SAMPLEWORKS_REQUIRE_PREBUILT_PIXI
-if you intentionally want runtime pixi installation.
+run_experiments is for the ACTL pixi-with-checkpoints image, which must contain
+ready-to-use environments under /app/.pixi. Refusing to run 'pixi run' because
+that would install or refresh packages inside the pod.
+
+Recreate the pod with the current pixi-with-checkpoints image. If you are
+intentionally debugging runtime pixi setup, set SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1.
 EOF
     exit 2
 fi
