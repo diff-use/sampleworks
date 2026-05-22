@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ACTL-native entry point for Sampleworks preset runs.
 #
-# The TOML preset is the source of truth. This wrapper only supplies smooth
-# pod defaults: persistent /mnt paths, the synced PR source tree on PYTHONPATH,
-# and direct use of the prebuilt pixi environments from the image at /app.
+# The TOML preset is the source of truth. This wrapper uses the synced ACTL
+# checkout at /home/dev/workspace for Sampleworks code, while reusing the
+# prebuilt pixi environments/checkpoints from the image at /app.
 
 set -euo pipefail
 
@@ -18,7 +18,56 @@ while [[ -L "$script_path" ]]; do
     fi
 done
 script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
-repo_root="${SAMPLEWORKS_APP_DIR:-$script_dir}"
+
+is_sampleworks_root() {
+    local candidate="$1"
+    [[ -f "$candidate/pyproject.toml" && -d "$candidate/src/sampleworks" && -f "$candidate/run_grid_search.py" ]]
+}
+
+find_sampleworks_root_upwards() {
+    local candidate="$1"
+    while [[ -n "$candidate" && "$candidate" != "/" ]]; do
+        if is_sampleworks_root "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+        candidate="$(dirname -- "$candidate")"
+    done
+    return 1
+}
+
+resolve_repo_root() {
+    local override="${SAMPLEWORKS_SOURCE_DIR:-${SAMPLEWORKS_APP_DIR:-}}"
+    if [[ -n "$override" ]]; then
+        printf '%s\n' "$override"
+        return 0
+    fi
+
+    # ACTL syncs the user's local checkout here. Prefer it over any stale code
+    # that may have been used only to build the image's pixi environments.
+    if is_sampleworks_root "/home/dev/workspace"; then
+        printf '%s\n' "/home/dev/workspace"
+        return 0
+    fi
+
+    find_sampleworks_root_upwards "$PWD" && return 0
+
+    if is_sampleworks_root "$script_dir"; then
+        printf '%s\n' "$script_dir"
+        return 0
+    fi
+
+    cat >&2 <<'EOF'
+Could not find the synced Sampleworks checkout.
+
+Expected ACTL to sync the repo to /home/dev/workspace. If you are using a
+custom layout, set SAMPLEWORKS_SOURCE_DIR=/path/to/sampleworks before running
+run_experiments.
+EOF
+    return 2
+}
+
+repo_root="$(resolve_repo_root)"
 
 preset="${SAMPLEWORKS_PRESET:-all_models}"
 if [[ $# -gt 0 && "$1" != -* ]]; then
@@ -102,7 +151,7 @@ Sampleworks input dataset was not found.
 
 Expected: $source_proteins_csv
 
-On an ACTL sampleworks pod, make sure the diffuse-shared PVC is mounted at
+On an ACTL Sampleworks pod, make sure the diffuse-shared PVC is mounted at
 /mnt/diffuse-shared, or override the dataset path, for example:
 
   DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/<dataset> ./run_experiments

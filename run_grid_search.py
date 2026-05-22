@@ -69,7 +69,28 @@ def get_job_status(job: JobConfig) -> str:
 def detect_gpus() -> list[str]:
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if cuda_visible:
-        return [g.strip() for g in cuda_visible.split(",") if g.strip()]
+        gpus = [g.strip() for g in cuda_visible.split(",") if g.strip()]
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                visible = [
+                    g.strip() for g in result.stdout.strip().split("\n") if g.strip()
+                ]
+                if all(g.isdigit() for g in gpus + visible):
+                    missing = sorted(set(gpus).difference(visible), key=int)
+                    if missing:
+                        raise ValueError(
+                            "CUDA_VISIBLE_DEVICES references GPUs that are not visible "
+                            f"in this container: {missing}. Visible GPUs: {visible}. "
+                            "Check the preset jobs.*.gpus values for this pod size."
+                        )
+        except FileNotFoundError:
+            pass
+        return gpus
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],

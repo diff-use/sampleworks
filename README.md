@@ -154,13 +154,15 @@ Instructions for running evaluation and metrics scripts are coming soon.
 
 ## ACTL preset experiments (`run_experiments`)
 
-Use ACTL to get a ready-to-run Sampleworks pod with 8 GPUs and the shared data PVC:
+Use ACTL to get a ready-to-run pod with baked pixi environments, checkpoints,
+and the shared data PVC:
 
 ```bash
-actl pod up sampleworks-pr236 --profile 8x --image sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks-pr236 --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:cuda12.4-2026-05-21-pr240-workspace1 --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
-Inside the pod shell (`/app`), run:
+ACTL syncs your local checkout to `/home/dev/workspace`; interactive shells land
+there. Run experiments from that synced checkout, not from `/app`:
 
 ```bash
 run_experiments --dry-run
@@ -169,12 +171,15 @@ run_experiments all_models
 
 `run_experiments` is a thin wrapper around `sampleworks-runs`: it reads TOML presets and launches the requested `run_grid_search.py` jobs in parallel, with `CUDA_VISIBLE_DEVICES` set per job. The default preset is `all_models`, which splits GPUs across Boltz2 XRD, Boltz2 MD, RF3, and Protenix.
 
-Presets live in `/app/src/sampleworks/runs/presets/*.toml` (same path in the repo: `src/sampleworks/runs/presets/`). To change an experiment, either edit/copy a preset or override values at launch:
+Presets live in the synced repo at `src/sampleworks/runs/presets/*.toml`. To change an experiment, either edit/copy a preset locally and let ACTL sync it, or override values at launch:
 
 ```bash
 run_experiments all_models --only rf3,protenix
 run_experiments rf3_partial --set jobs.rf3.gpus=0
 ```
+
+On smaller pods, make sure preset GPU IDs only reference visible pod GPUs
+(`0..N-1`). `run_experiments` fails fast if a preset requests unavailable GPUs.
 
 The shared inputs are under `/mnt/diffuse-shared/raw/sampleworks/...`; checkpoints are in `/mnt/diffuse-shared/raw/checkpoints`; default results go to `/mnt/diffuse-shared/results/sampleworks/<pod>/<preset>/`; MSA caches go to `/mnt/diffuse-shared/cache/sampleworks/msa`. Set `DATA_DIR`, `RESULTS_DIR`, or `MSA_CACHE_DIR` before running to change these locations. `run_all_models.sh` remains as a compatibility alias.
 

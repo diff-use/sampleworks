@@ -5,7 +5,7 @@
 # Checkpoints are baked into the image at /checkpoints/ via a pre-built base image.
 #
 # Build:
-#   docker build -t sampleworks .
+#   docker build -t pixi-with-checkpoints .
 #
 # CI builds pull checkpoints automatically from Harbor via:
 #   COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest
@@ -16,10 +16,10 @@
 #
 # Run examples:
 #   # Show help
-#   docker run sampleworks --help
+#   docker run pixi-with-checkpoints --help
 #
 #   # Run grid search with Boltz1 (checkpoint baked in)
-#   docker run --gpus all -v /data:/data sampleworks \
+#   docker run --gpus all -v /data:/data pixi-with-checkpoints \
 #     -e boltz run_grid_search.py \
 #     --proteins /data/proteins.csv \
 #     --models boltz1 \
@@ -33,7 +33,7 @@
 #     --align-to-input
 #
 #   # Run grid search with Boltz2 (checkpoint baked in)
-#   docker run --gpus all -v /data:/data sampleworks \
+#   docker run --gpus all -v /data:/data pixi-with-checkpoints \
 #     -e boltz run_grid_search.py \
 #     --proteins /data/proteins.csv \
 #     --models boltz2 \
@@ -45,7 +45,7 @@
 #     --use-tweedie
 #
 #   # Interactive shell
-#   docker run --gpus all -it sampleworks bash
+#   docker run --gpus all -it pixi-with-checkpoints bash
 #
 # Baked-in checkpoints (from diffuseproject/sampleworks-checkpoints:latest):
 #   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model (~3.5GB)
@@ -129,13 +129,16 @@ RUN pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
 
-COPY run_experiments run_experiments.sh run_all_models.sh ./
-RUN chmod +x /app/run_experiments /app/run_experiments.sh /app/run_all_models.sh \
-    && printf '#!/usr/bin/env bash\nexec /app/run_experiments "$@"\n' > /usr/local/bin/run_experiments \
-    && printf '#!/usr/bin/env bash\nexec /app/run_experiments.sh "$@"\n' > /usr/local/bin/run_experiments.sh \
-    && printf '#!/usr/bin/env bash\nexec /app/run_all_models.sh "$@"\n' > /usr/local/bin/run_all_models.sh \
-    && chmod +x /usr/local/bin/run_experiments /usr/local/bin/run_experiments.sh /usr/local/bin/run_all_models.sh \
-    && printf '\n# ACTL scientist workflow: land in the baked Sampleworks app.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /app ]; then\n    cd /app\nfi\n' >> /root/.bashrc
+# This image carries pixi environments and checkpoints. Runtime source should
+# come from ACTL's synced checkout at /home/dev/workspace, not from stale code
+# baked into /app during image construction.
+RUN rm -rf /app/src /app/scripts /app/run_grid_search.py \
+    && mkdir -p /home/dev/workspace
+
+COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh /usr/local/bin/
+RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' >> /root/.bashrc
+
+ENV SAMPLEWORKS_PIXI_PROJECT_DIR=/app
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \

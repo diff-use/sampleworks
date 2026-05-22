@@ -116,6 +116,43 @@ def test_grid_search_script_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -
     ]
 
 
+def test_gpu_validation_rejects_unavailable_gpu_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preset for 8 GPUs should fail clearly on a smaller pod."""
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0", "1", "2", "3"])
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        "[shared_args]\n"
+        '[[jobs]]\nname = "ok"\nenv = "rf3"\ngpus = "0,1"\noutput_subdir = "ok"\n'
+        '[[jobs]]\nname = "bad"\nenv = "rf3"\ngpus = "4,5"\noutput_subdir = "bad"\n'
+    )
+    preset = loader.load_preset(str(custom))
+    invocations = runner.build_invocations(preset, results_dir=tmp_path / "results")
+
+    with pytest.raises(RuntimeError, match="not visible"):
+        runner._validate_gpu_assignments(invocations)
+
+
+def test_gpu_validation_rejects_duplicate_gpu_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accidental GPU oversubscription is caught before jobs launch."""
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0", "1"])
+    monkeypatch.delenv("SAMPLEWORKS_ALLOW_GPU_OVERSUBSCRIPTION", raising=False)
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        "[shared_args]\n"
+        '[[jobs]]\nname = "a"\nenv = "rf3"\ngpus = "0"\noutput_subdir = "a"\n'
+        '[[jobs]]\nname = "b"\nenv = "rf3"\ngpus = "0"\noutput_subdir = "b"\n'
+    )
+    preset = loader.load_preset(str(custom))
+    invocations = runner.build_invocations(preset, results_dir=tmp_path / "results")
+
+    with pytest.raises(RuntimeError, match="same GPU"):
+        runner._validate_gpu_assignments(invocations)
+
+
 def test_uses_baked_env_python_when_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

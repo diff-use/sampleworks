@@ -16,6 +16,7 @@ from .schema import Job, Preset
 
 
 DEFAULT_GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
+WORKSPACE_GRID_SEARCH_SCRIPT = "/home/dev/workspace/run_grid_search.py"
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,128 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
     return invocations
 
 
+def _split_gpu_list(value: str) -> list[str]:
+    """Split a comma-separated GPU assignment into normalized tokens.
+
+    Parameters
+    ----------
+    value : str
+        GPU assignment string such as ``"0,1"``.
+
+    Returns
+    -------
+    list of str
+        Non-empty stripped GPU tokens.
+    """
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _all_integer_tokens(values: list[str]) -> bool:
+    """Return True when every GPU token is a CUDA ordinal.
+
+    Parameters
+    ----------
+    values : list of str
+        GPU tokens to inspect.
+
+    Returns
+    -------
+    bool
+        True if all tokens are non-negative integer strings.
+    """
+    return all(value.isdigit() for value in values)
+
+
+def _detect_available_gpus() -> list[str]:
+    """Return GPU ordinals visible to the runner process.
+
+    Returns
+    -------
+    list of str
+        Visible GPU identifiers, or an empty list when GPU discovery is not
+        available. Empty means validation should be skipped.
+    """
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if cuda_visible and cuda_visible.lower() not in {
+        "all",
+        "none",
+        "void",
+        "nodevfiles",
+    }:
+        return _split_gpu_list(cuda_visible)
+
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return []
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
+    """Fail fast when a preset asks for GPUs not present in this pod.
+
+    Parameters
+    ----------
+    invocations : list of JobInvocation
+        Jobs whose ``CUDA_VISIBLE_DEVICES`` assignments should be checked.
+
+    Raises
+    ------
+    RuntimeError
+        If numeric preset assignments reference unavailable visible GPU IDs,
+        or if multiple jobs claim the same GPU without opting into
+        oversubscription.
+    """
+    available = _detect_available_gpus()
+    if not available:
+        return
+
+    requested: dict[str, list[str]] = {}
+    for inv in invocations:
+        for gpu in _split_gpu_list(inv.job.gpus):
+            requested.setdefault(gpu, []).append(inv.job.name)
+
+    requested_tokens = list(requested)
+    if not _all_integer_tokens(available) or not _all_integer_tokens(requested_tokens):
+        return
+
+    available_set = set(available)
+    unavailable = {
+        gpu: names for gpu, names in requested.items() if gpu not in available_set
+    }
+    if unavailable:
+        details = ", ".join(
+            f"GPU {gpu} requested by {', '.join(names)}"
+            for gpu, names in sorted(unavailable.items())
+        )
+        raise RuntimeError(
+            "Preset requests GPUs that are not visible in this pod. "
+            f"Visible GPUs: {', '.join(available)}. {details}. "
+            "Edit the preset's jobs.*.gpus values or run a smaller --only subset."
+        )
+
+    allow_oversubscription = os.environ.get(
+        "SAMPLEWORKS_ALLOW_GPU_OVERSUBSCRIPTION", ""
+    ).lower() in {"1", "true", "yes"}
+    duplicates = {gpu: names for gpu, names in requested.items() if len(names) > 1}
+    if duplicates and not allow_oversubscription:
+        details = ", ".join(
+            f"GPU {gpu} requested by {', '.join(names)}"
+            for gpu, names in sorted(duplicates.items())
+        )
+        raise RuntimeError(
+            "Preset assigns the same GPU to multiple jobs. "
+            f"{details}. Set SAMPLEWORKS_ALLOW_GPU_OVERSUBSCRIPTION=1 to allow this."
+        )
+
+
 def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
     """Assemble the ``pixi run`` argv list for one job's args dict.
 
@@ -115,7 +238,7 @@ def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
 def _pixi_env_python(pixi_env: str) -> str | None:
     """Return the direct Python binary for a baked pixi environment when available.
 
-    The sampleworks ACTL image already contains fully-installed environments at
+    The ACTL pixi/checkpoint image already contains fully-installed environments at
     ``/app/.pixi/envs/<env>``. Calling those Python binaries directly avoids
     ``pixi run`` trying to refresh Git/PyPI caches on shared pod storage.
 
@@ -179,8 +302,8 @@ def _pixi_project_dir() -> Path:
     Returns
     -------
     Path
-        Project directory, defaulting to ``/app`` for the sampleworks image or
-        the current working directory outside that image.
+        Project directory, defaulting to ``/app`` for the ACTL pixi/checkpoint
+        image or the current working directory outside that image.
     """
     override = os.environ.get("SAMPLEWORKS_PIXI_PROJECT_DIR")
     if override:
@@ -194,17 +317,22 @@ def _pixi_project_dir() -> Path:
 def _grid_search_script() -> str:
     """Return the ``run_grid_search.py`` path used by worker jobs.
 
-    Resolution is intentionally simple for the ACTL sampleworks image: the
-    baked image keeps a stable copy at :data:`DEFAULT_GRID_SEARCH_SCRIPT`, while
-    synced PR worktrees can point the runner at their checkout with
-    ``SAMPLEWORKS_GRID_SEARCH_SCRIPT=/home/dev/workspace/run_grid_search.py``.
+    Prefer the synced ACTL checkout when it exists; otherwise fall back to the
+    historical baked ``/app`` path or an explicit
+    ``SAMPLEWORKS_GRID_SEARCH_SCRIPT``.
 
     Returns
     -------
     str
         Path to execute with ``python`` inside each pixi environment.
     """
-    return os.environ.get("SAMPLEWORKS_GRID_SEARCH_SCRIPT", DEFAULT_GRID_SEARCH_SCRIPT)
+    override = os.environ.get("SAMPLEWORKS_GRID_SEARCH_SCRIPT")
+    if override:
+        return override
+    workspace_script = Path(WORKSPACE_GRID_SEARCH_SCRIPT)
+    if workspace_script.exists():
+        return str(workspace_script)
+    return DEFAULT_GRID_SEARCH_SCRIPT
 
 
 def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
@@ -230,6 +358,7 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
     """
     results_dir.mkdir(parents=True, exist_ok=True)
     invocations = build_invocations(preset, results_dir=results_dir)
+    _validate_gpu_assignments(invocations)
 
     if dry_run:
         for inv in invocations:
