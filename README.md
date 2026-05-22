@@ -158,7 +158,7 @@ Use ACTL to get a ready-to-run pod with baked pixi environments, checkpoints,
 and the shared data PVC:
 
 ```bash
-actl pod up sampleworks-pr236 --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:cuda12.4-2026-05-21-pr240-workspace1 --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks-pr236 --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:latest --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
 ACTL syncs your local checkout to `/home/dev/workspace`; interactive shells land
