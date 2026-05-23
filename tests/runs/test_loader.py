@@ -8,7 +8,7 @@ import pytest
 from sampleworks.runs import loader
 
 
-BUNDLED = ["all_models", "rf3_partial", "rf3_partial_chiral_off", "protenix_dual", "rf3_protenix"]
+BUNDLED = ["full_8gpu", "rf3_partial", "rf3_partial_chiral_off", "protenix_dual", "rf3_protenix"]
 
 
 def test_list_bundled_presets_returns_the_five() -> None:
@@ -43,11 +43,11 @@ def test_defaults_used_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     assert preset.defaults["DATA_DIR"] == "/data/inputs"
 
 
-def test_all_models_uses_canonical_inputs_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_full_8gpu_uses_canonical_inputs_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     """The flagship preset must use /data/inputs, matching the ACTL wrapper."""
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("all_models")
+    preset = loader.load_preset("full_8gpu")
     assert preset.defaults["DATA_DIR"] == "/data/inputs"
     assert preset.shared_args["proteins"] == "/data/inputs/proteins.csv"
 
@@ -62,13 +62,13 @@ def test_set_override_at_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_set_override_at_job_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("all_models", overrides=["jobs.rf3.gpus=7"])
+    preset = loader.load_preset("full_8gpu", overrides=["jobs.rf3.gpus=7"])
     assert preset.job("rf3").gpus == "7"
 
 
 def test_set_override_at_job_by_index(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("all_models", overrides=["jobs.0.gpus=9"])
+    preset = loader.load_preset("full_8gpu", overrides=["jobs.0.gpus=9"])
     assert preset.jobs[0].gpus == "9"
 
 

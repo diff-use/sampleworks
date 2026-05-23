@@ -80,27 +80,92 @@ EOF
 
 repo_root="$(resolve_repo_root)"
 
-preset="${SAMPLEWORKS_PRESET:-all_models}"
-if [[ $# -gt 0 && "$1" != -* ]]; then
-    preset="$1"
-    shift
-fi
+env_preset="${SAMPLEWORKS_PRESET:-}"
+default_target="${env_preset:-full_8gpu}"
+target=""
+explicit_preset=""
+explicit_jobs=""
+explicit_results_dir=""
+expect_value_for=""
+for arg in "$@"; do
+    if [[ -n "$expect_value_for" ]]; then
+        case "$expect_value_for" in
+            preset)
+                explicit_preset="$arg"
+                ;;
+            results-dir)
+                explicit_results_dir="$arg"
+                ;;
+            jobs)
+                explicit_jobs="$arg"
+                ;;
+        esac
+        expect_value_for=""
+        continue
+    fi
 
-if [[ "$preset" == *.toml || "$preset" == */* ]]; then
-    if [[ "$preset" != /* ]]; then
-        preset="$repo_root/$preset"
+    case "$arg" in
+        --preset)
+            expect_value_for="preset"
+            ;;
+        --preset=*)
+            explicit_preset="${arg#--preset=}"
+            ;;
+        --results-dir)
+            expect_value_for="results-dir"
+            ;;
+        --results-dir=*)
+            explicit_results_dir="${arg#--results-dir=}"
+            ;;
+        --jobs)
+            expect_value_for="jobs"
+            ;;
+        --jobs=*)
+            explicit_jobs="${arg#--jobs=}"
+            ;;
+        -*)
+            ;;
+        *)
+            if [[ -z "$target" ]]; then
+                target="$arg"
+            fi
+            ;;
+    esac
+done
+
+label_source="$default_target"
+if [[ -n "$explicit_preset" ]]; then
+    label_source="$explicit_preset"
+elif [[ -n "$explicit_jobs" && ( -z "$target" || "$target" == "all" || "$target" == "full" || "$target" == "full_8gpu" ) ]]; then
+    label_source="$explicit_jobs"
+elif [[ -n "$target" ]]; then
+    label_source="$target"
+fi
+case "$label_source" in
+    all|full)
+        label_source="full_8gpu"
+        ;;
+esac
+if [[ "$label_source" == *.toml || "$label_source" == */* ]]; then
+    if [[ "$label_source" != /* ]]; then
+        label_source="$repo_root/$label_source"
     fi
 fi
-preset_label="${preset##*/}"
-preset_label="${preset_label%.toml}"
+run_label="${label_source##*/}"
+run_label="${run_label%.toml}"
+run_label="${run_label//,/_}"
 
 run_name="${SAMPLEWORKS_ACTL_RUN_NAME:-$(hostname -s 2>/dev/null || printf 'sampleworks')}"
 default_data_dir="/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps"
-default_results_dir="/mnt/diffuse-shared/results/sampleworks/${run_name}/${preset_label}"
+default_results_dir="/mnt/diffuse-shared/results/sampleworks/${run_name}/${run_label}"
 default_msa_cache_dir="/mnt/diffuse-shared/cache/sampleworks/msa"
 
 export DATA_DIR="${DATA_DIR:-${SAMPLEWORKS_DATA_DIR:-$default_data_dir}}"
-export RESULTS_DIR="${RESULTS_DIR:-${SAMPLEWORKS_RESULTS_DIR:-$default_results_dir}}"
+if [[ -n "$explicit_results_dir" ]]; then
+    export RESULTS_DIR="$explicit_results_dir"
+else
+    export RESULTS_DIR="${RESULTS_DIR:-${SAMPLEWORKS_RESULTS_DIR:-$default_results_dir}}"
+fi
 export MSA_CACHE_DIR="${MSA_CACHE_DIR:-${SAMPLEWORKS_MSA_CACHE_DIR:-$default_msa_cache_dir}}"
 export SAMPLEWORKS_GRID_SEARCH_SCRIPT="${SAMPLEWORKS_GRID_SEARCH_SCRIPT:-$repo_root/run_grid_search.py}"
 export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -152,6 +217,16 @@ if [[ -z "$pixi_project_dir" ]]; then
 fi
 runner_python="${SAMPLEWORKS_RUNNER_PYTHON:-$pixi_project_dir/.pixi/envs/$runner_env/bin/python}"
 
+extra_cli_args=()
+if [[ $# -eq 0 && -n "$env_preset" ]]; then
+    extra_cli_args=(--preset "$env_preset")
+fi
+
+display_target="${target:-${explicit_preset:-$default_target}}"
+if [[ -n "$explicit_jobs" ]]; then
+    display_target="$display_target --jobs $explicit_jobs"
+fi
+
 needs_runtime_paths=1
 for arg in "$@"; do
     case "$arg" in
@@ -181,7 +256,7 @@ fi
 
 cat >&2 <<EOF
 Sampleworks preset run
-  preset:        $preset
+  target:        $display_target
   data:          $DATA_DIR
   results:       $RESULTS_DIR
   msa cache:     $MSA_CACHE_DIR
@@ -192,15 +267,20 @@ Sampleworks preset run
 
 EOF
 
-cd "$pixi_project_dir"
 if [[ -x "$runner_python" ]]; then
     runner_env_dir="$(cd -- "$(dirname -- "$runner_python")/.." && pwd)"
     export PATH="$runner_env_dir/bin${PATH:+:$PATH}"
     export CONDA_PREFIX="$runner_env_dir"
     export CUDA_HOME="${CUDA_HOME:-$runner_env_dir}"
     export PYTHONNOUSERSITE=1
+    cd "$repo_root"
+    if [[ "${#extra_cli_args[@]}" -gt 0 ]]; then
+        exec "$runner_python" -m sampleworks.runs.cli \
+            --results-dir "$RESULTS_DIR" \
+            "${extra_cli_args[@]}" \
+            "$@"
+    fi
     exec "$runner_python" -m sampleworks.runs.cli \
-        "$preset" \
         --results-dir "$RESULTS_DIR" \
         "$@"
 fi
@@ -219,7 +299,13 @@ EOF
     exit 2
 fi
 
+cd "$pixi_project_dir"
+if [[ "${#extra_cli_args[@]}" -gt 0 ]]; then
+    exec pixi run -e "$runner_env" python -m sampleworks.runs.cli \
+        --results-dir "$RESULTS_DIR" \
+        "${extra_cli_args[@]}" \
+        "$@"
+fi
 exec pixi run -e "$runner_env" python -m sampleworks.runs.cli \
-    "$preset" \
     --results-dir "$RESULTS_DIR" \
     "$@"

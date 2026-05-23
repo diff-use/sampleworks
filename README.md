@@ -168,7 +168,8 @@ terminal, copy the `ssh:` line from `actl pod status sampleworks-pr240`, then:
 ssh workspace.actl-ws-<user>-sampleworks-pr240.devspace
 cd /home/dev/workspace
 run_experiments --dry-run
-run_experiments all_models
+run_experiments
+run_experiments rf3
 ```
 
 `run_experiments` is the entrypoint. It uses the synced source tree from
@@ -179,20 +180,21 @@ pod with the current `pixi-with-checkpoints` image.
 
 `run_experiments` reads TOML presets and launches the requested
 `run_grid_search.py` jobs in parallel, with `CUDA_VISIBLE_DEVICES` set per job.
-The default preset is `all_models`, which splits GPUs across Boltz2 XRD, Boltz2
-MD, RF3, and Protenix.
+The default preset is `full_8gpu`, which splits GPUs across Boltz2 XRD, Boltz2
+MD, RF3, and Protenix. A positional target like `rf3` or `rf3,protenix` runs
+those jobs from `full_8gpu`; use `--preset rf3_partial` for a specific preset.
 
 Presets live in the synced repo at `src/sampleworks/runs/presets/*.toml`. To change an experiment, either edit/copy a preset locally and let ACTL sync it, or override values at launch:
 
 ```bash
-run_experiments all_models --only rf3,protenix
-run_experiments rf3_partial --set jobs.rf3.gpus=0
+run_experiments rf3,protenix
+run_experiments --preset rf3_partial --set jobs.rf3.gpus=0
 ```
 
 On smaller pods, make sure preset GPU IDs only reference visible pod GPUs
 (`0..N-1`). `run_experiments` fails fast if a preset requests unavailable GPUs.
 
-The shared inputs are under `/mnt/diffuse-shared/raw/sampleworks/...`; checkpoints are in `/mnt/diffuse-shared/raw/checkpoints`; default results go to `/mnt/diffuse-shared/results/sampleworks/<pod>/<preset>/`; MSA caches go to `/mnt/diffuse-shared/cache/sampleworks/msa`. Set `DATA_DIR`, `RESULTS_DIR`, or `MSA_CACHE_DIR` before running to change these locations. `run_all_models.sh` remains as a compatibility alias.
+The shared inputs are under `/mnt/diffuse-shared/raw/sampleworks/...`; checkpoints are in `/mnt/diffuse-shared/raw/checkpoints`; default results go to `/mnt/diffuse-shared/results/sampleworks/<pod>/<target>/`; MSA caches go to `/mnt/diffuse-shared/cache/sampleworks/msa`. Set `DATA_DIR`, `RESULTS_DIR`, or `MSA_CACHE_DIR` before running to change these locations.
 
 
 ## Docker

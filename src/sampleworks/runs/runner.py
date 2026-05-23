@@ -28,7 +28,8 @@ class JobInvocation:
     job : Job
         Originating :class:`Job` (kept for introspection in logs).
     argv : list of str
-        Subprocess command line (starts with ``pixi run -e <env> python ...``).
+        Subprocess command line, preferably the baked pixi env Python followed
+        by ``run_grid_search.py``.
     env : dict of str to str
         Process environment, including ``CUDA_VISIBLE_DEVICES``.
     log_path : Path
@@ -182,7 +183,7 @@ def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
         raise RuntimeError(
             "Preset requests GPUs that are not visible in this pod. "
             f"Visible GPUs: {', '.join(available)}. {details}. "
-            "Edit the preset's jobs.*.gpus values or run a smaller --only subset."
+            "Edit the preset's jobs.*.gpus values or run a smaller --jobs subset."
         )
 
     allow_oversubscription = os.environ.get(

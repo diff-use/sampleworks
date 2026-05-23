@@ -11,6 +11,10 @@ from . import loader, runner
 from .schema import Preset
 
 
+DEFAULT_PRESET = "full_8gpu"
+DEFAULT_PRESET_ALIASES = frozenset({"all", "full", "full_8gpu"})
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``sampleworks-runs`` console script.
 
@@ -34,12 +38,10 @@ def main(argv: list[str] | None = None) -> int:
             print(name)
         return 0
 
-    if args.preset is None:
-        parser.error("PRESET is required (or pass --list)")
-
-    preset = loader.load_preset(args.preset, overrides=args.set)
-    if args.only:
-        preset = _filter_only(preset, args.only)
+    preset_name, job_filter = _resolve_target(args.target, args.preset, args.jobs, parser)
+    preset = loader.load_preset(preset_name, overrides=args.set)
+    if job_filter:
+        preset = _filter_jobs(preset, job_filter)
 
     if args.show:
         _print_show(preset)
@@ -64,23 +66,35 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sampleworks-runs",
         description=(
-            "Run a preset of parallel run_grid_search.py jobs. "
-            "Presets are TOML files bundled under sampleworks.runs.presets, "
-            "or pass a path to a .toml file directly."
+            "Run Sampleworks experiment presets. With no target, runs the "
+            "full_8gpu preset. A target like 'rf3' or 'rf3,protenix' is a "
+            "job shortcut from full_8gpu; use --preset for another TOML preset."
         ),
     )
-    parser.add_argument("preset", nargs="?", help="Bundled preset name or path to a .toml file")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help=(
+            "Job shortcut from full_8gpu (rf3, protenix, boltz2_xrd, "
+            "boltz2_md, or comma-separated), or 'full'/'full_8gpu'."
+        ),
+    )
+    parser.add_argument(
+        "--preset",
+        default="",
+        help="Bundled preset name or path to a .toml file. Default: full_8gpu.",
+    )
     parser.add_argument("--list", action="store_true", help="List bundled presets and exit")
     parser.add_argument("--show", action="store_true", help="Print the resolved preset and exit")
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the pixi run commands instead of executing them",
+        help="Print the resolved job commands instead of executing them",
     )
     parser.add_argument(
-        "--only",
+        "--jobs",
         default="",
-        help="Comma-separated job names to run (subset). Default: all jobs.",
+        help="Comma-separated job names to run from the selected preset. Default: all jobs.",
     )
     parser.add_argument(
         "--set",
@@ -102,14 +116,58 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _filter_only(preset: Preset, only: str) -> Preset:
+def _resolve_target(
+    target: str | None,
+    preset: str,
+    jobs: str,
+    parser: argparse.ArgumentParser,
+) -> tuple[str, str]:
+    """Resolve the user-facing target grammar into preset plus job filter.
+
+    Parameters
+    ----------
+    target : str or None
+        Optional positional target. Without ``--preset`` this is either a
+        default preset alias (``full``/``full_8gpu``/``all``) or a job selector
+        from :data:`DEFAULT_PRESET`. With ``--preset`` it is a shorthand job
+        selector for that explicit preset.
+    preset : str
+        Explicit preset name/path from ``--preset``.
+    jobs : str
+        Explicit comma-separated job selector from ``--jobs``.
+    parser : argparse.ArgumentParser
+        Parser used to report grammar errors.
+
+    Returns
+    -------
+    tuple of str, str
+        ``(preset_name_or_path, comma_separated_job_filter)``.
+    """
+    if preset:
+        if target and jobs:
+            parser.error("pass jobs either as the positional target or with --jobs, not both")
+        return preset, jobs or target or ""
+
+    if target is None or target in DEFAULT_PRESET_ALIASES:
+        return DEFAULT_PRESET, jobs
+
+    if jobs:
+        parser.error("pass jobs either as the positional target or with --jobs, not both")
+
+    if target.endswith(".toml") or "/" in target:
+        parser.error("pass custom preset paths with --preset path/to/preset.toml")
+
+    return DEFAULT_PRESET, target
+
+
+def _filter_jobs(preset: Preset, jobs: str) -> Preset:
     """Return a new :class:`Preset` containing only the named jobs.
 
     Parameters
     ----------
     preset : Preset
         Source preset.
-    only : str
+    jobs : str
         Comma-separated list of job names to keep.
 
     Returns
@@ -121,16 +179,18 @@ def _filter_only(preset: Preset, only: str) -> Preset:
     Raises
     ------
     SystemExit
-        If any name in ``only`` does not match a job in ``preset``.
+        If any name in ``jobs`` does not match a job in ``preset``.
     """
-    names = [n.strip() for n in only.split(",") if n.strip()]
+    names = [n.strip() for n in jobs.split(",") if n.strip()]
     keep = [j for j in preset.jobs if j.name in names]
     missing = set(names) - {j.name for j in keep}
     if missing:
-        raise SystemExit(f"--only references unknown jobs: {sorted(missing)}")
+        raise SystemExit(f"job selector references unknown jobs: {sorted(missing)}")
+    description = f"Subset of {preset.name}: {', '.join(names)}"
+    name = f"{preset.name}:{','.join(names)}"
     return Preset(
-        name=preset.name,
-        description=preset.description,
+        name=name,
+        description=description,
         defaults=preset.defaults,
         shared_args=preset.shared_args,
         jobs=keep,

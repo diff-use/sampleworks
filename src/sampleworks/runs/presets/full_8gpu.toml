@@ -1,8 +1,8 @@
-description = "Run all 4 model grid searches in parallel across 8 GPUs (boltz2 X-ray, boltz2 MD, RF3, Protenix)."
+description = "Full 8-GPU panel: Boltz2 X-ray, Boltz2 MD, RF3, and Protenix."
 
 [defaults]
 DATA_DIR = "/data/inputs"
-RESULTS_DIR = "/data/results/all_models"
+RESULTS_DIR = "/data/results/full_8gpu"
 MSA_CACHE_DIR = "/root/.sampleworks"
 PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
 

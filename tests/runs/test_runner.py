@@ -64,11 +64,11 @@ def test_explicit_output_dir_in_args_wins_over_subdir_default(
     assert pairs["--output-dir"] == "/explicit/path"
 
 
-def test_all_models_has_four_jobs_with_distinct_gpus(
+def test_full_8gpu_has_four_jobs_with_distinct_gpus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("all_models")
+    preset = loader.load_preset("full_8gpu")
     invocations = runner.build_invocations(preset, results_dir=Path("/r"))
     assert [i.job.name for i in invocations] == ["boltz2_xrd", "boltz2_md", "rf3", "protenix"]
     gpu_assignments = [i.env["CUDA_VISIBLE_DEVICES"] for i in invocations]
