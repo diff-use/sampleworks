@@ -445,6 +445,7 @@ def _expand(text: str, env: dict[str, str]) -> str:
     """
 
     def repl(match: re.Match[str]) -> str:
+        """Return the configured value for one ``${VAR}`` interpolation match."""
         var = match.group(1)
         if var not in env:
             raise KeyError(f"Undefined variable ${{{var}}} in preset (no env var, no default)")

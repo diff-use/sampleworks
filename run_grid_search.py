@@ -25,6 +25,8 @@ from sampleworks.utils.protein_input import ProteinInput
 
 @dataclass
 class GridSearchConfig:
+    """Serializable summary of the grid-search dimensions and output location."""
+
     model: str
     scalers: list[str]
     ensemble_sizes: list[int]
@@ -67,6 +69,12 @@ def get_job_status(job: JobConfig) -> str:
 
 
 def detect_gpus() -> list[str]:
+    """Return CUDA GPU identifiers visible to this grid-search process.
+
+    ``CUDA_VISIBLE_DEVICES`` wins when set because CUDA remaps those entries to
+    local process ordinals. Otherwise, ``nvidia-smi`` is used as a best-effort
+    discovery mechanism and ``["0"]`` is returned as a CPU/test fallback.
+    """
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if cuda_visible:
         gpus = [g.strip() for g in cuda_visible.split(",") if g.strip()]
@@ -105,6 +113,7 @@ def detect_gpus() -> list[str]:
 
 
 def get_pixi_env(model: str) -> str:
+    """Return the pixi environment name needed to run a model family."""
     if model in (StructurePredictor.BOLTZ_1, StructurePredictor.BOLTZ_2):
         return "boltz"
     elif model == StructurePredictor.PROTENIX:
@@ -119,6 +128,7 @@ def get_pixi_env(model: str) -> str:
 def build_args_for_process_pool(
     job: JobConfig, args: argparse.Namespace, device_num: int | None = None
 ) -> GuidanceConfig:
+    """Convert a grid-search job into the picklable guidance config for a worker."""
     guidance_config = GuidanceConfig(
         protein=job.protein,
         structure=job.structure_path,
@@ -384,6 +394,7 @@ def main(args: argparse.Namespace):
 
 
 def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
+    """Expand CLI grid dimensions into concrete per-protein guidance jobs."""
     jobs = []
 
     proteins = ProteinInput.from_csv(Path(args.proteins))
@@ -469,6 +480,7 @@ def save_results(
     output_dir: str,
     total_time: float,
 ):
+    """Merge the latest job results into ``results.json`` under ``output_dir``."""
     os.makedirs(output_dir, exist_ok=True)
     results_path = os.path.join(output_dir, "results.json")
 
@@ -527,6 +539,7 @@ def save_results(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for one model-specific grid search."""
     parser = argparse.ArgumentParser(
         description="Run grid search across scalers, and parameters for a single "
         "protein structure predictor model."
@@ -663,6 +676,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def log_args(args: argparse.Namespace, gpus: list[str]):
+    """Log the resolved grid-search configuration before jobs are generated."""
     log.info("=" * 50)
     log.info("Starting grid search")
     log.info(f"Model: {args.model}")
@@ -684,6 +698,7 @@ def log_args(args: argparse.Namespace, gpus: list[str]):
 # TODO make job statuses a proper class
 # TODO: there are many constants here like "not_run" that should be defined in only one place.
 def generate_and_filter_jobs(args: argparse.Namespace) -> tuple[list[JobConfig], dict[Any, Any]]:
+    """Generate jobs and filter them according to prior status and rerun flags."""
     jobs = generate_jobs(args)
     log.info(f"Generated {len(jobs)} total jobs")
 

@@ -40,6 +40,7 @@ def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_argv_omits_false_bool_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """False boolean args are omitted rather than emitted as bare CLI flags."""
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset(
         "rf3_partial", overrides=["shared_args.gradient-normalization=false"]
@@ -51,6 +52,7 @@ def test_argv_omits_false_bool_flags(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_explicit_output_dir_in_args_wins_over_subdir_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """An explicit per-job output-dir beats the output_subdir-derived default."""
     monkeypatch.setenv("HOME", "/home/test")
     custom = tmp_path / "custom.toml"
     custom.write_text(
@@ -67,6 +69,7 @@ def test_explicit_output_dir_in_args_wins_over_subdir_default(
 def test_full_8gpu_has_four_jobs_with_distinct_gpus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The full_8gpu preset maps its four jobs onto distinct GPU pairs."""
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("full_8gpu")
     invocations = runner.build_invocations(preset, results_dir=Path("/r"))
@@ -76,6 +79,7 @@ def test_full_8gpu_has_four_jobs_with_distinct_gpus(
 
 
 def test_protenix_dual_uses_different_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Protenix dual preset uses separate tiny and mini checkpoints."""
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("protenix_dual")
     invocations = runner.build_invocations(preset, results_dir=Path("/r"))
@@ -85,6 +89,7 @@ def test_protenix_dual_uses_different_checkpoints(monkeypatch: pytest.MonkeyPatc
 
 
 def test_rf3_partial_chiral_off_flag_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The RF3 chiral-off preset passes the disable and force rerun flags."""
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("rf3_partial_chiral_off")
     inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
