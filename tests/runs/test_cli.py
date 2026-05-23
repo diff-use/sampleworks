@@ -14,10 +14,17 @@ def test_list_prints_all_experiment_presets(capsys: pytest.CaptureFixture[str]) 
     assert exit_code == 0
     out = capsys.readouterr().out.splitlines()
     assert set(out) == {
+        "boltz",
+        "boltz1",
+        "boltz2",
+        "boltz2_md",
+        "boltz2_xrd",
         "full_8gpu",
+        "protenix",
+        "protenix_dual",
+        "rf3",
         "rf3_partial",
         "rf3_partial_chiral_off",
-        "protenix_dual",
         "rf3_protenix",
     }
 
@@ -67,6 +74,31 @@ def test_job_shortcut_filters_default_preset(
     assert "name: protenix" in out
     assert "boltz2_xrd" not in out
     assert "boltz2_md" not in out
+
+
+def test_model_target_uses_named_preset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A single model target resolves to the matching standalone preset."""
+    monkeypatch.setenv("HOME", "/home/test")
+    exit_code = cli.main(["boltz", "--show"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "name: boltz" in out
+    assert "name: boltz2_xrd" in out
+    assert "name: boltz2_md" in out
+
+
+def test_boltz1_target_uses_named_preset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The Boltz1 model has its own standalone preset target."""
+    monkeypatch.setenv("HOME", "/home/test")
+    exit_code = cli.main(["boltz1", "--show"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "name: boltz1" in out
+    assert "output_subdir: boltz1" in out
 
 
 def test_jobs_filters_explicit_preset(

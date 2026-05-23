@@ -8,10 +8,23 @@ import pytest
 from sampleworks.runs import loader
 
 
-BUNDLED = ["full_8gpu", "rf3_partial", "rf3_partial_chiral_off", "protenix_dual", "rf3_protenix"]
+BUNDLED = [
+    "boltz",
+    "boltz1",
+    "boltz2",
+    "boltz2_md",
+    "boltz2_xrd",
+    "full_8gpu",
+    "protenix",
+    "protenix_dual",
+    "rf3",
+    "rf3_partial",
+    "rf3_partial_chiral_off",
+    "rf3_protenix",
+]
 
 
-def test_list_presets_returns_the_five() -> None:
+def test_list_presets_returns_bundled_experiments() -> None:
     """Preset discovery returns the expected bundled experiment names."""
     names = loader.list_presets()
     assert set(names) == set(BUNDLED), f"unexpected experiment presets: {names}"

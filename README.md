@@ -178,7 +178,10 @@ results directory, and MSA cache.
 run_experiments --list        # show available presets
 run_experiments --show rf3    # inspect what will run
 run_experiments --dry-run rf3 # print commands without running
-run_experiments rf3           # run only the RF3 job from full_8gpu
+run_experiments rf3           # run the standalone RF3 preset
+run_experiments boltz         # run Boltz2 X-ray + Boltz2 MD
+run_experiments boltz1        # run standalone Boltz1
+run_experiments protenix      # run the standalone Protenix preset
 run_experiments               # run the default full_8gpu preset
 ```
 
@@ -188,6 +191,11 @@ parallel. Run a subset with:
 ```bash
 run_experiments full_8gpu --jobs rf3,protenix
 ```
+
+Standalone presets are available for each model/model family: `boltz`,
+`boltz1`, `boltz2`, `boltz2_xrd`, `boltz2_md`, `rf3`, and `protenix`.
+Additional comparison presets include `protenix_dual`, `rf3_protenix`, and RF3
+variants.
 
 Presets live in `experiments/*.toml` in your local checkout and on the pod at
 `/home/dev/workspace/experiments/*.toml`. To modify an experiment, edit or copy

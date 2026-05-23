@@ -67,16 +67,17 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="sampleworks-runs",
         description=(
             "Run Sampleworks experiment presets. With no target, runs the "
-            "full_8gpu preset. A target like 'rf3' or 'rf3,protenix' is a "
-            "job shortcut from full_8gpu; use --preset for another TOML preset."
+            "full_8gpu preset. A target like 'rf3', 'boltz', or 'protenix' "
+            "runs that preset; comma-separated targets like 'rf3,protenix' "
+            "select jobs from full_8gpu."
         ),
     )
     parser.add_argument(
         "target",
         nargs="?",
         help=(
-            "Job shortcut from full_8gpu (rf3, protenix, boltz2_xrd, "
-            "boltz2_md, or comma-separated), or 'full'/'full_8gpu'."
+            "Preset name from experiments/ (rf3, boltz, protenix, etc.), "
+            "comma-separated job shortcut from full_8gpu, or 'full'/'full_8gpu'."
         ),
     )
     parser.add_argument(
@@ -160,6 +161,9 @@ def _resolve_target(
 
     if target.endswith(".toml") or "/" in target:
         parser.error("pass custom preset paths with --preset path/to/preset.toml")
+
+    if "," not in target and target in loader.list_presets():
+        return target, ""
 
     return DEFAULT_PRESET, target
 
