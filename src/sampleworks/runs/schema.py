@@ -70,7 +70,7 @@ class Preset:
     Parameters
     ----------
     name : str
-        Identifier (matches the bundled TOML filename without the ``.toml``
+        Identifier (matches the experiment TOML filename without the ``.toml``
         suffix, or the stem of a user-supplied path).
     description : str
         Human-readable summary shown by ``--list`` and the launch banner.

@@ -97,6 +97,7 @@ WORKDIR /app
 # Copy all project files - needed because sampleworks is installed as editable package
 # The pypi-dependencies section has: sampleworks = {editable = true, path = "."}
 COPY pyproject.toml pixi.lock ./
+COPY experiments/ ./experiments/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY run_grid_search.py ./
@@ -132,7 +133,7 @@ print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-comp
 # This image carries pixi environments and checkpoints. Runtime source should
 # come from ACTL's synced checkout at /home/dev/workspace, not from stale code
 # baked into /app during image construction.
-RUN rm -rf /app/src /app/scripts /app/run_grid_search.py \
+RUN rm -rf /app/src /app/scripts /app/experiments /app/run_grid_search.py \
     && mkdir -p /home/dev/workspace
 
 COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh /usr/local/bin/

@@ -8,7 +8,7 @@ import pytest
 from sampleworks.runs import cli
 
 
-def test_list_prints_all_bundled_presets(capsys: pytest.CaptureFixture[str]) -> None:
+def test_list_prints_all_experiment_presets(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = cli.main(["--list"])
     assert exit_code == 0
     out = capsys.readouterr().out.splitlines()

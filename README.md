@@ -184,7 +184,7 @@ The default preset is `full_8gpu`, which splits GPUs across Boltz2 XRD, Boltz2
 MD, RF3, and Protenix. A positional target like `rf3` or `rf3,protenix` runs
 those jobs from `full_8gpu`; use `--preset rf3_partial` for a specific preset.
 
-Presets live in the synced repo at `src/sampleworks/runs/presets/*.toml`. To change an experiment, either edit/copy a preset locally and let ACTL sync it, or override values at launch:
+Presets live in the synced repo at `experiments/*.toml`. To change an experiment, either edit/copy a preset locally and let ACTL sync it, or override values at launch:
 
 ```bash
 run_experiments rf3,protenix

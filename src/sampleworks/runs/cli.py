@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.list:
-        for name in loader.list_bundled_presets():
+        for name in loader.list_presets():
             print(name)
         return 0
 
@@ -82,9 +82,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preset",
         default="",
-        help="Bundled preset name or path to a .toml file. Default: full_8gpu.",
+        help="Preset name from experiments/ or path to a .toml file. Default: full_8gpu.",
     )
-    parser.add_argument("--list", action="store_true", help="List bundled presets and exit")
+    parser.add_argument("--list", action="store_true", help="List experiments/*.toml presets and exit")
     parser.add_argument("--show", action="store_true", help="Print the resolved preset and exit")
     parser.add_argument(
         "--dry-run",

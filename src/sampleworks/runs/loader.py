@@ -12,39 +12,45 @@ import os
 import re
 import tomllib
 from collections.abc import Iterable
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from .schema import Job, Preset
 
 
-_BUNDLED_PRESETS_PACKAGE = "sampleworks.runs.presets"
+_EXPERIMENTS_DIR_NAME = "experiments"
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
 
 
-def list_bundled_presets() -> list[str]:
-    """List the names of all TOML presets shipped with the package.
+def list_presets() -> list[str]:
+    """List experiment preset names from the top-level ``experiments`` directory.
 
     Returns
     -------
     list of str
         Preset names (filename stems, no ``.toml`` extension), sorted
-        alphabetically.
+        alphabetically. If multiple experiment directories are visible, the
+        first directory in the resolution order wins for duplicate names.
     """
-    files = resources.files(_BUNDLED_PRESETS_PACKAGE)
-    return sorted(p.name.removesuffix(".toml") for p in files.iterdir() if p.name.endswith(".toml"))
+    names: dict[str, Path] = {}
+    for directory in _experiment_dirs():
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if path.is_file() and path.suffix == ".toml":
+                names.setdefault(path.stem, path)
+    return sorted(names)
 
 
 def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
-    """Load a preset by bundled name or filesystem path.
+    """Load a preset by experiment name or filesystem path.
 
     Parameters
     ----------
     name_or_path : str
-        Either the name of a bundled preset (as returned by
-        :func:`list_bundled_presets`) or a path ending in ``.toml``.
+        Either the name of a preset in the top-level ``experiments`` directory
+        (as returned by :func:`list_presets`) or a path ending in ``.toml``.
     overrides : Iterable of str, optional
         ``KEY=VALUE`` strings as accepted by ``--set``. Applied before
         variable interpolation.
@@ -57,7 +63,7 @@ def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
     Raises
     ------
     FileNotFoundError
-        If ``name_or_path`` matches no bundled preset and no file on disk.
+        If ``name_or_path`` matches no experiment preset and no file on disk.
     KeyError
         If an override path begins with an unknown top-level key, or if a
         ``${VAR}`` reference cannot be resolved against the environment or
@@ -73,12 +79,12 @@ def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
 
 
 def _read_toml(name_or_path: str) -> dict[str, Any]:
-    """Read raw TOML from a filesystem path or a bundled package resource.
+    """Read raw TOML from a filesystem path or an experiment preset name.
 
     Parameters
     ----------
     name_or_path : str
-        Bundled preset name or filesystem path ending in ``.toml``.
+        Experiment preset name or filesystem path ending in ``.toml``.
 
     Returns
     -------
@@ -90,25 +96,103 @@ def _read_toml(name_or_path: str) -> dict[str, Any]:
     FileNotFoundError
         If neither location yields a TOML file.
     """
-    path = Path(name_or_path)
-    if path.suffix == ".toml" and path.exists():
+    path = _find_preset_path(name_or_path)
+    if path is not None:
         return tomllib.loads(path.read_text())
-    bundled = resources.files(_BUNDLED_PRESETS_PACKAGE) / f"{name_or_path}.toml"
-    if not bundled.is_file():
-        raise FileNotFoundError(
-            f"No preset {name_or_path!r}. Bundled: {list_bundled_presets()}. "
-            f"Or pass a path to a .toml file."
-        )
-    return tomllib.loads(bundled.read_text())
+    raise FileNotFoundError(
+        f"No preset {name_or_path!r}. Experiments: {list_presets()}. "
+        "Put TOML presets in ./experiments or pass a path to a .toml file."
+    )
 
 
-def _preset_name(name_or_path: str) -> str:
-    """Return the canonical preset name for a bundled name or path argument.
+def _find_preset_path(name_or_path: str) -> Path | None:
+    """Resolve a preset name or path to a TOML file.
 
     Parameters
     ----------
     name_or_path : str
-        Either a bundled name or a path ending in ``.toml``.
+        Preset name (``full_8gpu``), TOML filename (``full_8gpu.toml``), or
+        filesystem path.
+
+    Returns
+    -------
+    pathlib.Path or None
+        Existing TOML path if found, otherwise ``None``.
+    """
+    path = Path(name_or_path)
+    if path.suffix == ".toml" and path.is_file():
+        return path
+
+    preset_filename = path.name if path.suffix == ".toml" else f"{name_or_path}.toml"
+    for directory in _experiment_dirs():
+        candidate = directory / preset_filename
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _experiment_dirs() -> list[Path]:
+    """Return candidate top-level experiment directories in precedence order.
+
+    Returns
+    -------
+    list of pathlib.Path
+        Existing or candidate ``experiments`` directories. Duplicates are
+        removed while preserving order.
+    """
+    candidates: list[Path] = []
+
+    explicit = os.environ.get("SAMPLEWORKS_EXPERIMENTS_DIR")
+    if explicit:
+        candidates.append(Path(explicit))
+
+    source_dir = os.environ.get("SAMPLEWORKS_SOURCE_DIR")
+    if source_dir:
+        candidates.append(Path(source_dir) / _EXPERIMENTS_DIR_NAME)
+
+    candidates.append(Path("/home/dev/workspace") / _EXPERIMENTS_DIR_NAME)
+    candidates.extend(_find_upward_experiment_dirs(Path.cwd()))
+    candidates.extend(_find_upward_experiment_dirs(Path(__file__).resolve()))
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve(strict=False)
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
+def _find_upward_experiment_dirs(start: Path) -> list[Path]:
+    """Search parents of ``start`` for top-level ``experiments`` directories.
+
+    Parameters
+    ----------
+    start : pathlib.Path
+        Directory or file path to begin searching from.
+
+    Returns
+    -------
+    list of pathlib.Path
+        Candidate experiment directories nearest to farthest.
+    """
+    current = start if start.is_dir() else start.parent
+    dirs: list[Path] = []
+    for parent in [current, *current.parents]:
+        candidate = parent / _EXPERIMENTS_DIR_NAME
+        if candidate.is_dir():
+            dirs.append(candidate)
+    return dirs
+
+
+def _preset_name(name_or_path: str) -> str:
+    """Return the canonical preset name for an experiment name or path argument.
+
+    Parameters
+    ----------
+    name_or_path : str
+        Either an experiment name or a path ending in ``.toml``.
 
     Returns
     -------

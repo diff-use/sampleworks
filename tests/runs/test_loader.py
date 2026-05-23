@@ -11,13 +11,13 @@ from sampleworks.runs import loader
 BUNDLED = ["full_8gpu", "rf3_partial", "rf3_partial_chiral_off", "protenix_dual", "rf3_protenix"]
 
 
-def test_list_bundled_presets_returns_the_five() -> None:
-    names = loader.list_bundled_presets()
-    assert set(names) == set(BUNDLED), f"unexpected bundled presets: {names}"
+def test_list_presets_returns_the_five() -> None:
+    names = loader.list_presets()
+    assert set(names) == set(BUNDLED), f"unexpected experiment presets: {names}"
 
 
 @pytest.mark.parametrize("name", BUNDLED)
-def test_each_bundled_preset_loads(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_each_experiment_preset_loads(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset(name)
     assert preset.name == name
@@ -114,6 +114,31 @@ def test_load_preset_from_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     preset = loader.load_preset(str(custom))
     assert preset.name == "mycustom"
     assert preset.defaults["DATA_DIR"] == "/x"
+
+
+def test_load_preset_from_experiments_dir_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scientists can point the loader at a top-level experiments directory."""
+    experiments_dir = tmp_path / "experiments"
+    experiments_dir.mkdir()
+    (experiments_dir / "custom.toml").write_text(
+        'description = "custom"\n'
+        "[shared_args]\n"
+        'model = "rf3"\n'
+        "[[jobs]]\n"
+        'name = "j1"\n'
+        'env = "rf3"\n'
+        'gpus = "0"\n'
+        'output_subdir = "j1"\n'
+        "args = {}\n"
+    )
+    monkeypatch.setenv("SAMPLEWORKS_EXPERIMENTS_DIR", str(experiments_dir))
+
+    preset = loader.load_preset("custom")
+
+    assert preset.name == "custom"
+    assert preset.job("j1").env == "rf3"
 
 
 def test_unknown_preset_raises() -> None:
