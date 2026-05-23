@@ -152,49 +152,65 @@ Output layout: `grid_search_results/<protein>/<model>[_<method>]/<scaler>/ens<N>
 Instructions for running evaluation and metrics scripts are coming soon.
 
 
-## ACTL preset experiments (`run_experiments`)
+## Running preset experiments on ACTL (`run_experiments`)
 
-Use ACTL to get one 8-GPU pod with baked pixi environments, checkpoints, the
-shared data PVC, and your local checkout synced to `/home/dev/workspace`:
+Start an 8-GPU ACTL machine named `sampleworks` with the Sampleworks image and
+the shared data volume mounted:
 
 ```bash
-actl pod up sampleworks-pr240 --fresh --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:latest --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:latest --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
-Keep that `actl pod up` terminal open so sync/SSH stays alive. In another
-terminal, copy the `ssh:` line from `actl pod status sampleworks-pr240`, then:
+Keep that terminal open; it maintains sync and SSH. From another terminal:
 
 ```bash
-ssh workspace.actl-ws-<user>-sampleworks-pr240.devspace
+actl pod status sampleworks
+# copy the `ssh:` line, then run it, for example:
+ssh workspace.actl-ws-<user>-sampleworks.devspace
 cd /home/dev/workspace
-run_experiments --dry-run
-run_experiments
-run_experiments rf3
 ```
 
-`run_experiments` is the entrypoint. It uses the synced source tree from
-`/home/dev/workspace`, but runs the baked interpreters from
-`/app/.pixi/envs/{boltz,protenix,rf3}/bin/python` directly. It should not run
-`pixi install` or pull packages at runtime; if an env is missing, recreate the
-pod with the current `pixi-with-checkpoints` image.
-
-`run_experiments` reads TOML presets and launches the requested
-`run_grid_search.py` jobs in parallel, with `CUDA_VISIBLE_DEVICES` set per job.
-The default preset is `full_8gpu`, which splits GPUs across Boltz2 XRD, Boltz2
-MD, RF3, and Protenix. A positional target like `rf3` or `rf3,protenix` runs
-those jobs from `full_8gpu`; use `--preset rf3_partial` for a specific preset.
-
-Presets live in the synced repo at `experiments/*.toml`. To change an experiment, either edit/copy a preset locally and let ACTL sync it, or override values at launch:
+The main command is `run_experiments`. It reads TOML presets and launches the
+right `run_grid_search.py` jobs, pixi environments, GPU assignments, logs,
+results directory, and MSA cache.
 
 ```bash
-run_experiments rf3,protenix
-run_experiments --preset rf3_partial --set jobs.rf3.gpus=0
+run_experiments --list        # show available presets
+run_experiments --show rf3    # inspect what will run
+run_experiments --dry-run rf3 # print commands without running
+run_experiments rf3           # run only the RF3 job from full_8gpu
+run_experiments               # run the default full_8gpu preset
 ```
 
-On smaller pods, make sure preset GPU IDs only reference visible pod GPUs
-(`0..N-1`). `run_experiments` fails fast if a preset requests unavailable GPUs.
+The default `full_8gpu` preset runs Boltz2 XRD, Boltz2 MD, RF3, and Protenix in
+parallel. Run a subset with:
 
-The shared inputs are under `/mnt/diffuse-shared/raw/sampleworks/...`; checkpoints are in `/mnt/diffuse-shared/raw/checkpoints`; default results go to `/mnt/diffuse-shared/results/sampleworks/<pod>/<target>/`; MSA caches go to `/mnt/diffuse-shared/cache/sampleworks/msa`. Set `DATA_DIR`, `RESULTS_DIR`, or `MSA_CACHE_DIR` before running to change these locations.
+```bash
+run_experiments full_8gpu --jobs rf3,protenix
+```
+
+Presets live in `experiments/*.toml` in your local checkout and on the pod at
+`/home/dev/workspace/experiments/*.toml`. To modify an experiment, edit or copy
+a preset locally, let ACTL sync it, then run it by name or path:
+
+```bash
+cp experiments/rf3_partial.toml experiments/my_rf3.toml
+# edit experiments/my_rf3.toml locally
+run_experiments --preset my_rf3
+```
+
+For one-off changes, use `--set` instead of editing TOML:
+
+```bash
+run_experiments rf3 --set jobs.rf3.gpus=0,1
+run_experiments rf3 --set jobs.rf3.args.gradient-weights="0.0 0.01 0.02"
+```
+
+Defaults: inputs come from `/mnt/diffuse-shared/raw/sampleworks/...`, checkpoints
+from `/mnt/diffuse-shared/raw/checkpoints`, results go to
+`/mnt/diffuse-shared/results/sampleworks/<pod>/<target>/`, and MSA caches go to
+`/mnt/diffuse-shared/cache/sampleworks/msa`. Override with `DATA_DIR`,
+`RESULTS_DIR`, or `MSA_CACHE_DIR` before running.
 
 
 ## Docker
