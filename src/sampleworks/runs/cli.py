@@ -84,7 +84,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Preset name from experiments/ or path to a .toml file. Default: full_8gpu.",
     )
-    parser.add_argument("--list", action="store_true", help="List experiments/*.toml presets and exit")
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List experiments/*.toml presets and exit",
+    )
     parser.add_argument("--show", action="store_true", help="Print the resolved preset and exit")
     parser.add_argument(
         "--dry-run",

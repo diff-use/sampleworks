@@ -105,7 +105,7 @@ COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # ============================================================================
-# Bake in model checkpoints from pre-built base image on Docker Hub
+# Bake in model checkpoints from pre-built Harbor image
 # ============================================================================
 # Checkpoints (~10 GB) rarely change, so this layer is placed before pixi
 # installs to stay cached even when dependencies update.

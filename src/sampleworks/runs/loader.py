@@ -1,9 +1,11 @@
 """Load presets from TOML and apply runtime overrides.
 
 Resolution order for every string value (defaults block and ``args``):
-  1. ``${VAR}`` references are resolved against the process environment,
+  1. ``--set <dotted-path>=<value>`` CLI overrides are applied to the raw TOML
+     dict by :func:`load_preset`, so overridden values participate in
+     interpolation.
+  2. ``${VAR}`` references are resolved against the process environment,
      with the preset's ``[defaults]`` block filling in any unset keys.
-  2. ``--set <dotted-path>=<value>`` CLI overrides are applied last.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from .schema import Job, Preset
 
 
 _EXPERIMENTS_DIR_NAME = "experiments"
+_MAX_EXPAND_ITERATIONS = 32
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
 
@@ -325,10 +328,15 @@ def _find_in_list(items: list[Any], key: str, *, where: str) -> int:
     Raises
     ------
     KeyError
-        If no element with the given name exists.
+        If no element with the given name or index exists.
     """
     if key.isdigit() or (key.startswith("-") and key[1:].isdigit()):
-        return int(key)
+        index = int(key)
+        try:
+            items[index]
+        except IndexError:
+            raise KeyError(f"No list element at index {index} at {where!r}") from None
+        return index
     for i, item in enumerate(items):
         if isinstance(item, dict) and item.get("name") == key:
             return i
@@ -442,6 +450,8 @@ def _expand(text: str, env: dict[str, str]) -> str:
     ------
     KeyError
         If a referenced variable is not in ``env``.
+    ValueError
+        If recursive variable interpolation does not converge.
     """
 
     def repl(match: re.Match[str]) -> str:
@@ -451,12 +461,16 @@ def _expand(text: str, env: dict[str, str]) -> str:
             raise KeyError(f"Undefined variable ${{{var}}} in preset (no env var, no default)")
         return env[var]
 
-    prev = None
     current = text
-    while prev != current:
-        prev = current
-        current = _VAR_PATTERN.sub(repl, current)
-    return current
+    for _ in range(_MAX_EXPAND_ITERATIONS):
+        expanded = _VAR_PATTERN.sub(repl, current)
+        if expanded == current:
+            return expanded
+        current = expanded
+    raise ValueError(
+        f"Variable expansion did not converge for {text!r}; check for circular "
+        "${VAR} references in [defaults], environment variables, or --set overrides."
+    )
 
 
 def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:

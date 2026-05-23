@@ -72,11 +72,15 @@ def detect_gpus() -> list[str]:
     """Return CUDA GPU identifiers visible to this grid-search process.
 
     ``CUDA_VISIBLE_DEVICES`` wins when set because CUDA remaps those entries to
-    local process ordinals. Otherwise, ``nvidia-smi`` is used as a best-effort
-    discovery mechanism and ``["0"]`` is returned as a CPU/test fallback.
+    local process ordinals. Explicit CUDA "no device" sentinel values return an
+    empty list. Otherwise, ``nvidia-smi`` is used as a best-effort discovery
+    mechanism and ``["0"]`` is returned as a CPU/test fallback.
     """
-    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    if cuda_visible:
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    cuda_visible_key = cuda_visible.lower()
+    if cuda_visible_key in {"none", "void", "nodevfiles"}:
+        return []
+    if cuda_visible and cuda_visible_key != "all":
         gpus = [g.strip() for g in cuda_visible.split(",") if g.strip()]
         try:
             result = subprocess.run(
@@ -85,9 +89,7 @@ def detect_gpus() -> list[str]:
                 text=True,
             )
             if result.returncode == 0:
-                visible = [
-                    g.strip() for g in result.stdout.strip().split("\n") if g.strip()
-                ]
+                visible = [g.strip() for g in result.stdout.strip().split("\n") if g.strip()]
                 if all(g.isdigit() for g in gpus + visible):
                     missing = sorted(set(gpus).difference(visible), key=int)
                     if missing:
@@ -361,6 +363,10 @@ def main(args: argparse.Namespace):
     log.info(f"Detected {len(gpus)} GPUs: {gpus}")
     if args.max_parallel != "auto":
         gpus = gpus[: int(args.max_parallel)]
+    if not gpus:
+        raise ValueError(
+            "No CUDA GPUs are visible; unset CUDA_VISIBLE_DEVICES=none or use a GPU pod"
+        )
 
     log_args(args, gpus)
 

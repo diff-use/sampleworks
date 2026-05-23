@@ -17,6 +17,8 @@ from .schema import Job, Preset
 
 DEFAULT_GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
 WORKSPACE_GRID_SEARCH_SCRIPT = "/home/dev/workspace/run_grid_search.py"
+PROCESS_SHUTDOWN_TIMEOUT_SECONDS = 10
+TEE_THREAD_JOIN_TIMEOUT_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -172,9 +174,7 @@ def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
         return
 
     available_set = set(available)
-    unavailable = {
-        gpu: names for gpu, names in requested.items() if gpu not in available_set
-    }
+    unavailable = {gpu: names for gpu, names in requested.items() if gpu not in available_set}
     if unavailable:
         details = ", ".join(
             f"GPU {gpu} requested by {', '.join(names)}"
@@ -413,6 +413,7 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
     int
         ``0`` if all jobs exited 0 (or ``dry_run`` was set), ``1`` otherwise.
     """
+    results_dir = results_dir.resolve()
     results_dir.mkdir(parents=True, exist_ok=True)
     invocations = build_invocations(preset, results_dir=results_dir)
     _validate_gpu_assignments(invocations)
@@ -444,23 +445,33 @@ def _terminate_all(jobs: list[_RunningJob]) -> None:
     Parameters
     ----------
     jobs : list of _RunningJob
-        Jobs whose subprocesses should be SIGTERM'd, waited on, and whose tee
-        threads should be joined.
+        Jobs whose subprocesses should be SIGTERM'd, escalated to SIGKILL if
+        needed, and whose tee threads should be joined with bounded waits.
     """
     for j in jobs:
         if j.proc.poll() is None:
             j.proc.terminate()
     for j in jobs:
-        j.proc.wait()
-        j.tee_thread.join()
+        try:
+            j.proc.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            j.proc.kill()
+            try:
+                j.proc.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                print(
+                    f"[{_ts()}] {j.inv.job.name} did not exit after SIGKILL",
+                    file=sys.stderr,
+                )
+        j.tee_thread.join(timeout=TEE_THREAD_JOIN_TIMEOUT_SECONDS)
 
 
 def _prepare_pixi_env(pixi_env: str) -> None:
     """Prepare a pixi environment before parallel job launch.
 
-    ``pixi run`` is deliberately called once per env even when the interpreter
-    directory already exists, because pixi may still need to materialize PyPI
-    packages into that environment after image startup.
+    Preparation is skipped when a baked interpreter is already available, when
+    prebuilt environments are required, or when ``SAMPLEWORKS_SKIP_ENV_PREPARE``
+    is truthy. Otherwise, ``pixi run`` is called once for the environment.
 
     Parameters
     ----------
@@ -576,24 +587,39 @@ def _spawn(inv: JobInvocation) -> _RunningJob:
     inv.log_path.parent.mkdir(parents=True, exist_ok=True)
     inv.output_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(inv.log_path, "wb")
+    proc: subprocess.Popen[bytes] | None = None
+    thread: threading.Thread | None = None
     try:
         proc = subprocess.Popen(
             inv.argv,
             env=inv.env,
+            cwd=str(_pixi_project_dir()),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
         )
+        if proc.stdout is None:
+            raise RuntimeError(f"Job {inv.job.name!r} started without a stdout pipe")
+        thread = threading.Thread(
+            target=_tee,
+            args=(inv.job.name, proc.stdout, log_file),
+            daemon=True,
+        )
+        thread.start()
     except BaseException:
         log_file.close()
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                print(
+                    f"[{_ts()}] {inv.job.name} did not exit after failed spawn cleanup",
+                    file=sys.stderr,
+                )
         raise
-    assert proc.stdout is not None
-    thread = threading.Thread(
-        target=_tee,
-        args=(inv.job.name, proc.stdout, log_file),
-        daemon=True,
-    )
-    thread.start()
+    if proc is None or thread is None:
+        raise RuntimeError(f"Job {inv.job.name!r} failed to initialize")
     print(f"[{_ts()}] launched {inv.job.name} (pid {proc.pid})", file=sys.stderr)
     return _RunningJob(inv=inv, proc=proc, tee_thread=thread)
 

@@ -183,6 +183,27 @@ def test_set_with_unknown_top_level_key_raises(monkeypatch: pytest.MonkeyPatch) 
         loader.load_preset("rf3_partial", overrides=["job.rf3.gpus=0"])
 
 
+def test_set_with_out_of_range_job_index_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Out-of-range list indices in overrides fail with a clear ``KeyError``."""
+    monkeypatch.setenv("HOME", "/home/test")
+    with pytest.raises(KeyError, match="index 99"):
+        loader.load_preset("rf3_partial", overrides=["jobs.99.gpus=0"])
+
+
+def test_cyclic_variable_expansion_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Cyclic ``${VAR}`` references fail fast instead of looping forever."""
+    bad = tmp_path / "cycle.toml"
+    bad.write_text(
+        "[shared_args]\n"
+        'proteins = "${A}"\n'
+        '[[jobs]]\nname = "j"\nenv = "rf3"\ngpus = "0"\noutput_subdir = "j"\nargs = {}\n'
+    )
+    monkeypatch.setenv("A", "${B}")
+    monkeypatch.setenv("B", "${A}")
+    with pytest.raises(ValueError, match="did not converge"):
+        loader.load_preset(str(bad))
+
+
 def test_bad_env_rejected(tmp_path: Path) -> None:
     """Preset jobs reject unsupported pixi environment names."""
     bad = tmp_path / "bad.toml"

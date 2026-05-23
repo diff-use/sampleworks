@@ -1,8 +1,9 @@
 """Dataclasses for the preset schema.
 
 A preset describes one or more parallel ``run_grid_search.py`` jobs. Each job
-is launched in its configured model environment with ``CUDA_VISIBLE_DEVICES``
-set to the job's GPU assignment.
+runs in its configured model environment, either through ``pixi run`` or a
+baked environment Python, with ``CUDA_VISIBLE_DEVICES`` set to the job's GPU
+assignment.
 """
 
 from __future__ import annotations

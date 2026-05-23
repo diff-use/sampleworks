@@ -39,13 +39,15 @@ def test_dry_run_does_not_invoke_subprocess(
 ) -> None:
     """``--dry-run`` prints commands and CUDA assignment instead of executing."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    exit_code = cli.main([
-        "--preset",
-        "rf3_partial",
-        "--dry-run",
-        "--results-dir",
-        str(tmp_path),
-    ])
+    exit_code = cli.main(
+        [
+            "--preset",
+            "rf3_partial",
+            "--dry-run",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "pixi run -e rf3 python /app/run_grid_search.py" in out

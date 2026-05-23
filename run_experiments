@@ -39,6 +39,13 @@ find_sampleworks_root_upwards() {
 resolve_repo_root() {
     local source_override="${SAMPLEWORKS_SOURCE_DIR:-}"
     if [[ -n "$source_override" ]]; then
+        if ! is_sampleworks_root "$source_override"; then
+            cat >&2 <<EOF
+SAMPLEWORKS_SOURCE_DIR does not point to a Sampleworks checkout:
+  $source_override
+EOF
+            return 2
+        fi
         printf '%s\n' "$source_override"
         return 0
     fi
@@ -191,8 +198,17 @@ for checkpoint_var_and_file in \
     fi
 done
 
+needs_runtime_paths=1
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|--show|--list|-h|--help)
+            needs_runtime_paths=0
+            ;;
+    esac
+done
+
 source_proteins_csv="${PROTEINS_CSV:-$DATA_DIR/proteins.csv}"
-if [[ -f "$source_proteins_csv" ]]; then
+if [[ "$needs_runtime_paths" -eq 1 && -f "$source_proteins_csv" ]]; then
     # The shared proteins.csv currently contains absolute /data/inputs paths,
     # while ACTL mounts the dataset at /mnt/diffuse-shared. Rewrite a per-run
     # manifest instead of requiring non-root scientists to create /data symlinks.
@@ -226,15 +242,6 @@ display_target="${target:-${explicit_preset:-$default_target}}"
 if [[ -n "$explicit_jobs" ]]; then
     display_target="$display_target --jobs $explicit_jobs"
 fi
-
-needs_runtime_paths=1
-for arg in "$@"; do
-    case "$arg" in
-        --dry-run|--show|--list|-h|--help)
-            needs_runtime_paths=0
-            ;;
-    esac
-done
 
 if [[ "$needs_runtime_paths" -eq 1 ]]; then
     if [[ ! -f "${PROTEINS_CSV:-$source_proteins_csv}" ]]; then
