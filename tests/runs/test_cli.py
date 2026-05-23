@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sampleworks.runs import cli
+from sampleworks.runs import cli, runner
 
 
 def test_list_prints_all_experiment_presets(capsys: pytest.CaptureFixture[str]) -> None:
@@ -46,6 +46,7 @@ def test_dry_run_does_not_invoke_subprocess(
 ) -> None:
     """``--dry-run`` prints commands and CUDA assignment instead of executing."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: [str(i) for i in range(8)])
     exit_code = cli.main(
         [
             "--preset",
@@ -58,7 +59,7 @@ def test_dry_run_does_not_invoke_subprocess(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "pixi run -e rf3 python /app/run_grid_search.py" in out
-    assert "CUDA_VISIBLE_DEVICES=4" in out
+    assert "CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7" in out
 
 
 def test_job_shortcut_filters_default_preset(

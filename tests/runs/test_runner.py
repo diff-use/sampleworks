@@ -9,17 +9,18 @@ from sampleworks.runs import loader, runner
 
 
 def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Faithful translation: argv should match the canonical rf3_partial bash invocation."""
+    """RF3 partial builds the canonical argv and auto-assigns all GPUs."""
     monkeypatch.setenv("HOME", "/home/test")
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.delenv("RESULTS_DIR", raising=False)
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: [str(i) for i in range(8)])
     preset = loader.load_preset("rf3_partial")
     invocations = runner.build_invocations(preset, results_dir=Path("/results"))
 
     assert len(invocations) == 1
     inv = invocations[0]
     assert inv.job.name == "rf3"
-    assert inv.env["CUDA_VISIBLE_DEVICES"] == "4"
+    assert inv.env["CUDA_VISIBLE_DEVICES"] == "0,1,2,3,4,5,6,7"
     assert inv.log_path == Path("/results/rf3_run.log")
 
     argv = inv.argv
@@ -71,11 +72,74 @@ def test_full_8gpu_has_four_jobs_with_distinct_gpus(
 ) -> None:
     """The full_8gpu preset maps its four jobs onto distinct GPU pairs."""
     monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: [str(i) for i in range(8)])
     preset = loader.load_preset("full_8gpu")
     invocations = runner.build_invocations(preset, results_dir=Path("/r"))
     assert [i.job.name for i in invocations] == ["boltz2_xrd", "boltz2_md", "rf3", "protenix"]
     gpu_assignments = [i.env["CUDA_VISIBLE_DEVICES"] for i in invocations]
     assert gpu_assignments == ["0,1", "2,3", "4,5", "6,7"]
+
+
+def test_single_job_presets_use_all_eight_gpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Standalone single-job presets default to all eight visible GPUs."""
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: [str(i) for i in range(8)])
+    all_gpus = "0,1,2,3,4,5,6,7"
+    for name in ("boltz1", "boltz2_xrd", "boltz2_md", "rf3", "protenix"):
+        preset = loader.load_preset(name)
+        invocations = runner.build_invocations(preset, results_dir=Path("/r"))
+        assert len(invocations) == 1
+        assert invocations[0].env["CUDA_VISIBLE_DEVICES"] == all_gpus
+
+
+def test_gpu_count_uses_visible_gpus_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auto GPU allocation consumes visible GPU IDs in preset order."""
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["4", "5", "6"])
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        "[shared_args]\n"
+        '[[jobs]]\nname = "a"\nenv = "rf3"\ngpu_count = 2\noutput_subdir = "a"\n'
+        '[[jobs]]\nname = "b"\nenv = "rf3"\ngpu_count = 1\noutput_subdir = "b"\n'
+    )
+    preset = loader.load_preset(str(custom))
+    invocations = runner.build_invocations(preset, results_dir=tmp_path / "results")
+
+    assert [inv.gpus for inv in invocations] == ["4,5", "6"]
+    assert [inv.env["CUDA_VISIBLE_DEVICES"] for inv in invocations] == ["4,5", "6"]
+
+
+def test_gpu_count_respects_explicit_gpu_reservations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auto GPU allocation skips GPUs already claimed explicitly."""
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0", "1", "2", "3"])
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        "[shared_args]\n"
+        '[[jobs]]\nname = "manual"\nenv = "rf3"\ngpus = "2"\noutput_subdir = "manual"\n'
+        '[[jobs]]\nname = "auto"\nenv = "rf3"\ngpu_count = 2\noutput_subdir = "auto"\n'
+    )
+    preset = loader.load_preset(str(custom))
+    invocations = runner.build_invocations(preset, results_dir=tmp_path / "results")
+
+    assert [inv.gpus for inv in invocations] == ["2", "0,1"]
+
+
+def test_gpu_count_rejects_insufficient_visible_gpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auto GPU allocation fails clearly when visible GPUs are exhausted."""
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0"])
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        '[shared_args]\n[[jobs]]\nname = "a"\nenv = "rf3"\ngpu_count = 2\noutput_subdir = "a"\n'
+    )
+    preset = loader.load_preset(str(custom))
+
+    with pytest.raises(RuntimeError, match="Not enough visible GPUs"):
+        runner.build_invocations(preset, results_dir=tmp_path / "results")
 
 
 def test_protenix_dual_uses_different_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:

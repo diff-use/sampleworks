@@ -22,6 +22,6 @@ align-to-input = true
 [[jobs]]
 name = "rf3"
 env = "rf3"
-gpus = "0,1"
+gpu_count = 8
 output_subdir = "rf3"
 args = {}

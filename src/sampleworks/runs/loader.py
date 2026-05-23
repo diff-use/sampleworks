@@ -501,8 +501,9 @@ def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:
         Job(
             name=str(j["name"]),
             env=str(j["env"]),
-            gpus=str(j["gpus"]),
             output_subdir=str(j["output_subdir"]),
+            gpus=str(j.get("gpus", "")),
+            gpu_count=_optional_int(j.get("gpu_count")),
             args=dict(j.get("args", {})),
         )
         for j in raw_jobs
@@ -514,3 +515,8 @@ def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:
         shared_args=dict(raw.get("shared_args", {})),
         jobs=jobs,
     )
+
+
+def _optional_int(value: Any) -> int | None:
+    """Return ``value`` as an int, preserving ``None`` for absent fields."""
+    return None if value is None else int(value)

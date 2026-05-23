@@ -110,7 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Override a value in the loaded preset. Examples: "
             "--set defaults.DATA_DIR=/data/foo, "
             "--set jobs.rf3.args.gradient-weights='0.0 0.01', "
-            "--set jobs.0.gpus=5"
+            "--set jobs.0.gpu_count=4"
         ),
     )
     parser.add_argument(
@@ -224,7 +224,10 @@ def _print_show(preset: Preset) -> None:
     for j in preset.jobs:
         print(f"  - name: {j.name}")
         print(f"    env: {j.env}")
-        print(f"    gpus: {j.gpus}")
+        if j.gpus:
+            print(f"    gpus: {j.gpus}")
+        else:
+            print(f"    gpu_count: {j.gpu_count}")
         print(f"    output_subdir: {j.output_subdir}")
         print("    args:")
         for k, v in j.args.items():

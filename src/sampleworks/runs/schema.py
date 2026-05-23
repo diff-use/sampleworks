@@ -2,8 +2,8 @@
 
 A preset describes one or more parallel ``run_grid_search.py`` jobs. Each job
 runs in its configured model environment, either through ``pixi run`` or a
-baked environment Python, with ``CUDA_VISIBLE_DEVICES`` set to the job's GPU
-assignment.
+baked environment Python, with ``CUDA_VISIBLE_DEVICES`` set from an explicit
+GPU assignment or an automatically allocated ``gpu_count``.
 """
 
 from __future__ import annotations
@@ -28,8 +28,11 @@ class Job:
         Pixi environment to run the job in. Must be one of
         :data:`VALID_PIXI_ENVS`.
     gpus : str
-        Value to set as ``CUDA_VISIBLE_DEVICES`` for the subprocess (e.g.
-        ``"4"`` or ``"0,1"``).
+        Explicit value to set as ``CUDA_VISIBLE_DEVICES`` for the subprocess
+        (e.g. ``"4"`` or ``"0,1"``). Mutually exclusive with ``gpu_count``.
+    gpu_count : int or None, optional
+        Number of visible GPUs to auto-assign for this job. The runner assigns
+        concrete GPU IDs in declaration order.
     output_subdir : str
         Path appended to the run's ``results_dir`` to form the job's
         ``--output-dir`` argument, when one is not given explicitly in ``args``.
@@ -42,14 +45,15 @@ class Job:
     Raises
     ------
     ValueError
-        If ``env`` is not in :data:`VALID_PIXI_ENVS`, or if ``gpus`` /
-        ``output_subdir`` is empty.
+        If ``env`` is not in :data:`VALID_PIXI_ENVS`, if neither/both ``gpus``
+        and ``gpu_count`` are set, or if ``output_subdir`` is empty.
     """
 
     name: str
     env: str
-    gpus: str
     output_subdir: str
+    gpus: str = ""
+    gpu_count: int | None = None
     args: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -58,8 +62,10 @@ class Job:
             raise ValueError(
                 f"Job {self.name!r}: env must be one of {VALID_PIXI_ENVS}, got {self.env!r}"
             )
-        if not self.gpus:
-            raise ValueError(f"Job {self.name!r}: gpus must be non-empty")
+        if bool(self.gpus) == (self.gpu_count is not None):
+            raise ValueError(f"Job {self.name!r}: set exactly one of gpus or gpu_count")
+        if self.gpu_count is not None and self.gpu_count <= 0:
+            raise ValueError(f"Job {self.name!r}: gpu_count must be positive")
         if not self.output_subdir:
             raise ValueError(f"Job {self.name!r}: output_subdir must be non-empty")
 

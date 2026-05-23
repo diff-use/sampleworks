@@ -195,7 +195,8 @@ run_experiments full_8gpu --jobs rf3,protenix
 Standalone presets are available for each model/model family: `boltz`,
 `boltz1`, `boltz2`, `boltz2_xrd`, `boltz2_md`, `rf3`, and `protenix`.
 Additional comparison presets include `protenix_dual`, `rf3_protenix`, and RF3
-variants.
+variants. Single-job presets default to `gpu_count = 8`, so on an 8-GPU pod
+they use the whole machine.
 
 Presets live in `experiments/*.toml` in your local checkout and on the pod at
 `/home/dev/workspace/experiments/*.toml`. To modify an experiment, edit or copy
@@ -210,9 +211,14 @@ run_experiments --preset my_rf3
 For one-off changes, use `--set` instead of editing TOML:
 
 ```bash
-run_experiments rf3 --set jobs.rf3.gpus=0,1
+run_experiments rf3 --set jobs.rf3.gpu_count=4
 run_experiments rf3 --set jobs.rf3.args.gradient-weights="0.0 0.01 0.02"
 ```
+
+Presets usually declare `gpu_count = N`, not fixed GPU IDs. The runner assigns
+visible GPUs automatically in job order, so the same preset works on different
+pod sizes. Use explicit `gpus = "0,1"` only when you need to pin a job to
+specific devices.
 
 Defaults: inputs come from `/mnt/diffuse-shared/raw/sampleworks/...`, checkpoints
 from `/mnt/diffuse-shared/raw/checkpoints`, results go to

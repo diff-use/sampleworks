@@ -34,6 +34,9 @@ class JobInvocation:
         by ``run_grid_search.py``.
     env : dict of str to str
         Process environment, including ``CUDA_VISIBLE_DEVICES``.
+    gpus : str
+        Resolved CUDA-visible GPU assignment. For jobs that declare
+        ``gpu_count``, this is the concrete auto-assigned GPU list.
     log_path : Path
         File to tee stdout+stderr into.
     output_dir : Path
@@ -44,6 +47,7 @@ class JobInvocation:
     job: Job
     argv: list[str]
     env: dict[str, str]
+    gpus: str
     log_path: Path
     output_dir: Path
 
@@ -67,18 +71,80 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
     list of JobInvocation
         One :class:`JobInvocation` per job, in declaration order.
     """
+    gpu_assignments = _resolve_gpu_assignments(preset.jobs)
     invocations: list[JobInvocation] = []
     for job in preset.jobs:
         args = preset.effective_args(job)
         args.setdefault("output-dir", str(results_dir / job.output_subdir))
         argv = _build_argv(job.env, args)
-        env = _job_env(job.env, {**os.environ, "CUDA_VISIBLE_DEVICES": job.gpus})
+        gpus = gpu_assignments[job.name]
+        env = _job_env(job.env, {**os.environ, "CUDA_VISIBLE_DEVICES": gpus})
         log_path = results_dir / f"{job.name}_run.log"
         output_dir = Path(args["output-dir"])
         invocations.append(
-            JobInvocation(job=job, argv=argv, env=env, log_path=log_path, output_dir=output_dir)
+            JobInvocation(
+                job=job,
+                argv=argv,
+                env=env,
+                gpus=gpus,
+                log_path=log_path,
+                output_dir=output_dir,
+            )
         )
     return invocations
+
+
+def _resolve_gpu_assignments(jobs: list[Job]) -> dict[str, str]:
+    """Resolve explicit ``gpus`` and automatic ``gpu_count`` declarations.
+
+    Explicit assignments reserve those GPU tokens. Jobs with ``gpu_count`` then
+    consume remaining visible GPU IDs in preset declaration order. When GPU
+    discovery is unavailable (for local dry-runs/tests), synthetic ordinals are
+    generated so command construction stays deterministic.
+    """
+    explicit: dict[str, str] = {job.name: job.gpus for job in jobs if job.gpus}
+    reserved = {gpu for value in explicit.values() for gpu in _split_gpu_list(value)}
+    total_auto = sum(job.gpu_count or 0 for job in jobs)
+    available = _detect_available_gpus()
+    if available:
+        pool = [gpu for gpu in available if gpu not in reserved]
+        if len(pool) < total_auto:
+            raise RuntimeError(
+                "Not enough visible GPUs for preset auto-assignment. "
+                f"Visible GPUs: {available}. Reserved GPUs: {sorted(reserved)}. "
+                f"Auto-requested GPUs: {total_auto}."
+            )
+    elif _cuda_visible_devices_disables_gpus() and total_auto:
+        raise RuntimeError(
+            "CUDA_VISIBLE_DEVICES disables GPU access, so gpu_count auto-assignment "
+            "cannot allocate any GPUs."
+        )
+    else:
+        pool = _synthetic_gpu_pool(reserved, total_auto)
+
+    assignments: dict[str, str] = {}
+    cursor = 0
+    for job in jobs:
+        if job.gpus:
+            assignments[job.name] = job.gpus
+            continue
+        count = job.gpu_count or 0
+        assigned = pool[cursor : cursor + count]
+        cursor += count
+        assignments[job.name] = ",".join(assigned)
+    return assignments
+
+
+def _synthetic_gpu_pool(reserved: set[str], count: int) -> list[str]:
+    """Return deterministic CUDA ordinals when real GPU discovery is unavailable."""
+    pool: list[str] = []
+    candidate = 0
+    while len(pool) < count:
+        token = str(candidate)
+        if token not in reserved:
+            pool.append(token)
+        candidate += 1
+    return pool
 
 
 def _split_gpu_list(value: str) -> list[str]:
@@ -123,12 +189,10 @@ def _detect_available_gpus() -> list[str]:
         available. Empty means validation should be skipped.
     """
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if cuda_visible and cuda_visible.lower() not in {
-        "all",
-        "none",
-        "void",
-        "nodevfiles",
-    }:
+    cuda_visible_key = cuda_visible.lower()
+    if _cuda_visible_devices_disables_gpus():
+        return []
+    if cuda_visible and cuda_visible_key != "all":
         return _split_gpu_list(cuda_visible)
 
     try:
@@ -143,6 +207,15 @@ def _detect_available_gpus() -> list[str]:
     if result.returncode != 0:
         return []
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _cuda_visible_devices_disables_gpus() -> bool:
+    """Return True when CUDA_VISIBLE_DEVICES explicitly hides all GPUs."""
+    return os.environ.get("CUDA_VISIBLE_DEVICES", "").strip().lower() in {
+        "none",
+        "void",
+        "nodevfiles",
+    }
 
 
 def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
@@ -166,7 +239,7 @@ def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
 
     requested: dict[str, list[str]] = {}
     for inv in invocations:
-        for gpu in _split_gpu_list(inv.job.gpus):
+        for gpu in _split_gpu_list(inv.gpus):
             requested.setdefault(gpu, []).append(inv.job.name)
 
     requested_tokens = list(requested)
@@ -183,7 +256,7 @@ def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
         raise RuntimeError(
             "Preset requests GPUs that are not visible in this pod. "
             f"Visible GPUs: {', '.join(available)}. {details}. "
-            "Edit the preset's jobs.*.gpus values or run a smaller --jobs subset."
+            "Edit the preset's jobs.*.gpus/gpu_count values or run a smaller --jobs subset."
         )
 
     allow_oversubscription = os.environ.get(
@@ -517,9 +590,9 @@ def _print_dry_run(inv: JobInvocation) -> None:
     inv : JobInvocation
         Invocation to print.
     """
-    print(f"# job: {inv.job.name}  (env={inv.job.env}, gpus={inv.job.gpus})", file=sys.stderr)
+    print(f"# job: {inv.job.name}  (env={inv.job.env}, gpus={inv.gpus})", file=sys.stderr)
     print(f"# log: {inv.log_path}", file=sys.stderr)
-    print(f"CUDA_VISIBLE_DEVICES={inv.job.gpus} {_shell_join(inv.argv)}")
+    print(f"CUDA_VISIBLE_DEVICES={inv.gpus} {_shell_join(inv.argv)}")
     print(file=sys.stderr)
 
 
@@ -540,7 +613,7 @@ def _print_launch_summary(preset: Preset, invocations: list[JobInvocation]) -> N
         print(f"  {preset.description}", file=sys.stderr)
     for inv in invocations:
         print(
-            f"  - {inv.job.name}: env={inv.job.env}, gpus={inv.job.gpus}, log={inv.log_path}",
+            f"  - {inv.job.name}: env={inv.job.env}, gpus={inv.gpus}, log={inv.log_path}",
             file=sys.stderr,
         )
     print(bar, file=sys.stderr)

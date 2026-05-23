@@ -21,6 +21,6 @@ align-to-input = true
 [[jobs]]
 name = "boltz2_xrd"
 env = "boltz"
-gpus = "0,1"
+gpu_count = 8
 output_subdir = "boltz2_xrd"
 args = {}

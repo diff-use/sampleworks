@@ -22,6 +22,6 @@ align-to-input = true
 [[jobs]]
 name = "boltz1"
 env = "boltz"
-gpus = "0,1"
+gpu_count = 8
 output_subdir = "boltz1"
 args = {}

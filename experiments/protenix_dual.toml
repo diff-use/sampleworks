@@ -22,13 +22,13 @@ align-to-input = true
 [[jobs]]
 name = "protenix_tiny"
 env = "protenix"
-gpus = "2,3"
+gpu_count = 4
 output_subdir = "protenix_tiny"
 args = { model-checkpoint = "${PROTENIX_TINY_CHECKPOINT}" }
 
 [[jobs]]
 name = "protenix_mini"
 env = "protenix"
-gpus = "6,7"
+gpu_count = 4
 output_subdir = "protenix_mini"
 args = { model-checkpoint = "${PROTENIX_MINI_CHECKPOINT}" }

@@ -20,6 +20,6 @@ align-to-input = true
 [[jobs]]
 name = "protenix"
 env = "protenix"
-gpus = "0,1"
+gpu_count = 8
 output_subdir = "protenix"
 args = {}
