@@ -211,7 +211,7 @@ def run_grid_search(
         for worker_num, job_queue_path in enumerate(job_queue_paths):
             model = worker_job_queues[worker_num][0].model
             future = executor.submit(
-                run_guidance_queue_script, (job_queue_path, max_workers, model, worker_num)
+                run_guidance_queue_script, (job_queue_path, model, worker_num, gpus)
             )
             futures[future] = job_queue_path
 
@@ -240,8 +240,16 @@ def run_grid_search(
     return results
 
 
-def run_guidance_queue_script(args: tuple[str, int, str, int]):
-    job_queue_path, max_workers, model, worker_num = args
+def run_guidance_queue_script(args: tuple[str, str, int, list[str]]):
+    """Run one pickled guidance job queue in the model's pixi environment.
+
+    Parameters
+    ----------
+    args : tuple of str, str, int, and list of str
+        Job queue path, model name, worker index, and selected GPU entries. CUDA remaps
+        selected entries such as ``4,5`` to local process indices ``0,1``.
+    """
+    job_queue_path, model, worker_num, gpus = args
     pixi_env = get_pixi_env(model)
     script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
     env_python = get_pixi_env_python(pixi_env)
@@ -260,7 +268,16 @@ def run_guidance_queue_script(args: tuple[str, int, str, int]):
             job_queue_path,
         ]
         env = os.environ.copy()
-    log.info(f"Running worker {worker_num}: {cmd} on GPU {worker_num % max_workers}")
+    local_gpu = worker_num % len(gpus)
+    requested_gpu = gpus[local_gpu]
+    if os.environ.get("CUDA_VISIBLE_DEVICES"):
+        gpu_source = "CUDA_VISIBLE_DEVICES"
+    else:
+        gpu_source = "GPU detection"
+    log.info(
+        f"Running worker {worker_num}: {cmd} on local CUDA GPU {local_gpu} "
+        f"(selected GPU {requested_gpu} via {gpu_source})"
+    )
 
     with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
         result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, env=env)
