@@ -274,6 +274,10 @@ def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
         leaf_parent[_find_in_list(leaf_parent, leaf_key, where=dotted)] = value
     else:
         leaf_parent[leaf_key] = value
+        if parts[0] == "jobs" and len(parts) == 3 and leaf_key == "gpus":
+            leaf_parent.pop("gpu_count", None)
+        elif parts[0] == "jobs" and len(parts) == 3 and leaf_key == "gpu_count":
+            leaf_parent.pop("gpus", None)
 
 
 def _index(cursor: Any, part: str, *, where: str) -> Any:

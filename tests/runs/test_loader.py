@@ -83,6 +83,7 @@ def test_set_override_at_job_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("full_8gpu", overrides=["jobs.rf3.gpus=7"])
     assert preset.job("rf3").gpus == "7"
+    assert preset.job("rf3").gpu_count is None
 
 
 def test_set_override_at_job_by_index(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,6 +91,27 @@ def test_set_override_at_job_by_index(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset("full_8gpu", overrides=["jobs.0.gpus=9"])
     assert preset.jobs[0].gpus == "9"
+    assert preset.jobs[0].gpu_count is None
+
+
+def test_set_override_gpu_count_clears_gpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--set jobs.<name>.gpu_count`` replaces an explicit GPU assignment."""
+    monkeypatch.setenv("HOME", "/home/test")
+    custom = tmp_path / "gpu_count.toml"
+    custom.write_text(
+        'description = "custom"\n'
+        "[[jobs]]\n"
+        'name = "j1"\n'
+        'env = "rf3"\n'
+        'gpus = "0"\n'
+        'output_subdir = "j1"\n'
+        "args = {}\n"
+    )
+    preset = loader.load_preset(str(custom), overrides=["jobs.j1.gpu_count=2"])
+    assert preset.job("j1").gpu_count == 2
+    assert preset.job("j1").gpus == ""
 
 
 def test_set_override_at_args_inside_job(monkeypatch: pytest.MonkeyPatch) -> None:
