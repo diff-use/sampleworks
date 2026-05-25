@@ -68,6 +68,65 @@ def get_job_status(job: JobConfig) -> str:
         return "failed"
 
 
+def _gpu_indices_from_torch() -> list[str] | None:
+    """Return visible CUDA ordinals using PyTorch when it is importable.
+
+    Returns
+    -------
+    list of str or None
+        Visible local CUDA ordinals. ``None`` means PyTorch is unavailable or
+        CUDA discovery failed before returning a device count.
+    """
+    try:
+        import torch
+    except ImportError:
+        return None
+
+    try:
+        if not torch.cuda.is_available():
+            return []
+        return [str(i) for i in range(torch.cuda.device_count())]
+    except Exception as exc:
+        log.debug(f"PyTorch CUDA discovery failed: {exc}")
+        return None
+
+
+def _gpu_indices_from_nvidia_smi() -> list[str] | None:
+    """Return visible CUDA ordinals using ``nvidia-smi`` as a fallback.
+
+    Returns
+    -------
+    list of str or None
+        GPU ordinals reported by ``nvidia-smi``. ``None`` means the command is
+        absent or failed.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    return [g.strip() for g in result.stdout.strip().split("\n") if g.strip()]
+
+
+def _discover_gpu_indices() -> list[str] | None:
+    """Return visible CUDA ordinals from Python first, then ``nvidia-smi``.
+
+    Returns
+    -------
+    list of str or None
+        Visible GPU ordinals, or ``None`` when discovery is unavailable.
+    """
+    torch_indices = _gpu_indices_from_torch()
+    if torch_indices is not None:
+        return torch_indices
+    return _gpu_indices_from_nvidia_smi()
+
+
 def detect_gpus() -> list[str]:
     """Return CUDA GPU identifiers visible to this grid-search process.
 
@@ -80,37 +139,23 @@ def detect_gpus() -> list[str]:
     cuda_visible_key = cuda_visible.lower()
     if cuda_visible_key in {"none", "void", "nodevfiles"}:
         return []
+    if cuda_visible_key == "all":
+        return _discover_gpu_indices() or ["0"]
     if cuda_visible and cuda_visible_key != "all":
         gpus = [g.strip() for g in cuda_visible.split(",") if g.strip()]
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                visible = [g.strip() for g in result.stdout.strip().split("\n") if g.strip()]
-                if all(g.isdigit() for g in gpus + visible):
-                    missing = sorted(set(gpus).difference(visible), key=int)
-                    if missing:
-                        raise ValueError(
-                            "CUDA_VISIBLE_DEVICES references GPUs that are not visible "
-                            f"in this container: {missing}. Visible GPUs: {visible}. "
-                            "Check the preset jobs.*.gpus values for this pod size."
-                        )
-        except FileNotFoundError:
-            pass
+        visible = _discover_gpu_indices()
+        if visible and all(g.isdigit() for g in gpus + visible):
+            missing = sorted(set(gpus).difference(visible), key=int)
+            if missing:
+                raise ValueError(
+                    "CUDA_VISIBLE_DEVICES references GPUs that are not visible "
+                    f"in this container: {missing}. Visible GPUs: {visible}. "
+                    "Check the preset jobs.*.gpus values for this pod size."
+                )
         return gpus
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return [g.strip() for g in result.stdout.strip().split("\n") if g.strip()]
-    except FileNotFoundError:
-        pass
+    discovered = _discover_gpu_indices()
+    if discovered is not None:
+        return discovered
     return ["0"]
 
 
@@ -223,7 +268,11 @@ def run_grid_search(
         for worker_num, job_queue_path in enumerate(job_queue_paths):
             model = worker_job_queues[worker_num][0].model
             future = executor.submit(
-                run_guidance_queue_script, (job_queue_path, model, worker_num, gpus)
+                run_guidance_queue_script,
+                job_queue_path,
+                model,
+                worker_num,
+                gpus,
             )
             futures[future] = job_queue_path
 
@@ -252,34 +301,49 @@ def run_grid_search(
     return results
 
 
-def run_guidance_queue_script(args: tuple[str, str, int, list[str]]):
+def run_guidance_queue_script(
+    job_queue_path: str,
+    model: str,
+    worker_num: int,
+    gpus: list[str],
+) -> subprocess.CompletedProcess[Any]:
     """Run one pickled guidance job queue in the model's pixi environment.
 
     Parameters
     ----------
-    args : tuple of str, str, int, and list of str
-        Job queue path, model name, worker index, and selected GPU entries. CUDA remaps
-        selected entries such as ``4,5`` to local process indices ``0,1``.
+    job_queue_path : str
+        Pickled queue of guidance jobs assigned to this worker.
+    model : str
+        Structure predictor name used to select the pixi environment.
+    worker_num : int
+        Zero-based worker index. This determines the local CUDA ordinal.
+    gpus : list of str
+        Selected GPU entries. CUDA remaps entries such as ``4,5`` to local
+        process indices ``0,1``.
+
+    Returns
+    -------
+    subprocess.CompletedProcess
+        Result from the subprocess that ran the worker queue.
     """
-    job_queue_path, model, worker_num, gpus = args
-    pixi_env = get_pixi_env(model)
+    pixi_env_name = get_pixi_env(model)
     script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
-    env_python = get_pixi_env_python(pixi_env)
+    env_python = get_pixi_env_python(pixi_env_name)
     if env_python:
         cmd = [env_python, str(script_path), "--job-queue-path", job_queue_path]
-        env = get_pixi_env_process_env(env_python)
+        process_env = get_pixi_env_process_env(env_python)
     else:
         cmd = [
             "pixi",
             "run",
             "-e",
-            pixi_env,
+            pixi_env_name,
             "python",
             str(script_path),
             "--job-queue-path",
             job_queue_path,
         ]
-        env = os.environ.copy()
+        process_env = os.environ.copy()
     local_gpu = worker_num % len(gpus)
     requested_gpu = gpus[local_gpu]
     if os.environ.get("CUDA_VISIBLE_DEVICES"):
@@ -292,7 +356,12 @@ def run_guidance_queue_script(args: tuple[str, str, int, list[str]]):
     )
 
     with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
-        result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, env=env)
+        result = subprocess.run(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=process_env,
+        )
     return result
 
 

@@ -362,7 +362,11 @@ def process_structure_for_boltz(
 
     # Keep Boltz dataloading in-process by default. Kubernetes pods usually get
     # a small /dev/shm, and torch DataLoader workers can exhaust it while
-    # sharing large featurized batches back to the parent process.
+    # sharing large featurized batches back to the parent process. This is
+    # Boltz-specific because the Protenix/RF3 wrappers do not expose an
+    # equivalent preprocessing worker pool here; callers can still pass
+    # ``num_workers`` explicitly when profiling shows that multiprocessing is
+    # worth the shared-memory tradeoff.
     config = BoltzConfig(
         out_dir=out_dir or structure.get("metadata", {}).get("id", "boltz_output"),
         num_workers=num_workers,

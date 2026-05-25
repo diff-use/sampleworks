@@ -154,11 +154,17 @@ Instructions for running evaluation and metrics scripts are coming soon.
 
 ## Running preset experiments on ACTL (`run_experiments`)
 
+This section is Astera-specific: it assumes access to ACTL, the internal Harbor
+image registry, and the `diffuse-shared` PVC. External users can run the same
+TOML presets with `sampleworks-runs` or `python -m sampleworks.runs.cli` after
+setting equivalent local paths for `DATA_DIR`, `PROTEINS_CSV`, `RESULTS_DIR`,
+`MSA_CACHE_DIR`, and model checkpoints.
+
 Start an 8-GPU ACTL machine named `sampleworks` with the Sampleworks image and
 the shared data volume mounted:
 
 ```bash
-actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:latest --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
 Keep that terminal open; it maintains sync and SSH. From another terminal:
@@ -175,14 +181,18 @@ right `run_grid_search.py` jobs, pixi environments, GPU assignments, logs,
 results directory, and MSA cache.
 
 ```bash
-run_experiments --list        # show available presets
+export DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps
+export PROTEINS_CSV="$DATA_DIR/proteins.csv"
+export SAMPLEWORKS_ACTL_RUN_NAME="$(hostname -s)"
+
+run_experiments --list        # show available presets (does not require DATA_DIR)
 run_experiments --show rf3    # inspect what will run
 run_experiments --dry-run rf3 # print commands without running
 run_experiments rf3           # run the standalone RF3 preset
 run_experiments boltz         # run Boltz2 X-ray + Boltz2 MD
 run_experiments boltz1        # run standalone Boltz1
 run_experiments protenix      # run the standalone Protenix preset
-run_experiments               # run the default full_8gpu preset
+run_experiments full_8gpu     # run the full 8-GPU comparison preset
 ```
 
 The default `full_8gpu` preset runs Boltz2 XRD, Boltz2 MD, RF3, and Protenix in
@@ -217,14 +227,23 @@ run_experiments rf3 --set jobs.rf3.args.gradient-weights="0.0 0.01 0.02"
 
 Presets usually declare `gpu_count = N`, not fixed GPU IDs. The runner assigns
 visible GPUs automatically in job order, so the same preset works on different
-pod sizes. Use explicit `gpus = "0,1"` only when you need to pin a job to
-specific devices.
+pod sizes and fails fast if the pod has fewer visible GPUs than requested. Use
+explicit `gpus = "0,1"` only when you need to pin a job to specific devices; the
+runner validates those IDs before launching jobs.
 
-Defaults: inputs come from `/mnt/diffuse-shared/raw/sampleworks/...`, checkpoints
-from `/mnt/diffuse-shared/raw/checkpoints`, results go to
+Set `DATA_DIR` and `PROTEINS_CSV` explicitly for each run so they are captured in
+the shell history and launch logs. Checkpoints default to
+`/mnt/diffuse-shared/raw/checkpoints` when those files exist, results go to
 `/mnt/diffuse-shared/results/sampleworks/<pod>/<target>/`, and MSA caches go to
-`/mnt/diffuse-shared/cache/sampleworks/msa`. Override with `DATA_DIR`,
-`RESULTS_DIR`, or `MSA_CACHE_DIR` before running.
+`/mnt/diffuse-shared/cache/sampleworks/msa`. Override with `RESULTS_DIR`,
+`MSA_CACHE_DIR`, or model-specific checkpoint variables before running.
+
+The ACTL image contains baked pixi environments under `/app/.pixi`. If your
+synced branch changes `pyproject.toml` or `pixi.lock`, `run_experiments` stops
+with a clear error instead of mutating the baked environment. For dependency
+debugging only, opt into an on-pod pixi update with
+`SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1 run_experiments ...`; reproducible scientist
+runs should use a rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 
 ## Docker
