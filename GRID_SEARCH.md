@@ -6,14 +6,14 @@ and how to find and read logs if you need to debug the process.
 
 ## Optional: Setting up the docker container
 It is often useful to have a docker container with all the dependencies installed.
-Our script `run_all_models.sh` for instance uses a docker container to manage all
+Our script `run_experiments` for instance uses a docker container to manage all
 dependencies. To run that script, you will need to have docker installed. Build
 the container with
 ```shell
-docker build -t diffuseproject/sampleworks .
+docker build -t pixi-with-checkpoints .
 ```
 which will add an image to your local docker repository called
-`diffuseproject/sampleworks:latest`. The top of the `Dockerfile` contains
+`pixi-with-checkpoints:latest`. The top of the `Dockerfile` contains
 instructions on how to use the container as well. The container entrypoint
 (`docker-entrypoint`) is fairly generic and is used to call the `run_grid_search.py`
 script described below.

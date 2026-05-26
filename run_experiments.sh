@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Backward-compatible alias. Prefer run_experiments for new docs/usage.
+# Backward-compatible alias for the extensionless run_experiments command.
 set -euo pipefail
 
 script_path="${BASH_SOURCE[0]}"

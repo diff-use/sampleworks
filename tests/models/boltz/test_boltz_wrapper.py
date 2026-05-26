@@ -112,7 +112,7 @@ class TestAnnotateStructureForBoltz:
     def test_annotate_default_values(self, structure_6b8x: dict, temp_output_dir: Path):
         result = process_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
         config = result["_boltz_config"]
-        assert config.num_workers == 8
+        assert config.num_workers == 0
         assert config.ensemble_size == 1
         assert config.recycling_steps == 3
 
@@ -142,7 +142,7 @@ class TestBoltzConfig:
     def test_boltz_config_default_values(self):
         config = BoltzConfig()
         assert config.out_dir is None
-        assert config.num_workers == 8
+        assert config.num_workers == 0
         assert config.ensemble_size == 1
         assert config.recycling_steps == 3
 

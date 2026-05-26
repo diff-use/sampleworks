@@ -71,6 +71,7 @@ def save_trajectory(
     subdir_name,
     save_every=10,
 ):
+    """Dispatch trajectory serialization to the handler for the selected scaler."""
     if scaler_type == GuidanceType.PURE_GUIDANCE:
         _save_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every)
     elif scaler_type == GuidanceType.FK_STEERING:
@@ -100,6 +101,7 @@ def _write_coords_into_array(
 
 
 def _save_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every):
+    """Save a pure-guidance coordinate trajectory as sampled multi-model CIFs."""
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -122,6 +124,7 @@ def _save_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every
 
 
 def _save_fk_steering_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every):
+    """Save the first-particle FK-steering trajectory as sampled multi-model CIFs."""
     output_dir = Path(output_dir / "trajectory" / subdir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -146,6 +149,7 @@ def _save_fk_steering_trajectory(trajectory, atom_array, output_dir, subdir_name
 
 
 def save_losses(losses, output_dir):
+    """Write per-step guidance losses to ``losses.txt`` in ``output_dir``."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -165,6 +169,7 @@ def get_model_and_device(
     method: str | None = None,
     model: Any = None,
 ) -> tuple[torch.device, Any]:
+    """Validate a checkpoint, choose a device, and construct the model wrapper."""
     validated_checkpoint_path = validate_model_checkpoint(model_type, model_checkpoint_path)
 
     device = torch.device(device_str) if device_str else try_gpu()
@@ -225,6 +230,7 @@ def get_reward_function_and_structure(
     resolution,
     structure_path: str | Path,
 ) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
+    """Load structure and density inputs and build the real-space reward function."""
     logger.debug(f"Loading structure from {structure_path}")
     safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
     structure = parse(
@@ -418,6 +424,7 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
 
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
+    """Run one configured guidance trajectory and save its outputs."""
     reward_function, structure = get_reward_function_and_structure(
         args.density,  # str/path to a map file.
         device,  # this needs to come from the global context, not the args object.
@@ -459,8 +466,14 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     elif "Boltz" in wrapper_class_name:
         from sampleworks.models.boltz.wrapper import process_structure_for_boltz
 
+        # Boltz preprocessing writes manifest/NPZ/MSA files as a side effect.
+        # Keep those under the per-job output directory so concurrent grid jobs
+        # for the same protein do not race on a shared metadata-derived path.
         structure = process_structure_for_boltz(
-            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+            structure,
+            out_dir=args.output_dir,
+            ensemble_size=args.ensemble_size,
+            recycling_steps=recycling_steps,
         )
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
@@ -588,6 +601,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
 
 
 def epoch_seconds(time_to_convert: datetime) -> float:
+    """Convert a :class:`datetime.datetime` to seconds since the Unix epoch."""
     return (time_to_convert - datetime(1970, 1, 1)).total_seconds()
 
 
@@ -599,6 +613,7 @@ def get_job_result(
     exit_code: int,
     status: str,
 ) -> JobResult:
+    """Build the serializable result record for a completed guidance job."""
     start_time = epoch_seconds(started_at)
     end_time = epoch_seconds(ended_at)
     result = JobResult(
@@ -621,6 +636,7 @@ def get_job_result(
 
 
 def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
+    """Load a pickled job queue, reuse one model wrapper, and run all jobs."""
     with open(job_queue_path, "rb") as fp:
         job_queue: list[GuidanceConfig] = pickle.load(fp)
 

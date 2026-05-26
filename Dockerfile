@@ -5,10 +5,10 @@
 # Checkpoints are baked into the image at /checkpoints/ via a pre-built base image.
 #
 # Build:
-#   docker build -t sampleworks .
+#   docker build -t pixi-with-checkpoints .
 #
-# CI builds pull checkpoints automatically from Docker Hub via:
-#   COPY --from=diffuseproject/sampleworks-checkpoints:latest
+# CI builds pull checkpoints automatically from Harbor via:
+#   COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest
 # No checkpoint files are needed in the build context or on the CI runner.
 #
 # To rebuild the checkpoints base image (only needed when checkpoints change):
@@ -16,10 +16,10 @@
 #
 # Run examples:
 #   # Show help
-#   docker run sampleworks --help
+#   docker run pixi-with-checkpoints --help
 #
 #   # Run grid search with Boltz1 (checkpoint baked in)
-#   docker run --gpus all -v /data:/data sampleworks \
+#   docker run --gpus all -v /data:/data pixi-with-checkpoints \
 #     -e boltz run_grid_search.py \
 #     --proteins /data/proteins.csv \
 #     --models boltz1 \
@@ -33,7 +33,7 @@
 #     --align-to-input
 #
 #   # Run grid search with Boltz2 (checkpoint baked in)
-#   docker run --gpus all -v /data:/data sampleworks \
+#   docker run --gpus all -v /data:/data pixi-with-checkpoints \
 #     -e boltz run_grid_search.py \
 #     --proteins /data/proteins.csv \
 #     --models boltz2 \
@@ -45,7 +45,7 @@
 #     --use-tweedie
 #
 #   # Interactive shell
-#   docker run --gpus all -it sampleworks bash
+#   docker run --gpus all -it pixi-with-checkpoints bash
 #
 # Baked-in checkpoints (from diffuseproject/sampleworks-checkpoints:latest):
 #   /checkpoints/boltz1_conf.ckpt                   - Boltz1 model (~3.5GB)
@@ -56,7 +56,7 @@
 #   /checkpoints/protenix_base_default_v0.5.0.pt     - Protenix model (~1.4GB)
 #
 # Checkpoints base image:
-#   All checkpoints live in diffuseproject/sampleworks-checkpoints:latest on Docker Hub.
+#   All checkpoints live in harbor.astera.sh/library/sampleworks-checkpoints:latest.
 #   To rebuild that image, see /data/users/diffuse/checkpoint-build/ on the GPU server.
 
 # ============================================================================
@@ -97,6 +97,7 @@ WORKDIR /app
 # Copy all project files - needed because sampleworks is installed as editable package
 # The pypi-dependencies section has: sampleworks = {editable = true, path = "."}
 COPY pyproject.toml pixi.lock ./
+COPY experiments/ ./experiments/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY run_grid_search.py ./
@@ -104,11 +105,11 @@ COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # ============================================================================
-# Bake in model checkpoints from pre-built base image on Docker Hub
+# Bake in model checkpoints from pre-built Harbor image
 # ============================================================================
 # Checkpoints (~10 GB) rarely change, so this layer is placed before pixi
 # installs to stay cached even when dependencies update.
-COPY --from=diffuseproject/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
+COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
 
 # ============================================================================
 # Install all three environments: boltz, protenix, rf3
@@ -128,6 +129,19 @@ RUN pixi install -e boltz --frozen && \
 RUN pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
+
+# This image carries pixi environments and checkpoints. Runtime source should
+# come from ACTL's synced checkout at /home/dev/workspace, not from stale code
+# baked into /app during image construction.
+RUN rm -rf /app/src /app/scripts /app/experiments /app/run_grid_search.py \
+    && mkdir -p /home/dev/workspace
+
+COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh /usr/local/bin/
+RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' >> /root/.bashrc
+
+ENV SAMPLEWORKS_PIXI_PROJECT_DIR=/app \
+    SAMPLEWORKS_APP_DIR= \
+    SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=1
 
 # Set default checkpoint paths via environment variables
 ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \

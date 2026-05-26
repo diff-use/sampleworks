@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# ACTL-native entry point for Sampleworks preset runs.
+#
+# The TOML preset is the source of truth. This wrapper uses the synced ACTL
+# checkout at /home/dev/workspace for Sampleworks code, while reusing the
+# prebuilt pixi environments/checkpoints from the image at /app.
+
+set -euo pipefail
+
+# Resolve the physical location of this wrapper even when it is invoked through
+# the /usr/local/bin symlink baked into the ACTL image. Later fallbacks use this
+# directory to find a checkout when /home/dev/workspace is not available.
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+    script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+    script_target="$(readlink "$script_path")"
+    if [[ "$script_target" == /* ]]; then
+        script_path="$script_target"
+    else
+        script_path="$script_dir/$script_target"
+    fi
+done
+script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+
+is_sampleworks_root() {
+    local candidate="$1"
+    [[ -f "$candidate/pyproject.toml" && -d "$candidate/src/sampleworks" && -f "$candidate/run_grid_search.py" ]]
+}
+
+find_sampleworks_root_upwards() {
+    local candidate="$1"
+    while [[ -n "$candidate" && "$candidate" != "/" ]]; do
+        if is_sampleworks_root "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+        candidate="$(dirname -- "$candidate")"
+    done
+    return 1
+}
+
+truthy_env() {
+    local name="$1"
+    [[ "${!name:-}" =~ ^(1|true|yes)$ ]]
+}
+
+require_env_var() {
+    local name="$1"
+    local help_text="$2"
+    if [[ -z "${!name:-}" ]]; then
+        cat >&2 <<EOF
+$name must be set explicitly for run_experiments.
+
+$help_text
+EOF
+        return 2
+    fi
+}
+
+pixi_inputs_match_image() {
+    local image_root="$1"
+    local source_root="$2"
+
+    # Older images do not have enough metadata to validate; let the existing
+    # prebuilt-env checks handle those cases.
+    [[ -f "$image_root/pyproject.toml" && -f "$image_root/pixi.lock" ]] || return 0
+    [[ -f "$source_root/pyproject.toml" && -f "$source_root/pixi.lock" ]] || return 0
+
+    cmp -s "$image_root/pyproject.toml" "$source_root/pyproject.toml" && \
+        cmp -s "$image_root/pixi.lock" "$source_root/pixi.lock"
+}
+
+resolve_repo_root() {
+    local source_override="${SAMPLEWORKS_SOURCE_DIR:-}"
+    if [[ -n "$source_override" ]]; then
+        if ! is_sampleworks_root "$source_override"; then
+            cat >&2 <<EOF
+SAMPLEWORKS_SOURCE_DIR does not point to a Sampleworks checkout:
+  $source_override
+EOF
+            return 2
+        fi
+        printf '%s\n' "$source_override"
+        return 0
+    fi
+
+    # ACTL syncs the user's local checkout here. Prefer it over any stale code
+    # that may have been used only to build the image's pixi environments.
+    if is_sampleworks_root "/home/dev/workspace"; then
+        printf '%s\n' "/home/dev/workspace"
+        return 0
+    fi
+
+    find_sampleworks_root_upwards "$PWD" && return 0
+
+    # Legacy fallback for older images/users. This intentionally comes after
+    # /home/dev/workspace so inherited SAMPLEWORKS_APP_DIR=/app cannot mask the
+    # synced checkout.
+    local app_override="${SAMPLEWORKS_APP_DIR:-}"
+    if [[ -n "$app_override" ]]; then
+        if is_sampleworks_root "$app_override"; then
+            printf '%s\n' "$app_override"
+            return 0
+        fi
+    fi
+
+    if is_sampleworks_root "$script_dir"; then
+        printf '%s\n' "$script_dir"
+        return 0
+    fi
+
+    cat >&2 <<'EOF'
+Could not find the synced Sampleworks checkout.
+
+Expected ACTL to sync the repo to /home/dev/workspace. If you are using a
+custom layout, set SAMPLEWORKS_SOURCE_DIR=/path/to/sampleworks before running
+run_experiments.
+EOF
+    return 2
+}
+
+repo_root="$(resolve_repo_root)"
+
+env_preset="${SAMPLEWORKS_PRESET:-}"
+default_target="$env_preset"
+target=""
+explicit_preset=""
+explicit_jobs=""
+explicit_results_dir=""
+expect_value_for=""
+for arg in "$@"; do
+    if [[ -n "$expect_value_for" ]]; then
+        case "$expect_value_for" in
+            preset)
+                explicit_preset="$arg"
+                ;;
+            results-dir)
+                explicit_results_dir="$arg"
+                ;;
+            jobs)
+                explicit_jobs="$arg"
+                ;;
+        esac
+        expect_value_for=""
+        continue
+    fi
+
+    case "$arg" in
+        --preset)
+            expect_value_for="preset"
+            ;;
+        --preset=*)
+            explicit_preset="${arg#--preset=}"
+            ;;
+        --results-dir)
+            expect_value_for="results-dir"
+            ;;
+        --results-dir=*)
+            explicit_results_dir="${arg#--results-dir=}"
+            ;;
+        --jobs)
+            expect_value_for="jobs"
+            ;;
+        --jobs=*)
+            explicit_jobs="${arg#--jobs=}"
+            ;;
+        -*)
+            ;;
+        *)
+            if [[ -z "$target" ]]; then
+                target="$arg"
+            fi
+            ;;
+    esac
+done
+
+needs_run_config=1
+for arg in "$@"; do
+    case "$arg" in
+        --list|-h|--help)
+            needs_run_config=0
+            ;;
+    esac
+done
+
+if [[
+    "$needs_run_config" -eq 1 &&
+    -z "$target" &&
+    -z "$explicit_preset" &&
+    -z "$explicit_jobs" &&
+    -z "$env_preset"
+]]; then
+    cat >&2 <<'EOF'
+run_experiments requires an explicit preset or job selector.
+
+Examples:
+  run_experiments rf3
+  run_experiments full_8gpu --jobs rf3,protenix
+  run_experiments --preset experiments/my_rf3.toml
+EOF
+    exit 2
+fi
+
+label_source="$default_target"
+if [[ -n "$explicit_preset" ]]; then
+    label_source="$explicit_preset"
+elif [[ -n "$explicit_jobs" && ( -z "$target" || "$target" == "all" || "$target" == "full" || "$target" == "full_8gpu" ) ]]; then
+    label_source="$explicit_jobs"
+elif [[ -n "$target" ]]; then
+    label_source="$target"
+fi
+case "$label_source" in
+    all|full)
+        label_source="full_8gpu"
+        ;;
+esac
+if [[ "$label_source" == *.toml || "$label_source" == */* ]]; then
+    if [[ "$label_source" != /* ]]; then
+        label_source="$repo_root/$label_source"
+    fi
+fi
+run_label="${label_source##*/}"
+run_label="${run_label%.toml}"
+run_label="${run_label//,/_}"
+
+run_name="${SAMPLEWORKS_ACTL_RUN_NAME:-$(hostname -s 2>/dev/null || printf 'sampleworks')}"
+default_results_dir="/mnt/diffuse-shared/results/sampleworks/${run_name}/${run_label}"
+default_msa_cache_dir="/mnt/diffuse-shared/cache/sampleworks/msa"
+
+export DATA_DIR="${DATA_DIR:-${SAMPLEWORKS_DATA_DIR:-}}"
+export PROTEINS_CSV="${PROTEINS_CSV:-${SAMPLEWORKS_PROTEINS_CSV:-}}"
+if [[ "$needs_run_config" -eq 1 ]]; then
+    require_env_var DATA_DIR \
+        "Set DATA_DIR to the dataset directory for this run, e.g. /mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps."
+    require_env_var PROTEINS_CSV \
+        "Set PROTEINS_CSV to the input manifest for this run, e.g. \$DATA_DIR/proteins.csv."
+fi
+if [[ -n "$explicit_results_dir" ]]; then
+    export RESULTS_DIR="$explicit_results_dir"
+else
+    export RESULTS_DIR="${RESULTS_DIR:-${SAMPLEWORKS_RESULTS_DIR:-$default_results_dir}}"
+fi
+export MSA_CACHE_DIR="${MSA_CACHE_DIR:-${SAMPLEWORKS_MSA_CACHE_DIR:-$default_msa_cache_dir}}"
+export SAMPLEWORKS_GRID_SEARCH_SCRIPT="${SAMPLEWORKS_GRID_SEARCH_SCRIPT:-$repo_root/run_grid_search.py}"
+# Append the old PYTHONPATH only when it is non-empty. This avoids a trailing
+# colon, which Python treats as the current working directory.
+export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
+export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-/tmp/pixi-cache}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
+
+shared_checkpoint_dir="/mnt/diffuse-shared/raw/checkpoints"
+for checkpoint_var_and_file in \
+    "BOLTZ1_CHECKPOINT boltz1_conf.ckpt" \
+    "BOLTZ2_CHECKPOINT boltz2_conf.ckpt" \
+    "RF3_CHECKPOINT rf3_foundry_01_24_latest.ckpt" \
+    "PROTENIX_CHECKPOINT protenix_base_default_v0.5.0.pt"; do
+    read -r checkpoint_var checkpoint_file <<<"$checkpoint_var_and_file"
+    checkpoint_path="$shared_checkpoint_dir/$checkpoint_file"
+    if [[ -z "${!checkpoint_var:-}" && -f "$checkpoint_path" ]]; then
+        export "$checkpoint_var=$checkpoint_path"
+    fi
+done
+
+needs_runtime_paths=1
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|--show|--list|-h|--help)
+            needs_runtime_paths=0
+            ;;
+    esac
+done
+
+source_proteins_csv="$PROTEINS_CSV"
+if [[ "$needs_runtime_paths" -eq 1 && -f "$source_proteins_csv" ]]; then
+    # The shared proteins.csv currently contains absolute /data/inputs paths,
+    # while ACTL mounts the dataset at /mnt/diffuse-shared. Rewrite a per-run
+    # manifest instead of requiring non-root scientists to create /data symlinks.
+    manifest_dir="$RESULTS_DIR/_input_manifest"
+    manifest_proteins_csv="$manifest_dir/proteins.csv"
+    mkdir -p "$manifest_dir"
+    legacy_data_dir="/data/inputs"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        printf '%s\n' "${line//$legacy_data_dir/$DATA_DIR}"
+    done <"$source_proteins_csv" >"$manifest_proteins_csv"
+    export PROTEINS_CSV="$manifest_proteins_csv"
+fi
+
+runner_env="${SAMPLEWORKS_RUNNER_ENV:-rf3}"
+# RUNTIME_PIXI=1 is the short scientist-facing escape hatch for branches whose
+# pyproject.toml or pixi.lock no longer match the baked image. Normalize it to
+# the internal flag that both this wrapper and sampleworks.runs.runner consume.
+if truthy_env RUNTIME_PIXI; then
+    export SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1
+fi
+pixi_project_dir="${SAMPLEWORKS_PIXI_PROJECT_DIR:-}"
+if [[ -z "$pixi_project_dir" ]]; then
+    if ! pixi_inputs_match_image /app "$repo_root" && truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
+        pixi_project_dir="$repo_root"
+    elif [[ -f /app/pyproject.toml && -d /app/.pixi ]]; then
+        pixi_project_dir="/app"
+    else
+        pixi_project_dir="$repo_root"
+    fi
+fi
+export SAMPLEWORKS_PIXI_PROJECT_DIR="$pixi_project_dir"
+
+if ! pixi_inputs_match_image /app "$repo_root"; then
+    if truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
+        cat >&2 <<EOF
+Synced pyproject.toml or pixi.lock differs from the baked image. Runtime pixi
+updates are enabled, so using the synced checkout as the pixi project:
+  $repo_root
+EOF
+        export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI="${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-0}"
+        export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-0}"
+    else
+        cat >&2 <<EOF
+Synced pyproject.toml or pixi.lock differs from the baked pixi-with-checkpoints image.
+
+Rebuild/use an image produced from this checkout, or intentionally update pixi
+inside this pod by running with:
+
+  RUNTIME_PIXI=1 run_experiments ...
+
+Runtime pixi updates can be slow and may rebuild CUDA packages, so they are
+disabled by default for reproducible scientist runs.
+EOF
+        exit 2
+    fi
+else
+    # The ACTL image is expected to provide ready-to-use pixi envs under /app/.pixi.
+    # Do not let sampleworks.runs.runner call `pixi run` just to "prepare" envs;
+    # that can reinstall the CUDA stack inside the pod or spend a long time
+    # refreshing caches. Use RUNTIME_PIXI=1 for dependency
+    # debugging against the synced checkout.
+    export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI="${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-1}"
+    export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-1}"
+fi
+runner_python="${SAMPLEWORKS_RUNNER_PYTHON:-$pixi_project_dir/.pixi/envs/$runner_env/bin/python}"
+
+extra_cli_args=()
+if [[ $# -eq 0 && -n "$env_preset" ]]; then
+    extra_cli_args=(--preset "$env_preset")
+fi
+
+display_target="${target:-${explicit_preset:-$default_target}}"
+if [[ -n "$explicit_jobs" ]]; then
+    display_target="$display_target --jobs $explicit_jobs"
+fi
+
+if [[ "$needs_runtime_paths" -eq 1 ]]; then
+    if [[ ! -f "${PROTEINS_CSV:-$source_proteins_csv}" ]]; then
+        cat >&2 <<EOF
+Sampleworks input dataset was not found.
+
+Expected: $source_proteins_csv
+
+On an ACTL Sampleworks pod, make sure the diffuse-shared PVC is mounted at
+/mnt/diffuse-shared, or override the dataset path, for example:
+
+  DATA_DIR=/mnt/diffuse-shared/raw/sampleworks/<dataset> ./run_experiments
+
+EOF
+        exit 2
+    fi
+    mkdir -p "$RESULTS_DIR" "$MSA_CACHE_DIR"
+fi
+
+cat >&2 <<EOF
+Sampleworks preset run
+  target:        $display_target
+  data:          $DATA_DIR
+  results:       $RESULTS_DIR
+  msa cache:     $MSA_CACHE_DIR
+  source:        $repo_root
+  pixi project:  $pixi_project_dir
+  runner env:    $runner_env
+  runner python: $runner_python
+
+EOF
+
+if [[ -x "$runner_python" ]]; then
+    runner_env_dir="$(cd -- "$(dirname -- "$runner_python")/.." && pwd)"
+    export PATH="$runner_env_dir/bin${PATH:+:$PATH}"
+    export CONDA_PREFIX="$runner_env_dir"
+    export CUDA_HOME="${CUDA_HOME:-$runner_env_dir}"
+    export PYTHONNOUSERSITE=1
+    cd "$repo_root"
+    if [[ "${#extra_cli_args[@]}" -gt 0 ]]; then
+        exec "$runner_python" -m sampleworks.runs.cli \
+            --results-dir "$RESULTS_DIR" \
+            "${extra_cli_args[@]}" \
+            "$@"
+    fi
+    exec "$runner_python" -m sampleworks.runs.cli \
+        --results-dir "$RESULTS_DIR" \
+        "$@"
+fi
+
+if ! truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
+    cat >&2 <<EOF
+Prebuilt runner pixi environment is missing: $runner_python
+
+run_experiments is for the ACTL pixi-with-checkpoints image, which must contain
+ready-to-use environments under /app/.pixi. Refusing to run 'pixi run' because
+that would install or refresh packages inside the pod.
+
+Recreate the pod with the current pixi-with-checkpoints image. If you are
+intentionally debugging runtime pixi setup, set RUNTIME_PIXI=1.
+EOF
+    exit 2
+fi
+
+cd "$pixi_project_dir"
+if [[ "${#extra_cli_args[@]}" -gt 0 ]]; then
+    exec pixi run -e "$runner_env" python -m sampleworks.runs.cli \
+        --results-dir "$RESULTS_DIR" \
+        "${extra_cli_args[@]}" \
+        "$@"
+fi
+exec pixi run -e "$runner_env" python -m sampleworks.runs.cli \
+    --results-dir "$RESULTS_DIR" \
+    "$@"

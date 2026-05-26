@@ -1,0 +1,26 @@
+description = "Boltz2 MD canonical occ-sweep job."
+
+[defaults]
+DATA_DIR = "/data/inputs"
+RESULTS_DIR = "/data/results/boltz2_md"
+MSA_CACHE_DIR = "/root/.sampleworks"
+PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
+
+[shared_args]
+proteins = "${PROTEINS_CSV}"
+model = "boltz2"
+method = "MD"
+scalers = "pure_guidance"
+partial-diffusion-step = 120
+ensemble-sizes = "8"
+gradient-weights = "0.0 0.05 0.1 0.2 0.35 0.5"
+gradient-normalization = true
+augmentation = true
+align-to-input = true
+
+[[jobs]]
+name = "boltz2_md"
+env = "boltz"
+gpu_count = 8
+output_subdir = "boltz2_md"
+args = {}

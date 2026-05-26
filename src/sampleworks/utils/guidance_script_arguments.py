@@ -9,16 +9,34 @@ from typing import Any
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 
 
-# Baked-in checkpoint paths (Docker image) with legacy fallbacks
+# Baked-in checkpoint paths (Docker image), ACTL shared-storage paths, and
+# legacy fallbacks. Environment variables win when present.
+_CHECKPOINT_ENV_VARS = {
+    "boltz1": "BOLTZ1_CHECKPOINT",
+    "boltz2": "BOLTZ2_CHECKPOINT",
+    "rf3": "RF3_CHECKPOINT",
+    "protenix": "PROTENIX_CHECKPOINT",
+}
+
 _CHECKPOINT_CANDIDATES = {
-    "boltz1": ["/checkpoints/boltz1_conf.ckpt", "~/.boltz/boltz1_conf.ckpt"],
-    "boltz2": ["/checkpoints/boltz2_conf.ckpt", "~/.boltz/boltz2_conf.ckpt"],
+    "boltz1": [
+        "/checkpoints/boltz1_conf.ckpt",
+        "/mnt/diffuse-shared/raw/checkpoints/boltz1_conf.ckpt",
+        "~/.boltz/boltz1_conf.ckpt",
+    ],
+    "boltz2": [
+        "/checkpoints/boltz2_conf.ckpt",
+        "/mnt/diffuse-shared/raw/checkpoints/boltz2_conf.ckpt",
+        "~/.boltz/boltz2_conf.ckpt",
+    ],
     "rf3": [
         "/checkpoints/rf3_foundry_01_24_latest.ckpt",
+        "/mnt/diffuse-shared/raw/checkpoints/rf3_foundry_01_24_latest.ckpt",
         "~/.foundry/checkpoints/rf3_foundry_01_24_latest.ckpt",
     ],
     "protenix": [
         "/checkpoints/protenix_base_default_v0.5.0.pt",
+        "/mnt/diffuse-shared/raw/checkpoints/protenix_base_default_v0.5.0.pt",
         ".pixi/envs/protenix-dev/lib/python3.12/site-packages/release_data/checkpoint/protenix_base_default_v0.5.0.pt",
     ],
 }
@@ -27,11 +45,16 @@ _CHECKPOINT_CANDIDATES = {
 def _resolve_checkpoint(model_key: str) -> str:
     """Return the first checkpoint path that exists on disk for *model_key*.
 
-    Tries baked-in Docker paths first (``/checkpoints/``), then falls back to
-    legacy development paths.  If none are found the first candidate is returned
-    so that downstream validation produces a clear error message.
+    Model-specific environment variables from :data:`_CHECKPOINT_ENV_VARS` win
+    when set. Otherwise, candidates from :data:`_CHECKPOINT_CANDIDATES` are
+    tried in order, starting with baked-in ``/checkpoints/`` paths and then
+    ACTL shared-storage and legacy development locations.
     """
-    candidates = _CHECKPOINT_CANDIDATES.get(model_key, [])
+    env_var = _CHECKPOINT_ENV_VARS.get(model_key)
+    candidates = []
+    if env_var and os.environ.get(env_var):
+        candidates.append(os.environ[env_var])
+    candidates.extend(_CHECKPOINT_CANDIDATES.get(model_key, []))
     for candidate in candidates:
         resolved = Path(candidate).expanduser()
         if resolved.exists():
@@ -45,9 +68,10 @@ def _resolve_checkpoint(model_key: str) -> str:
             f"Provide --model-checkpoint or bake checkpoints into /checkpoints/."
         )
     if not Path(resolved).exists():
+        env_hint = _CHECKPOINT_ENV_VARS.get(model_key, "a checkpoint env var")
         raise ValueError(
-            f"Model checkpoint '{resolved}' does not exist. "
-            f"Provide a valid path via --model-checkpoint."
+            f"Model checkpoint for '{model_key}' was not found. Checked: {candidates}. "
+            f"Provide --model-checkpoint or set {env_hint}."
         )
 
     return resolved
@@ -341,6 +365,7 @@ class GuidanceConfig:
             raise ValueError(f"Unknown model type: {self.model}")
 
     def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
+        """Apply per-job grid-search values onto this guidance configuration."""
         checkpoint = get_checkpoint(args)
         if checkpoint is not None:
             self.model_checkpoint = checkpoint
@@ -384,6 +409,7 @@ class GuidanceConfig:
 
 
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments shared by all models and guidance methods."""
     parser.add_argument("--structure", type=str, required=True, help="Input structure")
     parser.add_argument("--density", type=str, required=True, help="Input density map")
     parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
@@ -450,6 +476,7 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
 # Guidance type specific arguments
 ######################
 def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to pure guidance sampling."""
     parser.add_argument("--step-size", type=float, default=0.1, help="Gradient step")
     parser.add_argument(
         "--step-scaler-type",
@@ -462,6 +489,7 @@ def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
 
 
 def add_fk_steering_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to Feynman-Kac steering."""
     parser.add_argument(
         "--num-particles",
         type=int,
@@ -504,6 +532,7 @@ def add_fk_steering_args(parser: argparse.ArgumentParser | GuidanceConfig):
 # Model specific arguments
 ###########
 def add_boltz2_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to Boltz2 guidance runs."""
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -519,6 +548,7 @@ def add_boltz2_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
 
 
 def add_protenix_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to Protenix guidance runs."""
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -528,6 +558,7 @@ def add_protenix_specific_args(parser: argparse.ArgumentParser | GuidanceConfig)
 
 
 def add_boltz1_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to Boltz1 guidance runs."""
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -537,6 +568,7 @@ def add_boltz1_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
 
 
 def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to RF3 guidance runs."""
     parser.add_argument(
         "--model-checkpoint",
         type=str,
@@ -576,6 +608,8 @@ _GUIDANCE_ARG_ADDERS: dict[str, Any] = {
 
 @dataclass
 class JobConfig:
+    """Resolved inputs and grid-search settings for one guidance job."""
+
     protein: str
     structure_path: Path | str
     density_path: Path | str
@@ -592,6 +626,8 @@ class JobConfig:
 
 @dataclass
 class JobResult:
+    """Serializable status record produced after a guidance job finishes."""
+
     protein: str
     model: str
     method: str | None
