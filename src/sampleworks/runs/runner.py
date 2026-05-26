@@ -367,9 +367,10 @@ def _require_prebuilt_envs() -> bool:
         True when the ACTL wrapper/image requires baked pixi environments and
         the caller has not explicitly opted into runtime pixi installation.
     """
-    return _truthy_env("SAMPLEWORKS_REQUIRE_PREBUILT_PIXI") and not _truthy_env(
+    allow_runtime_pixi = _truthy_env("RUNTIME_PIXI") or _truthy_env(
         "SAMPLEWORKS_ALLOW_RUNTIME_PIXI"
     )
+    return _truthy_env("SAMPLEWORKS_REQUIRE_PREBUILT_PIXI") and not allow_runtime_pixi
 
 
 def _missing_prebuilt_env_message(pixi_env: str) -> str:
@@ -391,8 +392,8 @@ def _missing_prebuilt_env_message(pixi_env: str) -> str:
         "The pixi-with-checkpoints image must contain ready-to-use boltz, "
         "protenix, and rf3 environments. Refusing to fall back to 'pixi run' "
         "because that would install or refresh packages inside the pod. "
-        "Recreate the pod with the current image, or set "
-        "SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1 only when intentionally debugging pixi."
+        "Recreate the pod with the current image, or set RUNTIME_PIXI=1 only "
+        "when intentionally debugging pixi."
     )
 
 

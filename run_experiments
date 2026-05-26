@@ -286,6 +286,12 @@ if [[ "$needs_runtime_paths" -eq 1 && -f "$source_proteins_csv" ]]; then
 fi
 
 runner_env="${SAMPLEWORKS_RUNNER_ENV:-rf3}"
+# RUNTIME_PIXI=1 is the short scientist-facing escape hatch for branches whose
+# pyproject.toml or pixi.lock no longer match the baked image. Normalize it to
+# the internal flag that both this wrapper and sampleworks.runs.runner consume.
+if truthy_env RUNTIME_PIXI; then
+    export SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1
+fi
 pixi_project_dir="${SAMPLEWORKS_PIXI_PROJECT_DIR:-}"
 if [[ -z "$pixi_project_dir" ]]; then
     if ! pixi_inputs_match_image /app "$repo_root" && truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
@@ -314,7 +320,7 @@ Synced pyproject.toml or pixi.lock differs from the baked pixi-with-checkpoints 
 Rebuild/use an image produced from this checkout, or intentionally update pixi
 inside this pod by running with:
 
-  SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1 run_experiments ...
+  RUNTIME_PIXI=1 run_experiments ...
 
 Runtime pixi updates can be slow and may rebuild CUDA packages, so they are
 disabled by default for reproducible scientist runs.
@@ -325,7 +331,7 @@ else
     # The ACTL image is expected to provide ready-to-use pixi envs under /app/.pixi.
     # Do not let sampleworks.runs.runner call `pixi run` just to "prepare" envs;
     # that can reinstall the CUDA stack inside the pod or spend a long time
-    # refreshing caches. Use SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1 for dependency
+    # refreshing caches. Use RUNTIME_PIXI=1 for dependency
     # debugging against the synced checkout.
     export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI="${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-1}"
     export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-1}"
@@ -391,7 +397,7 @@ if [[ -x "$runner_python" ]]; then
         "$@"
 fi
 
-if [[ ! "${SAMPLEWORKS_ALLOW_RUNTIME_PIXI:-}" =~ ^(1|true|yes)$ ]]; then
+if ! truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
     cat >&2 <<EOF
 Prebuilt runner pixi environment is missing: $runner_python
 
@@ -400,7 +406,7 @@ ready-to-use environments under /app/.pixi. Refusing to run 'pixi run' because
 that would install or refresh packages inside the pod.
 
 Recreate the pod with the current pixi-with-checkpoints image. If you are
-intentionally debugging runtime pixi setup, set SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1.
+intentionally debugging runtime pixi setup, set RUNTIME_PIXI=1.
 EOF
     exit 2
 fi

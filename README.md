@@ -242,8 +242,8 @@ The ACTL image contains baked pixi environments under `/app/.pixi`. If your
 synced branch changes `pyproject.toml` or `pixi.lock`, `run_experiments` stops
 with a clear error instead of mutating the baked environment. For dependency
 debugging only, opt into an on-pod pixi update with
-`SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1 run_experiments ...`; reproducible scientist
-runs should use a rebuilt `pixi-with-checkpoints:sampleworks` image instead.
+`RUNTIME_PIXI=1 run_experiments ...`; reproducible scientist runs should use a
+rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 
 ## Docker
