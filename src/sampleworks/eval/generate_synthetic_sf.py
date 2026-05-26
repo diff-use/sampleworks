@@ -420,7 +420,9 @@ def process_batch(
     seed
         Optional seed for reproducible R-free flag assignment
     device
-        PyTorch device for computation
+        PyTorch device for computation. NOTE: all parallel workers currently
+        receive the same device, so with n_jobs > 1 all jobs will run on a
+        single GPU. See TODO below.
     n_jobs
         Number of parallel jobs. -1 means use all available CPUs.
     strip_hydrogens
@@ -434,10 +436,27 @@ def process_batch(
     save_structure
         If True, save each processed structure as mmCIF to output_dir.
     """
+    # TODO(engineers): GPU device distribution in parallel batch mode
+    #
+    # Currently all joblib worker processes receive the same `device` argument
+    # (e.g. cuda:0), so when n_jobs > 1 every parallel job competes for the
+    # same GPU. On a multi-GPU machine this wastes available GPU memory and
+    # compute. The fix requires distributing workers across GPUs, for example
+    # by:
+    #   - Accepting a list of GPU IDs (e.g. --gpus 0,1,2,3) and assigning
+    #     worker i to cuda:(gpu_ids[i % len(gpu_ids)]).
+    #   - Or detecting torch.cuda.device_count() and cycling workers across
+    #     cuda:0 … cuda:(N-1).
+    #   - Or letting callers control placement via CUDA_VISIBLE_DEVICES per
+    #     subprocess (requires spawning processes manually rather than using
+    #     joblib with the loky backend).
+    #
+    # Until this is resolved, prefer running with n_jobs=1 (or a small count
+    # that fits on one GPU) when using CUDA, or use CPU-only mode.
     from joblib import delayed, Parallel
 
     rows = load_batch_csv(csv_path)
-    logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
+
 
     Parallel(n_jobs=n_jobs, backend="loky")(
         delayed(_process_single_row)(
