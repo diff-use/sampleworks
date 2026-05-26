@@ -1,10 +1,34 @@
 """Fixtures for tests under ``tests/utils``."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from biotite.structure import AtomArray, AtomArrayStack, stack
+from sampleworks.utils.guidance_script_arguments import JobResult
 
 from tests.utils.atom_array_builders import build_test_atom_array
+
+
+@pytest.fixture
+def guidance_job_result(tmp_path: Path) -> JobResult:
+    """Successful JobResult populated with paths under ``tmp_path``."""
+    return JobResult(
+        protein="1l63",
+        model="boltz2",
+        method=None,
+        scaler="pure_guidance",
+        ensemble_size=8,
+        gradient_weight=0.1,
+        gd_steps=200,
+        status="success",
+        exit_code=0,
+        runtime_seconds=12.34,
+        started_at="2026-05-05T10:00:00",
+        finished_at="2026-05-05T10:00:12.340000",
+        log_path=str(tmp_path / "run.log"),
+        output_dir=str(tmp_path),
+    )
 
 
 @pytest.fixture

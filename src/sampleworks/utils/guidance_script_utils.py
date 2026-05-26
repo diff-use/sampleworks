@@ -333,11 +333,8 @@ def save_everything(
     add_category_to_cif(final_structure, metadata, category_name="sampleworks")
     final_structure.write(str(output_dir / "refined.cif"))
 
-    # Write out the job parameters to a JSON file alongside refined.cif. Even though this is
-    # technically duplicated with the CIF category, keep it around as a backup in case metadata
-    # is lost in some CIF transform. JobResult fields (timing, status) are appended later in
-    # run_guidance once the run finishes.
-    _write_job_metadata(output_dir, args)
+    # job_metadata.json (config + JobResult) is written by run_guidance after this returns;
+    # don't duplicate it here.
 
     # Two calls to save_trajectory, very similar, but saving different trajectories!
     save_trajectory(
@@ -592,13 +589,13 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
 def _write_job_metadata(
     output_dir: str | Path,
     args: GuidanceConfig,
-    job_result: JobResult | None = None,
+    job_result: JobResult,
 ) -> None:
-    """Write ``job_metadata.json`` from a GuidanceConfig, optionally enriched with a JobResult.
+    """Write ``job_metadata.json`` merging GuidanceConfig and JobResult fields.
 
     Both :py:meth:`GuidanceConfig.as_dict` and :py:meth:`JobResult.as_dict` apply
     container-to-host path remapping, so the merged file is consistent regardless of
-    whether the JobResult was populated.
+    where the run executed.
 
     Parameters
     ----------
@@ -606,14 +603,13 @@ def _write_job_metadata(
         Directory in which to write ``job_metadata.json``. Created if missing.
     args : GuidanceConfig
         Configuration used for the guidance run. Provides the base metadata payload.
-    job_result : JobResult | None, optional
-        Completed job result. When provided, its fields (notably ``started_at``,
-        ``finished_at``, ``runtime_seconds``, ``status``, ``exit_code``) are merged
-        on top of the ``GuidanceConfig`` payload.
+    job_result : JobResult
+        Completed job result. Its fields (notably ``started_at``, ``finished_at``,
+        ``runtime_seconds``, ``status``, ``exit_code``) are merged on top of the
+        ``GuidanceConfig`` payload.
     """
     metadata = args.as_dict()
-    if job_result is not None:
-        metadata.update(job_result.as_dict())
+    metadata.update(job_result.as_dict())
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / "job_metadata.json", "w") as fp:

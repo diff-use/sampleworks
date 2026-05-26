@@ -42,52 +42,9 @@ def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
     assert (tmp_path / "refined.cif").exists()
 
 
-def _make_job_result(output_dir: str) -> JobResult:
-    return JobResult(
-        protein="1l63",
-        model="boltz2",
-        method=None,
-        scaler="pure_guidance",
-        ensemble_size=8,
-        gradient_weight=0.1,
-        gd_steps=200,
-        status="success",
-        exit_code=0,
-        runtime_seconds=12.34,
-        started_at="2026-05-05T10:00:00",
-        finished_at="2026-05-05T10:00:12.340000",
-        log_path=str(Path(output_dir) / "run.log"),
-        output_dir=output_dir,
-    )
-
-
-def test_write_job_metadata_without_job_result_writes_guidance_config(tmp_path: Path):
-    """Without a JobResult, only GuidanceConfig fields should be written (backup snapshot)."""
-    args = GuidanceConfig(
-        protein="1l63",
-        structure=Path("dummy"),
-        density=Path("dummy"),
-        model="boltz2",
-        guidance_type="pure_guidance",
-        log_path="dummy",
-        output_dir=str(tmp_path),
-    )
-
-    _write_job_metadata(tmp_path, args)
-
-    metadata_path = tmp_path / "job_metadata.json"
-    assert metadata_path.exists()
-    metadata = json.loads(metadata_path.read_text())
-    assert metadata["protein"] == "1l63"
-    assert metadata["guidance_type"] == "pure_guidance"
-    # JobResult-only fields should not yet be present
-    assert "started_at" not in metadata
-    assert "finished_at" not in metadata
-    assert "runtime_seconds" not in metadata
-    assert "status" not in metadata
-
-
-def test_write_job_metadata_with_job_result_appends_timing_and_status(tmp_path: Path):
+def test_write_job_metadata_with_job_result_appends_timing_and_status(
+    tmp_path: Path, guidance_job_result: JobResult
+):
     """JobResult fields (timing, status, exit_code) must be merged into job_metadata.json."""
     args = GuidanceConfig(
         protein="1l63",
@@ -98,9 +55,8 @@ def test_write_job_metadata_with_job_result_appends_timing_and_status(tmp_path: 
         log_path="dummy",
         output_dir=str(tmp_path),
     )
-    job_result = _make_job_result(str(tmp_path))
 
-    _write_job_metadata(tmp_path, args, job_result)
+    _write_job_metadata(tmp_path, args, guidance_job_result)
 
     metadata = json.loads((tmp_path / "job_metadata.json").read_text())
     # GuidanceConfig keys are preserved
@@ -114,7 +70,9 @@ def test_write_job_metadata_with_job_result_appends_timing_and_status(tmp_path: 
     assert metadata["exit_code"] == 0
 
 
-def test_write_job_metadata_creates_missing_output_dir(tmp_path: Path):
+def test_write_job_metadata_creates_missing_output_dir(
+    tmp_path: Path, guidance_job_result: JobResult
+):
     """Helper should create the output directory if it doesn't exist (failure-path safety)."""
     nested = tmp_path / "does" / "not" / "exist"
     args = GuidanceConfig(
@@ -126,9 +84,8 @@ def test_write_job_metadata_creates_missing_output_dir(tmp_path: Path):
         log_path="dummy",
         output_dir=str(nested),
     )
-    job_result = _make_job_result(str(nested))
 
-    _write_job_metadata(nested, args, job_result)
+    _write_job_metadata(nested, args, guidance_job_result)
 
     assert (nested / "job_metadata.json").exists()
 
