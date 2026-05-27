@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+# Sampleworks - Astera private overlay
+#
+# Build this after the public Sampleworks image has been pushed. The private
+# image adds Astera-only tooling (EXT, rsync, editor conveniences) and is pushed
+# to Harbor. It intentionally does not duplicate the public Sampleworks build.
+#
+# Build locally:
+#   docker build --platform linux/amd64 \
+#     -f Dockerfile.astera \
+#     --build-arg SAMPLEWORKS_BASE_IMAGE=diffuseproject/sampleworks:latest \
+#     -t harbor.astera.sh/library/sampleworks-ext:local \
+#     .
+
+ARG SAMPLEWORKS_BASE_IMAGE=diffuseproject/sampleworks:latest
+ARG EXT_CLI_IMAGE=harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57
+
+FROM ${EXT_CLI_IMAGE} AS ext-cli
+
+FROM ${SAMPLEWORKS_BASE_IMAGE} AS astera
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/home/dev \
+    XDG_CONFIG_HOME=/home/dev/.config \
+    XDG_CACHE_HOME=/home/dev/.cache \
+    XDG_DATA_HOME=/home/dev/.local/share \
+    SHELL=/bin/bash \
+    SAMPLEWORKS_PIXI_PROJECT_DIR=/app \
+    SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=1 \
+    SAMPLEWORKS_SKIP_ENV_PREPARE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nano \
+        rsync \
+        vim \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && mkdir -p /home/dev/.config /home/dev/.cache /home/dev/.local/share /home/dev/workspace \
+    && install -m 0755 /app/run_experiments /usr/local/bin/run_experiments \
+    && install -m 0755 /app/run_experiments.sh /usr/local/bin/run_experiments.sh \
+    && install -m 0755 /app/run_all_models.sh /usr/local/bin/run_all_models.sh
+
+COPY --from=ext-cli /ext /usr/local/bin/ext
+
+RUN chmod 0755 /usr/local/bin/ext
+
+# Inherit Sampleworks' entrypoint and default command from the public base.
