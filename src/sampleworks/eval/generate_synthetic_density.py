@@ -180,8 +180,8 @@ def _process_single_row(
     structure_path = base_dir / row.filename
     atom_array = load_structure_for_synthetic_reward(
         structure_path,
-        occ_mode=occ_mode,
-        occ_values=row.occ_values,
+        occupancy_mode=occ_mode,
+        occupancy_values=row.occ_values,
         strip_hydrogens=strip_hydrogens,
         strip_waters=strip_waters,
         strip_ligands=strip_ligands,

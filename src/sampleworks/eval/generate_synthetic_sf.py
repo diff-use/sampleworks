@@ -1,8 +1,9 @@
 """Generate synthetic structure factor amplitudes via SFcalculator-torch.
 
-Produces an MTZ file of |F_protein| (no bulk solvent, no scaling) for each input
-PDB/mmCIF structure. v1 scope: protein-only structure factors, with optional
-per-row override of unit cell + space group and optional R-free flag column.
+Produces an MTZ file of |Fmodel| (or |Fprotein| if not simulate solvent and
+scale) for each input PDB/mmCIF structure. The MTZ file has dummy values for
+SIGFP and optionally R-free flag column. Each structure can be optionally
+overridden with unit cell, space group, atom selection, and occupancy.
 """
 
 import argparse
@@ -19,7 +20,10 @@ import reciprocalspaceship as rs
 import torch
 from biotite.structure import AtomArray
 from loguru import logger
-from sampleworks.eval.synthetic_utils import load_structure_for_synthetic_reward
+from sampleworks.eval.synthetic_utils import (
+    load_structure_for_synthetic_reward,
+    validate_occupancy_values,
+)
 from sampleworks.utils.atom_array_utils import BLANK_ALTLOC_IDS
 from sampleworks.utils.torch_utils import try_gpu
 from SFC_Torch import SFcalculator
@@ -27,53 +31,67 @@ from SFC_Torch.io import array2hier, PDBParser
 
 
 @dataclass
-class BatchRow:
-    """A row from the batch processing CSV file.
+class BatchRowForMTZ:
+    """A row from the batch processing CSV file. Each row represents one structure.
 
     Attributes
     ----------
     filename
-        Path to the structure file (relative to base_dir)
+        Path to the structure file (relative to base_dir, which is meant to be the
+        parent directory of all structures.)
     mtzfile
         Optional custom output filename for the MTZ
     unit_cell
         Optional unit cell to override the one in the structure file
     space_group
-        Optional space group (in Hermann-Mauguin string format) to override the
-        one in the structure file.
+        Optional space group to override the one in the structure file. Accepts any
+        string (e.g. "P 21 21 2") or integer (space group number, e.g. 18) that gemmi
+        can convert to a SpaceGroup object, which is then converted to the international
+        notation (Hermann-Mauguin string). See gemmi documentation for more details
+        (https://gemmi.readthedocs.io/en/latest/symmetry.html#spacegroup).
     selection
         Optional atom selection string in pyMOL-like syntax (e.g., 'chain A and resi 10-50')
-    occ_values
+    occupancy_values
         Custom list of occupancy values for altlocs, must be in range [0.0, 1.0]
     """
 
-    VALID_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".pdb", ".cif", ".mmcif", ".ent"})
+    VALID_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".cif", ".mmcif"})
+    LEGACY_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".pdb", ".ent"})
 
     filename: Path | str
     mtzfile: str | None = None
     unit_cell: gemmi.UnitCell | None = None
     space_group: str | None = None
     selection: str | None = None
-    occ_values: list[float] = field(default_factory=list)
+    occupancy_values: list[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         ext = Path(self.filename).suffix.lower()
-        if ext not in self.VALID_EXTENSIONS:
+        all_supported = self.VALID_EXTENSIONS | self.LEGACY_EXTENSIONS
+        if ext not in all_supported:
             raise ValueError(
                 f"Invalid file extension '{ext}' for '{self.filename}'. "
-                f"Expected one of: {', '.join(sorted(self.VALID_EXTENSIONS))}"
+                f"Expected one of: {', '.join(sorted(all_supported))}"
             )
-        for i, v in enumerate(self.occ_values):
-            if not 0.0 <= v <= 1.0:
-                raise ValueError(f"Occupancy value {v} at index {i} is out of range [0.0, 1.0]")
+        if ext in self.LEGACY_EXTENSIONS:
+            logger.warning(
+                f"'{ext}' is a legacy PDB format and support may be removed in a future version. "
+                "Prefer .cif or .mmcif (mmCIF format)."
+            )
+        validate_occupancy_values(self.occupancy_values)
 
     @classmethod
-    def from_dict(cls, row: dict[str, Any]) -> "BatchRow":
-        """Create a BatchRow from a CSV row dictionary.
+    def from_dict(cls, row: dict[str, Any]) -> "BatchRowForMTZ":
+        """Create a BatchRowForMTZ from a CSV row dictionary.
 
-        CSV columns: filename (required), mtzfile, unit_cell (six floats
-        separated by ':' — a:b:c:alpha:beta:gamma), space_group (space group number or
-        Hermann-Mauguin string), occ_values (colon-separated, e.g. '0.3:0.7').
+        CSV columns:
+        - filename (required): e.g. '1abc.cif', relative to base_dir
+        - mtzfile: e.g. 'output/1abc.mtz'
+        - unit_cell (six floats separated by ':'): e.g. '1.0:1.0:1.0:90.0:90.0:90.0'
+          in units of Angstroms and degrees
+        - space_group (number or Hermann-Mauguin string): e.g. '18' or 'P 21 21 2'
+        - occupancy_values (colon-separated floats summing to 1.0): e.g. '0.3:0.7'
+        - selection (PyMOL-like syntax): e.g. 'chain A'
         """
         if "filename" not in row:
             raise KeyError("CSV is missing required 'filename' column")
@@ -94,9 +112,9 @@ class BatchRow:
             if space_group.isdigit():
                 space_group = gemmi.SpaceGroup(int(space_group)).hm
 
-        occ_values: list[float] = []
-        if row.get("occ_values"):
-            occ_values = [float(v.strip()) for v in row["occ_values"].split(":")]
+        occupancy_values: list[float] = []
+        if row.get("occupancy_values"):
+            occupancy_values = [float(v.strip()) for v in row["occupancy_values"].split(":")]
 
         return cls(
             filename=row["filename"],
@@ -104,7 +122,7 @@ class BatchRow:
             unit_cell=unit_cell,
             space_group=space_group,
             selection=row.get("selection") or None,
-            occ_values=occ_values,
+            occupancy_values=occupancy_values,
         )
 
 
@@ -124,7 +142,7 @@ def atomarray_to_gemmi(
         Input structure with occupancy and b_factor annotations
     unit_cell
         Crystallographic unit cell for the structure. If None, gemmi defaults
-        to (1.0, 1.0, 1.0, 90.0, 90.0, 90.0).
+        to (1.0, 1.0, 1.0, 90.0, 90.0, 90.0) in units of Angstroms and degrees.
     space_group
         Space group (in Hermann-Mauguin string format) for the structure. If
         empty or invalid, SFcalculator defaults to P1.
@@ -139,9 +157,9 @@ def atomarray_to_gemmi(
         f"{atom_array.chain_id[i]}-0-{atom_array.res_name[i]}-{atom_array.atom_name[i]}"
         for i in range(n)
     ]
-    # gemmi uses '\x00' for blank altloc; biotite uses ''
+    # gemmi uses '\x00' for blank altloc
     atom_altloc = ["\x00" if a in BLANK_ALTLOC_IDS else a for a in atom_array.altloc_id]
-    structure = array2hier(
+    structure: gemmi.Structure = array2hier(
         atom_pos=atom_array.coord,
         atom_b_aniso=np.zeros((n, 3, 3), dtype=np.float64),
         atom_b_iso=atom_array.b_factor,
@@ -158,46 +176,49 @@ def atomarray_to_gemmi(
     return structure
 
 
-def write_amplitudes_to_mtz(
+def process_amplitudes_to_dataset(
     sfc: SFcalculator,
-    output_path: Path,
     test_fraction: float = 0.05,
     seed: int | None = None,
-    hkl_attr: str = "Hasu_array",
-    f_attr: str = "Ftotal_asu",
+    miller_index_column: str = "Hasu_array",
+    structure_factor_column: str = "Ftotal_asu",
     ccp4_convention: bool = False,
-    sigf_scale: float = 0.2,
-) -> None:
-    """Build an rs.DataSet from SFcalculator outputs and write it as MTZ.
+    sigma_f_scale: float = 0.2,
+    output_path: Path | None = None,
+) -> rs.DataSet:
+    """Build an rs.DataSet from SFcalculator outputs, optionally writing it as MTZ.
 
     Parameters
     ----------
     sfc: SFcalculator
         SFcalculator instance
-    output_path: Path
-        Path to the output MTZ file
     test_fraction: float
         Fraction of reflections to mark as R-free test set (0 disables)
     seed: int | None
         Optional seed for reproducible R-free flag assignment
-    hkl_attr: str
+    miller_index_column: str
         Attribute name in SFcalculator for hkl indices
-    f_attr: str
+    structure_factor_column: str
         Attribute name in SFcalculator for structure factors
     ccp4_convention: bool
         If True, use CCP4 convention for R-free flag assignment. Default
         is False, which uses Phenix convention (1 = test, 0 = working).
-    sigf_scale: float
-        Scale factor to make a fake SIGFP column from FP values so that
-        SFcalculator can load the output MTZ file as synthetic reward
-        without errors. The actual SIGFP values only matter when
-        computing R-factor.
+    sigma_f_scale: float
+        Scale factor to make a fake sigma column from the structure factor amplitude
+        values so that SFcalculator can load the output MTZ file as synthetic reward
+        without errors. The actual sigma values only matter when computing R-factor.
+    output_path: Path | None
+        If provided, write the dataset to this MTZ file path.
     """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    dataset = sfc.prepare_dataset(hkl_attr, f_attr)
-    dataset.rename(columns={"FMODEL": "FP"}, inplace=True)
-    dataset["SIGFP"] = dataset["FP"] * sigf_scale
-    dataset["SIGFP"] = dataset["SIGFP"].astype(rs.StandardDeviationDtype())
+    dataset: rs.DataSet = sfc.prepare_dataset(miller_index_column, structure_factor_column)
+    # assumes the first detected column of dtype F is the structure factor amplitude column
+    # avoids hardcoding unexposed column name "FMODEL" from sfc.prepare_dataset().
+    structure_factor_amplitude_column = dataset.select_mtzdtype(
+        rs.StructureFactorAmplitudeDtype()
+    ).columns[0]
+    sigma_f_column = f"SIG{structure_factor_amplitude_column}"
+    dataset[sigma_f_column] = dataset[structure_factor_amplitude_column] * sigma_f_scale
+    dataset[sigma_f_column] = dataset[sigma_f_column].astype(rs.StandardDeviationDtype())
     if test_fraction > 0:
         dataset = rs.utils.add_rfree(
             dataset,
@@ -205,17 +226,20 @@ def write_amplitudes_to_mtz(
             fraction=test_fraction,
             seed=seed,
         )
-    dataset.write_mtz(str(output_path))
-    logger.info(f"Saved structure factors to {output_path}")
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset.write_mtz(str(output_path))
+        logger.info(f"Saved structure factors to {output_path}")
+    return dataset
 
 
 def _process_single_row(
-    row: BatchRow,
+    row: BatchRowForMTZ,
     base_dir: Path,
     output_dir: Path,
-    dmin: float,
-    mode: str,
-    occ_mode: str,
+    resolution: float,
+    scattering_factor_mode: str,
+    occupancy_mode: str,
     test_fraction: float,
     seed: int | None,
     device: torch.device,
@@ -231,18 +255,18 @@ def _process_single_row(
     Parameters
     ----------
     row
-        BatchRow describing the input structure and optional per-row overrides
+        BatchRowForMTZ describing the input structure and optional per-row overrides
     base_dir
         Base directory for resolving relative structure file paths
     output_dir
         Directory where output MTZ files will be written
-    dmin
-        High-resolution limit in Angstroms
-    mode
+    resolution
+        High-resolution (dmin) limit in Angstroms
+    scattering_factor_mode
         SFcalculator mode: "xray" or "cryoem"
-    occ_mode
+    occupancy_mode
         Occupancy assignment mode: 'default' (keep file values), 'uniform'
-        (1/n_altlocs each), or 'custom' (use per-row occ_values from BatchRow)
+        (1/n_altlocs each), or 'custom' (use per-row occupancy_values from BatchRowForMTZ)
     test_fraction
         Fraction of reflections to mark as R-free test set (0 disables)
     seed
@@ -266,8 +290,8 @@ def _process_single_row(
     structure_path = base_dir / row.filename
     atom_array = load_structure_for_synthetic_reward(
         structure_path,
-        occ_mode=occ_mode,
-        occ_values=row.occ_values,
+        occupancy_mode=occupancy_mode,
+        occupancy_values=row.occupancy_values,
         strip_hydrogens=strip_hydrogens,
         strip_waters=strip_waters,
         strip_ligands=strip_ligands,
@@ -311,13 +335,13 @@ def _process_single_row(
         sfc = SFcalculator(
             pdbmodel=PDBParser(gemmi_structure),
             mtzdata=None,
-            dmin=dmin,
-            mode=mode,
+            dmin=resolution,
+            mode=scattering_factor_mode,
             anomalous=False,
             set_experiment=False,
             device=device,
         )
-        logger.info(
+        logger.debug(
             f"SFC info for {row.filename}: cell: {sfc.unit_cell}, "
             f"space group: {sfc.space_group.hm}, "
             f"n_atoms: {len(sfc.atom_pos_orth)}"
@@ -331,7 +355,7 @@ def _process_single_row(
             F_attribute = "Ftotal_asu"
         else:
             F_attribute = "Fprotein_asu"
-        logger.info(f"Computed {F_attribute} for {row.filename} on {device}")
+        logger.debug(f"Computed {F_attribute} for {row.filename} on {device}")
     except Exception as e:
         logger.error(
             f"Failed to compute for {row.filename} ({type(e).__name__}): {e}\n"
@@ -340,10 +364,14 @@ def _process_single_row(
         return
 
     # Output MTZ file
-    output_path = output_dir / (row.mtzfile or f"{structure_path.stem}_{dmin:.2f}A.mtz")
+    output_path = output_dir / (row.mtzfile or f"{structure_path.stem}_{resolution:.2f}A.mtz")
     try:
-        write_amplitudes_to_mtz(
-            sfc, output_path, f_attr=F_attribute, test_fraction=test_fraction, seed=seed
+        process_amplitudes_to_dataset(
+            sfc,
+            structure_factor_column=F_attribute,
+            test_fraction=test_fraction,
+            seed=seed,
+            output_path=output_path,
         )
     except Exception as e:
         logger.error(
@@ -353,18 +381,18 @@ def _process_single_row(
         )
 
 
-def load_batch_csv(csv_path: Path) -> list[BatchRow]:
+def load_batch_csv(csv_path: Path) -> list[BatchRowForMTZ]:
     """Load and parse a CSV file for batch processing.
 
     Parameters
     ----------
     csv_path
         Path to CSV file with columns: filename (required), mtzfile, unit_cell,
-        space_group, selection, occ_values (all optional)
+        space_group, selection, occupancy_values (all optional)
 
     Returns
     -------
-    list[BatchRow]
+    list[BatchRowForMTZ]
         List of validated batch processing rows
 
     Raises
@@ -378,7 +406,7 @@ def load_batch_csv(csv_path: Path) -> list[BatchRow]:
         if reader.fieldnames is None or "filename" not in reader.fieldnames:
             raise KeyError(f"CSV file '{csv_path}' is missing required 'filename' column")
         for row in reader:
-            rows.append(BatchRow.from_dict(row))
+            rows.append(BatchRowForMTZ.from_dict(row))
     return rows
 
 
@@ -386,9 +414,9 @@ def process_batch(
     csv_path: Path,
     base_dir: Path,
     output_dir: Path,
-    dmin: float,
-    mode: str,
-    occ_mode: str,
+    resolution: float,
+    scattering_factor_mode: str,
+    occupancy_mode: str,
     test_fraction: float,
     seed: int | None,
     device: torch.device,
@@ -409,11 +437,11 @@ def process_batch(
         Base directory for resolving relative structure file paths
     output_dir
         Directory where output MTZ files will be written
-    dmin
-        High-resolution limit in Angstroms
-    mode
+    resolution
+        High-resolution (dmin) limit in Angstroms
+    scattering_factor_mode
         Scattering factor type: 'xray' or 'cryoem'
-    occ_mode
+    occupancy_mode
         Occupancy assignment mode: 'default', 'uniform', or 'custom'
     test_fraction
         Fraction of reflections to mark as R-free test set (0 disables)
@@ -444,9 +472,9 @@ def process_batch(
             row=row,
             base_dir=base_dir,
             output_dir=output_dir,
-            dmin=dmin,
-            mode=mode,
-            occ_mode=occ_mode,
+            resolution=resolution,
+            scattering_factor_mode=scattering_factor_mode,
+            occupancy_mode=occupancy_mode,
             test_fraction=test_fraction,
             seed=seed,
             device=device,
@@ -484,25 +512,29 @@ def parse_args() -> argparse.Namespace:
         help="Atom selection (e.g., 'chain A and resi 10-50' or 'chain A and resi 10')",
     )
 
-    occ_group = parser.add_argument_group("Occupancy Options")
-    occ_group.add_argument(
-        "--occ-mode",
+    occupancy_group = parser.add_argument_group("Occupancy Options")
+    occupancy_group.add_argument(
+        "--occupancy-mode",
         choices=["default", "uniform", "custom"],
         default="default",
         help="Occupancy assignment mode",
     )
-    occ_group.add_argument(
-        "--occ-values",
+    occupancy_group.add_argument(
+        "--occupancy-values",
         type=str,
         help="Colon-separated occupancy values for custom mode (e.g., '0.3:0.7')",
     )
 
     sf_group = parser.add_argument_group("Structure Factor Options")
     sf_group.add_argument(
-        "--dmin", "-r", type=float, default=1.0, help="High-resolution limit in Angstroms"
+        "--resolution",
+        "-r",
+        type=float,
+        default=1.0,
+        help="High-resolution (dmin) limit in Angstroms",
     )
     sf_group.add_argument(
-        "--mode",
+        "--scattering-factor-mode",
         choices=["xray", "cryoem"],
         default="xray",
         help="Scattering factor type",
@@ -585,9 +617,9 @@ def main() -> None:
             csv_path=args.batch_csv,
             base_dir=args.base_dir,
             output_dir=args.output_dir,
-            dmin=args.dmin,
-            mode=args.mode,
-            occ_mode=args.occ_mode,
+            resolution=args.resolution,
+            scattering_factor_mode=args.scattering_factor_mode,
+            occupancy_mode=args.occupancy_mode,
             test_fraction=args.test_fraction,
             seed=args.seed,
             device=device,
@@ -599,23 +631,23 @@ def main() -> None:
             save_structure=args.save_structure,
         )
     elif args.structure:
-        row = BatchRow.from_dict(
+        row = BatchRowForMTZ.from_dict(
             {
                 "filename": args.structure.name,
                 "mtzfile": args.output.name if args.output else None,
                 "unit_cell": args.unit_cell,
                 "space_group": args.space_group,
                 "selection": args.selection,
-                "occ_values": args.occ_values,
+                "occupancy_values": args.occupancy_values,
             }
         )
         _process_single_row(
             row=row,
             base_dir=args.structure.parent,
             output_dir=args.output.parent if args.output else Path("."),
-            dmin=args.dmin,
-            mode=args.mode,
-            occ_mode=args.occ_mode,
+            resolution=args.resolution,
+            scattering_factor_mode=args.scattering_factor_mode,
+            occupancy_mode=args.occupancy_mode,
             test_fraction=args.test_fraction,
             seed=args.seed,
             device=device,
