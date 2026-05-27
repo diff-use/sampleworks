@@ -154,6 +154,7 @@ src/sampleworks/
 ├── metrics/               # Quality metrics (LDDT, sidechain)
 ├── eval/                  # Evaluation utilities
 ├── data/                  # Reference data (protein configs)
+├── runs/                  # `sampleworks-runs` CLI + TOML preset orchestrator
 └── utils/                 # Shared utilities
 ```
 

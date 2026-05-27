@@ -320,7 +320,7 @@ class BoltzConfig:
     """
 
     out_dir: str | Path | None = None
-    num_workers: int = 8
+    num_workers: int = 0
     ensemble_size: int = 1
     recycling_steps: int = 3
 
@@ -329,7 +329,7 @@ def process_structure_for_boltz(
     structure: dict,
     *,
     out_dir: str | Path | None = None,
-    num_workers: int = 8,
+    num_workers: int = 0,
     ensemble_size: int = 1,
     recycling_steps: int | None = 3,
 ) -> dict:
@@ -360,6 +360,13 @@ def process_structure_for_boltz(
     if recycling_steps is None:
         recycling_steps = 3
 
+    # Keep Boltz dataloading in-process by default. Kubernetes pods usually get
+    # a small /dev/shm, and torch DataLoader workers can exhaust it while
+    # sharing large featurized batches back to the parent process. This is
+    # Boltz-specific because the Protenix/RF3 wrappers do not expose an
+    # equivalent preprocessing worker pool here; callers can still pass
+    # ``num_workers`` explicitly when profiling shows that multiprocessing is
+    # worth the shared-memory tradeoff.
     config = BoltzConfig(
         out_dir=out_dir or structure.get("metadata", {}).get("id", "boltz_output"),
         num_workers=num_workers,
@@ -567,7 +574,7 @@ class Boltz2Wrapper:
         self,
         input_path: str | Path,
         out_dir: str | Path,
-        num_workers: int = 8,
+        num_workers: int = 0,
     ):
         """Create the Lightning data module used by Boltz to serve data to the model.
 
@@ -628,7 +635,7 @@ class Boltz2Wrapper:
             target_dir=processed.targets_dir,
             msa_dir=processed.msa_dir,
             mol_dir=mol_dir,
-            num_workers=num_workers if num_workers is not None else 8,
+            num_workers=num_workers if num_workers is not None else 0,
             constraints_dir=processed.constraints_dir,
             template_dir=processed_dir / "templates"
             if (processed_dir / "templates").exists()
@@ -1032,7 +1039,7 @@ class Boltz1Wrapper:
         self,
         input_path: str | Path,
         out_dir: str | Path,
-        num_workers: int = 2,
+        num_workers: int = 0,
     ):
         """Create the Lightning data module used by Boltz to serve data to the model.
 
@@ -1090,7 +1097,7 @@ class Boltz1Wrapper:
             manifest=processed.manifest,
             target_dir=processed.targets_dir,
             msa_dir=processed.msa_dir,
-            num_workers=num_workers if num_workers is not None else 2,
+            num_workers=num_workers if num_workers is not None else 0,
             constraints_dir=processed.constraints_dir,
         )
 

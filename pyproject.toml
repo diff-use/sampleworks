@@ -33,10 +33,14 @@ dependencies = [
 ]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
-version = "0.6.2"
+version = "0.6.3"
 
 [project.scripts]
 sampleworks-guidance = "sampleworks.cli.guidance:main"
+sampleworks-runs = "sampleworks.runs.cli:main"
+
+[tool.hatch.build.targets.wheel.force-include]
+"experiments" = "experiments"
 
 [tool.hatch.metadata]
 allow-direct-references = true

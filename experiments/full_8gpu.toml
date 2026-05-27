@@ -1,0 +1,44 @@
+description = "Full 8-GPU panel: Boltz2 X-ray, Boltz2 MD, RF3, and Protenix."
+
+[defaults]
+DATA_DIR = "/data/inputs"
+RESULTS_DIR = "/data/results/full_8gpu"
+MSA_CACHE_DIR = "/root/.sampleworks"
+PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
+
+[shared_args]
+proteins = "${PROTEINS_CSV}"
+scalers = "pure_guidance"
+partial-diffusion-step = 120
+ensemble-sizes = "8"
+gradient-normalization = true
+augmentation = true
+align-to-input = true
+
+[[jobs]]
+name = "boltz2_xrd"
+env = "boltz"
+gpu_count = 2
+output_subdir = "boltz2_xrd"
+args = { model = "boltz2", method = "X-RAY DIFFRACTION", gradient-weights = "0.0 0.05 0.1 0.2 0.35 0.5" }
+
+[[jobs]]
+name = "boltz2_md"
+env = "boltz"
+gpu_count = 2
+output_subdir = "boltz2_md"
+args = { model = "boltz2", method = "MD", gradient-weights = "0.0 0.05 0.1 0.2 0.35 0.5" }
+
+[[jobs]]
+name = "rf3"
+env = "rf3"
+gpu_count = 2
+output_subdir = "rf3"
+args = { model = "rf3", gradient-weights = "0.0 0.005 0.01 0.02 0.035 0.05 0.1" }
+
+[[jobs]]
+name = "protenix"
+env = "protenix"
+gpu_count = 2
+output_subdir = "protenix"
+args = { model = "protenix", gradient-weights = "0.0 0.05 0.1 0.2 0.35 0.5" }
