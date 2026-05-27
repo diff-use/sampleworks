@@ -18,7 +18,7 @@ analysis = [
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru", "python-semantic-release"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
-sfc = ["sfcalculator-torch>=0.3", "setuptools<81"]
+sfc = ["sfcalculator-torch>=0.3.2"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
@@ -77,11 +77,13 @@ boltz-dev = {features = ["boltz", "dev"]}
 boltz-dev-sfc = {features = ["boltz", "dev", "sfc"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
+protenix-dev-sfc = {features = ["protenix", "dev", "sfc"]}
 rf3 = {features = ["rf3"]}
 rf3-dev = {features = ["rf3", "dev"]}
 rf3-dev-sfc = {features = ["rf3", "dev", "sfc"]}
 
 [tool.pixi.feature.protenix.pypi-options.dependency-overrides]
+pandas = "==2.3.1"
 rdkit = ">=2024.3.5,<2025.9"
 
 [tool.pixi.feature.rf3.pypi-dependencies]

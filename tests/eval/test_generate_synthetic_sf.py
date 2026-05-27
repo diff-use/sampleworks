@@ -69,7 +69,10 @@ def _compute_fprotein(gemmi_structure: gemmi.Structure, device: torch.device) ->
 
 
 class TestAtomArrayToGemmi:
+    """Tests for atomarray_to_gemmi using the 6b8x structure."""
+
     def test_cell_matches_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
+        """Unit cell parameters are preserved through the biotite→gemmi conversion."""
         result = gemmi_structure_from_atomarray.cell
         expected = stripped_gemmi.cell
         assert result.a == pytest.approx(expected.a)
@@ -80,9 +83,11 @@ class TestAtomArrayToGemmi:
         assert result.gamma == pytest.approx(expected.gamma)
 
     def test_space_group_matches_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
+        """Space group is preserved through the biotite→gemmi conversion."""
         assert gemmi_structure_from_atomarray.spacegroup_hm == stripped_gemmi.spacegroup_hm
 
     def test_atoms_match_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
+        """Atom names and positions match the original PDB, in the same order."""
         # atom order is preserved: biotite keeps PDB file order, array2hier reconstructs it
         parser_from_atomarray = PDBParser(gemmi_structure_from_atomarray)
         parser_from_gemmi = PDBParser(stripped_gemmi)
@@ -92,6 +97,7 @@ class TestAtomArrayToGemmi:
         )
 
     def test_occupancy_change_is_applied(self, stripped_atom_array, stripped_gemmi):
+        """Custom occupancy values are correctly written to each altloc group."""
         occ_values = [0.2, 0.8, 0.0]
         altloc_info = detect_altlocs(stripped_atom_array)
         arr = assign_occupancies(stripped_atom_array, altloc_info, "custom", occ_values)
@@ -104,33 +110,40 @@ class TestAtomArrayToGemmi:
     def test_fprotein_matches_direct_gemmi(
         self, gemmi_structure_from_atomarray, stripped_gemmi, device
     ):
+        """Fprotein amplitudes from the converted structure match those from
+        the original gemmi structure."""
         f_atomarray = _compute_fprotein(gemmi_structure_from_atomarray, device)
         f_direct = _compute_fprotein(stripped_gemmi, device)
         np.testing.assert_allclose(np.abs(f_atomarray), np.abs(f_direct), atol=1e-3)
 
     def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
+        """A warning is logged when more occupancy values are provided than there are altlocs."""
         altloc_info = detect_altlocs(stripped_atom_array)
         with caplog.at_level(logging.WARNING):
             assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.2, 0.8, 0.0, 0.0])
         assert "Extra values will be ignored" in caplog.text
 
     def test_occupancy_warns_on_missing_values(self, stripped_atom_array, caplog):
+        """A warning is logged when fewer occupancy values are provided than there are altlocs."""
         altloc_info = detect_altlocs(stripped_atom_array)
         with caplog.at_level(logging.WARNING):
             assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.5, 0.5])
         assert "Missing values are automatically set to 0" in caplog.text
 
     def test_occupancy_raises_on_out_of_range(self, stripped_atom_array):
+        """ValueError is raised when an occupancy value is outside [0.0, 1.0]."""
         altloc_info = detect_altlocs(stripped_atom_array)
         with pytest.raises(ValueError, match="out of range"):
             assign_occupancies(stripped_atom_array, altloc_info, "custom", [1.5, 0.0, 0.0])
 
     def test_occupancy_raises_on_bad_sum(self, stripped_atom_array):
+        """ValueError is raised when occupancy values do not sum to 1.0."""
         altloc_info = detect_altlocs(stripped_atom_array)
         with pytest.raises(ValueError, match="sum to 1.0"):
             assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.3, 0.3, 0.3])
 
     def test_fprotein_changes_with_occupancy(self, stripped_atom_array, stripped_gemmi, device):
+        """Fprotein amplitudes differ when occupancies changes from uniform to custom values."""
         altloc_info = detect_altlocs(stripped_atom_array)
 
         arr_uniform = assign_occupancies(stripped_atom_array, altloc_info, "uniform")
