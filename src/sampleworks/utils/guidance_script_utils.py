@@ -339,12 +339,8 @@ def save_everything(
     add_category_to_cif(final_structure, metadata, category_name="sampleworks")
     final_structure.write(str(output_dir / "refined.cif"))
 
-    # write out the job parameters to a JSON file in the same directory as the refined.cif file
-    # Even though this is technically duplicated, keep it around as a backup in case metadata
-    # is lost in some CIF transform.
-    with open(Path(output_dir) / "job_metadata.json", "w") as fp:
-        # use the GuidanceConfig's as_dict() method to avoid serializing PosixPath objects
-        json.dump(metadata, fp)
+    # job_metadata.json (config + JobResult) is written by run_guidance after this returns;
+    # don't duplicate it here.
 
     # Two calls to save_trajectory, very similar, but saving different trajectories!
     save_trajectory(
@@ -413,13 +409,16 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
         with logger.contextualize(special=True):
             _run_guidance(args, guidance_type, model_wrapper, device)
         logger.info("Guidance run successfully!")
-        return get_job_result(args, device, started_at, datetime.now(), 0, "success")
+        job_result = get_job_result(args, device, started_at, datetime.now(), 0, "success")
     except Exception as e:
         logger.error(f"Error running guidance: {e} consult logs ({log_path}) for real errors.")
         logger.error(traceback.format_exc())
-        return get_job_result(args, device, started_at, datetime.now(), 1, "failed")
+        job_result = get_job_result(args, device, started_at, datetime.now(), 1, "failed")
     finally:
         logger.remove(handle)
+
+    _write_job_metadata(args.output_dir, args, job_result)
+    return job_result
 
 
 # "guidance_type" is also called "scaler" in many places
@@ -598,6 +597,36 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         with open(stats_path, "w") as f:
             json.dump(model_wrapper._chiral_grad_stats, f, indent=2)
         logger.info(f"Saved chiral gradient stats to {stats_path}")
+
+
+def _write_job_metadata(
+    output_dir: str | Path,
+    args: GuidanceConfig,
+    job_result: JobResult,
+) -> None:
+    """Write ``job_metadata.json`` merging GuidanceConfig and JobResult fields.
+
+    Both :py:meth:`GuidanceConfig.as_dict` and :py:meth:`JobResult.as_dict` apply
+    container-to-host path remapping, so the merged file is consistent regardless of
+    where the run executed.
+
+    Parameters
+    ----------
+    output_dir : str | Path
+        Directory in which to write ``job_metadata.json``. Created if missing.
+    args : GuidanceConfig
+        Configuration used for the guidance run. Provides the base metadata payload.
+    job_result : JobResult
+        Completed job result. Its fields (notably ``started_at``, ``finished_at``,
+        ``runtime_seconds``, ``status``, ``exit_code``) are merged on top of the
+        ``GuidanceConfig`` payload.
+    """
+    metadata = args.as_dict()
+    metadata.update(job_result.as_dict())
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / "job_metadata.json", "w") as fp:
+        json.dump(metadata, fp)
 
 
 def epoch_seconds(time_to_convert: datetime) -> float:
