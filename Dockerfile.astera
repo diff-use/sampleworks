@@ -1,23 +1,23 @@
 # syntax=docker/dockerfile:1
 # Sampleworks - Astera private overlay
 #
-# Build this after the public Sampleworks image has been pushed. The private
-# image adds Astera-only tooling (EXT, rsync, editor conveniences) and is pushed
-# to Harbor. It intentionally does not duplicate the public Sampleworks build.
+# Build this after the public pixi-with-checkpoints image has been pushed. The
+# private image adds Astera-only tooling (EXT, rsync, editor conveniences) and is
+# pushed to Harbor. It intentionally does not duplicate the public build.
 #
 # Build locally:
 #   docker build --platform linux/amd64 \
 #     -f Dockerfile.astera \
-#     --build-arg SAMPLEWORKS_BASE_IMAGE=diffuseproject/sampleworks:latest \
-#     -t harbor.astera.sh/library/sampleworks-ext:local \
+#     --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:latest \
+#     -t harbor.astera.sh/library/pixi-with-checkpoints:local \
 #     .
 
-ARG SAMPLEWORKS_BASE_IMAGE=diffuseproject/sampleworks:latest
+ARG PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:latest
 ARG EXT_CLI_IMAGE=harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57
 
 FROM ${EXT_CLI_IMAGE} AS ext-cli
 
-FROM ${SAMPLEWORKS_BASE_IMAGE} AS astera
+FROM ${PIXI_WITH_CHECKPOINTS_IMAGE} AS astera
 
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/dev \

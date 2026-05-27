@@ -16,12 +16,12 @@ env:
   # Override these with repository variables if Diffuse Hub uses a different
   # public registry path.
   PUBLIC_REGISTRY: ${{ vars.SAMPLEWORKS_PUBLIC_REGISTRY || 'docker.io' }}
-  PUBLIC_IMAGE_NAME: ${{ vars.SAMPLEWORKS_PUBLIC_IMAGE || 'diffuseproject/sampleworks' }}
+  PUBLIC_IMAGE_NAME: ${{ vars.SAMPLEWORKS_PUBLIC_IMAGE || 'diffuseproject/pixi-with-checkpoints' }}
   CHECKPOINTS_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_IMAGE || 'diffuseproject/sampleworks-checkpoints:latest' }}
   CUDA_BASE_IMAGE: ${{ vars.SAMPLEWORKS_CUDA_BASE_IMAGE || 'nvidia/cuda:12.4.1-devel-ubuntu22.04' }}
 
   ASTERA_REGISTRY: harbor.astera.sh
-  ASTERA_IMAGE_NAME: library/sampleworks-ext
+  ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
   EXT_CLI_IMAGE: ${{ vars.EXT_CLI_IMAGE || 'harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57' }}
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
@@ -151,7 +151,7 @@ jobs:
           tags: ${{ steps.astera-meta.outputs.tags }}
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
-            SAMPLEWORKS_BASE_IMAGE=${{ needs.public.outputs.image-ref }}
+            PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
             EXT_CLI_IMAGE=${{ env.EXT_CLI_IMAGE }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max

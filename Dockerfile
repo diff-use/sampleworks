@@ -5,7 +5,7 @@
 # and model checkpoints, with no Astera/EXT-specific tooling.
 #
 # Build public image locally:
-#   docker build --platform linux/amd64 -t diffuseproject/sampleworks:local .
+#   docker build --platform linux/amd64 -t diffuseproject/pixi-with-checkpoints:local .
 #
 # Fast context/Dockerfile smoke check without pulling checkpoints or installing
 # pixi environments:

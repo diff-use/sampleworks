@@ -315,7 +315,7 @@ EOF
         export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-0}"
     else
         cat >&2 <<EOF
-Synced pyproject.toml or pixi.lock differs from the baked sampleworks-ext image.
+Synced pyproject.toml or pixi.lock differs from the baked pixi-with-checkpoints image.
 
 Rebuild/use an image produced from this checkout, or intentionally update pixi
 inside this pod by running with:
@@ -401,11 +401,11 @@ if ! truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
     cat >&2 <<EOF
 Prebuilt runner pixi environment is missing: $runner_python
 
-run_experiments is for the ACTL sampleworks-ext image, which must contain
+run_experiments is for the ACTL pixi-with-checkpoints image, which must contain
 ready-to-use environments under /app/.pixi. Refusing to run 'pixi run' because
 that would install or refresh packages inside the pod.
 
-Recreate the pod with the current sampleworks-ext image. If you are
+Recreate the pod with the current pixi-with-checkpoints image. If you are
 intentionally debugging runtime pixi setup, set RUNTIME_PIXI=1.
 EOF
     exit 2

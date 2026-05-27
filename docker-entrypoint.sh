@@ -2,15 +2,15 @@
 # Sampleworks Docker Entrypoint
 #
 # Usage:
-#   docker run sampleworks -e <pixi_env> <script> [args...]
-#   docker run sampleworks -e boltz run_grid_search.py --proteins /data/proteins.csv ...
-#   docker run sampleworks bash  # interactive shell
+#   docker run pixi-with-checkpoints -e <pixi_env> <script> [args...]
+#   docker run pixi-with-checkpoints -e boltz run_grid_search.py --proteins /data/proteins.csv ...
+#   docker run pixi-with-checkpoints bash  # interactive shell
 #
 # Available pixi environments: boltz, protenix, rf3
 #
 # Examples:
 #   # Run grid search with RF3
-#   docker run --gpus all -v /data:/data sampleworks \
+#   docker run --gpus all -v /data:/data pixi-with-checkpoints \
 #     -e rf3 run_grid_search.py \
 #     --proteins /data/proteins.csv \
 #     --models rf3 \
@@ -28,9 +28,9 @@ show_help() {
 Sampleworks - Protein structure prediction with diffusion model guidance
 
 USAGE:
-    docker run --gpus all --shm-size=16g sampleworks -e <environment> <script> [arguments...]
-    docker run sampleworks bash
-    docker run sampleworks --help
+    docker run --gpus all --shm-size=16g pixi-with-checkpoints -e <environment> <script> [arguments...]
+    docker run pixi-with-checkpoints bash
+    docker run pixi-with-checkpoints --help
 
 IMPORTANT:
     Always use --shm-size=16g (or larger) to avoid shared memory errors with DataLoaders.
@@ -47,7 +47,7 @@ ENVIRONMENTS:
 
 EXAMPLES:
     # Run grid search with RF3 model
-    docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
+    docker run --gpus all --shm-size=16g -v /data:/data pixi-with-checkpoints \
       -e rf3 run_grid_search.py \
       --proteins /data/proteins.csv \
       --models rf3 \
@@ -62,7 +62,7 @@ EXAMPLES:
       --rf3-checkpoint /data/checkpoints/rf3_foundry_01_24_latest.ckpt
 
     # Run grid search with Boltz1 model
-    docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
+    docker run --gpus all --shm-size=16g -v /data:/data pixi-with-checkpoints \
       -e boltz run_grid_search.py \
       --proteins /data/proteins.csv \
       --models boltz1 \
@@ -74,7 +74,7 @@ EXAMPLES:
       --boltz1-checkpoint /data/checkpoints/boltz1_conf.ckpt
 
     # Run grid search with Boltz2 model
-    docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
+    docker run --gpus all --shm-size=16g -v /data:/data pixi-with-checkpoints \
       -e boltz run_grid_search.py \
       --proteins /data/proteins.csv \
       --models boltz2 \
@@ -87,7 +87,7 @@ EXAMPLES:
       --boltz2-checkpoint /data/checkpoints/boltz2_conf.ckpt
 
     # Run grid search with Protenix model
-    docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
+    docker run --gpus all --shm-size=16g -v /data:/data pixi-with-checkpoints \
       -e protenix run_grid_search.py \
       --proteins /data/proteins.csv \
       --models protenix \
@@ -99,10 +99,10 @@ EXAMPLES:
       --protenix-checkpoint /data/checkpoints/protenix_base_default_v0.5.0.pt
 
     # Interactive shell
-    docker run --gpus all --shm-size=16g -it sampleworks bash
+    docker run --gpus all --shm-size=16g -it pixi-with-checkpoints bash
 
     # Run a custom script
-    docker run --gpus all --shm-size=16g -v /data:/data sampleworks \
+    docker run --gpus all --shm-size=16g -v /data:/data pixi-with-checkpoints \
       -e boltz scripts/boltz2_pure_guidance.py \
       --structure /data/structure.cif \
       --density /data/density.ccp4 \
@@ -176,7 +176,7 @@ METADATA HOST PATH REMAPPING:
       docker run -v /mnt/data:/data/inputs:ro -v /results:/data/results \
         -e SAMPLEWORKS_HOST_INPUT_DIR=/mnt/data \
         -e SAMPLEWORKS_HOST_RESULTS_DIR=/results \
-        sampleworks -e boltz run_grid_search.py ...
+        pixi-with-checkpoints -e boltz run_grid_search.py ...
 
 PROTEINS CSV FORMAT:
     The --proteins CSV file must have the following columns:
@@ -191,7 +191,7 @@ PROTEINS CSV FORMAT:
       2xyz,/data/structures/2xyz.cif,/data/maps/2xyz.mrc,1.8
 
 For full argument details, run:
-    docker run sampleworks -e boltz run_grid_search.py --help
+    docker run pixi-with-checkpoints -e boltz run_grid_search.py --help
 EOF
 }
 
@@ -226,9 +226,9 @@ while [[ $# -gt 0 ]]; do
         *)
             echo "Error: First argument must be -e <environment>, bash, or --help"
             echo ""
-            echo "Usage: docker run sampleworks -e <env> <script> [args...]"
-            echo "       docker run sampleworks bash"
-            echo "       docker run sampleworks --help"
+            echo "Usage: docker run pixi-with-checkpoints -e <env> <script> [args...]"
+            echo "       docker run pixi-with-checkpoints bash"
+            echo "       docker run pixi-with-checkpoints --help"
             exit 1
             ;;
     esac
@@ -238,12 +238,12 @@ done
 if [[ -z "$ENV" ]]; then
     echo "Error: Environment not specified. Use -e <env> where env is boltz, protenix, or rf3"
     echo ""
-    echo "Usage: docker run sampleworks -e <env> <script> [args...]"
+    echo "Usage: docker run pixi-with-checkpoints -e <env> <script> [args...]"
     echo ""
     echo "Examples:"
-    echo "  docker run sampleworks -e boltz run_grid_search.py --proteins /data/proteins.csv"
-    echo "  docker run sampleworks -e rf3 run_grid_search.py --help"
-    echo "  docker run sampleworks bash"
+    echo "  docker run pixi-with-checkpoints -e boltz run_grid_search.py --proteins /data/proteins.csv"
+    echo "  docker run pixi-with-checkpoints -e rf3 run_grid_search.py --help"
+    echo "  docker run pixi-with-checkpoints bash"
     exit 1
 fi
 
@@ -259,7 +259,7 @@ esac
 # Get the script to run
 if [[ $# -eq 0 ]]; then
     echo "Error: No script specified"
-    echo "Usage: docker run sampleworks -e <env> <script> [args...]"
+    echo "Usage: docker run pixi-with-checkpoints -e <env> <script> [args...]"
     exit 1
 fi
 

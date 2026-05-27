@@ -164,7 +164,7 @@ Start an 8-GPU ACTL machine named `sampleworks` with the private Astera
 Sampleworks image and the shared data volume mounted:
 
 ```bash
-actl pod up sampleworks --profile 8x --image sampleworks-ext --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
 Keep that terminal open; it maintains sync and SSH. From another terminal:
@@ -243,21 +243,22 @@ synced branch changes `pyproject.toml` or `pixi.lock`, `run_experiments` stops
 with a clear error instead of mutating the baked environment. For dependency
 debugging only, opt into an on-pod pixi update with
 `RUNTIME_PIXI=1 run_experiments ...`; reproducible scientist runs should use a
-rebuilt `sampleworks-ext` image instead.
+rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 
 ## Docker
 
 Sampleworks now has a two-layer image split:
 
-1. `Dockerfile` builds the regular public Sampleworks image.
+1. `Dockerfile` builds the regular public `pixi-with-checkpoints` image.
 2. `Dockerfile.astera` builds the private Astera overlay with EXT plus small
-   workspace conveniences, using the public image as its base.
+   workspace conveniences, using the public `pixi-with-checkpoints` image as its
+   base.
 
 Build the public image locally:
 
 ```bash
-docker build --platform linux/amd64 -t diffuseproject/sampleworks:local .
+docker build --platform linux/amd64 -t diffuseproject/pixi-with-checkpoints:local .
 ```
 
 Build the Astera overlay locally after a public image is available:
@@ -265,8 +266,8 @@ Build the Astera overlay locally after a public image is available:
 ```bash
 docker build --platform linux/amd64 \
   -f Dockerfile.astera \
-  --build-arg SAMPLEWORKS_BASE_IMAGE=diffuseproject/sampleworks:local \
-  -t harbor.astera.sh/library/sampleworks-ext:local \
+  --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:local \
+  -t harbor.astera.sh/library/pixi-with-checkpoints:local \
   .
 ```
 

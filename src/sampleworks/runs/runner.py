@@ -389,7 +389,7 @@ def _missing_prebuilt_env_message(pixi_env: str) -> str:
     expected = _pixi_project_dir() / ".pixi" / "envs" / pixi_env / "bin" / "python"
     return (
         f"Prebuilt pixi environment is missing for job env {pixi_env!r}: {expected}. "
-        "The sampleworks-ext image must contain ready-to-use boltz, "
+        "The pixi-with-checkpoints image must contain ready-to-use boltz, "
         "protenix, and rf3 environments. Refusing to fall back to 'pixi run' "
         "because that would install or refresh packages inside the pod. "
         "Recreate the pod with the current image, or set RUNTIME_PIXI=1 only "
