@@ -276,6 +276,9 @@ def process_batch(
     rows = load_batch_csv(csv_path)
     logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
 
+    # TODO(`#242`): When device is CUDA and n_jobs > 1, each loky worker gets its own
+    # CUDA context, risking GPU memory contention or OOM errors. Consider explicit
+    # per-worker device assignment and/or n_jobs capping. Same issue in SF script.
     Parallel(n_jobs=n_jobs, backend="loky")(
         delayed(_process_single_row)(
             row=row,

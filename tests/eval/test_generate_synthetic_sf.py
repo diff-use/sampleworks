@@ -1,5 +1,6 @@
 """Tests for atomarray_to_gemmi in generate_synthetic_sf, using real 6b8x structure."""
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -81,10 +82,13 @@ class TestAtomArrayToGemmi:
     def test_space_group_matches_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
         assert gemmi_structure_from_atomarray.spacegroup_hm == stripped_gemmi.spacegroup_hm
 
-    def test_atom_count_matches_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
-        assert (
-            gemmi_structure_from_atomarray[0].count_atom_sites()
-            == stripped_gemmi[0].count_atom_sites()
+    def test_atoms_match_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
+        # atom order is preserved: biotite keeps PDB file order, array2hier reconstructs it
+        parser_from_atomarray = PDBParser(gemmi_structure_from_atomarray)
+        parser_from_gemmi = PDBParser(stripped_gemmi)
+        assert np.array_equal(parser_from_atomarray.atom_name, parser_from_gemmi.atom_name)
+        np.testing.assert_allclose(
+            parser_from_atomarray.atom_pos, parser_from_gemmi.atom_pos, atol=1e-3
         )
 
     def test_occupancy_change_is_applied(self, stripped_atom_array, stripped_gemmi):
@@ -104,12 +108,34 @@ class TestAtomArrayToGemmi:
         f_direct = _compute_fprotein(stripped_gemmi, device)
         np.testing.assert_allclose(np.abs(f_atomarray), np.abs(f_direct), atol=1e-3)
 
+    def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with caplog.at_level(logging.WARNING):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.2, 0.8, 0.0, 0.0])
+        assert "Extra values will be ignored" in caplog.text
+
+    def test_occupancy_warns_on_missing_values(self, stripped_atom_array, caplog):
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with caplog.at_level(logging.WARNING):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.5, 0.5])
+        assert "Missing values are automatically set to 0" in caplog.text
+
+    def test_occupancy_raises_on_out_of_range(self, stripped_atom_array):
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with pytest.raises(ValueError, match="out of range"):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [1.5, 0.0, 0.0])
+
+    def test_occupancy_raises_on_bad_sum(self, stripped_atom_array):
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with pytest.raises(ValueError, match="sum to 1.0"):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.3, 0.3, 0.3])
+
     def test_fprotein_changes_with_occupancy(self, stripped_atom_array, stripped_gemmi, device):
         altloc_info = detect_altlocs(stripped_atom_array)
 
-        arr_default = assign_occupancies(stripped_atom_array, altloc_info, "default")
-        f_default = _compute_fprotein(
-            atomarray_to_gemmi(arr_default, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm),
+        arr_uniform = assign_occupancies(stripped_atom_array, altloc_info, "uniform")
+        f_uniform = _compute_fprotein(
+            atomarray_to_gemmi(arr_uniform, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm),
             device,
         )
 
@@ -119,4 +145,4 @@ class TestAtomArrayToGemmi:
             device,
         )
 
-        assert not np.allclose(np.abs(f_default), np.abs(f_custom), atol=1e-3)
+        assert not np.allclose(np.abs(f_uniform), np.abs(f_custom), atol=1e-3)

@@ -209,6 +209,12 @@ def process_amplitudes_to_dataset(
         without errors. The actual sigma values only matter when computing R-factor.
     output_path: Path | None
         If provided, write the dataset to this MTZ file path.
+
+    Returns
+    -------
+    rs.DataSet
+        Dataset with structure factor amplitudes, fake sigma column, and optionally
+        R-free flags.
     """
     dataset: rs.DataSet = sfc.prepare_dataset(miller_index_column, structure_factor_column)
     # assumes the first detected column of dtype F is the structure factor amplitude column
@@ -467,6 +473,9 @@ def process_batch(
     rows = load_batch_csv(csv_path)
     logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
 
+    # TODO(`#242`): When device is CUDA and n_jobs > 1, each loky worker gets its own
+    # CUDA context, risking GPU memory contention or OOM errors. Consider explicit
+    # per-worker device assignment and/or n_jobs capping. Same issue in density script.
     Parallel(n_jobs=n_jobs, backend="loky")(
         delayed(_process_single_row)(
             row=row,
