@@ -258,7 +258,10 @@ Sampleworks now has a two-layer image split:
 Build the public image locally:
 
 ```bash
-docker build --platform linux/amd64 -t diffuseproject/pixi-with-checkpoints:local .
+docker build --platform linux/amd64 \
+  --build-arg CHECKPOINTS_IMAGE=<checkpoint-image-ref> \
+  -t diffuseproject/pixi-with-checkpoints:local \
+  .
 ```
 
 Build the Astera overlay locally after a public image is available:
@@ -271,8 +274,8 @@ docker build --platform linux/amd64 \
   .
 ```
 
-The default checkpoint source is `diffuseproject/sampleworks-checkpoints:latest`.
-Private builders can override it with `--build-arg CHECKPOINTS_IMAGE=...`.
+The checkpoint source is required as `CHECKPOINTS_IMAGE`; CI should set
+`SAMPLEWORKS_CHECKPOINTS_IMAGE` to a digest-pinned public checkpoint image.
 
 
 ## Development

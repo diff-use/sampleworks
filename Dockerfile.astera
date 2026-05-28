@@ -8,11 +8,11 @@
 # Build locally:
 #   docker build --platform linux/amd64 \
 #     -f Dockerfile.astera \
-#     --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:latest \
+#     --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:local \
 #     -t harbor.astera.sh/library/pixi-with-checkpoints:local \
 #     .
 
-ARG PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:latest
+ARG PIXI_WITH_CHECKPOINTS_IMAGE
 ARG EXT_CLI_IMAGE=harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57
 
 FROM ${EXT_CLI_IMAGE} AS ext-cli
@@ -44,4 +44,7 @@ COPY --from=ext-cli /ext /usr/local/bin/ext
 
 RUN chmod 0755 /usr/local/bin/ext
 
+# ACTL workspace pods intentionally keep the inherited root runtime user: the
+# prebuilt /app/.pixi environments and shared PVC workflows are currently
+# root-oriented, and switching USER here would break existing scientist runs.
 # Inherit Sampleworks' entrypoint and default command from the public base.

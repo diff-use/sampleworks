@@ -5,7 +5,9 @@
 # and model checkpoints, with no Astera/EXT-specific tooling.
 #
 # Build public image locally:
-#   docker build --platform linux/amd64 -t diffuseproject/pixi-with-checkpoints:local .
+#   docker build --platform linux/amd64 \
+#     --build-arg CHECKPOINTS_IMAGE=<checkpoint-image-ref> \
+#     -t diffuseproject/pixi-with-checkpoints:local .
 #
 # Fast context/Dockerfile smoke check without pulling checkpoints or installing
 # pixi environments:
@@ -14,14 +16,13 @@
 # Private Astera/EXT overlays are built from Dockerfile.astera after this image is
 # pushed to the public registry.
 
-# Public default. Astera CI may override this with its Docker Hub cache mirror,
-# e.g. harbor.astera.sh/dockerhub-cache/nvidia/cuda:12.4.1-devel-ubuntu22.04.
-ARG BASE_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04
+# Public default pinned to the Docker Hub manifest list for reproducible builds.
+# Astera CI may override this with a digest-pinned Docker Hub cache mirror.
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
-# Public default for the large checkpoint layer. Private builders can override
-# this with an internal mirror, but the public Dockerfile itself does not depend
-# on Harbor.
-ARG CHECKPOINTS_IMAGE=diffuseproject/sampleworks-checkpoints:latest
+# Required checkpoint layer for the full image. The `scratch` default keeps
+# source-check builds cheap; CI must override it with a digest-pinned public image.
+ARG CHECKPOINTS_IMAGE=scratch
 
 # ============================================================================
 # OS base: CUDA + Pixi + common build/runtime dependencies
@@ -102,11 +103,15 @@ RUN --mount=type=cache,target=/root/.cache/pixi \
     pixi install -e protenix --frozen && \
     pixi install -e rf3 --frozen
 
-# Pre-compile CUDA extensions when the builder supports it. CPU-only builders are
-# still allowed to produce the image; the extension can JIT at runtime if needed.
-RUN pixi run -e boltz python -c "\
+# Pre-compile CUDA extensions only when the builder exposes NVIDIA devices.
+# If a GPU is present, failures should stop the build instead of being masked.
+RUN if [ ! -e /dev/nvidiactl ] && [ ! -e /proc/driver/nvidia/version ]; then \
+        echo "CUDA extension pre-compilation skipped (no GPU visible during build)"; \
+    else \
+        pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
-print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
+print('CUDA extensions compiled successfully')"; \
+    fi
 
 # ============================================================================
 # Public runtime: regular Sampleworks image for the public registry

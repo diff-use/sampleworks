@@ -10,7 +10,9 @@ Our script `run_experiments` for instance uses a docker container to manage all
 dependencies. To run that script, you will need to have docker installed. Build
 the container with
 ```shell
-docker build --platform linux/amd64 -t diffuseproject/pixi-with-checkpoints:local .
+docker build --platform linux/amd64 \
+  --build-arg CHECKPOINTS_IMAGE=<checkpoint-image-ref> \
+  -t diffuseproject/pixi-with-checkpoints:local .
 ```
 which will add an image to your local docker repository called
 `diffuseproject/pixi-with-checkpoints:local`. The top of the `Dockerfile` contains
