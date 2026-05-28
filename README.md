@@ -161,7 +161,7 @@ setting equivalent local paths for `DATA_DIR`, `PROTEINS_CSV`, `RESULTS_DIR`,
 `MSA_CACHE_DIR`, and model checkpoints.
 
 Start an 8-GPU ACTL machine named `sampleworks` with the private Astera
-Sampleworks image and the shared data volume mounted:
+`pixi-with-checkpoints:sampleworks` image and the shared data volume mounted:
 
 ```bash
 actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
@@ -254,6 +254,35 @@ Sampleworks now has a two-layer image split:
 2. `Dockerfile.astera` builds the private Astera overlay with EXT plus small
    workspace conveniences, using the public `pixi-with-checkpoints` image as its
    base.
+
+Image names:
+
+| Purpose | Image |
+|---|---|
+| Public Sampleworks runtime | `diffuseproject/pixi-with-checkpoints` |
+| Astera/ACTL runtime | `harbor.astera.sh/library/pixi-with-checkpoints` |
+| ACTL scientist tag | `harbor.astera.sh/library/pixi-with-checkpoints:sampleworks` |
+
+CI publishes these tags:
+
+| Image | Tags |
+|---|---|
+| Public | `latest` on `main`, `sha-<short-sha>`, release semver tags |
+| Astera/Harbor | `latest` and `sampleworks` on `main`, `sha-<short-sha>`, release semver tags |
+
+The Astera image is always built from the exact public `sha-<short-sha>` image
+produced earlier in the same workflow run, then adds EXT and small workspace
+tools on top.
+
+CI configuration variables:
+
+| Variable | Purpose |
+|---|---|
+| `SAMPLEWORKS_PUBLIC_REGISTRY` | Public registry host; defaults to `docker.io` |
+| `SAMPLEWORKS_PUBLIC_IMAGE` | Public image path; defaults to `diffuseproject/pixi-with-checkpoints` |
+| `SAMPLEWORKS_CHECKPOINTS_IMAGE` | Required checkpoint image ref for the public build; use a digest-pinned public ref |
+| `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
+| `EXT_CLI_IMAGE` | Optional EXT CLI image override for the Astera overlay |
 
 Build the public image locally:
 

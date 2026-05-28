@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 # Sampleworks - public multi-stage image
 #
-# The default build produces the public Sampleworks image: dependencies, source,
-# and model checkpoints, with no Astera/EXT-specific tooling.
+# The default build produces the public pixi-with-checkpoints image:
+# dependencies, source, and model checkpoints, with no Astera/EXT-specific
+# tooling.
 #
 # Build public image locally:
 #   docker build --platform linux/amd64 \

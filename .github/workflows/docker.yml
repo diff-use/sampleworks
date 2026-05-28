@@ -1,7 +1,7 @@
 name: Build and Push Docker Images
 
 # Two-image split:
-#   1. Public Sampleworks image from Dockerfile -> public Diffuse registry.
+#   1. Public pixi-with-checkpoints image from Dockerfile -> public registry.
 #   2. Private Astera overlay from Dockerfile.astera -> Harbor, based on the
 #      exact public image SHA tag built in step 1.
 
@@ -28,7 +28,7 @@ env:
 
 jobs:
   public:
-    name: Public Sampleworks image
+    name: Public pixi-with-checkpoints image
     runs-on: ubuntu-latest
     permissions:
       contents: read
