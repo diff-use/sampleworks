@@ -274,7 +274,7 @@ def _filter_jobs(preset: Preset, jobs: str) -> Preset:
     -------
     Preset
         New preset with the same ``description``, ``defaults``, and
-        ``shared_args`` and only the filtered jobs.
+        ``shared_args``, all pre-jobs, and only the filtered main jobs.
 
     Raises
     ------
