@@ -56,6 +56,23 @@ file. These `refined-patched.cif` files can be used as input to the remaining ev
 The evaluation scripts have a common interface defined by the method 
 `sampleworks.eval.grid_search_eval_utils.parse_eval_args`. The general form of these commands is:
 
+The preferred ACTL entrypoint is `run_analysis`, which reads TOML presets from `analyses/` and uses
+the same backend runner as `run_experiments`:
+
+```shell
+export GRID_SEARCH_RESULTS_DIR=/home/ubuntu/grid_search_results
+export GRID_SEARCH_INPUTS_DIR=/home/ubuntu/grid_search_inputs
+export PROTEIN_CONFIGS_CSV=/home/ubuntu/protein_analysis_config.csv
+
+run_analysis --list
+run_analysis grid_search --jobs rscc,lddt,bond_geometry
+run_analysis altloc_find
+run_analysis altloc_classify
+run_analysis rscc --set shared_args.target-filename=refined.cif
+```
+
+For direct script invocation, the equivalent command shape is:
+
 ```shell
 pixi run -e analysis python scripts/eval/<script> \
 --grid-search-results-path /home/ubuntu/grid_search_results \

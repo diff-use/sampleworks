@@ -17,6 +17,7 @@ from .schema import Job, Preset
 
 DEFAULT_GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
 WORKSPACE_GRID_SEARCH_SCRIPT = "/home/dev/workspace/run_grid_search.py"
+DISABLE_GPU_ASSIGNMENTS = frozenset({"none", "void", "nodevfiles"})
 PROCESS_SHUTDOWN_TIMEOUT_SECONDS = 10
 TEE_THREAD_JOIN_TIMEOUT_SECONDS = 5
 
@@ -31,7 +32,7 @@ class JobInvocation:
         Originating :class:`Job` (kept for introspection in logs).
     argv : list of str
         Subprocess command line, preferably the baked pixi env Python followed
-        by ``run_grid_search.py``.
+        by the job script.
     env : dict of str to str
         Process environment, including ``CUDA_VISIBLE_DEVICES``.
     gpus : str
@@ -40,8 +41,9 @@ class JobInvocation:
     log_path : Path
         File to tee stdout+stderr into.
     output_dir : Path
-        Resolved ``--output-dir`` value (mkdir'd by the runner before launch
-        because ``run_grid_search.py`` assumes its existence).
+        Directory mkdir'd by the runner before launch. Experiment jobs use this
+        as their injected ``--output-dir``; analysis jobs can use it only as a
+        side-effect directory for logs or scratch space.
     """
 
     job: Job
@@ -55,9 +57,9 @@ class JobInvocation:
 def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocation]:
     """Build the subprocess invocation for every job in the preset.
 
-    Per-job ``args`` are merged on top of :attr:`Preset.shared_args`, with
-    ``--output-dir`` auto-injected from ``results_dir / job.output_subdir`` if
-    not already present.
+    Per-job ``args`` are merged on top of :attr:`Preset.shared_args`, with a
+    job-specific output argument auto-injected from
+    ``results_dir / job.output_subdir`` when configured and absent.
 
     Parameters
     ----------
@@ -75,12 +77,14 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
     invocations: list[JobInvocation] = []
     for job in preset.jobs:
         args = preset.effective_args(job)
-        args.setdefault("output-dir", str(results_dir / job.output_subdir))
-        argv = _build_argv(job.env, args)
+        output_dir = results_dir / job.output_subdir
+        if job.output_arg:
+            args.setdefault(job.output_arg, str(output_dir))
+            output_dir = Path(args[job.output_arg])
+        argv = _build_argv(job.env, args, script=job.script or None)
         gpus = gpu_assignments[job.name]
         env = _job_env(job.env, {**os.environ, "CUDA_VISIBLE_DEVICES": gpus})
         log_path = results_dir / f"{job.name}_run.log"
-        output_dir = Path(args["output-dir"])
         invocations.append(
             JobInvocation(
                 job=job,
@@ -163,6 +167,22 @@ def _split_gpu_list(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def _gpu_assignment_disables_gpus(value: str) -> bool:
+    """Return True when an explicit assignment intentionally hides all GPUs.
+
+    Parameters
+    ----------
+    value : str
+        CUDA_VISIBLE_DEVICES assignment from a job, such as ``"none"``.
+
+    Returns
+    -------
+    bool
+        True when ``value`` is one of the CUDA-recognized no-GPU tokens.
+    """
+    return value.strip().lower() in DISABLE_GPU_ASSIGNMENTS
+
+
 def _all_integer_tokens(values: list[str]) -> bool:
     """Return True when every GPU token is a CUDA ordinal.
 
@@ -211,11 +231,7 @@ def _detect_available_gpus() -> list[str]:
 
 def _cuda_visible_devices_disables_gpus() -> bool:
     """Return True when CUDA_VISIBLE_DEVICES explicitly hides all GPUs."""
-    return os.environ.get("CUDA_VISIBLE_DEVICES", "").strip().lower() in {
-        "none",
-        "void",
-        "nodevfiles",
-    }
+    return _gpu_assignment_disables_gpus(os.environ.get("CUDA_VISIBLE_DEVICES", ""))
 
 
 def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
@@ -239,6 +255,8 @@ def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
 
     requested: dict[str, list[str]] = {}
     for inv in invocations:
+        if _gpu_assignment_disables_gpus(inv.gpus):
+            continue
         for gpu in _split_gpu_list(inv.gpus):
             requested.setdefault(gpu, []).append(inv.job.name)
 
@@ -274,7 +292,7 @@ def _validate_gpu_assignments(invocations: list[JobInvocation]) -> None:
         )
 
 
-def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
+def _build_argv(pixi_env: str, args: dict[str, Any], *, script: str | None = None) -> list[str]:
     """Assemble the ``pixi run`` argv list for one job's args dict.
 
     ``True`` bools become bare flags, ``False``/``None`` are dropped, all other
@@ -286,29 +304,54 @@ def _build_argv(pixi_env: str, args: dict[str, Any]) -> list[str]:
         Pixi environment name passed to ``-e``.
     args : dict of str to Any
         Flag-name to value map (kebab-case keys, no leading ``--``).
+    script : str or None, optional
+        Script path to execute. If ``None``, the default grid-search script is
+        used for backward-compatible experiment presets.
 
     Returns
     -------
     list of str
         Subprocess argv.
     """
+    script_path = _resolve_script_path(script)
     env_python = _pixi_env_python(pixi_env)
     if env_python:
-        argv = [env_python, _grid_search_script()]
+        argv = [env_python, script_path]
     elif _require_prebuilt_envs():
         raise RuntimeError(_missing_prebuilt_env_message(pixi_env))
     else:
-        argv = ["pixi", "run", "-e", pixi_env, "python", _grid_search_script()]
+        argv = ["pixi", "run", "-e", pixi_env, "python", script_path]
     for key, value in args.items():
-        flag = f"--{key}"
-        if isinstance(value, bool):
-            if value:
-                argv.append(flag)
-        elif value is None:
-            continue
-        else:
-            argv.extend([flag, str(value)])
+        _append_cli_arg(argv, key, value)
     return argv
+
+
+def _append_cli_arg(argv: list[str], key: str, value: Any) -> None:
+    """Append one TOML-configured CLI argument to ``argv``.
+
+    Parameters
+    ----------
+    argv : list of str
+        Mutable command vector to extend.
+    key : str
+        Flag name without leading ``--``.
+    value : Any
+        TOML value. ``True`` emits a bare flag, ``False``/``None`` are omitted,
+        lists emit one flag followed by one value per element, and all other
+        values are stringified.
+    """
+    flag = f"--{key}"
+    if isinstance(value, bool):
+        if value:
+            argv.append(flag)
+    elif value is None:
+        return
+    elif isinstance(value, (list, tuple)):
+        if value:
+            argv.append(flag)
+            argv.extend(str(item) for item in value)
+    else:
+        argv.extend([flag, str(value)])
 
 
 def _pixi_env_python(pixi_env: str) -> str | None:
@@ -464,6 +507,67 @@ def _grid_search_script() -> str:
     if workspace_script.exists():
         return str(workspace_script)
     return DEFAULT_GRID_SEARCH_SCRIPT
+
+
+def _resolve_script_path(script: str | None) -> str:
+    """Resolve a job script path for subprocess execution.
+
+    Parameters
+    ----------
+    script : str or None
+        Script configured by a TOML job. Empty/``None`` selects the historical
+        ``run_grid_search.py`` default.
+
+    Returns
+    -------
+    str
+        Absolute path when the script can be found in a known Sampleworks
+        checkout, otherwise the original expanded path so subprocess startup
+        errors remain clear.
+    """
+    if not script:
+        return _grid_search_script()
+
+    expanded = Path(os.path.expandvars(script)).expanduser()
+    if expanded.is_absolute():
+        return str(expanded)
+
+    for root in _source_root_candidates():
+        candidate = root / expanded
+        if candidate.exists():
+            return str(candidate)
+    return str(expanded)
+
+
+def _source_root_candidates() -> list[Path]:
+    """Return likely Sampleworks checkout roots for relative script paths.
+
+    Returns
+    -------
+    list of pathlib.Path
+        Candidate directories in precedence order, deduplicated after
+        expansion. The synced ACTL checkout and current working directory are
+        preferred over stale files under the baked image.
+    """
+    candidates: list[Path] = []
+    for env_var in ("SAMPLEWORKS_SOURCE_DIR", "SAMPLEWORKS_SCRIPT_ROOT"):
+        override = os.environ.get(env_var)
+        if override:
+            candidates.append(Path(override))
+
+    candidates.append(Path("/home/dev/workspace"))
+    candidates.extend([Path.cwd(), *Path.cwd().parents])
+    module_path = Path(__file__).resolve()
+    candidates.extend([module_path.parent, *module_path.parents])
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve(strict=False)
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
 
 
 def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:

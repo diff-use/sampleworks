@@ -1,9 +1,11 @@
-"""Dataclasses for the preset schema.
+"""Dataclasses for the run preset schema.
 
-A preset describes one or more parallel ``run_grid_search.py`` jobs. Each job
-runs in its configured model environment, either through ``pixi run`` or a
-baked environment Python, with ``CUDA_VISIBLE_DEVICES`` set from an explicit
-GPU assignment or an automatically allocated ``gpu_count``.
+A preset describes one or more parallel script jobs. Experiment presets default
+to ``run_grid_search.py`` while analysis presets set ``script`` explicitly to
+one of the evaluation scripts. Each job runs in its configured pixi environment,
+either through ``pixi run`` or a baked environment Python, with
+``CUDA_VISIBLE_DEVICES`` set from an explicit GPU assignment or an automatically
+allocated ``gpu_count``.
 """
 
 from __future__ import annotations
@@ -12,12 +14,22 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-VALID_PIXI_ENVS = ("boltz", "protenix", "rf3")
+VALID_PIXI_ENVS = (
+    "analysis",
+    "analysis-dev",
+    "boltz",
+    "boltz-analysis",
+    "boltz-dev",
+    "protenix",
+    "protenix-dev",
+    "rf3",
+    "rf3-dev",
+)
 
 
 @dataclass(frozen=True)
 class Job:
-    """One parallel `run_grid_search.py` invocation within a preset.
+    """One parallel script invocation within a preset.
 
     Parameters
     ----------
@@ -29,13 +41,24 @@ class Job:
         :data:`VALID_PIXI_ENVS`.
     gpus : str
         Explicit value to set as ``CUDA_VISIBLE_DEVICES`` for the subprocess
-        (e.g. ``"4"`` or ``"0,1"``). Mutually exclusive with ``gpu_count``.
+        (e.g. ``"4"``, ``"0,1"``, or ``"none"`` for CPU-only jobs). Mutually
+        exclusive with ``gpu_count``.
     gpu_count : int or None, optional
         Number of visible GPUs to auto-assign for this job. The runner assigns
         concrete GPU IDs in declaration order.
     output_subdir : str
         Path appended to the run's ``results_dir`` to form the job's
-        ``--output-dir`` argument, when one is not given explicitly in ``args``.
+        output argument, when one is not given explicitly in ``args``. Also used
+        as the directory the runner creates before launch.
+    script : str, optional
+        Script path to execute for this job. Relative paths are resolved against
+        the active Sampleworks checkout. If empty, the runner uses its default
+        experiment script.
+    output_arg : str, optional
+        CLI flag name that should receive ``results_dir / output_subdir`` when
+        absent from ``args``. The default is ``"output-dir"`` for experiment
+        runs. Set to ``""`` for scripts, such as analysis/eval scripts, that do
+        not accept an output directory flag.
     args : dict of str to Any, optional
         Per-job overrides merged on top of the preset's
         :attr:`Preset.shared_args`. Keys are CLI flag names (without the
@@ -54,6 +77,8 @@ class Job:
     output_subdir: str
     gpus: str = ""
     gpu_count: int | None = None
+    script: str = ""
+    output_arg: str = "output-dir"
     args: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -68,6 +93,10 @@ class Job:
             raise ValueError(f"Job {self.name!r}: gpu_count must be positive")
         if not self.output_subdir:
             raise ValueError(f"Job {self.name!r}: output_subdir must be non-empty")
+        if self.output_arg.startswith("--"):
+            raise ValueError(
+                f"Job {self.name!r}: output_arg must omit leading dashes, got {self.output_arg!r}"
+            )
 
 
 @dataclass(frozen=True)

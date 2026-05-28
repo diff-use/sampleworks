@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sampleworks.runs import loader, runner
+from sampleworks.runs import analysis_cli, loader, runner
 
 
 def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -265,6 +265,86 @@ def test_dry_run_does_not_create_directories(
     # results_dir gets created by run() (for log file location) but per-job
     # output subdirs must NOT exist after dry-run.
     assert not (results_dir / "rf3").exists()
+
+
+def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Analysis TOML presets run eval scripts without injecting --output-dir."""
+    repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setenv("SAMPLEWORKS_SOURCE_DIR", str(repo_root))
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0"])
+    preset = loader.load_preset(
+        "grid_search",
+        overrides=[
+            "defaults.GRID_SEARCH_RESULTS_DIR=/grid/results",
+            "defaults.GRID_SEARCH_INPUTS_DIR=/grid/inputs",
+            "defaults.PROTEIN_CONFIGS_CSV=/grid/inputs/protein_analysis_config.csv",
+            "shared_args.n-jobs=2",
+        ],
+        preset_dir_name="analyses",
+        preset_dir_env_var="SAMPLEWORKS_ANALYSES_DIR",
+    )
+
+    invocations = runner.build_invocations(preset, results_dir=Path("/analysis-logs"))
+    rscc = invocations[0]
+
+    assert rscc.job.name == "rscc"
+    assert rscc.env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert rscc.argv[:6] == [
+        "pixi",
+        "run",
+        "-e",
+        "analysis",
+        "python",
+        str(repo_root / "scripts/eval/rscc_grid_search_script.py"),
+    ]
+    assert "--output-dir" not in rscc.argv
+    assert rscc.output_dir == Path("/analysis-logs/analysis/rscc")
+    assert rscc.argv[rscc.argv.index("--grid-search-results-path") + 1] == "/grid/results"
+    assert rscc.argv[rscc.argv.index("--grid-search-inputs-path") + 1] == "/grid/inputs"
+    occupancy_index = rscc.argv.index("--occupancies")
+    assert rscc.argv[occupancy_index + 1 : occupancy_index + 6] == [
+        "0.0",
+        "0.25",
+        "0.5",
+        "0.75",
+        "1.0",
+    ]
+
+
+def test_analysis_cli_lists_analysis_presets(capsys: pytest.CaptureFixture[str]) -> None:
+    """The analysis entrypoint lists analyses/*.toml instead of experiments/*.toml."""
+    assert analysis_cli.main(["--list"]) == 0
+    listed = set(capsys.readouterr().out.splitlines())
+    assert {
+        "all",
+        "altloc_classify",
+        "altloc_find",
+        "external_tools",
+        "grid_search",
+    }.issubset(listed)
+
+
+def test_gpu_validation_ignores_cpu_jobs_but_checks_gpu_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gpus='none' analysis job must not disable validation for real GPU jobs."""
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0", "1"])
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        "[shared_args]\n"
+        '[[jobs]]\nname = "cpu"\nenv = "analysis"\ngpus = "none"\noutput_subdir = "cpu"\n'
+        'script = "scripts/eval/bond_geometry_eval.py"\noutput_arg = ""\n'
+        '[[jobs]]\nname = "a"\nenv = "analysis"\ngpus = "0"\noutput_subdir = "a"\n'
+        'script = "scripts/eval/rscc_grid_search_script.py"\noutput_arg = ""\n'
+        '[[jobs]]\nname = "b"\nenv = "analysis"\ngpus = "0"\noutput_subdir = "b"\n'
+        'script = "scripts/eval/lddt_evaluation_script.py"\noutput_arg = ""\n'
+    )
+    preset = loader.load_preset(str(custom))
+    invocations = runner.build_invocations(preset, results_dir=tmp_path / "logs")
+
+    with pytest.raises(RuntimeError, match="same GPU"):
+        runner._validate_gpu_assignments(invocations)
 
 
 def _argv_to_dict(tail: list[str]) -> dict[str, object]:

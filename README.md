@@ -149,7 +149,8 @@ Output layout: `grid_search_results/<protein>/<model>[_<method>]/<scaler>/ens<N>
 
 > **Note**: Jobs are skipped if a `refined.cif` file already exists in the output directory. Some flags (e.g., `--use-tweedie`, `--gradient-normalization`) are not reflected in the directory structure, so changing them alone won't trigger a re-run. Use `--force-all` to re-run all jobs regardless. This is under active development and will likely change soon.
 
-Instructions for running evaluation and metrics scripts are coming soon.
+Evaluation and metrics scripts can be run through `run_analysis`; see the ACTL
+section below and `scripts/eval/EVALUATION.md`.
 
 
 ## Running preset experiments on ACTL (`run_experiments`)
@@ -244,6 +245,29 @@ with a clear error instead of mutating the baked environment. For dependency
 debugging only, opt into an on-pod pixi update with
 `RUNTIME_PIXI=1 run_experiments ...`; reproducible scientist runs should use a
 rebuilt `pixi-with-checkpoints:sampleworks` image instead.
+
+
+## Running preset analyses on ACTL (`run_analysis`)
+
+`run_analysis` uses the same TOML runner as `run_experiments`, but loads presets
+from `analyses/*.toml` and runs the scripts under `scripts/eval/`.
+
+```bash
+export GRID_SEARCH_RESULTS_DIR=/mnt/diffuse-shared/results/sampleworks/<pod>/full_8gpu
+export GRID_SEARCH_INPUTS_DIR=/mnt/diffuse-shared/raw/sampleworks/initial_dataset_40_occ_sweeps
+export PROTEIN_CONFIGS_CSV="$GRID_SEARCH_INPUTS_DIR/protein_analysis_config.csv"
+
+run_analysis --list
+run_analysis --dry-run rscc
+run_analysis grid_search --jobs rscc,lddt
+run_analysis altloc_find
+run_analysis altloc_classify
+run_analysis all  # includes tortoize and phenix.clashscore jobs
+```
+
+Use `--set` for one-off changes, for example
+`run_analysis rscc --set shared_args.target-filename=refined.cif` or
+`run_analysis rscc --set jobs.rscc.gpus=0`.
 
 
 ## Docker

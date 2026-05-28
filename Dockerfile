@@ -120,7 +120,8 @@ COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest /checkpoints
 # smaller CI runners (ubuntu-latest can be 72 GB or 145 GB).
 RUN pixi install -e boltz --frozen && \
     pixi install -e protenix --frozen && \
-    pixi install -e rf3 --frozen
+    pixi install -e rf3 --frozen && \
+    pixi install -e analysis --frozen
 
 # ============================================================================
 # Pre-compile CUDA extensions to avoid JIT compilation at runtime
@@ -133,10 +134,11 @@ print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-comp
 # This image carries pixi environments and checkpoints. Runtime source should
 # come from ACTL's synced checkout at /home/dev/workspace, not from stale code
 # baked into /app during image construction.
-RUN rm -rf /app/src /app/scripts /app/experiments /app/run_grid_search.py \
+RUN rm -rf /app/src /app/scripts /app/experiments /app/analyses \
+    /app/run_grid_search.py /app/run_analysis \
     && mkdir -p /home/dev/workspace
 
-COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh /usr/local/bin/
+COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh run_analysis run_analysis.sh /usr/local/bin/
 RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' >> /root/.bashrc
 
 ENV SAMPLEWORKS_PIXI_PROJECT_DIR=/app \

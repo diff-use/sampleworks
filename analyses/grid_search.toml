@@ -1,0 +1,40 @@
+description = "Core grid-search evaluations: RSCC, LDDT clustering, and bond geometry."
+
+[defaults]
+GRID_SEARCH_RESULTS_DIR = "/data/results/grid_search_results"
+GRID_SEARCH_INPUTS_DIR = "/data/inputs"
+PROTEIN_CONFIGS_CSV = "${GRID_SEARCH_INPUTS_DIR}/protein_analysis_config.csv"
+TARGET_FILENAME = "refined-patched.cif"
+N_JOBS = "16"
+
+[shared_args]
+grid-search-results-path = "${GRID_SEARCH_RESULTS_DIR}"
+grid-search-inputs-path = "${GRID_SEARCH_INPUTS_DIR}"
+protein-configs-csv = "${PROTEIN_CONFIGS_CSV}"
+target-filename = "${TARGET_FILENAME}"
+occupancies = [0.0, 0.25, 0.5, 0.75, 1.0]
+n-jobs = "${N_JOBS}"
+
+[[jobs]]
+name = "rscc"
+env = "analysis"
+gpu_count = 1
+script = "scripts/eval/rscc_grid_search_script.py"
+output_arg = ""
+output_subdir = "analysis/rscc"
+
+[[jobs]]
+name = "lddt"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/lddt_evaluation_script.py"
+output_arg = ""
+output_subdir = "analysis/lddt"
+
+[[jobs]]
+name = "bond_geometry"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/bond_geometry_eval.py"
+output_arg = ""
+output_subdir = "analysis/bond_geometry"

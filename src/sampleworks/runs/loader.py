@@ -21,23 +21,39 @@ from .schema import Job, Preset
 
 
 _EXPERIMENTS_DIR_NAME = "experiments"
+_EXPERIMENTS_DIR_ENV_VAR = "SAMPLEWORKS_EXPERIMENTS_DIR"
 _MAX_EXPAND_ITERATIONS = 32
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
 
 
-def list_presets() -> list[str]:
-    """List experiment preset names from the top-level ``experiments`` directory.
+def list_presets(
+    *,
+    preset_dir_name: str = _EXPERIMENTS_DIR_NAME,
+    preset_dir_env_var: str = _EXPERIMENTS_DIR_ENV_VAR,
+) -> list[str]:
+    """List preset names from a top-level preset directory.
+
+    Parameters
+    ----------
+    preset_dir_name : str, optional
+        Top-level directory name to search, e.g. ``"experiments"`` or
+        ``"analyses"``.
+    preset_dir_env_var : str, optional
+        Environment variable that can override the preset directory path.
 
     Returns
     -------
     list of str
         Preset names (filename stems, no ``.toml`` extension), sorted
-        alphabetically. If multiple experiment directories are visible, the
-        first directory in the resolution order wins for duplicate names.
+        alphabetically. If multiple preset directories are visible, the first
+        directory in the resolution order wins for duplicate names.
     """
     names: dict[str, Path] = {}
-    for directory in _experiment_dirs():
+    for directory in _preset_dirs(
+        preset_dir_name=preset_dir_name,
+        preset_dir_env_var=preset_dir_env_var,
+    ):
         if not directory.is_dir():
             continue
         for path in directory.iterdir():
@@ -46,17 +62,28 @@ def list_presets() -> list[str]:
     return sorted(names)
 
 
-def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
+def load_preset(
+    name_or_path: str,
+    *,
+    overrides: Iterable[str] = (),
+    preset_dir_name: str = _EXPERIMENTS_DIR_NAME,
+    preset_dir_env_var: str = _EXPERIMENTS_DIR_ENV_VAR,
+) -> Preset:
     """Load a preset by experiment name or filesystem path.
 
     Parameters
     ----------
     name_or_path : str
-        Either the name of a preset in the top-level ``experiments`` directory
+        Either the name of a preset in the configured top-level preset directory
         (as returned by :func:`list_presets`) or a path ending in ``.toml``.
     overrides : Iterable of str, optional
         ``KEY=VALUE`` strings as accepted by ``--set``. Applied before
         variable interpolation.
+    preset_dir_name : str, optional
+        Top-level directory name to search, e.g. ``"experiments"`` or
+        ``"analyses"``.
+    preset_dir_env_var : str, optional
+        Environment variable that can override the preset directory path.
 
     Returns
     -------
@@ -74,20 +101,33 @@ def load_preset(name_or_path: str, *, overrides: Iterable[str] = ()) -> Preset:
     ValueError
         If an override is malformed (missing ``=``).
     """
-    raw = _read_toml(name_or_path)
+    raw = _read_toml(
+        name_or_path,
+        preset_dir_name=preset_dir_name,
+        preset_dir_env_var=preset_dir_env_var,
+    )
     overrides_list = list(overrides)
     raw = _apply_overrides(raw, overrides_list)
     raw = _resolve_variables(raw)
     return _build_preset(name=_preset_name(name_or_path), raw=raw)
 
 
-def _read_toml(name_or_path: str) -> dict[str, Any]:
+def _read_toml(
+    name_or_path: str,
+    *,
+    preset_dir_name: str = _EXPERIMENTS_DIR_NAME,
+    preset_dir_env_var: str = _EXPERIMENTS_DIR_ENV_VAR,
+) -> dict[str, Any]:
     """Read raw TOML from a filesystem path or an experiment preset name.
 
     Parameters
     ----------
     name_or_path : str
         Experiment preset name or filesystem path ending in ``.toml``.
+    preset_dir_name : str, optional
+        Top-level directory name to search.
+    preset_dir_env_var : str, optional
+        Environment variable that can override the preset directory path.
 
     Returns
     -------
@@ -99,16 +139,26 @@ def _read_toml(name_or_path: str) -> dict[str, Any]:
     FileNotFoundError
         If neither location yields a TOML file.
     """
-    path = _find_preset_path(name_or_path)
+    path = _find_preset_path(
+        name_or_path,
+        preset_dir_name=preset_dir_name,
+        preset_dir_env_var=preset_dir_env_var,
+    )
     if path is not None:
         return tomllib.loads(path.read_text())
     raise FileNotFoundError(
-        f"No preset {name_or_path!r}. Experiments: {list_presets()}. "
-        "Put TOML presets in ./experiments or pass a path to a .toml file."
+        f"No preset {name_or_path!r}. Presets: "
+        f"{list_presets(preset_dir_name=preset_dir_name, preset_dir_env_var=preset_dir_env_var)}. "
+        f"Put TOML presets in ./{preset_dir_name} or pass a path to a .toml file."
     )
 
 
-def _find_preset_path(name_or_path: str) -> Path | None:
+def _find_preset_path(
+    name_or_path: str,
+    *,
+    preset_dir_name: str = _EXPERIMENTS_DIR_NAME,
+    preset_dir_env_var: str = _EXPERIMENTS_DIR_ENV_VAR,
+) -> Path | None:
     """Resolve a preset name or path to a TOML file.
 
     Parameters
@@ -116,6 +166,10 @@ def _find_preset_path(name_or_path: str) -> Path | None:
     name_or_path : str
         Preset name (``full_8gpu``), TOML filename (``full_8gpu.toml``), or
         filesystem path.
+    preset_dir_name : str, optional
+        Top-level directory name to search.
+    preset_dir_env_var : str, optional
+        Environment variable that can override the preset directory path.
 
     Returns
     -------
@@ -127,35 +181,47 @@ def _find_preset_path(name_or_path: str) -> Path | None:
         return path
 
     preset_filename = path.name if path.suffix == ".toml" else f"{name_or_path}.toml"
-    for directory in _experiment_dirs():
+    for directory in _preset_dirs(
+        preset_dir_name=preset_dir_name,
+        preset_dir_env_var=preset_dir_env_var,
+    ):
         candidate = directory / preset_filename
         if candidate.is_file():
             return candidate
     return None
 
 
-def _experiment_dirs() -> list[Path]:
-    """Return candidate top-level experiment directories in precedence order.
+def _preset_dirs(*, preset_dir_name: str, preset_dir_env_var: str) -> list[Path]:
+    """Return candidate top-level preset directories in precedence order.
+
+    Parameters
+    ----------
+    preset_dir_name : str
+        Top-level directory name to search.
+    preset_dir_env_var : str
+        Environment variable that can override the preset directory path.
 
     Returns
     -------
     list of pathlib.Path
-        Existing or candidate ``experiments`` directories. Duplicates are
-        removed while preserving order.
+        Existing or candidate preset directories. Duplicates are removed while
+        preserving order.
     """
     candidates: list[Path] = []
 
-    explicit = os.environ.get("SAMPLEWORKS_EXPERIMENTS_DIR")
+    explicit = os.environ.get(preset_dir_env_var)
     if explicit:
         candidates.append(Path(explicit))
 
     source_dir = os.environ.get("SAMPLEWORKS_SOURCE_DIR")
     if source_dir:
-        candidates.append(Path(source_dir) / _EXPERIMENTS_DIR_NAME)
+        candidates.append(Path(source_dir) / preset_dir_name)
 
-    candidates.append(Path("/home/dev/workspace") / _EXPERIMENTS_DIR_NAME)
-    candidates.extend(_find_upward_experiment_dirs(Path.cwd()))
-    candidates.extend(_find_upward_experiment_dirs(Path(__file__).resolve()))
+    candidates.append(Path("/home/dev/workspace") / preset_dir_name)
+    candidates.extend(_find_upward_preset_dirs(Path.cwd(), preset_dir_name=preset_dir_name))
+    candidates.extend(
+        _find_upward_preset_dirs(Path(__file__).resolve(), preset_dir_name=preset_dir_name)
+    )
 
     seen: set[Path] = set()
     unique: list[Path] = []
@@ -167,23 +233,25 @@ def _experiment_dirs() -> list[Path]:
     return unique
 
 
-def _find_upward_experiment_dirs(start: Path) -> list[Path]:
-    """Search parents of ``start`` for top-level ``experiments`` directories.
+def _find_upward_preset_dirs(start: Path, *, preset_dir_name: str) -> list[Path]:
+    """Search parents of ``start`` for top-level preset directories.
 
     Parameters
     ----------
     start : pathlib.Path
         Directory or file path to begin searching from.
+    preset_dir_name : str
+        Top-level directory name to search.
 
     Returns
     -------
     list of pathlib.Path
-        Candidate experiment directories nearest to farthest.
+        Candidate preset directories nearest to farthest.
     """
     current = start if start.is_dir() else start.parent
     dirs: list[Path] = []
     for parent in [current, *current.parents]:
-        candidate = parent / _EXPERIMENTS_DIR_NAME
+        candidate = parent / preset_dir_name
         if candidate.is_dir():
             dirs.append(candidate)
     return dirs
@@ -508,6 +576,8 @@ def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:
             output_subdir=str(j["output_subdir"]),
             gpus=str(j.get("gpus", "")),
             gpu_count=_optional_int(j.get("gpu_count")),
+            script=str(j.get("script", "")),
+            output_arg=str(j.get("output_arg", "output-dir")),
             args=dict(j.get("args", {})),
         )
         for j in raw_jobs
