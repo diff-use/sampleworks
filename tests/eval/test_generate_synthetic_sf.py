@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
+from biotite.structure import AtomArray
 from sampleworks.eval.generate_synthetic_sf import atomarray_to_gemmi
 from sampleworks.eval.synthetic_utils import assign_occupancies
 from sampleworks.utils.atom_array_utils import (
@@ -34,11 +35,13 @@ def stripped_gemmi(resources_dir: Path) -> gemmi.Structure:
 
 
 @pytest.fixture(scope="module")
-def stripped_atom_array(resources_dir: Path):
+def stripped_atom_array(resources_dir: Path) -> AtomArray:
     arr = load_structure_with_altlocs(resources_dir / "6b8x" / "6b8x_final.pdb")
     arr = remove_hydrogens(arr)
     arr = remove_waters(arr)
-    return keep_polymer(keep_amino_acids(arr))
+    arr = keep_polymer(keep_amino_acids(arr))
+    assert isinstance(arr, AtomArray)
+    return arr
 
 
 @pytest.fixture(scope="module")

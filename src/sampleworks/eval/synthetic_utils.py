@@ -3,10 +3,9 @@
 import math
 import traceback
 from pathlib import Path
-from typing import cast
 
 from atomworks.io.transforms.atom_array import remove_waters
-from biotite.structure import AtomArray, AtomArrayStack
+from biotite.structure import AtomArray
 from loguru import logger
 from sampleworks.eval.structure_utils import apply_selection
 from sampleworks.utils.atom_array_utils import (
@@ -29,11 +28,11 @@ def validate_occupancy_values(occupancy_values: list[float]) -> None:
 
 
 def assign_occupancies(
-    atom_array: AtomArray | AtomArrayStack,
+    atom_array: AtomArray,
     altloc_info: AltlocInfo,
     occupancy_mode: str,
     occupancy_values: list[float] | None = None,
-) -> AtomArray | AtomArrayStack:
+) -> AtomArray:
     """Assign occupancy values to atoms based on their altloc membership.
 
     Parameters
@@ -52,7 +51,7 @@ def assign_occupancies(
 
     Returns
     -------
-    AtomArray | AtomArrayStack
+    AtomArray
         Modified structure with updated occupancies
 
     Raises
@@ -101,7 +100,7 @@ def assign_occupancies(
         for altloc, occupancy_value in zip(sorted(altloc_info.altloc_ids), occupancy_values):
             occupancy[altloc_info.atom_masks[altloc]] = occupancy_value
 
-    return cast(AtomArray, result)
+    return result
 
 
 def load_structure_for_synthetic_reward(
@@ -168,7 +167,8 @@ def load_structure_for_synthetic_reward(
     atom_array = remove_hydrogens(atom_array) if strip_hydrogens else atom_array
     atom_array = remove_waters(atom_array) if strip_waters else atom_array
     atom_array = keep_polymer(keep_amino_acids(atom_array)) if strip_ligands else atom_array
-    altloc_info = detect_altlocs(atom_array)  # ty: ignore[invalid-argument-type]
+    assert isinstance(atom_array, AtomArray)
+    altloc_info = detect_altlocs(atom_array)
     if occupancy_values:
         if occupancy_mode != "custom":
             logger.warning(
@@ -193,4 +193,4 @@ def load_structure_for_synthetic_reward(
         logger.error(f"Invalid occupancy mode '{occupancy_mode}' for {structure_path}")
         raise ValueError(f"Invalid occupancy mode '{occupancy_mode}'")
 
-    return cast(AtomArray, atom_array)
+    return atom_array

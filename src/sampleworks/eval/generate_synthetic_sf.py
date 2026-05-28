@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 import gemmi
 import numpy as np
 import reciprocalspaceship as rs
+import reciprocalspaceship.utils
 import torch
 from biotite.structure import AtomArray
 from loguru import logger
