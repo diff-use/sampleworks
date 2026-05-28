@@ -3,14 +3,10 @@
 import logging
 from pathlib import Path
 
+import gemmi
 import numpy as np
 import pytest
 import torch
-
-
-pytest.importorskip("SFC_Torch", reason="SFC_Torch not available; run in analysis-dev-sfc env")
-
-import gemmi
 from atomworks.io.transforms.atom_array import remove_waters
 from sampleworks.eval.generate_synthetic_sf import atomarray_to_gemmi
 from sampleworks.eval.synthetic_utils import assign_occupancies

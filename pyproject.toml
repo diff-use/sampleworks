@@ -5,6 +5,7 @@ requires = ["hatchling"]
 [dependency-groups]
 analysis = [
   "ipython",
+  "joblib",
   "marimo",
   "matplotlib",
   "mdtraj",
@@ -18,7 +19,6 @@ analysis = [
 boltz = ["boltz", "cuequivariance-torch", "cuequivariance-ops-torch-cu12", "rdkit>=2025.3.6"]
 dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru", "python-semantic-release"]
 protenix = ["protenix>=0.6.3", "einx", "triton"]
-sfc = ["sfcalculator-torch>=0.3.2"]
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
@@ -30,7 +30,8 @@ dependencies = [
   "einx<0.4",
   "hydra-core",
   "loguru",
-  "omegaconf"
+  "omegaconf",
+  "sfcalculator-torch>=0.3.2"
 ]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
@@ -70,20 +71,15 @@ pyarrow = "==17.0.0"
 [tool.pixi.environments]
 analysis = {features = ["analysis"]}
 analysis-dev = {features = ["analysis", "dev"]}
-analysis-dev-sfc = {features = ["analysis", "dev", "sfc"]}
 boltz = {features = ["boltz"]}
 boltz-analysis = {features = ["boltz", "analysis"]}
 boltz-dev = {features = ["boltz", "dev"]}
-boltz-dev-sfc = {features = ["boltz", "dev", "sfc"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
-protenix-dev-sfc = {features = ["protenix", "dev", "sfc"]}
 rf3 = {features = ["rf3"]}
 rf3-dev = {features = ["rf3", "dev"]}
-rf3-dev-sfc = {features = ["rf3", "dev", "sfc"]}
 
 [tool.pixi.feature.protenix.pypi-options.dependency-overrides]
-pandas = "==2.3.1"
 rdkit = ">=2024.3.5,<2025.9"
 
 [tool.pixi.feature.rf3.pypi-dependencies]
@@ -91,6 +87,12 @@ rc-foundry = {editable = true, extras = ["rf3"], git = "https://github.com/k-chr
 
 [tool.pixi.pypi-dependencies]
 sampleworks = {editable = true, path = "."}
+
+# Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
+# caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins
+# pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
+[tool.pixi.pypi-options.dependency-overrides]
+pandas = "==2.3.1"
 
 [tool.pixi.system-requirements]
 cuda = "12"
