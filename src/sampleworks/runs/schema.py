@@ -1,11 +1,11 @@
 """Dataclasses for the run preset schema.
 
-A preset describes one or more parallel script jobs. Experiment presets default
-to ``run_grid_search.py`` while analysis presets set ``script`` explicitly to
-one of the evaluation scripts. Each job runs in its configured pixi environment,
-either through ``pixi run`` or a baked environment Python, with
-``CUDA_VISIBLE_DEVICES`` set from an explicit GPU assignment or an automatically
-allocated ``gpu_count``.
+A preset describes optional sequential pre-jobs followed by one or more parallel
+script jobs. Experiment presets default to ``run_grid_search.py`` while analysis
+presets set ``script`` explicitly to one of the evaluation scripts. Each job runs
+in its configured pixi environment, either through ``pixi run`` or a baked
+environment Python, with ``CUDA_VISIBLE_DEVICES`` set from an explicit GPU
+assignment or an automatically allocated ``gpu_count``.
 """
 
 from __future__ import annotations
@@ -116,6 +116,9 @@ class Preset:
     shared_args : dict of str to Any, optional
         Args merged into every job's ``args`` before argv is built. Per-job
         ``args`` win on collision.
+    pre_jobs : list of Job
+        Jobs that run sequentially before any main jobs. They are useful for
+        required preparation steps such as CIF patching.
     jobs : list of Job
         Jobs to launch in parallel. Must be non-empty and have unique names.
 
@@ -129,6 +132,7 @@ class Preset:
     description: str
     defaults: dict[str, str] = field(default_factory=dict)
     shared_args: dict[str, Any] = field(default_factory=dict)
+    pre_jobs: list[Job] = field(default_factory=list)
     jobs: list[Job] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -136,7 +140,7 @@ class Preset:
         if not self.jobs:
             raise ValueError(f"Preset {self.name!r}: must declare at least one job")
         seen: set[str] = set()
-        for job in self.jobs:
+        for job in [*self.pre_jobs, *self.jobs]:
             if job.name in seen:
                 raise ValueError(f"Preset {self.name!r}: duplicate job name {job.name!r}")
             seen.add(job.name)

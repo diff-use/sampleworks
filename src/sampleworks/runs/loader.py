@@ -24,7 +24,7 @@ _EXPERIMENTS_DIR_NAME = "experiments"
 _EXPERIMENTS_DIR_ENV_VAR = "SAMPLEWORKS_EXPERIMENTS_DIR"
 _MAX_EXPAND_ITERATIONS = 32
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "jobs"})
+_TOP_LEVEL_KEYS = frozenset({"description", "defaults", "shared_args", "pre_jobs", "jobs"})
 
 
 def list_presets(
@@ -342,9 +342,9 @@ def _set_dotted(obj: dict[str, Any], dotted: str, value: Any) -> None:
         leaf_parent[_find_in_list(leaf_parent, leaf_key, where=dotted)] = value
     else:
         leaf_parent[leaf_key] = value
-        if parts[0] == "jobs" and len(parts) == 3 and leaf_key == "gpus":
+        if parts[0] in {"pre_jobs", "jobs"} and len(parts) == 3 and leaf_key == "gpus":
             leaf_parent.pop("gpu_count", None)
-        elif parts[0] == "jobs" and len(parts) == 3 and leaf_key == "gpu_count":
+        elif parts[0] in {"pre_jobs", "jobs"} and len(parts) == 3 and leaf_key == "gpu_count":
             leaf_parent.pop("gpus", None)
 
 
@@ -566,10 +566,38 @@ def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:
         If ``raw['jobs']`` is not a list, or if any :class:`Job` /
         :class:`Preset` invariant fails (see their docstrings).
     """
+    raw_pre_jobs = raw.get("pre_jobs", [])
     raw_jobs = raw.get("jobs", [])
+    if not isinstance(raw_pre_jobs, list):
+        raise ValueError(f"Preset {name!r}: 'pre_jobs' must be a list")
     if not isinstance(raw_jobs, list):
         raise ValueError(f"Preset {name!r}: 'jobs' must be a list")
-    jobs = [
+    pre_jobs = _build_jobs(raw_pre_jobs)
+    jobs = _build_jobs(raw_jobs)
+    return Preset(
+        name=name,
+        description=str(raw.get("description", "")),
+        defaults=dict(raw.get("defaults", {})),
+        shared_args=dict(raw.get("shared_args", {})),
+        pre_jobs=pre_jobs,
+        jobs=jobs,
+    )
+
+
+def _build_jobs(raw_jobs: list[Any]) -> list[Job]:
+    """Build :class:`Job` objects from raw TOML job dictionaries.
+
+    Parameters
+    ----------
+    raw_jobs : list of Any
+        Parsed TOML job entries.
+
+    Returns
+    -------
+    list of Job
+        Validated jobs.
+    """
+    return [
         Job(
             name=str(j["name"]),
             env=str(j["env"]),
@@ -582,13 +610,6 @@ def _build_preset(*, name: str, raw: dict[str, Any]) -> Preset:
         )
         for j in raw_jobs
     ]
-    return Preset(
-        name=name,
-        description=str(raw.get("description", "")),
-        defaults=dict(raw.get("defaults", {})),
-        shared_args=dict(raw.get("shared_args", {})),
-        jobs=jobs,
-    )
 
 
 def _optional_int(value: Any) -> int | None:

@@ -73,10 +73,57 @@ def build_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocatio
     list of JobInvocation
         One :class:`JobInvocation` per job, in declaration order.
     """
-    gpu_assignments = _resolve_gpu_assignments(preset.jobs)
+    return _build_invocations_for_jobs(
+        preset.jobs, preset=preset, results_dir=results_dir, include_shared_args=True
+    )
+
+
+def build_pre_invocations(preset: Preset, *, results_dir: Path) -> list[JobInvocation]:
+    """Build subprocess invocations for sequential preset pre-jobs.
+
+    Parameters
+    ----------
+    preset : Preset
+        Resolved preset to launch.
+    results_dir : Path
+        Root directory for outputs and per-job log files.
+
+    Returns
+    -------
+    list of JobInvocation
+        One :class:`JobInvocation` per pre-job, in declaration order.
+    """
+    return _build_invocations_for_jobs(
+        preset.pre_jobs, preset=preset, results_dir=results_dir, include_shared_args=False
+    )
+
+
+def _build_invocations_for_jobs(
+    jobs: list[Job], *, preset: Preset, results_dir: Path, include_shared_args: bool
+) -> list[JobInvocation]:
+    """Build subprocess invocations for a specific preset job phase.
+
+    Parameters
+    ----------
+    jobs : list of Job
+        Jobs to resolve into command lines.
+    preset : Preset
+        Parent preset whose shared args apply to each job.
+    results_dir : Path
+        Root directory for outputs and per-job log files.
+    include_shared_args : bool
+        If True, merge ``preset.shared_args`` into each job. Pre-jobs use False
+        because preparation scripts usually have different CLIs from main jobs.
+
+    Returns
+    -------
+    list of JobInvocation
+        Resolved invocations for ``jobs``.
+    """
+    gpu_assignments = _resolve_gpu_assignments(jobs)
     invocations: list[JobInvocation] = []
-    for job in preset.jobs:
-        args = preset.effective_args(job)
+    for job in jobs:
+        args = preset.effective_args(job) if include_shared_args else dict(job.args)
         output_dir = results_dir / job.output_subdir
         if job.output_arg:
             args.setdefault(job.output_arg, str(output_dir))
@@ -593,20 +640,31 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
     """
     results_dir = results_dir.resolve()
     results_dir.mkdir(parents=True, exist_ok=True)
+    pre_invocations = build_pre_invocations(preset, results_dir=results_dir)
     invocations = build_invocations(preset, results_dir=results_dir)
+    _validate_gpu_assignments(pre_invocations)
     _validate_gpu_assignments(invocations)
 
     if dry_run:
+        for inv in pre_invocations:
+            _print_dry_run(inv, phase="pre-job")
         for inv in invocations:
-            _print_dry_run(inv)
+            _print_dry_run(inv, phase="job")
         return 0
 
-    pixi_envs = sorted({inv.job.env for inv in invocations})
+    pixi_envs = sorted({inv.job.env for inv in [*pre_invocations, *invocations]})
     for pixi_env in pixi_envs:
         _prepare_pixi_env(pixi_env)
+    pre_invocations = build_pre_invocations(preset, results_dir=results_dir)
     invocations = build_invocations(preset, results_dir=results_dir)
 
-    _print_launch_summary(preset, invocations)
+    if pre_invocations:
+        _print_launch_summary(preset, pre_invocations, phase="pre-jobs")
+        pre_exit = _run_sequential(pre_invocations)
+        if pre_exit != 0:
+            return pre_exit
+
+    _print_launch_summary(preset, invocations, phase="jobs")
     processes: list[_RunningJob] = []
     try:
         for inv in invocations:
@@ -687,21 +745,25 @@ def _prepare_pixi_env(pixi_env: str) -> None:
     subprocess.run(cmd, cwd=str(_pixi_project_dir()), env=env, check=True)
 
 
-def _print_dry_run(inv: JobInvocation) -> None:
+def _print_dry_run(inv: JobInvocation, *, phase: str = "job") -> None:
     """Print the exact command for one job without launching it.
 
     Parameters
     ----------
     inv : JobInvocation
         Invocation to print.
+    phase : str, optional
+        Human-readable phase label for the dry-run header.
     """
-    print(f"# job: {inv.job.name}  (env={inv.job.env}, gpus={inv.gpus})", file=sys.stderr)
+    print(f"# {phase}: {inv.job.name}  (env={inv.job.env}, gpus={inv.gpus})", file=sys.stderr)
     print(f"# log: {inv.log_path}", file=sys.stderr)
     print(f"CUDA_VISIBLE_DEVICES={inv.gpus} {_shell_join(inv.argv)}")
     print(file=sys.stderr)
 
 
-def _print_launch_summary(preset: Preset, invocations: list[JobInvocation]) -> None:
+def _print_launch_summary(
+    preset: Preset, invocations: list[JobInvocation], *, phase: str = "jobs"
+) -> None:
     """Print a banner describing what is about to be launched.
 
     Parameters
@@ -710,10 +772,12 @@ def _print_launch_summary(preset: Preset, invocations: list[JobInvocation]) -> N
         Preset being launched.
     invocations : list of JobInvocation
         Jobs about to be spawned.
+    phase : str, optional
+        Phase label to print in the banner.
     """
     bar = "=" * 60
     print(bar, file=sys.stderr)
-    print(f"preset: {preset.name}", file=sys.stderr)
+    print(f"preset: {preset.name} ({phase})", file=sys.stderr)
     if preset.description:
         print(f"  {preset.description}", file=sys.stderr)
     for inv in invocations:
@@ -722,6 +786,26 @@ def _print_launch_summary(preset: Preset, invocations: list[JobInvocation]) -> N
             file=sys.stderr,
         )
     print(bar, file=sys.stderr)
+
+
+def _run_sequential(invocations: list[JobInvocation]) -> int:
+    """Run invocations one at a time, stopping at the first failure.
+
+    Parameters
+    ----------
+    invocations : list of JobInvocation
+        Pre-job invocations to run in order.
+
+    Returns
+    -------
+    int
+        ``0`` if all jobs succeed, otherwise ``1``.
+    """
+    for inv in invocations:
+        exit_code = _wait_all([_spawn(inv)])
+        if exit_code != 0:
+            return exit_code
+    return 0
 
 
 @dataclass(frozen=True)

@@ -251,6 +251,9 @@ rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 `run_analysis` uses the same TOML runner as `run_experiments`, but loads presets
 from `analyses/*.toml` and runs the scripts under `scripts/eval/`.
+The `grid_search`, `all`, and `external_tools` presets first run a sequential
+`patch_outputs` pre-job, which creates `refined-patched.cif` files from each
+`refined.cif` before the evaluation jobs start.
 
 ```bash
 export GRID_SEARCH_RESULTS_DIR=/mnt/diffuse-shared/results/sampleworks/<pod>/full_8gpu
@@ -266,8 +269,9 @@ run_analysis all  # includes tortoize and phenix.clashscore jobs
 ```
 
 Use `--set` for one-off changes, for example
-`run_analysis rscc --set shared_args.target-filename=refined.cif` or
-`run_analysis rscc --set jobs.rscc.gpus=0`.
+`run_analysis rscc --set jobs.rscc.gpus=0`. If your input layout differs from
+the default `processed/{pdb_id}/{pdb_id}_single_001_density_input.cif`, override
+the patch pre-job with `--set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'`.
 
 
 ## Docker

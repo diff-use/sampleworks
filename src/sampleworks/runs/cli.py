@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import loader, runner
-from .schema import Preset
+from .schema import Job, Preset
 
 
 DEFAULT_PRESET = "full_8gpu"
@@ -293,6 +293,7 @@ def _filter_jobs(preset: Preset, jobs: str) -> Preset:
         description=description,
         defaults=preset.defaults,
         shared_args=preset.shared_args,
+        pre_jobs=preset.pre_jobs,
         jobs=keep,
     )
 
@@ -312,22 +313,37 @@ def _print_show(preset: Preset) -> None:
         print("defaults:")
         for k, v in preset.defaults.items():
             print(f"  {k} = {v}")
+    if preset.pre_jobs:
+        print("pre_jobs:")
+        for j in preset.pre_jobs:
+            _print_job(j)
     print("jobs:")
     for j in preset.jobs:
-        print(f"  - name: {j.name}")
-        print(f"    env: {j.env}")
-        if j.gpus:
-            print(f"    gpus: {j.gpus}")
-        else:
-            print(f"    gpu_count: {j.gpu_count}")
-        if j.script:
-            print(f"    script: {j.script}")
-        print(f"    output_subdir: {j.output_subdir}")
-        if j.output_arg != "output-dir":
-            print(f"    output_arg: {j.output_arg!r}")
-        print("    args:")
-        for k, v in j.args.items():
-            print(f"      {k} = {v!r}")
+        _print_job(j)
+
+
+def _print_job(j: Job) -> None:
+    """Print one resolved preset job for ``--show``.
+
+    Parameters
+    ----------
+    j : Job
+        Job to print.
+    """
+    print(f"  - name: {j.name}")
+    print(f"    env: {j.env}")
+    if j.gpus:
+        print(f"    gpus: {j.gpus}")
+    else:
+        print(f"    gpu_count: {j.gpu_count}")
+    if j.script:
+        print(f"    script: {j.script}")
+    print(f"    output_subdir: {j.output_subdir}")
+    if j.output_arg != "output-dir":
+        print(f"    output_arg: {j.output_arg!r}")
+    print("    args:")
+    for k, v in j.args.items():
+        print(f"      {k} = {v!r}")
 
 
 def _default_results_dir(preset: Preset, *, config: CliConfig = EXPERIMENT_CLI_CONFIG) -> str:

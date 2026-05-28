@@ -21,10 +21,15 @@ coordinates, and not the additional information that many programs, like `tortoi
 `phenix.clashscore`, require. Furthermore, many protein structure predictors effectively 
 renumber residues. Since our metrics are frequently calculated by comparing selections of atoms or 
 residues, we must align to the original _sequence_ of the protein as well. Future versions of 
-Sampleworks will handle these issues automatically. For now, you should run the script
-`scripts/patch_output_cif_files.py`. This will use the original PDB inputs to reconstruct proper 
-output CIF files that are numbered correctly and
-have all necessary metadata to reconstruct the protein structure correctly.
+Sampleworks will handle these issues automatically. For direct script invocation, you should run
+the script `scripts/patch_output_cif_files.py`. This will use the original PDB inputs to
+reconstruct proper output CIF files that are numbered correctly and have all necessary metadata to
+reconstruct the protein structure correctly.
+
+The `run_analysis` presets automate this step for the `grid_search`, `all`, and `external_tools`
+presets: a sequential `patch_outputs` pre-job runs before evaluation jobs and writes
+`refined-patched.cif` files. Override `PATCH_INPUT_PDB_PATTERN`, `PATCH_RCSB_PATTERN`,
+`PATCH_CIF_PATTERN`, or `PATCH_DEPTH` if your input or output layout differs.
 
 You can run the following command, which assumes:
 - your sampleworks output is stored in `/home/ubuntu/grid_search_results`, 
@@ -68,8 +73,12 @@ run_analysis --list
 run_analysis grid_search --jobs rscc,lddt,bond_geometry
 run_analysis altloc_find
 run_analysis altloc_classify
-run_analysis rscc --set shared_args.target-filename=refined.cif
+run_analysis rscc --set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'
 ```
+
+The `grid_search`, `all`, and `external_tools` presets run the CIF patching pre-step before these
+evaluation scripts. If you run the scripts directly, run `scripts/patch_output_cif_files.py` first
+or point `--target-filename` at files that already contain the required metadata.
 
 For direct script invocation, the equivalent command shape is:
 

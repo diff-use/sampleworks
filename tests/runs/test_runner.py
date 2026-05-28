@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -268,7 +269,7 @@ def test_dry_run_does_not_create_directories(
 
 
 def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Analysis TOML presets run eval scripts without injecting --output-dir."""
+    """Analysis TOML presets patch CIFs before running eval scripts."""
     repo_root = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("HOME", "/home/test")
     monkeypatch.setenv("SAMPLEWORKS_SOURCE_DIR", str(repo_root))
@@ -285,8 +286,31 @@ def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.Monk
         preset_dir_env_var="SAMPLEWORKS_ANALYSES_DIR",
     )
 
+    pre_invocations = runner.build_pre_invocations(preset, results_dir=Path("/analysis-logs"))
     invocations = runner.build_invocations(preset, results_dir=Path("/analysis-logs"))
+    patch = pre_invocations[0]
     rscc = invocations[0]
+
+    assert patch.job.name == "patch_outputs"
+    assert patch.env["CUDA_VISIBLE_DEVICES"] == "none"
+    assert patch.argv[:6] == [
+        "pixi",
+        "run",
+        "-e",
+        "analysis",
+        "python",
+        str(repo_root / "scripts/patch_output_cif_files.py"),
+    ]
+    patch_args = _argv_to_dict(patch.argv[6:])
+    assert patch_args["--input-dir"] == "/grid/results"
+    assert patch_args["--grid-search-input-dir"] == "/grid/inputs"
+    assert patch_args["--cif-pattern"] == "refined.cif"
+    assert patch_args["--rcsb-pattern"] == "/grid/results/([A-Za-z0-9]{4})"
+    assert patch_args["--input-pdb-pattern"] == (
+        "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
+    )
+    assert "--target-filename" not in patch_args
+    assert "--protein-configs-csv" not in patch_args
 
     assert rscc.job.name == "rscc"
     assert rscc.env["CUDA_VISIBLE_DEVICES"] == "0"
@@ -310,6 +334,33 @@ def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.Monk
         "0.75",
         "1.0",
     ]
+
+
+def test_pre_jobs_run_before_main_jobs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sequential pre-jobs complete before regular jobs are launched."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("SAMPLEWORKS_ANALYSIS_PYTHON", sys.executable)
+    pre_script = tmp_path / "pre.py"
+    main_script = tmp_path / "main.py"
+    pre_script.write_text("from pathlib import Path\nPath('marker').write_text('pre')\n")
+    main_script.write_text(
+        "from pathlib import Path\n"
+        "assert Path('marker').read_text() == 'pre'\n"
+        "Path('main').write_text('main')\n"
+    )
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        'description = "custom"\n'
+        '[[pre_jobs]]\nname = "pre"\nenv = "analysis"\ngpus = "none"\n'
+        f'script = "{pre_script}"\noutput_subdir = "pre"\noutput_arg = ""\n'
+        '[[jobs]]\nname = "main"\nenv = "analysis"\ngpus = "none"\n'
+        f'script = "{main_script}"\noutput_subdir = "main"\noutput_arg = ""\n'
+    )
+    preset = loader.load_preset(str(custom))
+
+    assert runner.run(preset, results_dir=tmp_path / "results") == 0
+    assert (tmp_path / "main").read_text() == "main"
 
 
 def test_analysis_cli_lists_analysis_presets(capsys: pytest.CaptureFixture[str]) -> None:
