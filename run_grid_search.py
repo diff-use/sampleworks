@@ -393,9 +393,10 @@ def get_pixi_env_process_env(env_python: str) -> dict[str, str]:
 def get_pixi_env_python(pixi_env: str) -> str | None:
     """Return a direct Python binary for a preinstalled pixi environment.
 
-    The ACTL sampleworks image bakes environments under ``/app/.pixi``. Using
-    those interpreters directly avoids a runtime ``pixi run`` cache refresh on
-    shared storage. Set ``SAMPLEWORKS_FORCE_PIXI=1`` to force the old behavior.
+    The ACTL ``pixi-with-checkpoints`` image bakes environments under
+    ``/app/.pixi``. Using those interpreters directly avoids a runtime
+    ``pixi run`` cache refresh on shared storage. Set ``SAMPLEWORKS_FORCE_PIXI=1``
+    to force the old behavior.
 
     Parameters
     ----------

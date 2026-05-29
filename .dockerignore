@@ -56,5 +56,5 @@ results/
 # Hatch alternative config (not needed in container)
 pyproject-hatch.toml
 
-# Checkpoint files (baked in via COPY --from=diffuseproject/sampleworks-checkpoints:latest)
+# Checkpoint files (baked in via digest-pinned COPY --from=$CHECKPOINTS_IMAGE)
 checkpoints/

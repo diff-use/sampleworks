@@ -177,7 +177,7 @@ METADATA HOST PATH REMAPPING:
       docker run -v /mnt/data:/data/inputs:ro -v /results:/data/results \
         -e SAMPLEWORKS_HOST_INPUT_DIR=/mnt/data \
         -e SAMPLEWORKS_HOST_RESULTS_DIR=/results \
-        sampleworks -e boltz run_grid_search.py ...
+        pixi-with-checkpoints -e boltz run_grid_search.py ...
 
 PROTEINS CSV FORMAT:
     The --proteins CSV file must have the following columns:

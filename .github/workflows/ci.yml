@@ -9,7 +9,12 @@ on:
       - 'pyproject.toml'
       - 'pixi.lock'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/docker.yml'
       - '.pre-commit-config.yaml'
+      - 'Dockerfile'
+      - 'Dockerfile.astera'
+      - 'docker-entrypoint.sh'
+      - 'run_grid_search.py'
   pull_request:
     branches: [main]
     paths:
@@ -18,7 +23,12 @@ on:
       - 'pyproject.toml'
       - 'pixi.lock'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/docker.yml'
       - '.pre-commit-config.yaml'
+      - 'Dockerfile'
+      - 'Dockerfile.astera'
+      - 'docker-entrypoint.sh'
+      - 'run_grid_search.py'
   workflow_dispatch:
 
 concurrency:
