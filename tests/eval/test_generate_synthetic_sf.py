@@ -28,6 +28,7 @@ DMIN = 2.0
 
 @pytest.fixture(scope="module")
 def stripped_gemmi(resources_dir: Path) -> gemmi.Structure:
+    """gemmi.Structure with hydrogens, ligands, and waters removed using gemmi methods."""
     s = gemmi.read_structure(str(resources_dir / "6b8x" / "6b8x_final.pdb"))
     s.remove_hydrogens()
     s.remove_ligands_and_waters()
@@ -36,6 +37,8 @@ def stripped_gemmi(resources_dir: Path) -> gemmi.Structure:
 
 @pytest.fixture(scope="module")
 def stripped_atom_array(resources_dir: Path) -> AtomArray:
+    """AtomArray with hydrogens, waters, and non-polymer/non-amino-acid atoms
+    removed using existing utils."""
     arr = load_structure_with_altlocs(resources_dir / "6b8x" / "6b8x_final.pdb")
     arr = remove_hydrogens(arr)
     arr = remove_waters(arr)
@@ -48,12 +51,15 @@ def stripped_atom_array(resources_dir: Path) -> AtomArray:
 def gemmi_structure_from_atomarray(
     stripped_atom_array, stripped_gemmi: gemmi.Structure
 ) -> gemmi.Structure:
+    """gemmi.Structure converted from the stripped AtomArray."""
     return atomarray_to_gemmi(
         stripped_atom_array, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm
     )
 
 
 def _compute_fprotein(gemmi_structure: gemmi.Structure, device: torch.device) -> np.ndarray:
+    """Compute |Fprotein| amplitudes from a gemmi structure via SFcalculator at ``DMIN``
+    resolution. The final assert_numpy converts any tensor or list to a numpy array."""
     sfc = SFcalculator(
         PDBParser(gemmi_structure),
         mtzdata=None,
