@@ -1,9 +1,9 @@
 name: Build and Push Docker Images
 
-# CI builds pull all model checkpoints (~10 GB) from Harbor automatically via:
-#   COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest /checkpoints/ /checkpoints/
-# No checkpoint files are needed on the CI runner. The checkpoints base image is
-# pre-built and pushed from the GPU server. See Dockerfile comments for details.
+# Two-image split:
+#   1. Public pixi-with-checkpoints image from Dockerfile -> public registry.
+#   2. Private Astera overlay from Dockerfile.astera -> Harbor, based on the
+#      exact public image SHA tag built in step 1.
 
 on:
   push:
@@ -13,12 +13,162 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: harbor.astera.sh
-  IMAGE_NAME: library/pixi-with-checkpoints
+  # Override these with repository variables if Diffuse Hub uses a different
+  # public registry path.
+  PUBLIC_REGISTRY: ${{ vars.SAMPLEWORKS_PUBLIC_REGISTRY || 'docker.io' }}
+  PUBLIC_IMAGE_NAME: ${{ vars.SAMPLEWORKS_PUBLIC_IMAGE || 'diffuseproject/pixi-with-checkpoints' }}
+  CHECKPOINTS_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_IMAGE || vars.SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE || 'docker.io/diffuseproject/sampleworks-checkpoints:latest' }}
+  CHECKPOINTS_SOURCE_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE || 'harbor.astera.sh/library/sampleworks-checkpoints@sha256:ff1dd2b42c3afd593e034cf81df1bf1862c27ae491f46cc10e105629f1102781' }}
+  CHECKPOINTS_DOCKERHUB_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE || 'docker.io/diffuseproject/sampleworks-checkpoints:latest' }}
+  CUDA_BASE_IMAGE: ${{ vars.SAMPLEWORKS_CUDA_BASE_IMAGE || 'nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5' }}
+
+  ASTERA_REGISTRY: harbor.astera.sh
+  ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
+  # Update this only when the Astera overlay needs a newer EXT CLI; otherwise the
+  # repo variable can override it without changing this workflow.
+  EXT_CLI_IMAGE: ${{ vars.EXT_CLI_IMAGE || 'harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57' }}
+
+  DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
 jobs:
-  build:
+  sync-checkpoints:
+    name: Sync checkpoints to Docker Hub
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Copy checkpoint image to Docker Hub
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "${CHECKPOINTS_SOURCE_IMAGE}" ] || [ -z "${CHECKPOINTS_DOCKERHUB_IMAGE}" ]; then
+            echo "Checkpoint source and Docker Hub destination image refs must be set."
+            exit 1
+          fi
+          if [ -z "${HARBOR_USERNAME}" ] || [ -z "${HARBOR_PASSWORD}" ]; then
+            echo "HARBOR_USERNAME and HARBOR_PASSWORD secrets are required to pull checkpoint image."
+            exit 1
+          fi
+          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
+            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are required to push checkpoint image."
+            exit 1
+          fi
+
+          skopeo copy --preserve-digests \
+            --src-creds "${HARBOR_USERNAME}:${HARBOR_PASSWORD}" \
+            --dest-creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+            "docker://${CHECKPOINTS_SOURCE_IMAGE}" \
+            "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}"
+
+      - name: Verify Docker Hub checkpoint digest
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          expected_digest="${CHECKPOINTS_SOURCE_IMAGE##*@}"
+          actual_digest="$(skopeo inspect \
+            --creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+            --format '{{.Digest}}' \
+            "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}")"
+
+          if [ "${actual_digest}" != "${expected_digest}" ]; then
+            echo "Docker Hub checkpoint digest mismatch: expected ${expected_digest}, got ${actual_digest}"
+            exit 1
+          fi
+
+  public:
+    name: Public pixi-with-checkpoints image
+    runs-on: ubuntu-latest
+    needs: sync-checkpoints
+    permissions:
+      contents: read
+    outputs:
+      image-ref: ${{ steps.public-ref.outputs.image }}
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Login to public registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ${{ env.PUBLIC_REGISTRY }}
+          username: ${{ secrets.SAMPLEWORKS_PUBLIC_REGISTRY_USERNAME || secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.SAMPLEWORKS_PUBLIC_REGISTRY_PASSWORD || secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata for public image
+        id: public-meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
+        with:
+          images: ${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
+
+      - name: Validate checkpoint image input
+        run: |
+          if [ -z "${CHECKPOINTS_IMAGE}" ]; then
+            echo "SAMPLEWORKS_CHECKPOINTS_IMAGE must be set to a checkpoint image ref, preferably digest-pinned."
+            exit 1
+          fi
+
+      - name: Build and push public image
+        id: public-build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: Dockerfile
+          target: public
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.public-meta.outputs.tags }}
+          labels: ${{ steps.public-meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ env.CUDA_BASE_IMAGE }}
+            CHECKPOINTS_IMAGE=${{ env.CHECKPOINTS_IMAGE }}
+          cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max
+          provenance: false
+
+      - name: Publish public image ref for Astera overlay
+        id: public-ref
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}:sha-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Public image digest
+        run: echo "Public image pushed with digest ${{ steps.public-build.outputs.digest }}"
+
+  astera:
+    name: Astera EXT image
+    runs-on: ubuntu-latest
+    needs: public
     permissions:
       contents: read
 
@@ -34,41 +184,48 @@ jobs:
           swap-storage: true
 
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
       - name: Login to Harbor
-        uses: docker/login-action@v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ${{ env.ASTERA_REGISTRY }}
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
-      # The Dockerfile uses COPY --from=harbor.astera.sh/library/sampleworks-checkpoints:latest
-      # which Docker automatically pulls from Harbor during the build.
-      # No checkpoint files are needed in the CI build context.
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
+      - name: Docker metadata for Astera image
+        id: astera-meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}
           tags: |
-            type=raw,value=sampleworks
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sampleworks,enable={{is_default_branch}}
             type=sha,prefix=sha-
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
-      - name: Build and push Docker image
-        id: build-push
-        uses: docker/build-push-action@v7
+
+      - name: Build and push Astera image
+        id: astera-build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
+          file: Dockerfile.astera
+          platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.astera-meta.outputs.tags }}
+          labels: ${{ steps.astera-meta.outputs.labels }}
+          build-args: |
+            PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
+            EXT_CLI_IMAGE=${{ env.EXT_CLI_IMAGE }}
+          cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max
           provenance: false
 
-      - name: Image digest
-        run: echo "Image pushed with digest ${{ steps.build-push.outputs.digest }}"
+      - name: Astera image digest
+        run: echo "Astera image pushed with digest ${{ steps.astera-build.outputs.digest }}"
