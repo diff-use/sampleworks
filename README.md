@@ -280,9 +280,8 @@ CI configuration variables:
 |---|---|
 | `SAMPLEWORKS_PUBLIC_REGISTRY` | Public registry host; defaults to `docker.io` |
 | `SAMPLEWORKS_PUBLIC_IMAGE` | Public image path; defaults to `diffuseproject/pixi-with-checkpoints` |
-| `SAMPLEWORKS_CHECKPOINTS_IMAGE` | Required checkpoint image ref for the public build; use a digest-pinned public ref |
-| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional source checkpoint image for CI to mirror to Docker Hub; defaults to the current Harbor digest |
-| `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional Docker Hub checkpoint mirror destination; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
+| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional private/source checkpoint image that CI mirrors to Docker Hub; defaults to the current digest-pinned Harbor image |
+| `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional public Docker Hub checkpoint mirror destination tag; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
 | `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
 | `EXT_CLI_IMAGE` | Optional EXT CLI image override for the Astera overlay |
 
@@ -305,10 +304,11 @@ docker build --platform linux/amd64 \
   .
 ```
 
-The checkpoint source is required as `CHECKPOINTS_IMAGE`; CI should set
-`SAMPLEWORKS_CHECKPOINTS_IMAGE` to a digest-pinned public checkpoint image. The
-Docker workflow mirrors the current Harbor checkpoint image to Docker Hub before
-building the public image so the public build never needs Harbor credentials.
+For local public builds, pass `CHECKPOINTS_IMAGE` as a public, digest-pinned
+checkpoint image ref. In CI, the Docker workflow first mirrors the private Harbor
+checkpoint source to Docker Hub, verifies the digest, and passes the resulting
+digest-pinned Docker Hub ref to the public build so that build never needs Harbor
+credentials.
 
 
 ## Development

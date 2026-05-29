@@ -17,7 +17,6 @@ env:
   # public registry path.
   PUBLIC_REGISTRY: ${{ vars.SAMPLEWORKS_PUBLIC_REGISTRY || 'docker.io' }}
   PUBLIC_IMAGE_NAME: ${{ vars.SAMPLEWORKS_PUBLIC_IMAGE || 'diffuseproject/pixi-with-checkpoints' }}
-  CHECKPOINTS_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_IMAGE }}
   CHECKPOINTS_SOURCE_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE || 'harbor.astera.sh/library/sampleworks-checkpoints@sha256:ff1dd2b42c3afd593e034cf81df1bf1862c27ae491f46cc10e105629f1102781' }}
   CHECKPOINTS_DOCKERHUB_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE || 'docker.io/diffuseproject/sampleworks-checkpoints:latest' }}
   CUDA_BASE_IMAGE: ${{ vars.SAMPLEWORKS_CUDA_BASE_IMAGE || 'nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5' }}
@@ -31,11 +30,13 @@ env:
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
 jobs:
-  sync-checkpoints:
+  sync_checkpoints:
     name: Sync checkpoints to Docker Hub
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      checkpoints_image: ${{ steps.verify_checkpoints.outputs.checkpoints_image }}
 
     steps:
       - name: Install skopeo
@@ -54,6 +55,10 @@ jobs:
             echo "Checkpoint source and Docker Hub destination image refs must be set."
             exit 1
           fi
+          if [ "${CHECKPOINTS_SOURCE_IMAGE}" = "${CHECKPOINTS_SOURCE_IMAGE%@*}" ]; then
+            echo "CHECKPOINTS_SOURCE_IMAGE must be digest-pinned."
+            exit 1
+          fi
           if [ -z "${HARBOR_USERNAME}" ] || [ -z "${HARBOR_PASSWORD}" ]; then
             echo "HARBOR_USERNAME and HARBOR_PASSWORD secrets are required to pull checkpoint image."
             exit 1
@@ -70,6 +75,7 @@ jobs:
             "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}"
 
       - name: Verify Docker Hub checkpoint digest
+        id: verify_checkpoints
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -85,10 +91,14 @@ jobs:
             exit 1
           fi
 
+          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
+          dockerhub_ref="${dockerhub_ref%:*}"
+          echo "checkpoints_image=${dockerhub_ref}@${actual_digest}" >> "$GITHUB_OUTPUT"
+
   public:
     name: Public pixi-with-checkpoints image
     runs-on: ubuntu-latest
-    needs: sync-checkpoints
+    needs: sync_checkpoints
     permissions:
       contents: read
     outputs:
@@ -131,10 +141,12 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
-      - name: Validate checkpoint image input
+      - name: Validate mirrored checkpoint image input
+        env:
+          CHECKPOINTS_IMAGE: ${{ needs.sync_checkpoints.outputs.checkpoints_image }}
         run: |
           if [ -z "${CHECKPOINTS_IMAGE}" ]; then
-            echo "SAMPLEWORKS_CHECKPOINTS_IMAGE must be set to a checkpoint image ref, preferably digest-pinned."
+            echo "sync-checkpoints did not produce a digest-pinned checkpoint image ref."
             exit 1
           fi
 
@@ -151,7 +163,7 @@ jobs:
           labels: ${{ steps.public-meta.outputs.labels }}
           build-args: |
             BASE_IMAGE=${{ env.CUDA_BASE_IMAGE }}
-            CHECKPOINTS_IMAGE=${{ env.CHECKPOINTS_IMAGE }}
+            CHECKPOINTS_IMAGE=${{ needs.sync_checkpoints.outputs.checkpoints_image }}
           cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max
           provenance: false
@@ -159,7 +171,7 @@ jobs:
       - name: Publish public image ref for Astera overlay
         id: public-ref
         run: |
-          short_sha="${GITHUB_SHA::7}"
+          short_sha="${GITHUB_SHA:0:${DOCKER_METADATA_SHORT_SHA_LENGTH}}"
           echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}:sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Public image digest
