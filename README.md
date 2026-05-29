@@ -160,8 +160,8 @@ TOML presets with `sampleworks-runs` or `python -m sampleworks.runs.cli` after
 setting equivalent local paths for `DATA_DIR`, `PROTEINS_CSV`, `RESULTS_DIR`,
 `MSA_CACHE_DIR`, and model checkpoints.
 
-Start an 8-GPU ACTL machine named `sampleworks` with the Sampleworks image and
-the shared data volume mounted:
+Start an 8-GPU ACTL machine named `sampleworks` with the private Astera
+`pixi-with-checkpoints:sampleworks` image and the shared data volume mounted:
 
 ```bash
 actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
@@ -248,7 +248,67 @@ rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 ## Docker
 
-TODO: Docker container documentation
+Sampleworks now has a two-layer image split:
+
+1. `Dockerfile` builds the regular public `pixi-with-checkpoints` image.
+2. `Dockerfile.astera` builds the private Astera overlay with EXT plus small
+   workspace conveniences, using the public `pixi-with-checkpoints` image as its
+   base.
+
+Image names:
+
+| Purpose | Image |
+|---|---|
+| Public Sampleworks runtime | `diffuseproject/pixi-with-checkpoints` |
+| Astera/ACTL runtime | `harbor.astera.sh/library/pixi-with-checkpoints` |
+| ACTL scientist tag | `harbor.astera.sh/library/pixi-with-checkpoints:sampleworks` |
+
+CI publishes these tags:
+
+| Image | Tags |
+|---|---|
+| Public | `latest` on `main`, `sha-<short-sha>`, release semver tags |
+| Astera/Harbor | `latest` and `sampleworks` on `main`, `sha-<short-sha>`, release semver tags |
+
+The Astera image is always built from the exact public `sha-<short-sha>` image
+produced earlier in the same workflow run, then adds EXT and small workspace
+tools on top.
+
+CI configuration variables:
+
+| Variable | Purpose |
+|---|---|
+| `SAMPLEWORKS_PUBLIC_REGISTRY` | Public registry host; defaults to `docker.io` |
+| `SAMPLEWORKS_PUBLIC_IMAGE` | Public image path; defaults to `diffuseproject/pixi-with-checkpoints` |
+| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional private/source checkpoint image that CI mirrors to Docker Hub; defaults to the current digest-pinned Harbor image |
+| `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional public Docker Hub checkpoint mirror destination tag; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
+| `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
+| `EXT_CLI_IMAGE` | Optional EXT CLI image override for the Astera overlay |
+
+Build the public image locally:
+
+```bash
+docker build --platform linux/amd64 \
+  --build-arg CHECKPOINTS_IMAGE=<checkpoint-image-ref> \
+  -t diffuseproject/pixi-with-checkpoints:local \
+  .
+```
+
+Build the Astera overlay locally after a public image is available:
+
+```bash
+docker build --platform linux/amd64 \
+  -f Dockerfile.astera \
+  --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:local \
+  -t harbor.astera.sh/library/pixi-with-checkpoints:local \
+  .
+```
+
+For local public builds, pass `CHECKPOINTS_IMAGE` as a public, digest-pinned
+checkpoint image ref. In CI, the Docker workflow first mirrors the private Harbor
+checkpoint source to Docker Hub, verifies the digest, and passes the resulting
+digest-pinned Docker Hub ref to the public build so that build never needs Harbor
+credentials.
 
 
 ## Development
