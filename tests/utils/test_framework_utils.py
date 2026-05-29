@@ -527,7 +527,7 @@ class TestMatchBatchNumpy:
     def test_raises_on_scalar_input(self):
         scalar = np.float64(1.0)
         with pytest.raises(ValueError, match="ndim >= 1"):
-            match_batch(scalar, target_batch_size=2)  # type: ignore[no-matching-overload]
+            match_batch(scalar, target_batch_size=2)  # ty: ignore[no-matching-overload]
 
     def test_1d_array(self):
         array = np.array([42.0])
@@ -549,4 +549,4 @@ class TestMatchBatchNumpy:
 
     def test_raises_on_unsupported_type(self):
         with pytest.raises(TypeError, match="unsupported array type"):
-            match_batch([1, 2, 3], target_batch_size=2)  # type: ignore[no-matching-overload]
+            match_batch([1, 2, 3], target_batch_size=2)  # ty: ignore[no-matching-overload]

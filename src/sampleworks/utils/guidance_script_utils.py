@@ -164,7 +164,7 @@ def save_losses(losses, output_dir):
 
 def get_model_and_device(
     device_str: str,
-    model_checkpoint_path: str,
+    model_checkpoint_path: str | None,
     model_type: str,
     method: str | None = None,
     model: Any = None,

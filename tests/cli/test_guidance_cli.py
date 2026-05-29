@@ -66,7 +66,7 @@ class TestFromCliUnified:
             "/data/msa.a3m",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
-        assert config.msa_path == "/data/msa.a3m"
+        assert config.msa_path == "/data/msa.a3m"  # ty: ignore[unresolved-attribute]
 
     def test_guidance_specific_args_fk(self):
         argv = [
