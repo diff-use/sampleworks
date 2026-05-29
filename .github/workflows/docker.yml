@@ -22,6 +22,8 @@ env:
 
   ASTERA_REGISTRY: harbor.astera.sh
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
+  # Update this only when the Astera overlay needs a newer EXT CLI; otherwise the
+  # repo variable can override it without changing this workflow.
   EXT_CLI_IMAGE: ${{ vars.EXT_CLI_IMAGE || 'harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57' }}
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7

@@ -104,8 +104,8 @@ RUN --mount=type=cache,target=/root/.cache/pixi \
     pixi install -e protenix --frozen && \
     pixi install -e rf3 --frozen
 
-# Pre-compile CUDA extensions only when the builder exposes NVIDIA devices.
-# If a GPU is present, failures should stop the build instead of being masked.
+# A GPU is not required to build the image. Pre-compile CUDA extensions only when
+# the builder exposes NVIDIA devices; if present, failures should stop the build.
 RUN if [ ! -e /dev/nvidiactl ] && [ ! -e /proc/driver/nvidia/version ]; then \
         echo "CUDA extension pre-compilation skipped (no GPU visible during build)"; \
     else \

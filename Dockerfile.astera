@@ -30,6 +30,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SAMPLEWORKS_SKIP_ENV_PREPARE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        emacs-nox \
         nano \
         rsync \
         vim \
