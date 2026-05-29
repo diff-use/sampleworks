@@ -18,6 +18,8 @@ env:
   PUBLIC_REGISTRY: ${{ vars.SAMPLEWORKS_PUBLIC_REGISTRY || 'docker.io' }}
   PUBLIC_IMAGE_NAME: ${{ vars.SAMPLEWORKS_PUBLIC_IMAGE || 'diffuseproject/pixi-with-checkpoints' }}
   CHECKPOINTS_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_IMAGE }}
+  CHECKPOINTS_SOURCE_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE || 'harbor.astera.sh/library/sampleworks-checkpoints@sha256:ff1dd2b42c3afd593e034cf81df1bf1862c27ae491f46cc10e105629f1102781' }}
+  CHECKPOINTS_DOCKERHUB_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE || 'docker.io/diffuseproject/sampleworks-checkpoints:latest' }}
   CUDA_BASE_IMAGE: ${{ vars.SAMPLEWORKS_CUDA_BASE_IMAGE || 'nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5' }}
 
   ASTERA_REGISTRY: harbor.astera.sh
@@ -29,9 +31,64 @@ env:
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
 jobs:
+  sync-checkpoints:
+    name: Sync checkpoints to Docker Hub
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Copy checkpoint image to Docker Hub
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "${CHECKPOINTS_SOURCE_IMAGE}" ] || [ -z "${CHECKPOINTS_DOCKERHUB_IMAGE}" ]; then
+            echo "Checkpoint source and Docker Hub destination image refs must be set."
+            exit 1
+          fi
+          if [ -z "${HARBOR_USERNAME}" ] || [ -z "${HARBOR_PASSWORD}" ]; then
+            echo "HARBOR_USERNAME and HARBOR_PASSWORD secrets are required to pull checkpoint image."
+            exit 1
+          fi
+          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
+            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are required to push checkpoint image."
+            exit 1
+          fi
+
+          skopeo copy --preserve-digests \
+            --src-creds "${HARBOR_USERNAME}:${HARBOR_PASSWORD}" \
+            --dest-creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+            "docker://${CHECKPOINTS_SOURCE_IMAGE}" \
+            "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}"
+
+      - name: Verify Docker Hub checkpoint digest
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          expected_digest="${CHECKPOINTS_SOURCE_IMAGE##*@}"
+          actual_digest="$(skopeo inspect \
+            --creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+            --format '{{.Digest}}' \
+            "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}")"
+
+          if [ "${actual_digest}" != "${expected_digest}" ]; then
+            echo "Docker Hub checkpoint digest mismatch: expected ${expected_digest}, got ${actual_digest}"
+            exit 1
+          fi
+
   public:
     name: Public pixi-with-checkpoints image
     runs-on: ubuntu-latest
+    needs: sync-checkpoints
     permissions:
       contents: read
     outputs:

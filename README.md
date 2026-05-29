@@ -281,6 +281,8 @@ CI configuration variables:
 | `SAMPLEWORKS_PUBLIC_REGISTRY` | Public registry host; defaults to `docker.io` |
 | `SAMPLEWORKS_PUBLIC_IMAGE` | Public image path; defaults to `diffuseproject/pixi-with-checkpoints` |
 | `SAMPLEWORKS_CHECKPOINTS_IMAGE` | Required checkpoint image ref for the public build; use a digest-pinned public ref |
+| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional source checkpoint image for CI to mirror to Docker Hub; defaults to the current Harbor digest |
+| `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional Docker Hub checkpoint mirror destination; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
 | `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
 | `EXT_CLI_IMAGE` | Optional EXT CLI image override for the Astera overlay |
 
@@ -304,7 +306,9 @@ docker build --platform linux/amd64 \
 ```
 
 The checkpoint source is required as `CHECKPOINTS_IMAGE`; CI should set
-`SAMPLEWORKS_CHECKPOINTS_IMAGE` to a digest-pinned public checkpoint image.
+`SAMPLEWORKS_CHECKPOINTS_IMAGE` to a digest-pinned public checkpoint image. The
+Docker workflow mirrors the current Harbor checkpoint image to Docker Hub before
+building the public image so the public build never needs Harbor credentials.
 
 
 ## Development
