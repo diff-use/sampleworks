@@ -1,4 +1,4 @@
-description = "Core grid-search evaluations: RSCC, LDDT clustering, and bond geometry."
+description = "Analyze grid-search outputs with RSCC, LDDT clustering, and bond geometry."
 
 [defaults]
 GRID_SEARCH_RESULTS_DIR = "/data/results/grid_search_results"
@@ -7,7 +7,8 @@ PROTEIN_CONFIGS_CSV = "${GRID_SEARCH_INPUTS_DIR}/protein_analysis_config.csv"
 TARGET_FILENAME = "refined-patched.cif"
 N_JOBS = "16"
 PATCH_CIF_PATTERN = "refined.cif"
-PATCH_DEPTH = "4"
+GRID_SEARCH_DEPTH = "4"
+PATCH_DEPTH = "${GRID_SEARCH_DEPTH}"
 PATCH_INPUT_PDB_PATTERN = "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
 PATCH_RCSB_PATTERN = "${GRID_SEARCH_RESULTS_DIR}/([A-Za-z0-9]{4})"
 
@@ -18,6 +19,7 @@ protein-configs-csv = "${PROTEIN_CONFIGS_CSV}"
 target-filename = "${TARGET_FILENAME}"
 occupancies = [0.0, 0.25, 0.5, 0.75, 1.0]
 n-jobs = "${N_JOBS}"
+depth = "${GRID_SEARCH_DEPTH}"
 
 [[pre_jobs]]
 name = "patch_outputs"

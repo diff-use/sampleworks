@@ -598,8 +598,7 @@ def _source_root_candidates() -> list[Path]:
     """
     candidates: list[Path] = []
     for env_var in ("SAMPLEWORKS_SOURCE_DIR", "SAMPLEWORKS_SCRIPT_ROOT"):
-        override = os.environ.get(env_var)
-        if override:
+        if override := os.environ.get(env_var):
             candidates.append(Path(override))
 
     candidates.append(Path("/home/dev/workspace"))
@@ -617,7 +616,13 @@ def _source_root_candidates() -> list[Path]:
     return unique
 
 
-def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
+def run(
+    preset: Preset,
+    *,
+    results_dir: Path,
+    dry_run: bool = False,
+    skip_pre_jobs: bool = False,
+) -> int:
     """Launch every job in parallel and wait for completion.
 
     Stdout+stderr from each job is teed to a per-job log file under
@@ -632,6 +637,9 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
         Root directory for outputs and logs. Created if missing.
     dry_run : bool, optional
         If True, print the resolved commands instead of launching anything.
+    skip_pre_jobs : bool, optional
+        If True, omit sequential pre-jobs. Use this when preparation outputs,
+        such as patched CIFs, have already been generated.
 
     Returns
     -------
@@ -640,7 +648,9 @@ def run(preset: Preset, *, results_dir: Path, dry_run: bool = False) -> int:
     """
     results_dir = results_dir.resolve()
     results_dir.mkdir(parents=True, exist_ok=True)
-    pre_invocations = build_pre_invocations(preset, results_dir=results_dir)
+    pre_invocations = (
+        [] if skip_pre_jobs else build_pre_invocations(preset, results_dir=results_dir)
+    )
     invocations = build_invocations(preset, results_dir=results_dir)
     _validate_gpu_assignments(pre_invocations)
     _validate_gpu_assignments(invocations)

@@ -251,7 +251,7 @@ rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 `run_analysis` uses the same TOML runner as `run_experiments`, but loads presets
 from `analyses/*.toml` and runs the scripts under `scripts/eval/`.
-The `grid_search`, `all`, and `external_tools` presets first run a sequential
+The `analyze_grid_search`, `all`, and `external_tools` presets first run a sequential
 `patch_outputs` pre-job, which creates `refined-patched.cif` files from each
 `refined.cif` before the evaluation jobs start.
 
@@ -261,17 +261,23 @@ export GRID_SEARCH_INPUTS_DIR=/mnt/diffuse-shared/raw/sampleworks/initial_datase
 export PROTEIN_CONFIGS_CSV="$GRID_SEARCH_INPUTS_DIR/protein_analysis_config.csv"
 
 run_analysis --list
-run_analysis --dry-run rscc
-run_analysis grid_search --jobs rscc,lddt
+run_analysis --dry-run analyze_grid_search --jobs rscc
+run_analysis analyze_grid_search --jobs rscc,lddt
 run_analysis altloc_find
 run_analysis altloc_classify
 run_analysis all  # includes tortoize and phenix.clashscore jobs
 ```
 
 Use `--set` for one-off changes, for example
-`run_analysis rscc --set jobs.rscc.gpus=0`. If your input layout differs from
-the default `processed/{pdb_id}/{pdb_id}_single_001_density_input.cif`, override
-the patch pre-job with `--set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'`.
+`run_analysis analyze_grid_search --jobs rscc --set jobs.rscc.gpus=0`. If your
+input layout differs from the default
+`processed/{pdb_id}/{pdb_id}_single_001_density_input.cif`, override the patch
+pre-job with `--set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'`.
+When patched CIFs already exist, add `--skip-pre-jobs` to rerun analyses without
+repeating the patching step.
+The `altloc_find` and `altloc_classify` presets are independent of grid-search
+outputs; override `ALTLOC_ANALYSIS_DIR` and `ALTLOC_INPUTS_DIR` when their input
+or output roots differ from the defaults.
 
 
 ## Docker

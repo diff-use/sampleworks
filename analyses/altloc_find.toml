@@ -1,10 +1,10 @@
 description = "Build an analysis protein-config CSV by finding altloc selections in input CIFs."
 
 [defaults]
-GRID_SEARCH_RESULTS_DIR = "/data/results/grid_search_results"
-GRID_SEARCH_INPUTS_DIR = "/data/inputs"
-PROTEINS_CSV = "${GRID_SEARCH_INPUTS_DIR}/proteins.csv"
-ALTLOC_SELECTIONS_CSV = "${GRID_SEARCH_RESULTS_DIR}/analysis/altloc_selections.csv"
+ALTLOC_ANALYSIS_DIR = "/data/results/altloc_analysis"
+ALTLOC_INPUTS_DIR = "/data/inputs"
+PROTEINS_CSV = "${ALTLOC_INPUTS_DIR}/proteins.csv"
+ALTLOC_SELECTIONS_CSV = "${ALTLOC_ANALYSIS_DIR}/altloc_selections.csv"
 ALTLOC_MIN_SPAN = "5"
 ALTLOC_LABEL = "label_alt_id"
 

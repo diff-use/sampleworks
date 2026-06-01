@@ -178,13 +178,13 @@ if [[
     -z "$explicit_jobs" &&
     -z "$env_preset"
 ]]; then
-    target="grid_search"
+    target="analyze_grid_search"
 fi
 
 label_source="$default_target"
 if [[ -n "$explicit_preset" ]]; then
     label_source="$explicit_preset"
-elif [[ -n "$explicit_jobs" && ( -z "$target" || "$target" == "all" || "$target" == "grid_search" ) ]]; then
+elif [[ -n "$explicit_jobs" && ( -z "$target" || "$target" == "all" || "$target" == "grid_search" || "$target" == "analyze_grid_search" ) ]]; then
     label_source="$explicit_jobs"
 elif [[ -n "$target" ]]; then
     label_source="$target"
@@ -209,6 +209,8 @@ else
 fi
 export RESULTS_DIR="${RESULTS_DIR:-$GRID_SEARCH_RESULTS_DIR}"
 export GRID_SEARCH_INPUTS_DIR="${GRID_SEARCH_INPUTS_DIR:-${DATA_DIR:-${SAMPLEWORKS_DATA_DIR:-$default_grid_inputs_dir}}}"
+export ALTLOC_ANALYSIS_DIR="${ALTLOC_ANALYSIS_DIR:-${SAMPLEWORKS_ALTLOC_ANALYSIS_DIR:-$default_grid_results_dir}}"
+export ALTLOC_INPUTS_DIR="${ALTLOC_INPUTS_DIR:-${SAMPLEWORKS_ALTLOC_INPUTS_DIR:-$GRID_SEARCH_INPUTS_DIR}}"
 export PROTEIN_CONFIGS_CSV="${PROTEIN_CONFIGS_CSV:-${SAMPLEWORKS_PROTEIN_CONFIGS_CSV:-$GRID_SEARCH_INPUTS_DIR/protein_analysis_config.csv}}"
 export TARGET_FILENAME="${TARGET_FILENAME:-${SAMPLEWORKS_TARGET_FILENAME:-refined-patched.cif}}"
 export N_JOBS="${N_JOBS:-${SAMPLEWORKS_ANALYSIS_N_JOBS:-16}}"

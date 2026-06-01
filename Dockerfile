@@ -112,7 +112,8 @@ RUN if [ ! -e /dev/nvidiactl ] && [ ! -e /proc/driver/nvidia/version ]; then \
     else \
         pixi run -e boltz python -c "\
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
-print('CUDA extensions compiled successfully')" || echo "CUDA extension pre-compilation skipped (no GPU during build)"
+print('CUDA extensions compiled successfully')"; \
+    fi
 
 # This image carries pixi environments and checkpoints. Runtime source should
 # come from ACTL's synced checkout at /home/dev/workspace, not from stale code

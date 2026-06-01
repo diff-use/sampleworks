@@ -26,7 +26,7 @@ the script `scripts/patch_output_cif_files.py`. This will use the original PDB i
 reconstruct proper output CIF files that are numbered correctly and have all necessary metadata to
 reconstruct the protein structure correctly.
 
-The `run_analysis` presets automate this step for the `grid_search`, `all`, and `external_tools`
+The `run_analysis` presets automate this step for the `analyze_grid_search`, `all`, and `external_tools`
 presets: a sequential `patch_outputs` pre-job runs before evaluation jobs and writes
 `refined-patched.cif` files. Override `PATCH_INPUT_PDB_PATTERN`, `PATCH_RCSB_PATTERN`,
 `PATCH_CIF_PATTERN`, or `PATCH_DEPTH` if your input or output layout differs.
@@ -70,15 +70,16 @@ export GRID_SEARCH_INPUTS_DIR=/home/ubuntu/grid_search_inputs
 export PROTEIN_CONFIGS_CSV=/home/ubuntu/protein_analysis_config.csv
 
 run_analysis --list
-run_analysis grid_search --jobs rscc,lddt,bond_geometry
+run_analysis analyze_grid_search --jobs rscc,lddt,bond_geometry
 run_analysis altloc_find
 run_analysis altloc_classify
-run_analysis rscc --set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'
+run_analysis analyze_grid_search --jobs rscc --set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'
 ```
 
-The `grid_search`, `all`, and `external_tools` presets run the CIF patching pre-step before these
+The `analyze_grid_search`, `all`, and `external_tools` presets run the CIF patching pre-step before these
 evaluation scripts. If you run the scripts directly, run `scripts/patch_output_cif_files.py` first
-or point `--target-filename` at files that already contain the required metadata.
+or point `--target-filename` at files that already contain the required metadata. If patched CIFs
+already exist, add `--skip-pre-jobs` to rerun the analyses without repeating the patching step.
 
 For direct script invocation, the equivalent command shape is:
 
@@ -87,6 +88,7 @@ pixi run -e analysis python scripts/eval/<script> \
 --grid-search-results-path /home/ubuntu/grid_search_results \
 --grid-search-inputs-path /home/ubuntu/grid_search_inputs \
 --target-filename 'refined-patched.cif' \
+--depth 4 \
 --protein-configs-csv /home/ubuntu/protein_analysis_config.csv \
 --occupancies 0.0 0.25 0.5 0.75 1.0 \
 --n-jobs 16
@@ -96,6 +98,8 @@ what you used in the grid search.
 
 The `--n-jobs` argument is the number of parallel jobs to run; it is not used by all scripts yet but
 speeds some up considerably, especially for the tortoize and clashscore scripts.
+
+The `--depth` argument is the maximum directory depth to recurse into when looking for target CIF files.
 
 The `--protein-configs-csv` argument is a CSV file describes what parts of each protein to evaluate.
 Examples can be found in `sampleworks/data/`.

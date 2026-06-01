@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from sampleworks.runs import analysis_cli, loader, runner
+from sampleworks.runs.schema import Job
 
 
 def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -269,13 +270,18 @@ def test_dry_run_does_not_create_directories(
 
 
 def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Analysis TOML presets patch CIFs before running eval scripts."""
+    """Build analysis eval and preparation commands.
+
+    Returns
+    -------
+    None
+    """
     repo_root = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("HOME", "/home/test")
     monkeypatch.setenv("SAMPLEWORKS_SOURCE_DIR", str(repo_root))
     monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0"])
     preset = loader.load_preset(
-        "grid_search",
+        "analyze_grid_search",
         overrides=[
             "defaults.GRID_SEARCH_RESULTS_DIR=/grid/results",
             "defaults.GRID_SEARCH_INPUTS_DIR=/grid/inputs",
@@ -309,6 +315,7 @@ def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.Monk
     assert patch_args["--input-pdb-pattern"] == (
         "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
     )
+    assert patch_args["--depth"] == "4"
     assert "--target-filename" not in patch_args
     assert "--protein-configs-csv" not in patch_args
 
@@ -326,6 +333,7 @@ def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.Monk
     assert rscc.output_dir == Path("/analysis-logs/analysis/rscc")
     assert rscc.argv[rscc.argv.index("--grid-search-results-path") + 1] == "/grid/results"
     assert rscc.argv[rscc.argv.index("--grid-search-inputs-path") + 1] == "/grid/inputs"
+    assert rscc.argv[rscc.argv.index("--depth") + 1] == "4"
     occupancy_index = rscc.argv.index("--occupancies")
     assert rscc.argv[occupancy_index + 1 : occupancy_index + 6] == [
         "0.0",
@@ -364,22 +372,32 @@ def test_pre_jobs_run_before_main_jobs(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_analysis_cli_lists_analysis_presets(capsys: pytest.CaptureFixture[str]) -> None:
-    """The analysis entrypoint lists analyses/*.toml instead of experiments/*.toml."""
+    """List bundled analysis presets.
+
+    Returns
+    -------
+    None
+    """
     assert analysis_cli.main(["--list"]) == 0
     listed = set(capsys.readouterr().out.splitlines())
     assert {
         "all",
+        "analyze_grid_search",
         "altloc_classify",
         "altloc_find",
         "external_tools",
-        "grid_search",
     }.issubset(listed)
 
 
 def test_gpu_validation_ignores_cpu_jobs_but_checks_gpu_duplicates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A gpus='none' analysis job must not disable validation for real GPU jobs."""
+    """Validate CPU-only jobs without masking GPU conflicts.
+
+    Returns
+    -------
+    None
+    """
     monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0", "1"])
     custom = tmp_path / "custom.toml"
     custom.write_text(
@@ -396,6 +414,23 @@ def test_gpu_validation_ignores_cpu_jobs_but_checks_gpu_duplicates(
 
     with pytest.raises(RuntimeError, match="same GPU"):
         runner._validate_gpu_assignments(invocations)
+
+
+def test_output_arg_rejects_any_leading_dash() -> None:
+    """Reject output_arg values that already look like CLI flags.
+
+    Returns
+    -------
+    None
+    """
+    with pytest.raises(ValueError, match="output_arg must omit leading dashes"):
+        Job(
+            name="bad",
+            env="analysis",
+            gpus="none",
+            output_subdir="bad",
+            output_arg="-output-dir",
+        )
 
 
 def _argv_to_dict(tail: list[str]) -> dict[str, object]:

@@ -93,7 +93,7 @@ class Job:
             raise ValueError(f"Job {self.name!r}: gpu_count must be positive")
         if not self.output_subdir:
             raise ValueError(f"Job {self.name!r}: output_subdir must be non-empty")
-        if self.output_arg.startswith("--"):
+        if self.output_arg.startswith("-"):
             raise ValueError(
                 f"Job {self.name!r}: output_arg must omit leading dashes, got {self.output_arg!r}"
             )

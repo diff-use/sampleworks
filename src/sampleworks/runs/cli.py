@@ -8,8 +8,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import loader, runner
-from .schema import Job, Preset
+from sampleworks.runs import loader, runner
+from sampleworks.runs.schema import Job, Preset
 
 
 DEFAULT_PRESET = "full_8gpu"
@@ -152,7 +152,12 @@ def run_cli(argv: list[str] | None = None, *, config: CliConfig) -> int:
 
     results_dir = Path(args.results_dir or _default_results_dir(preset, config=config))
     try:
-        return runner.run(preset, results_dir=results_dir, dry_run=args.dry_run)
+        return runner.run(
+            preset,
+            results_dir=results_dir,
+            dry_run=args.dry_run,
+            skip_pre_jobs=args.skip_pre_jobs,
+        )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -180,6 +185,11 @@ def _build_parser(config: CliConfig) -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Print the resolved job commands instead of executing them",
+    )
+    parser.add_argument(
+        "--skip-pre-jobs",
+        action="store_true",
+        help="Skip sequential pre-jobs when their outputs already exist.",
     )
     parser.add_argument(
         "--jobs",
@@ -245,17 +255,18 @@ def _resolve_target(
     if target is None or target in config.default_aliases:
         return config.default_preset, jobs
 
-    if jobs:
-        parser.error("pass jobs either as the positional target or with --jobs, not both")
-
     if target.endswith(".toml") or "/" in target:
         parser.error("pass custom preset paths with --preset path/to/preset.toml")
 
-    if "," not in target and target in loader.list_presets(
+    preset_names = loader.list_presets(
         preset_dir_name=config.preset_dir_name,
         preset_dir_env_var=config.preset_dir_env_var,
-    ):
-        return target, ""
+    )
+    if "," not in target and target in preset_names:
+        return target, jobs
+
+    if jobs:
+        parser.error("pass jobs either as the positional target or with --jobs, not both")
 
     return config.default_preset, target
 
