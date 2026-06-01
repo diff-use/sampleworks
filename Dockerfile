@@ -102,7 +102,8 @@ RUN --mount=type=cache,target=/root/.cache/pixi \
     --mount=type=cache,target=/root/.cache/uv \
     pixi install -e boltz --frozen && \
     pixi install -e protenix --frozen && \
-    pixi install -e rf3 --frozen
+    pixi install -e rf3 --frozen && \
+    pixi install -e analysis --frozen
 
 # A GPU is not required to build the image. Pre-compile CUDA extensions only when
 # the builder exposes NVIDIA devices; if present, failures should stop the build.
@@ -113,6 +114,16 @@ RUN if [ ! -e /dev/nvidiactl ] && [ ! -e /proc/driver/nvidia/version ]; then \
 from sampleworks.core.forward_models.xray.real_space_density_deps.ops import dilate_atom_centric; \
 print('CUDA extensions compiled successfully')"; \
     fi
+
+# This image carries pixi environments and checkpoints. Runtime source should
+# come from ACTL's synced checkout at /home/dev/workspace, not from stale code
+# baked into /app during image construction.
+RUN rm -rf /app/src /app/scripts /app/experiments /app/analyses \
+    /app/run_grid_search.py /app/run_analysis \
+    && mkdir -p /home/dev/workspace
+
+COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh run_analysis run_analysis.sh /usr/local/bin/
+RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' >> /root/.bashrc
 
 # ============================================================================
 # Public runtime: regular Sampleworks image for the public registry

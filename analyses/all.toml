@@ -1,0 +1,71 @@
+description = "All grid-search evaluations, including optional external-tool checks."
+
+[defaults]
+GRID_SEARCH_RESULTS_DIR = "/data/results/grid_search_results"
+GRID_SEARCH_INPUTS_DIR = "/data/inputs"
+PROTEIN_CONFIGS_CSV = "${GRID_SEARCH_INPUTS_DIR}/protein_analysis_config.csv"
+TARGET_FILENAME = "refined-patched.cif"
+N_JOBS = "16"
+PATCH_CIF_PATTERN = "refined.cif"
+GRID_SEARCH_DEPTH = "4"
+PATCH_DEPTH = "${GRID_SEARCH_DEPTH}"
+PATCH_INPUT_PDB_PATTERN = "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
+PATCH_RCSB_PATTERN = "${GRID_SEARCH_RESULTS_DIR}/([A-Za-z0-9]{4})"
+
+[shared_args]
+grid-search-results-path = "${GRID_SEARCH_RESULTS_DIR}"
+grid-search-inputs-path = "${GRID_SEARCH_INPUTS_DIR}"
+protein-configs-csv = "${PROTEIN_CONFIGS_CSV}"
+target-filename = "${TARGET_FILENAME}"
+occupancies = [0.0, 0.25, 0.5, 0.75, 1.0]
+n-jobs = "${N_JOBS}"
+depth = "${GRID_SEARCH_DEPTH}"
+
+[[pre_jobs]]
+name = "patch_outputs"
+env = "analysis"
+gpus = "none"
+script = "scripts/patch_output_cif_files.py"
+output_arg = ""
+output_subdir = "analysis/patch_outputs"
+args = { input-dir = "${GRID_SEARCH_RESULTS_DIR}", cif-pattern = "${PATCH_CIF_PATTERN}", rcsb-pattern = "${PATCH_RCSB_PATTERN}", depth = "${PATCH_DEPTH}", grid-search-input-dir = "${GRID_SEARCH_INPUTS_DIR}", input-pdb-pattern = "${PATCH_INPUT_PDB_PATTERN}" }
+
+[[jobs]]
+name = "rscc"
+env = "analysis"
+gpu_count = 1
+script = "scripts/eval/rscc_grid_search_script.py"
+output_arg = ""
+output_subdir = "analysis/rscc"
+
+[[jobs]]
+name = "lddt"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/lddt_evaluation_script.py"
+output_arg = ""
+output_subdir = "analysis/lddt"
+
+[[jobs]]
+name = "bond_geometry"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/bond_geometry_eval.py"
+output_arg = ""
+output_subdir = "analysis/bond_geometry"
+
+[[jobs]]
+name = "tortoize"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/run_and_process_tortoize.py"
+output_arg = ""
+output_subdir = "analysis/tortoize"
+
+[[jobs]]
+name = "phenix_clashscore"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/run_and_process_phenix_clashscore.py"
+output_arg = ""
+output_subdir = "analysis/phenix_clashscore"

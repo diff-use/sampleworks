@@ -1,0 +1,23 @@
+description = "Build an analysis protein-config CSV by finding altloc selections in input CIFs."
+
+[defaults]
+ALTLOC_ANALYSIS_DIR = "/data/results/altloc_analysis"
+ALTLOC_INPUTS_DIR = "/data/inputs"
+PROTEINS_CSV = "${ALTLOC_INPUTS_DIR}/proteins.csv"
+ALTLOC_SELECTIONS_CSV = "${ALTLOC_ANALYSIS_DIR}/altloc_selections.csv"
+ALTLOC_MIN_SPAN = "5"
+ALTLOC_LABEL = "label_alt_id"
+
+[shared_args]
+input-csv = "${PROTEINS_CSV}"
+output-file = "${ALTLOC_SELECTIONS_CSV}"
+min-span = "${ALTLOC_MIN_SPAN}"
+altloc-label = "${ALTLOC_LABEL}"
+
+[[jobs]]
+name = "find_altloc_selections"
+env = "analysis"
+gpus = "none"
+script = "scripts/eval/find_altloc_selections.py"
+output_arg = ""
+output_subdir = "analysis/altloc_find"

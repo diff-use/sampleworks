@@ -6,7 +6,7 @@
 #   docker run pixi-with-checkpoints -e boltz run_grid_search.py --proteins /data/proteins.csv ...
 #   docker run pixi-with-checkpoints bash  # interactive shell
 #
-# Available pixi environments: boltz, protenix, rf3
+# Available pixi environments: boltz, protenix, rf3, analysis
 #
 # Examples:
 #   # Run grid search with RF3
@@ -36,7 +36,7 @@ IMPORTANT:
     Always use --shm-size=16g (or larger) to avoid shared memory errors with DataLoaders.
 
 OPTIONS:
-    -e, --env <env>     Pixi environment to use (boltz, protenix, rf3)
+    -e, --env <env>     Pixi environment to use (boltz, protenix, rf3, analysis)
     -h, --help          Show this help message
     bash                Start an interactive shell
 
@@ -44,6 +44,7 @@ ENVIRONMENTS:
     boltz       For boltz1 and boltz2 models
     protenix    For protenix model  
     rf3         For RF3 model
+    analysis    For scripts/eval analysis jobs
 
 EXAMPLES:
     # Run grid search with RF3 model
@@ -190,6 +191,10 @@ PROTEINS CSV FORMAT:
       1abc,/data/structures/1abc.cif,/data/maps/1abc.ccp4,2.0
       2xyz,/data/structures/2xyz.cif,/data/maps/2xyz.mrc,1.8
 
+ACTL helper commands:
+    run_experiments         Run experiments/*.toml presets
+    run_analysis            Run analyses/*.toml presets for scripts/eval
+
 For full argument details, run:
     docker run pixi-with-checkpoints -e boltz run_grid_search.py --help
 EOF
@@ -202,7 +207,7 @@ if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
 fi
 
 # Handle scientist workflow helpers and interactive shells
-if [ "$1" = "run_experiments" ] || [ "$1" = "run_experiments.sh" ] || [ "$1" = "run_all_models.sh" ]; then
+if [ "$1" = "run_experiments" ] || [ "$1" = "run_experiments.sh" ] || [ "$1" = "run_all_models.sh" ] || [ "$1" = "run_analysis" ] || [ "$1" = "run_analysis.sh" ]; then
     exec "$@"
 fi
 
@@ -216,7 +221,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -e|--env)
             if [ -z "$2" ] || [[ "$2" == -* ]]; then
-                echo "Error: -e/--env requires an environment name (boltz, protenix, rf3)"
+                echo "Error: -e/--env requires an environment name (boltz, protenix, rf3, analysis)"
                 exit 1
             fi
             ENV="$2"
@@ -236,7 +241,7 @@ done
 
 # Validate environment
 if [[ -z "$ENV" ]]; then
-    echo "Error: Environment not specified. Use -e <env> where env is boltz, protenix, or rf3"
+    echo "Error: Environment not specified. Use -e <env> where env is boltz, protenix, rf3, or analysis"
     echo ""
     echo "Usage: docker run pixi-with-checkpoints -e <env> <script> [args...]"
     echo ""
@@ -248,10 +253,10 @@ if [[ -z "$ENV" ]]; then
 fi
 
 case $ENV in
-    boltz|protenix|rf3)
+    boltz|protenix|rf3|analysis)
         ;;
     *)
-        echo "Error: Invalid environment '$ENV'. Must be one of: boltz, protenix, rf3"
+        echo "Error: Invalid environment '$ENV'. Must be one of: boltz, protenix, rf3, analysis"
         exit 1
         ;;
 esac

@@ -267,6 +267,12 @@ def parse_eval_args(description: str | None = None):
         help="Target filename for the CIF files to process, defaults to 'refined.cif'",
     )
     parser.add_argument(
+        "--depth",
+        type=int,
+        default=4,
+        help="Maximum directory depth to recurse when scanning for target CIF files.",
+    )
+    parser.add_argument(
         "--n-jobs",
         type=int,
         help="Number of parallel jobs to run. -1 uses all CPUs.",
@@ -288,7 +294,11 @@ def setup_evaluation_parameters(
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
     # Scan for experiments (look for refined.cif files)
-    all_trials = scan_grid_search_results(grid_search_dir, target_filename=args.target_filename)
+    all_trials = scan_grid_search_results(
+        grid_search_dir,
+        target_depth=args.depth,
+        target_filename=args.target_filename,
+    )
     logger.info(f"Found {len(all_trials)} experiments with refined.cif files")
 
     if all_trials:
