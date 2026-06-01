@@ -1,5 +1,5 @@
-"""Preset-driven orchestrator for parallel run_grid_search.py invocations.
+"""Preset-driven orchestrator for parallel Sampleworks script invocations.
 
-Replaces the previous ACTL-native bash wrapper scripts with TOML presets +
-a thin Python runner. See ``sampleworks-runs --help``.
+Replaces ACTL-native bash-only wrappers with TOML presets plus a thin Python
+runner. See ``sampleworks-runs --help`` and ``sampleworks-analysis --help``.
 """

@@ -21,10 +21,15 @@ coordinates, and not the additional information that many programs, like `tortoi
 `phenix.clashscore`, require. Furthermore, many protein structure predictors effectively 
 renumber residues. Since our metrics are frequently calculated by comparing selections of atoms or 
 residues, we must align to the original _sequence_ of the protein as well. Future versions of 
-Sampleworks will handle these issues automatically. For now, you should run the script
-`scripts/patch_output_cif_files.py`. This will use the original PDB inputs to reconstruct proper 
-output CIF files that are numbered correctly and
-have all necessary metadata to reconstruct the protein structure correctly.
+Sampleworks will handle these issues automatically. For direct script invocation, you should run
+the script `scripts/patch_output_cif_files.py`. This will use the original PDB inputs to
+reconstruct proper output CIF files that are numbered correctly and have all necessary metadata to
+reconstruct the protein structure correctly.
+
+The `run_analysis` presets automate this step for the `analyze_grid_search`, `all`, and `external_tools`
+presets: a sequential `patch_outputs` pre-job runs before evaluation jobs and writes
+`refined-patched.cif` files. Override `PATCH_INPUT_PDB_PATTERN`, `PATCH_RCSB_PATTERN`,
+`PATCH_CIF_PATTERN`, or `PATCH_DEPTH` if your input or output layout differs.
 
 You can run the following command, which assumes:
 - your sampleworks output is stored in `/home/ubuntu/grid_search_results`, 
@@ -56,11 +61,34 @@ file. These `refined-patched.cif` files can be used as input to the remaining ev
 The evaluation scripts have a common interface defined by the method 
 `sampleworks.eval.grid_search_eval_utils.parse_eval_args`. The general form of these commands is:
 
+The preferred ACTL entrypoint is `run_analysis`, which reads TOML presets from `analyses/` and uses
+the same backend runner as `run_experiments`:
+
+```shell
+export GRID_SEARCH_RESULTS_DIR=/home/ubuntu/grid_search_results
+export GRID_SEARCH_INPUTS_DIR=/home/ubuntu/grid_search_inputs
+export PROTEIN_CONFIGS_CSV=/home/ubuntu/protein_analysis_config.csv
+
+run_analysis --list
+run_analysis analyze_grid_search --jobs rscc,lddt,bond_geometry
+run_analysis altloc_find
+run_analysis altloc_classify
+run_analysis analyze_grid_search --jobs rscc --set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'
+```
+
+The `analyze_grid_search`, `all`, and `external_tools` presets run the CIF patching pre-step before these
+evaluation scripts. If you run the scripts directly, run `scripts/patch_output_cif_files.py` first
+or point `--target-filename` at files that already contain the required metadata. If patched CIFs
+already exist, add `--skip-pre-jobs` to rerun the analyses without repeating the patching step.
+
+For direct script invocation, the equivalent command shape is:
+
 ```shell
 pixi run -e analysis python scripts/eval/<script> \
 --grid-search-results-path /home/ubuntu/grid_search_results \
 --grid-search-inputs-path /home/ubuntu/grid_search_inputs \
 --target-filename 'refined-patched.cif' \
+--depth 4 \
 --protein-configs-csv /home/ubuntu/protein_analysis_config.csv \
 --occupancies 0.0 0.25 0.5 0.75 1.0 \
 --n-jobs 16
@@ -70,6 +98,8 @@ what you used in the grid search.
 
 The `--n-jobs` argument is the number of parallel jobs to run; it is not used by all scripts yet but
 speeds some up considerably, especially for the tortoize and clashscore scripts.
+
+The `--depth` argument is the maximum directory depth to recurse into when looking for target CIF files.
 
 The `--protein-configs-csv` argument is a CSV file describes what parts of each protein to evaluate.
 Examples can be found in `sampleworks/data/`.

@@ -115,6 +115,42 @@ def test_jobs_filters_explicit_preset(
     assert "protenix" not in out
 
 
+def test_jobs_filters_positional_preset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--jobs`` filters a preset selected by positional target.
+
+    Returns
+    -------
+    None
+    """
+    monkeypatch.setenv("HOME", "/home/test")
+    exit_code = cli.main(["boltz", "--jobs", "boltz2_xrd", "--show"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "name: boltz:boltz2_xrd" in out
+    assert "name: boltz2_xrd" in out
+    assert "name: boltz2_md" not in out
+
+
+def test_skip_pre_jobs_flag_is_passed_to_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--skip-pre-jobs`` reaches the runner.
+
+    Returns
+    -------
+    None
+    """
+    seen: dict[str, bool] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> int:
+        seen["skip_pre_jobs"] = bool(kwargs["skip_pre_jobs"])
+        return 0
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    assert cli.main(["--preset", "full_8gpu", "--skip-pre-jobs"]) == 0
+    assert seen == {"skip_pre_jobs": True}
+
+
 def test_job_shortcut_with_unknown_job_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unknown positional job shortcuts fail with a clear selector error."""
     monkeypatch.setenv("HOME", "/home/test")

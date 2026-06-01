@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
-from sampleworks.runs import loader, runner
+from sampleworks.runs import analysis_cli, loader, runner
+from sampleworks.runs.schema import Job
 
 
 def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -265,6 +267,170 @@ def test_dry_run_does_not_create_directories(
     # results_dir gets created by run() (for log file location) but per-job
     # output subdirs must NOT exist after dry-run.
     assert not (results_dir / "rf3").exists()
+
+
+def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build analysis eval and preparation commands.
+
+    Returns
+    -------
+    None
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setenv("SAMPLEWORKS_SOURCE_DIR", str(repo_root))
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0"])
+    preset = loader.load_preset(
+        "analyze_grid_search",
+        overrides=[
+            "defaults.GRID_SEARCH_RESULTS_DIR=/grid/results",
+            "defaults.GRID_SEARCH_INPUTS_DIR=/grid/inputs",
+            "defaults.PROTEIN_CONFIGS_CSV=/grid/inputs/protein_analysis_config.csv",
+            "shared_args.n-jobs=2",
+        ],
+        preset_dir_name="analyses",
+        preset_dir_env_var="SAMPLEWORKS_ANALYSES_DIR",
+    )
+
+    pre_invocations = runner.build_pre_invocations(preset, results_dir=Path("/analysis-logs"))
+    invocations = runner.build_invocations(preset, results_dir=Path("/analysis-logs"))
+    patch = pre_invocations[0]
+    rscc = invocations[0]
+
+    assert patch.job.name == "patch_outputs"
+    assert patch.env["CUDA_VISIBLE_DEVICES"] == "none"
+    assert patch.argv[:6] == [
+        "pixi",
+        "run",
+        "-e",
+        "analysis",
+        "python",
+        str(repo_root / "scripts/patch_output_cif_files.py"),
+    ]
+    patch_args = _argv_to_dict(patch.argv[6:])
+    assert patch_args["--input-dir"] == "/grid/results"
+    assert patch_args["--grid-search-input-dir"] == "/grid/inputs"
+    assert patch_args["--cif-pattern"] == "refined.cif"
+    assert patch_args["--rcsb-pattern"] == "/grid/results/([A-Za-z0-9]{4})"
+    assert patch_args["--input-pdb-pattern"] == (
+        "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
+    )
+    assert patch_args["--depth"] == "4"
+    assert "--target-filename" not in patch_args
+    assert "--protein-configs-csv" not in patch_args
+
+    assert rscc.job.name == "rscc"
+    assert rscc.env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert rscc.argv[:6] == [
+        "pixi",
+        "run",
+        "-e",
+        "analysis",
+        "python",
+        str(repo_root / "scripts/eval/rscc_grid_search_script.py"),
+    ]
+    assert "--output-dir" not in rscc.argv
+    assert rscc.output_dir == Path("/analysis-logs/analysis/rscc")
+    assert rscc.argv[rscc.argv.index("--grid-search-results-path") + 1] == "/grid/results"
+    assert rscc.argv[rscc.argv.index("--grid-search-inputs-path") + 1] == "/grid/inputs"
+    assert rscc.argv[rscc.argv.index("--depth") + 1] == "4"
+    occupancy_index = rscc.argv.index("--occupancies")
+    assert rscc.argv[occupancy_index + 1 : occupancy_index + 6] == [
+        "0.0",
+        "0.25",
+        "0.5",
+        "0.75",
+        "1.0",
+    ]
+
+
+def test_pre_jobs_run_before_main_jobs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sequential pre-jobs complete before regular jobs are launched."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("SAMPLEWORKS_ANALYSIS_PYTHON", sys.executable)
+    pre_script = tmp_path / "pre.py"
+    main_script = tmp_path / "main.py"
+    pre_script.write_text("from pathlib import Path\nPath('marker').write_text('pre')\n")
+    main_script.write_text(
+        "from pathlib import Path\n"
+        "assert Path('marker').read_text() == 'pre'\n"
+        "Path('main').write_text('main')\n"
+    )
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        'description = "custom"\n'
+        '[[pre_jobs]]\nname = "pre"\nenv = "analysis"\ngpus = "none"\n'
+        f'script = "{pre_script}"\noutput_subdir = "pre"\noutput_arg = ""\n'
+        '[[jobs]]\nname = "main"\nenv = "analysis"\ngpus = "none"\n'
+        f'script = "{main_script}"\noutput_subdir = "main"\noutput_arg = ""\n'
+    )
+    preset = loader.load_preset(str(custom))
+
+    assert runner.run(preset, results_dir=tmp_path / "results") == 0
+    assert (tmp_path / "main").read_text() == "main"
+
+
+def test_analysis_cli_lists_analysis_presets(capsys: pytest.CaptureFixture[str]) -> None:
+    """List bundled analysis presets.
+
+    Returns
+    -------
+    None
+    """
+    assert analysis_cli.main(["--list"]) == 0
+    listed = set(capsys.readouterr().out.splitlines())
+    assert {
+        "all",
+        "analyze_grid_search",
+        "altloc_classify",
+        "altloc_find",
+        "external_tools",
+    }.issubset(listed)
+
+
+def test_gpu_validation_ignores_cpu_jobs_but_checks_gpu_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validate CPU-only jobs without masking GPU conflicts.
+
+    Returns
+    -------
+    None
+    """
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: ["0", "1"])
+    custom = tmp_path / "custom.toml"
+    custom.write_text(
+        "[shared_args]\n"
+        '[[jobs]]\nname = "cpu"\nenv = "analysis"\ngpus = "none"\noutput_subdir = "cpu"\n'
+        'script = "scripts/eval/bond_geometry_eval.py"\noutput_arg = ""\n'
+        '[[jobs]]\nname = "a"\nenv = "analysis"\ngpus = "0"\noutput_subdir = "a"\n'
+        'script = "scripts/eval/rscc_grid_search_script.py"\noutput_arg = ""\n'
+        '[[jobs]]\nname = "b"\nenv = "analysis"\ngpus = "0"\noutput_subdir = "b"\n'
+        'script = "scripts/eval/lddt_evaluation_script.py"\noutput_arg = ""\n'
+    )
+    preset = loader.load_preset(str(custom))
+    invocations = runner.build_invocations(preset, results_dir=tmp_path / "logs")
+
+    with pytest.raises(RuntimeError, match="same GPU"):
+        runner._validate_gpu_assignments(invocations)
+
+
+def test_output_arg_rejects_any_leading_dash() -> None:
+    """Reject output_arg values that already look like CLI flags.
+
+    Returns
+    -------
+    None
+    """
+    with pytest.raises(ValueError, match="output_arg must omit leading dashes"):
+        Job(
+            name="bad",
+            env="analysis",
+            gpus="none",
+            output_subdir="bad",
+            output_arg="-output-dir",
+        )
 
 
 def _argv_to_dict(tail: list[str]) -> dict[str, object]:

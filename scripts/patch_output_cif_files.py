@@ -92,11 +92,36 @@ def main(
     rcsb_regex: str = r"grid_search_results/(.{4})",
     depth: int = 4,
     input_pdb_pattern: str = "{pdb_id}/{pdb_id}_single_001_density_input.cif",
-) -> None:
+) -> int:
+    """Patch Sampleworks output CIF files for downstream evaluation tools.
+
+    Parameters
+    ----------
+    input_dir : str or Path
+        Directory containing generated Sampleworks CIF files.
+    grid_search_input_dir : str or Path
+        Root directory containing original input CIF files.
+    target_pattern : str
+        Filename pattern for generated CIFs to patch.
+    rcsb_regex : str, optional
+        Regular expression with one capture group for the RCSB ID.
+    depth : int, optional
+        Directory recursion depth below ``input_dir``.
+    input_pdb_pattern : str, optional
+        Format string for locating original input CIFs from ``pdb_id``.
+
+    Returns
+    -------
+    int
+        ``0`` when all matched files patch successfully, otherwise ``1``.
+    """
     # make sure the cache exists
     SAMPLEWORKS_CACHE.mkdir(parents=True, exist_ok=True)
 
     cif_files_to_patch = crawl_dir_by_depth(input_dir, target_pattern, n_levels=depth)
+    if not cif_files_to_patch:
+        logger.error(f"No CIF files matching {target_pattern!r} found under {input_dir}")
+        return 1
     results = joblib.Parallel()(
         joblib.delayed(patch_individual_cif_file)(
             f, rcsb_regex, Path(grid_search_input_dir), input_pdb_pattern
@@ -108,6 +133,8 @@ def main(
         logger.error("The following errors occurred:")
         for r in results:
             print(r)
+        return 1
+    return 0
 
 
 def patch_individual_cif_file(
@@ -233,11 +260,13 @@ def patch_individual_cif_file(
 
 if __name__ == "__main__":
     args = parse_args()
-    main(
-        args.input_dir,
-        args.grid_search_input_dir,
-        args.cif_pattern,
-        args.rcsb_pattern,
-        args.depth,
-        args.input_pdb_pattern,
+    raise SystemExit(
+        main(
+            args.input_dir,
+            args.grid_search_input_dir,
+            args.cif_pattern,
+            args.rcsb_pattern,
+            args.depth,
+            args.input_pdb_pattern,
+        )
     )
