@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 BOLTZ_AVAILABLE = False
 PROTENIX_AVAILABLE = False
 RF3_AVAILABLE = False
+PROTPARDELLE_AVAILABLE = False
 
 try:
     from sampleworks.models.boltz.wrapper import Boltz1Wrapper, Boltz2Wrapper
@@ -36,6 +37,17 @@ try:
     RF3_AVAILABLE = True
     del RF3Wrapper
 except (ImportError, ModuleNotFoundError):
+    pass
+
+try:
+    # Protpardelle's package import (via protpardelle.env) raises
+    # NotADirectoryError (an OSError) when the model_params directory is not
+    # set up, so catch OSError in addition to import errors.
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
+
+    PROTPARDELLE_AVAILABLE = True
+    del ProtpardelleWrapper
+except (ImportError, ModuleNotFoundError, OSError):
     pass
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -172,6 +184,52 @@ def require_rf3(message: str | None = None) -> Callable[[F], F]:
     return decorator
 
 
+def require_protpardelle(message: str | None = None) -> Callable[[F], F]:
+    """Decorator to require Protpardelle model availability.
+
+    Parameters
+    ----------
+    message: str, optional
+        Custom error message. If None, uses default message.
+
+    Returns
+    -------
+    Callable
+        Decorator function
+
+    Examples
+    --------
+    >>> @require_protpardelle
+    ... def sample_protpardelle():
+    ...     pass
+
+    >>> @require_protpardelle("Custom error message")
+    ... def custom_function():
+    ...     pass
+    """
+    default_message = (
+        "Protpardelle model wrapper is not available. Install with: "
+        "pixi install -e protpardelle"
+    )
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if not PROTPARDELLE_AVAILABLE:
+                error_msg = message or default_message
+                try:
+                    import pytest
+
+                    pytest.skip(error_msg)
+                except ImportError:
+                    raise ImportError(error_msg) from None
+            return func(*args, **kwargs)
+
+        return wrapper  # type: ignore
+
+    return decorator
+
+
 def require_any_model(message: str | None = None) -> Callable[[F], F]:
     """Decorator to require at least one model wrapper availability.
 
@@ -204,7 +262,12 @@ def require_any_model(message: str | None = None) -> Callable[[F], F]:
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE and not RF3_AVAILABLE:
+            if (
+                not BOLTZ_AVAILABLE
+                and not PROTENIX_AVAILABLE
+                and not RF3_AVAILABLE
+                and not PROTPARDELLE_AVAILABLE
+            ):
                 error_msg = message or default_message
                 try:
                     import pytest
@@ -277,6 +340,27 @@ def check_rf3_available(message: str | None = None) -> None:
         raise ImportError(message or default_message)
 
 
+def check_protpardelle_available(message: str | None = None) -> None:
+    """Check if Protpardelle is available, raise ImportError if not.
+
+    Parameters
+    ----------
+    message: str, optional
+        Custom error message. If None, uses default message.
+
+    Raises
+    ------
+    ImportError
+        If Protpardelle model wrapper is not available.
+    """
+    if not PROTPARDELLE_AVAILABLE:
+        default_message = (
+            "Protpardelle model wrapper is not available. Install with: "
+            "pixi install -e protpardelle"
+        )
+        raise ImportError(message or default_message)
+
+
 def check_any_model_available(message: str | None = None) -> None:
     """Check if at least one model is available, raise ImportError if not.
 
@@ -290,11 +374,16 @@ def check_any_model_available(message: str | None = None) -> None:
     ImportError
         If no model wrapper is available.
     """
-    if not BOLTZ_AVAILABLE and not PROTENIX_AVAILABLE and not RF3_AVAILABLE:
+    if (
+        not BOLTZ_AVAILABLE
+        and not PROTENIX_AVAILABLE
+        and not RF3_AVAILABLE
+        and not PROTPARDELLE_AVAILABLE
+    ):
         default_message = (
             "No model wrappers are available. "
             "Please install at least one model wrapper with the appropriate "
             "feature group: 'pixi install -e boltz', 'pixi install -e protenix', "
-            "or 'pixi install -e rf3'"
+            "'pixi install -e rf3', or 'pixi install -e protpardelle'"
         )
         raise ImportError(message or default_message)
