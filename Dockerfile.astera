@@ -45,6 +45,8 @@ COPY --from=ext-cli /ext /usr/local/bin/ext
 
 RUN chmod 0755 /usr/local/bin/ext
 
+WORKDIR /home/dev
+
 # ACTL workspace pods intentionally keep the inherited root runtime user: the
 # prebuilt /app/.pixi environments and shared PVC workflows are currently
 # root-oriented, and switching USER here would break existing scientist runs.

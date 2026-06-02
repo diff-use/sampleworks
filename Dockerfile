@@ -134,7 +134,16 @@ ENV BOLTZ1_CHECKPOINT=/checkpoints/boltz1_conf.ckpt \
     BOLTZ2_CHECKPOINT=/checkpoints/boltz2_conf.ckpt \
     CCD_PATH=/checkpoints/ccd.pkl \
     RF3_CHECKPOINT=/checkpoints/rf3_foundry_01_24_latest.ckpt \
-    PROTENIX_CHECKPOINT=/checkpoints/protenix_base_default_v0.5.0.pt
+    PROTENIX_CHECKPOINT=/checkpoints/protenix_base_default_v0.5.0.pt \
+    HOME=/home/dev \
+    XDG_CONFIG_HOME=/home/dev/.config \
+    XDG_CACHE_HOME=/home/dev/.cache \
+    XDG_DATA_HOME=/home/dev/.local/share \
+    SHELL=/bin/bash
+
+RUN mkdir -p /home/dev/.config /home/dev/.cache /home/dev/.local/share /home/dev/workspace
+
+WORKDIR /home/dev
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["--help"]
