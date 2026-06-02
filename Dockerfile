@@ -123,7 +123,8 @@ RUN rm -rf /app/src /app/scripts /app/experiments /app/analyses \
     && mkdir -p /home/dev/workspace
 
 COPY --chmod=755 run_experiments run_experiments.sh run_all_models.sh run_analysis run_analysis.sh /usr/local/bin/
-RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' >> /root/.bashrc
+RUN printf '\n# ACTL scientist workflow: land in the synced Sampleworks checkout.\nif [[ $- == *i* ]] && [ -z "${SAMPLEWORKS_NO_AUTO_CD:-}" ] && [ -d /home/dev/workspace ]; then\n    cd /home/dev/workspace\nfi\n' \
+    | tee -a /root/.bashrc /home/dev/.bashrc >/dev/null
 
 # ============================================================================
 # Public runtime: regular Sampleworks image for the public registry
