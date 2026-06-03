@@ -1,5 +1,6 @@
 import re
 import traceback
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any, cast, overload
 import numpy as np
 import torch
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
+from atomworks.io.utils.ccd import ChainType, UNKNOWN_AA
+from atomworks.io.utils.sequence import get_1_from_3_letter_code, get_3_from_1_letter_code
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
 from sampleworks.core.rewards.protocol import RewardInputs
@@ -448,6 +451,75 @@ def get_asym_unit_from_structure(
     return atom_array
 
 
+def _closest_canonical_amino_acid(res_name: str) -> str | None:
+    """Map a (possibly modified) residue name to its canonical parent amino acid.
+
+    Uses atomworks' mapping, e.g. ``CSO -> CYS``, ``MSE -> MET``. Standard amino
+    acids map to themselves and "residues" with no amino-acid (ligands, waters) return ``None``.
+
+    Parameters
+    ----------
+    res_name : str
+        Three letter amino acid name.
+
+    Returns
+    -------
+    str | None
+        Canonical three letter amino acid name, or ``None`` if HETATM.
+    """
+    one_letter = get_1_from_3_letter_code(
+        res_name, ChainType.POLYPEPTIDE_L, use_closest_canonical=True
+    )
+    parent = get_3_from_1_letter_code(one_letter, ChainType.POLYPEPTIDE_L)
+    return None if parent == UNKNOWN_AA else parent
+
+
+def canonicalize_mixed_altloc_residues(
+    atom_array: AtomArray | AtomArrayStack,
+) -> AtomArray | AtomArrayStack:
+    """Rename modified amino acids that share a residue position with a canonical residue.
+
+    At residue positions whose altlocs disagree on ``res_name``, such as a
+    canonical amino acid with compositional heterogeneity as a modified form (e.g. CYS with an
+    alternate CSO), we rename the modified records to their canonical
+    amino acid (via :func:`_closest_canonical_amino_acid`) and clear the ``hetero`` flag in the
+    biotite AtomArray annotation. The conformers then share ``res_name``/``hetero``, so
+    :func:`map_altlocs_to_stack` can stack them. Running ``filter_to_common_atoms`` afterwards
+    helps drop modified atoms such as the CSO hydroxyl oxygen.
+
+    Positions with a single, consistent ``res_name`` are left untouched, so cases like a MSE with
+    no compositional heterogeneity are preserved.
+
+    Parameters
+    ----------
+    atom_array : AtomArray | AtomArrayStack
+        Reference structure loaded with altlocs
+
+    Returns
+    -------
+    AtomArray | AtomArrayStack
+        Copy of the input with mixed-altloc modified residues renamed to their closest canonical.
+    """
+    out = atom_array.copy()
+    res_names = out.res_name.tolist()
+    ins_codes = getattr(out, "ins_code", np.full(out.array_length(), "")).tolist()
+    positions = list(zip(out.chain_id.tolist(), out.res_id.tolist(), ins_codes))
+
+    res_names_by_position: dict[tuple, set[str]] = defaultdict(set)
+    for position, res_name in zip(positions, res_names):
+        res_names_by_position[position].add(res_name)
+
+    parent_cache: dict[str, str | None] = {}
+    for i, (position, res_name) in enumerate(zip(positions, res_names)):
+        if len(res_names_by_position[position]) == 1:
+            continue  # single consistent res_name means it doesn't have comp het
+        parent = parent_cache.setdefault(res_name, _closest_canonical_amino_acid(res_name))
+        if parent is not None and parent != res_name:
+            out.res_name[i] = parent
+            out.hetero[i] = False
+    return out
+
+
 def get_reference_atomarraystack(
     protein_config: ProteinConfig, altloc_occupancies: dict[str, float]
 ) -> tuple[Path | str | None, AtomArrayStack | None]:
@@ -464,7 +536,12 @@ def get_reference_atomarraystack(
     ref_path = protein_config.get_reference_structure_path(altloc_occupancies)
     if ref_path is None:
         return None, None
-    ref_struct = load_structure_with_altlocs(ref_path)
+
+    # A modified residue (e.g. CSO) recorded as an altloc at the same position as its canonical
+    # form (e.g. CYS) makes map_altlocs_to_stack fail: the conformers disagree on res_name/hetero
+    # so biotite.stack() rejects them. Canonicalize these residues to get map_altlocs_to_stack to
+    # work
+    ref_struct = canonicalize_mixed_altloc_residues(load_structure_with_altlocs(ref_path))
     if ref_struct.coord is None:
         raise ValueError(f"Unable to load coordinates from {ref_path} Please check file")
     if isinstance(ref_struct, AtomArray):

@@ -8,7 +8,9 @@ import pytest
 from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.structure_utils import (
+    _closest_canonical_amino_acid,
     apply_selection,
+    canonicalize_mixed_altloc_residues,
     extract_selection_coordinates,
     get_asym_unit_from_structure,
     get_reference_atomarraystack,
@@ -343,3 +345,40 @@ class TestGetReferenceStructureCoords:
         assert coords.ndim == 2
         assert coords.shape[1] == 3
         assert np.isfinite(coords).all()
+
+
+class TestCanonicalizeMixedAltlocResidues:
+    """Tests for canonicalize_mixed_altloc_residues / _closest_canonical_amino_acid."""
+
+    @staticmethod
+    def _mixed_array() -> AtomArray:
+        # (A,10): canonical CYS + modified CSO compositional heterogeneity
+        # (A,11): MSE only, single res_name, must be left untouched
+        aa = AtomArray(3)
+        aa.coord = np.zeros((3, 3), dtype=np.float32)
+        aa.set_annotation("chain_id", np.array(["A", "A", "A"]))
+        aa.set_annotation("res_id", np.array([10, 10, 11]))
+        aa.set_annotation("res_name", np.array(["CYS", "CSO", "MSE"]))
+        aa.set_annotation("hetero", np.array([False, True, True]))
+        aa.set_annotation("atom_name", np.array(["CA", "CA", "CA"]))
+        return aa
+
+    @pytest.mark.parametrize(
+        "res_name,expected",
+        [("CSO", "CYS"), ("MSE", "MET"), ("ALA", "ALA"), ("HOH", None)],
+    )
+    def test_closest_canonical_amino_acid(self, res_name, expected):
+        assert _closest_canonical_amino_acid(res_name) == expected
+
+    def test_renames_modified_at_mixed_position(self):
+        result = canonicalize_mixed_altloc_residues(self._mixed_array())
+        res_name = cast(np.ndarray, result.res_name)
+        hetero = cast(np.ndarray, result.hetero)
+        assert list(res_name[:2]) == ["CYS", "CYS"]  # CSO -> CYS
+        assert not hetero[0] and not hetero[1]  # hetero cleared
+        assert res_name[2] == "MSE" and hetero[2]  # MSE untouched
+
+    def test_does_not_mutate_input(self):
+        arr = self._mixed_array()
+        canonicalize_mixed_altloc_residues(arr)
+        assert cast(np.ndarray, arr.res_name)[1] == "CSO"
