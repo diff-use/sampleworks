@@ -142,8 +142,18 @@ def protpardelle_model(small_cc89_config_path: Path):
 
 
 @pytest.fixture(scope="session")
-def protpardelle_wrapper(protpardelle_model):
-    """A ProtpardelleWrapper backed by the small random model."""
+def protpardelle_wrapper(protpardelle_model, small_cc89_config_path):
+    """A ProtpardelleWrapper backed by the small random model.
+
+    A pre-built ``model`` is supplied, so ``checkpoint_path`` is only kept for
+    record-keeping and need not point at a real file.
+    """
+    import torch
     from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
 
-    return ProtpardelleWrapper(model=protpardelle_model)
+    return ProtpardelleWrapper(
+        checkpoint_path=small_cc89_config_path.parent / "unused.pth",
+        config_path=small_cc89_config_path,
+        device=torch.device("cpu"),
+        model=protpardelle_model,
+    )

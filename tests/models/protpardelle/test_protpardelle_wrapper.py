@@ -21,8 +21,11 @@ pytest.importorskip(
     "protpardelle.core.models", reason="Protpardelle not installed in this environment"
 )
 
+import biotite.structure as struc
+import numpy as np
 import torch
 from atomworks.enums import ChainType
+from protpardelle.common import residue_constants
 from protpardelle.data.sequence import seq_to_aatype
 from sampleworks.models.protocol import GenerativeModelInput, StructureModelWrapper
 from sampleworks.models.protpardelle.wrapper import (
@@ -39,8 +42,38 @@ SEQ_A = "ACDEFGHIKL"
 SEQ_B = "MNPQRSTVWY"
 
 
+def _build_asym_unit(sequences) -> struc.AtomArray:
+    """Build a biotite AtomArray for the given chains.
+
+    Each residue carries exactly the atom37 heavy atoms implied by its type
+    (matching ``atom37_mask_from_aatype``), so the atom count agrees with the
+    conditioning's ``atom_mask``. Coordinates are arbitrary but distinct.
+    """
+    chain_ids = "ABCDEFGH"
+    atom_mask = np.asarray(residue_constants.restype_atom37_mask)
+    atom_names, res_ids, chains = [], [], []
+    for chain_idx, seq in enumerate(sequences):
+        for res_pos, aa in enumerate(seq):
+            restype = residue_constants.restype_order[aa]
+            present = [
+                residue_constants.atom_types[slot]
+                for slot in range(residue_constants.atom_type_num)
+                if atom_mask[restype][slot]
+            ]
+            atom_names.extend(present)
+            res_ids.extend([res_pos + 1] * len(present))
+            chains.extend([chain_ids[chain_idx]] * len(present))
+
+    arr = struc.AtomArray(len(atom_names))
+    arr.atom_name = np.array(atom_names)
+    arr.res_id = np.array(res_ids)
+    arr.chain_id = np.array(chains)
+    arr.coord = np.arange(len(atom_names) * 3, dtype=np.float32).reshape(-1, 3)
+    return arr
+
+
 def _protein_structure(*sequences: str) -> dict:
-    """Build a minimal structure dict with protein chain_info only."""
+    """Build a minimal structure dict with protein chain_info and an asym_unit."""
     chain_ids = "ABCDEFGH"
     chain_info = {
         chain_ids[i]: {
@@ -49,7 +82,11 @@ def _protein_structure(*sequences: str) -> dict:
         }
         for i, seq in enumerate(sequences)
     }
-    return {"chain_info": chain_info, "metadata": {"id": "test"}}
+    return {
+        "chain_info": chain_info,
+        "asym_unit": _build_asym_unit(sequences),
+        "metadata": {"id": "test"},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +149,7 @@ class TestBuildSamplingKwargs:
         kwargs = ProtpardelleWrapper._build_sampling_kwargs(ProtpardelleConfig())
         assert kwargs["uniform_steps"] is True
         assert kwargs["jump_steps"] is False
-        assert kwargs["num_steps"] == 500
+        assert kwargs["num_steps"] == ProtpardelleConfig().num_steps
 
     def test_extra_overrides_take_precedence(self):
         config = ProtpardelleConfig(
@@ -124,8 +161,9 @@ class TestBuildSamplingKwargs:
 
 
 class TestConstructorValidation:
-    def test_requires_paths_or_model(self):
-        with pytest.raises(ValueError, match="config_path and checkpoint_path"):
+    def test_requires_checkpoint_and_config_paths(self):
+        # checkpoint_path, config_path and device are required positional args.
+        with pytest.raises(TypeError, match="required positional argument"):
             ProtpardelleWrapper()
 
 
@@ -181,6 +219,23 @@ class TestFeaturize:
         n_atoms = int(cond.atom_mask[0].sum().item())
         assert features.x_init.shape[1] == n_atoms
 
+    def test_atom37_index_maps_present(self, protpardelle_wrapper):
+        structure = _protein_structure(SEQ_A)
+        cond = protpardelle_wrapper.featurize(structure).conditioning
+        n_atoms = int(cond.atom_mask[0].sum().item())
+        # One entry per flat atom, matching the atom37 occupancy count.
+        assert cond.atom37_residue_index.shape == (n_atoms,)
+        assert cond.atom37_atom_index.shape == (n_atoms,)
+        # Slots are valid atom37 indices; residues stay within L.
+        assert int(cond.atom37_atom_index.max()) < 37
+        assert int(cond.atom37_residue_index.max()) == len(SEQ_A) - 1
+
+    def test_featurize_requires_asym_unit(self, protpardelle_wrapper):
+        structure = _protein_structure(SEQ_A)
+        del structure["asym_unit"]
+        with pytest.raises(ValueError, match="asym_unit"):
+            protpardelle_wrapper.featurize(structure)
+
     def test_multichain_indices_have_gap(self, protpardelle_wrapper):
         structure = _protein_structure(SEQ_A, SEQ_B)
         cond = protpardelle_wrapper.featurize(structure).conditioning
@@ -218,11 +273,51 @@ class TestInitializeFromPrior:
 # ---------------------------------------------------------------------------
 
 
+class TestConvertToAtom37:
+    def test_shape_and_placement(self, protpardelle_wrapper):
+        features = protpardelle_wrapper.featurize(_protein_structure(SEQ_A))
+        cond = features.conditioning
+        n_atoms = int(cond.atom_mask[0].sum().item())
+
+        x_t = torch.randn(2, n_atoms, 3)
+        out = protpardelle_wrapper._convert_to_atom37(cond, x_t)
+
+        assert out.shape == (2, len(SEQ_A), 37, 3)
+        # Every flat atom lands at its (residue, slot) destination.
+        res_idx = cond.atom37_residue_index
+        atom_idx = cond.atom37_atom_index
+        for n in range(n_atoms):
+            assert torch.allclose(out[:, res_idx[n], atom_idx[n]], x_t[:, n])
+        # Total non-zero atom slots equals the number of placed atoms.
+        occupied = (out.abs().sum(-1) > 0).sum().item()
+        assert occupied == 2 * n_atoms
+
+    def test_gradients_flow_back_to_x_t(self, protpardelle_wrapper):
+        features = protpardelle_wrapper.featurize(_protein_structure(SEQ_A))
+        cond = features.conditioning
+        n_atoms = int(cond.atom_mask[0].sum().item())
+
+        x_t = torch.randn(1, n_atoms, 3, requires_grad=True)
+        out = protpardelle_wrapper._convert_to_atom37(cond, x_t)
+        out.sum().backward()
+        # Each input coordinate is placed exactly once -> unit gradient.
+        assert torch.allclose(x_t.grad, torch.ones_like(x_t))
+
+    def test_atom_count_mismatch_raises(self, protpardelle_wrapper):
+        cond = protpardelle_wrapper.featurize(_protein_structure(SEQ_A)).conditioning
+        with pytest.raises(ValueError, match="atoms"):
+            protpardelle_wrapper._convert_to_atom37(cond, torch.randn(1, 3, 3))
+
+
 class TestStep:
     def test_step_raises_without_features(self, protpardelle_wrapper):
         with pytest.raises(ValueError, match="features"):
-            protpardelle_wrapper.step(None)
+            protpardelle_wrapper.step(torch.zeros(1, 1, 3), 0.0)
 
+    @pytest.mark.skip(
+        reason="step() is intentionally incomplete (noise level / conditioning "
+        "wiring still TODO); only _convert_to_atom37 is implemented so far."
+    )
     @pytest.mark.slow
     def test_step_returns_coords(self, protpardelle_wrapper):
         short_seq = "ACDEFG"

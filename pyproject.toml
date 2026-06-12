@@ -24,7 +24,7 @@ pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "cuequivarianc
 platforms = ["linux-64"]
 
 [tool.pixi.feature.boltz-osx]
-pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "rdkit" = ">=2025.3.6"}
+pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "rdkit" = ">=2025.3.6", "joblib" = "*", "sfcalculator-torch" = ">=0.3.2"}
 platforms = ["osx-arm64"]
 
 
@@ -62,7 +62,11 @@ transformers = "*"
 wandb = "*"
 
 [project]
-authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
+authors = [
+    {email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"},
+    {email = "marcus.collins@astera.org", name = "Marcus D. Collins"}
+]
+
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -182,6 +186,7 @@ sampleworks = {editable = true, path = "."}
 # pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
 [tool.pixi.pypi-options.dependency-overrides]
 pandas = "==2.3.1"
+gemmi = "==0.6.7"
 
 [tool.pixi.system-requirements]
 cuda = "12"

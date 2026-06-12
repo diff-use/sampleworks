@@ -61,6 +61,12 @@ try:
 except ImportError:
     RF3Wrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import RF3, hopefully you're running a different model")
+try:
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
+except ImportError:
+    ProtpardelleWrapper = None
+    logger.warning("Failed to import Protpardelle, hopefully you're running a different model")
+
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -215,6 +221,15 @@ def get_model_and_device(
             msa_manager=MSAManager(),
             device=device,
             model=model,
+        )
+    elif model_type == StructurePredictor.PROTPARDELLE:
+        if ProtpardelleWrapper is None:
+            raise ImportError("Protpardelle dependencies not installed")
+        logger.debug(f"Loading Protpardelle model from {validated_checkpoint_path}")
+        model_wrapper = ProtpardelleWrapper(
+            config_path=str(Path("src/sampleworks/data/cc89_epoch415.yaml").expanduser().resolve()),
+            checkpoint_path=validated_checkpoint_path,
+            device=device,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -478,6 +493,16 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = process_structure_for_boltz(
             structure,
             out_dir=args.output_dir,
+            recycling_steps=recycling_steps,
+        )
+    elif "Protpardelle" in wrapper_class_name:
+        from sampleworks.models.protpardelle.wrapper import annotate_structure_for_protpardelle
+
+        # TODO: this is where we need to pass in things like step scale, s_churn, etc...
+        #   I'm not entirely sure what all the args are yet though.
+        structure = annotate_structure_for_protpardelle(
+            structure,
+            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
         )
     else:
