@@ -30,16 +30,32 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SAMPLEWORKS_SKIP_ENV_PREPARE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        dnsutils \
         emacs-nox \
+        git \
+        htop \
+        iputils-ping \
         nano \
+        ncdu \
         rsync \
+        tini \
+        tmux \
         vim \
+        wget \
+        zsh \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     && mkdir -p /home/dev/.config /home/dev/.cache /home/dev/.local/share /home/dev/workspace \
     && install -m 0755 /app/run_experiments /usr/local/bin/run_experiments \
     && install -m 0755 /app/run_experiments.sh /usr/local/bin/run_experiments.sh \
-    && install -m 0755 /app/run_all_models.sh /usr/local/bin/run_all_models.sh
+    && install -m 0755 /app/run_all_models.sh /usr/local/bin/run_all_models.sh \
+    && for cmd in \
+        bash curl dig emacs git htop nano ncdu ping rsync tini tmux vim wget zsh; do \
+          command -v "${cmd}" >/dev/null 2>&1 || exit 1; \
+        done
 
 COPY --from=ext-cli /ext /usr/local/bin/ext
 
