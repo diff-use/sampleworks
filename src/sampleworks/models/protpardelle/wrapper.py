@@ -17,17 +17,18 @@ forward pass), this is a ``StructureModelWrapper`` rather than a
 import copy
 from dataclasses import dataclass, field
 from pathlib import Path
+from importlib.resources import files
 from typing import Any
 
 import biotite.structure as struc
 import numpy as np
 import torch
+import yaml
 from atomworks.enums import ChainType
 from jaxtyping import Float, Int
 from loguru import logger
 from protpardelle.common import residue_constants
 from protpardelle.core.models import load_model, Protpardelle
-from protpardelle.data.atom import atom37_mask_from_aatype
 from protpardelle.data.sequence import seq_to_aatype
 from torch import Tensor
 
@@ -45,53 +46,19 @@ ATOM37_NUM_ATOMS = residue_constants.atom_type_num
 # Matches ``data.n_aatype_tokens`` in the Protpardelle-1c configs (e.g. cc89.yaml).
 NUM_AATYPE_TOKENS = 21
 
+# get default model configurations from protpardelle-1c/cc89
+sampling_partial_diffusion_all_atom = files("protpardelle").joinpath(
+    "configs/running/sampling_partial_diffusion_allatom.yaml"
+)
+with open(str(sampling_partial_diffusion_all_atom), "r") as f:
+    DEFAULT_CONFIG = yaml.safe_load(f)
 
-# ``Protpardelle.sample`` reads many nested fields off ``conditional_cfg`` and
-# ``partial_diffusion`` (even when disabled). These defaults disable all
-# conditional generation / partial diffusion and mirror the structure of the
-# ``conditional_cfg`` block in the Protpardelle-1c running configs (e.g.
-# ``configs/running/sampling_unconditional_allatom.yaml``).
-DEFAULT_CONDITIONAL_CFG: dict[str, Any] = {
-    "enabled": False,
-    "discontiguous_motif_assignment": {
-        "enabled": False,
-        "strategy": "fixed",
-        "fixed_motif_pos": [],
-    },
-    "num_recurrence_steps": 1,
-    "crop_conditional_guidance": {
-        "enabled": False,
-        "start": 0.0,
-        "end": 2.0,
-        "freq": 1,
-        "freq_start": 0.0,
-        "freq_end": 0.0,
-        "strategy": "backbone-sidechain",
-    },
-    "reconstruction_guidance": {
-        "enabled": False,
-        "start": 0.0,
-        "end": 2.0,
-        "schedule": "custom",
-        "max_scale": 10.0,
-        "loss_weights": {"motif": 1.0},
-    },
-    "replacement_guidance": {
-        "enabled": False,
-        "start": 0.0,
-        "end": 0.92,
-    },
-}
-
-DEFAULT_PARTIAL_DIFFUSION: dict[str, Any] = {
-    "enabled": False,
-    "pdb_file_path": None,
-    "num_steps": 100,
-}
+DEFAULT_CONDITIONAL_CFG: dict[str, Any] = DEFAULT_CONFIG["sampling"]["conditional_cfg"]
+DEFAULT_PARTIAL_DIFFUSION: dict[str, Any] = DEFAULT_CONFIG["sampling"]["partial_diffusion"]
 
 
 # TODO: I believe this can be cleaned up, not all of this is necessary for a forward pass
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ProtpardelleConditioning:
     """Sequence-derived conditioning for a Protpardelle sampling run.
 
@@ -141,6 +108,19 @@ class ProtpardelleConditioning:
     sampling_kwargs: dict[str, Any]
     sequences: tuple[str, ...]
     x_self_conditioning: Float[Tensor, "batch L 37"] | None = None
+
+    _FROZEN = frozenset(
+        {"aatype", "seq_mask", "residue_index", "chain_index",
+         "atom_mask", "sampling_kwargs", "sequences"}
+    )
+
+    def __setattr__(self, key, value):
+        if key in self._FROZEN:
+            raise AttributeError(
+                f"Cannot set attribute {key!r} on {self.__class__.__name__}, it is frozen!"
+            )
+        super().__setattr__(key, value)
+
 
 
 @dataclass
@@ -392,7 +372,7 @@ class ProtpardelleWrapper:
         # Concatenate per-chain aatypes in chain order; chains are placed
         # contiguously at the front of the padded sequence by the helper above.
         chain_aatypes = [
-            seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences
+            seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences  # ty: ignore
         ]
         flat_aatype = torch.cat(chain_aatypes).to(self.device)
         padded_len = seq_mask.shape[1]
@@ -433,7 +413,7 @@ class ProtpardelleWrapper:
             atom37_atom_index=atom37_atom_index,
             sampling_kwargs=sampling_kwargs,
             sequences=tuple(sequences),
-            x_self_cond=None
+            x_self_conditioning=None
         )
 
         # x_init is a shape-compatible reference drawn from a Gaussian prior.
@@ -636,7 +616,7 @@ class ProtpardelleWrapper:
         noise_level = torch.full((cond.seq_mask.shape[0],), sigma_float, device=self.device)
 
         # To understand all these arguments better, you can study the (complicated)
-        # Protpardelle.sample method. Hints: partial diffusion enabled. cc.enabled = False!
+        # Protpardelle.sample method. Hints: partial diffusion is enabled and cc.enabled = False!
         # https://github.com/ProteinDesignLab/protpardelle-1c/src/protpardelle/core/models.py
         # The call to .forward() is at line 1766
         x0, s_logprobs, x_self_cond, s_self_cond = self.model.forward(
@@ -647,7 +627,7 @@ class ProtpardelleWrapper:
             chain_index=cond.chain_index,
             hotspot_mask=None,  # we don't support this yet
             struct_self_cond=(
-                features.conditioning.x_self_cond
+                features.conditioning.x_self_conditioning
                 if self.model.config.train.self_cond_train_prob > 0.5  # true for cc89
                 else None
             ),
@@ -659,10 +639,8 @@ class ProtpardelleWrapper:
             run_mpnn_model=False,  # we don't want to do sequence design
         )
 
-        # TODO: our features are immutable... but we need to update the self-cond
-        #  this might be a way to do it:
-        #  https://stackoverflow.com/questions/63803794/how-to-freeze-individual-field-of-non-frozen-dataclass
-        features.conditioning.x_self_cond = x_self_cond
+        # pass the self-conditioning to the next step by updating the features.
+        features.conditioning.x_self_conditioning = x_self_cond
 
         # x0: [batch, L, 37, 3]. Masked-out atom slots are zeroed during
         # ai-allatom sampling, so select the correct atoms via the atom37 mask.
