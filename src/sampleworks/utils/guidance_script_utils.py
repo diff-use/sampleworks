@@ -60,6 +60,12 @@ try:
 except ImportError:
     RF3Wrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import RF3, hopefully you're running a different model")
+try:
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
+except ImportError:
+    ProtpardelleWrapper = None
+    logger.warning("Failed to import Protpardelle, hopefully you're running a different model")
+
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -214,6 +220,15 @@ def get_model_and_device(
             msa_manager=MSAManager(),
             device=device,
         )
+    elif model_type == StructurePredictor.PROTPARDELLE:
+        if ProtpardelleWrapper is None:
+            raise ImportError("Protpardelle dependencies not installed")
+        logger.debug(f"Loading Protpardelle model from {validated_checkpoint_path}")
+        model_wrapper = ProtpardelleWrapper(
+            config_path=str(Path("src/sampleworks/data/cc89_epoch415.yaml").expanduser().resolve()),
+            checkpoint_path=validated_checkpoint_path,
+            device=device,
+        )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -240,7 +255,8 @@ def get_reward_function_and_structure(
         ccd_mirror_path=None,
     )
 
-    if safe_structure_path != structure_path:
+    # make sure to cast paths to strings, Path(x) != x!!
+    if str(safe_structure_path) != str(structure_path):
         safe_structure_path.unlink()  # delete the temporary file if it was created
 
     logger.debug(f"Loading density map from {density}")
@@ -474,6 +490,16 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
         )
+    elif "Protpardelle" in wrapper_class_name:
+        from sampleworks.models.protpardelle.wrapper import annotate_structure_for_protpardelle
+
+        # TODO: this is where we need to pass in things like step scale, s_churn, etc...
+        #   I'm not entirely sure what all the args are yet though.
+        structure = annotate_structure_for_protpardelle(
+            structure,
+            ensemble_size=args.ensemble_size,
+            recycling_steps=recycling_steps,
+        )
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
@@ -683,7 +709,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     device, model_wrapper = get_model_and_device(
         str(template_job.device),
         template_job.model_checkpoint,
-        template_job.model,
+        template_job.model,  # this is not actually the model, it's the model name, e.g. boltz2
         method=template_job.method if hasattr(template_job, "method") else None,
     )
     job_results = []
