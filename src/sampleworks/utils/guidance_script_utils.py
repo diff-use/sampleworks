@@ -545,7 +545,6 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     )
 
     # Create sampler with model-appropriate settings
-
     sampler_config = EDMSamplerConfig(
         device=str(device),
         augmentation=args.augmentation,

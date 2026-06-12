@@ -48,7 +48,7 @@ NUM_AATYPE_TOKENS = 21
 ATOM37_ATOM_NAME_ALIASES = {"SE": "SD"}
 
 
-# TODO: I believe this can be cleaned up, not all of this is necessary for a forward pass
+
 @dataclass(slots=True)
 class ProtpardelleConditioning:
     """Sequence-derived conditioning for a Protpardelle sampling run.
@@ -92,8 +92,8 @@ class ProtpardelleConditioning:
     residue_index: Float[Tensor, "batch L"]
     chain_index: Float[Tensor, "batch L"]
     atom_mask: Float[Tensor, "batch L 37"]
-    atom37_residue_index: Tensor
-    atom37_atom_index: Tensor
+    atom37_residue_index: Int[Tensor, "atoms"]
+    atom37_atom_index: Int[Tensor, "atoms"]
     sequences: tuple[str, ...]
     x_self_conditioning: Float[Tensor, "batch L 37 3"] | None = None
     _initialized: bool = field(default=False, init=False, repr=False)

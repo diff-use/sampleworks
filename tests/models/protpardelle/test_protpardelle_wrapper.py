@@ -140,16 +140,34 @@ class TestAnnotateStructure:
         # Original structure is not mutated.
         assert "_protpardelle_config" not in structure
 
-    def test_default_ensemble_size(self):
+    def test_defaults_match_ai_allatom_recipe(self):
         config = ProtpardelleConfig()
-        assert config.ensemble_size == 8
+        assert config.uniform_steps is True
+        assert config.jump_steps is False
+        assert config.sidechain_mode is False
+
+
+class TestBuildSamplingKwargs:
+    def test_defaults(self):
+        kwargs = ProtpardelleWrapper._build_sampling_kwargs(ProtpardelleConfig())
+        assert kwargs["uniform_steps"] is True
+        assert kwargs["jump_steps"] is False
+        assert kwargs["num_steps"] == ProtpardelleConfig().num_steps
+
+    def test_extra_overrides_take_precedence(self):
+        config = ProtpardelleConfig(
+            num_steps=500, extra_sampling_kwargs={"num_steps": 7, "noise_scale": 2.0}
+        )
+        kwargs = ProtpardelleWrapper._build_sampling_kwargs(config)
+        assert kwargs["num_steps"] == 7
+        assert kwargs["noise_scale"] == 2.0
 
 
 class TestConstructorValidation:
     def test_requires_checkpoint_and_config_paths(self):
         # checkpoint_path, config_path and device are required positional args.
         with pytest.raises(TypeError, match="required positional argument"):
-            ProtpardelleWrapper()  # ty: ignore[missing-argument]
+            ProtpardelleWrapper()
 
 
 class TestProtocolConformance:
