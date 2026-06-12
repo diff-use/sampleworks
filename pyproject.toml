@@ -5,6 +5,7 @@ requires = ["hatchling"]
 [dependency-groups]
 analysis = [
   "ipython",
+  "joblib",
   "marimo",
   "matplotlib",
   "mdtraj",
@@ -29,7 +30,8 @@ dependencies = [
   "einx<0.4",
   "hydra-core",
   "loguru",
-  "omegaconf"
+  "omegaconf",
+  "sfcalculator-torch>=0.3.2"
 ]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
@@ -85,6 +87,12 @@ rc-foundry = {editable = true, extras = ["rf3"], git = "https://github.com/k-chr
 
 [tool.pixi.pypi-dependencies]
 sampleworks = {editable = true, path = "."}
+
+# Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
+# caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins
+# pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
+[tool.pixi.pypi-options.dependency-overrides]
+pandas = "==2.3.1"
 
 [tool.pixi.system-requirements]
 cuda = "12"
@@ -188,11 +196,6 @@ include = ["src/sampleworks/eval/bond_angle_and_length_outlier_eval_script.py"]
 possibly-missing-attribute = "ignore"
 
 [tool.ty.rules]
-# Pre-existing type issues across the codebase; warn instead of error
-# so ty runs in CI without blocking PRs while the team fixes them.
-unresolved-import = "ignore"
-unknown-argument = "warn"
-unresolved-attribute = "warn"
 invalid-argument-type = "warn"
 invalid-assignment = "warn"
 invalid-method-override = "warn"
@@ -201,6 +204,11 @@ no-matching-overload = "warn"
 not-iterable = "warn"
 not-subscriptable = "warn"
 too-many-positional-arguments = "warn"
+unknown-argument = "warn"
+unresolved-attribute = "warn"
+# Pre-existing type issues across the codebase; warn instead of error
+# so ty runs in CI without blocking PRs while the team fixes them.
+unresolved-import = "ignore"
 unsupported-operator = "warn"
 unused-ignore-comment = "warn"
 unused-type-ignore-comment = "warn"

@@ -26,8 +26,10 @@ def instantiate_metric_manager(
         A dictionary where keys are metric names and values are
         Hydra configurations for the metrics.
     """
-    metrics = {}
+    metrics: dict[str, Metric] = {}
     for name, cfg in metrics_cfg.items():
+        if not isinstance(name, str):
+            raise TypeError(f"metrics_cfg key must be a str, got {type(name).__name__}: {name!r}")
         metric = hydra.utils.instantiate(cfg)
         if not isinstance(metric, Metric):
             raise TypeError(f"{name} must be a Metric instance")
