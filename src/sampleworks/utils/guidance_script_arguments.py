@@ -606,11 +606,22 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     )
 
 
+def add_protpardelle_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to Protpardelle guidance runs."""
+    parser.add_argument(
+        "--model-checkpoint",
+        type=str,
+        default=None,
+        help="Path to Protpardelle checkpoint (default: auto-resolved from /checkpoints/ or pixi env)",
+    )
+
+
 _MODEL_ARG_ADDERS: dict[str, Any] = {
     "boltz1": add_boltz1_specific_args,
     "boltz2": add_boltz2_specific_args,
     "protenix": add_protenix_specific_args,
     "rf3": add_rf3_specific_args,
+    "protpardelle": add_protpardelle_specific_args,
 }
 
 _GUIDANCE_ARG_ADDERS: dict[str, Any] = {
