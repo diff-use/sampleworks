@@ -497,8 +497,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         #   I'm not entirely sure what all the args are yet though.
         structure = annotate_structure_for_protpardelle(
             structure,
-            ensemble_size=args.ensemble_size,
-            recycling_steps=recycling_steps,
+            ensemble_size=args.ensemble_size
         )
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
