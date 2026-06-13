@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from loguru import logger
 
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import get_model_and_device, run_guidance
@@ -10,6 +11,7 @@ from sampleworks.utils.guidance_script_utils import get_model_and_device, run_gu
 
 def main(argv: list[str] | None = None) -> int:
     config = GuidanceConfig.from_cli(argv)
+    logger.info(f"Running guidance with config: {config}")
     device, model_wrapper = get_model_and_device(
         config.device,
         getattr(config, "model_checkpoint", None),
