@@ -240,7 +240,9 @@ def get_reward_function_and_structure(
         ccd_mirror_path=None,
     )
 
-    if safe_structure_path != structure_path:
+    # make sure to cast paths to strings, since Path(x) != str(x) we don't want to
+    # accidentally delete the originals.
+    if str(safe_structure_path) != str(structure_path):
         safe_structure_path.unlink()  # delete the temporary file if it was created
 
     logger.debug(f"Loading density map from {density}")
