@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from hashlib import sha3_256
 from pathlib import Path
 
@@ -18,6 +19,7 @@ else:
 
 MAX_PAIRED_SEQS = 8192
 MAX_MSA_SEQS = 16384
+MSAData = Mapping[str, str] | Mapping[int, str] | Mapping[str | int, str]
 
 
 def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
@@ -104,7 +106,7 @@ def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
 #   For the love of decent code, don't copy this and use it somewhere else and respect the
 #   leading underscore!
 def _compute_msa(
-    data: dict[str | int, str],
+    data: MSAData,
     target_id: str,
     msa_dir: Path,
     msa_server_url: str,
@@ -192,7 +194,7 @@ def _compute_msa(
     #  order as they are in `data`, and furthermore just returns a list of strings, the content
     #  of each string being a single sequence alignment. It's some weird file parsing that we
     #  should clean up so users don't break it or have to worry about it.
-    outputs = {}
+    outputs: dict[str | int, Path] = {}
     for idx, name in enumerate(data):
         # Get paired sequences
         paired = paired_msas[idx].strip().splitlines()
@@ -308,14 +310,14 @@ class MSAManager:
         self._cache_hits = 0
 
     @staticmethod
-    def _hash_arguments(data: dict[str | int, str], msa_pairing_strategy: str) -> str:
+    def _hash_arguments(data: MSAData, msa_pairing_strategy: str) -> str:
         encoded_sequence_tuple = str.encode(str(tuple(data.values())) + msa_pairing_strategy)
         hexdigest = sha3_256(encoded_sequence_tuple).hexdigest()
         return hexdigest
 
     def get_msa(
         self,
-        data: dict[str | int, str],
+        data: MSAData,
         msa_pairing_strategy: str,
         structure_predictor: str | StructurePredictor = StructurePredictor.BOLTZ_2,
     ) -> dict[str | int, Path]:
@@ -382,8 +384,9 @@ class MSAManager:
             protenix_dir.mkdir(parents=True, exist_ok=True)
             # Protenix adds extra information, easiest just to use their pipeline.
             # make sure sort order stays the same:
-            data_keys = sorted(data.keys())
-            sequences = [data[key] for key in data_keys]
+            data_items = sorted(data.items(), key=lambda item: str(item[0]))
+            data_keys = [key for key, _ in data_items]
+            sequences = [sequence for _, sequence in data_items]
             out_dir = self.msa_dir / "protenix" / hash_key
 
             msa_directories = [out_dir / str(idx) for idx in data_keys]
@@ -392,7 +395,7 @@ class MSAManager:
                 (out_dir / str(idx) / fn).exists() for idx in data_keys for fn in reqd_files
             )
             if need_msas:
-                msa_directories = protenix_msa_search(sequences, out_dir, mode="protenix")
+                msa_directories = protenix_msa_search(sequences, str(out_dir), mode="protenix")
                 self._api_calls += 1
             else:
                 self._cache_hits += 1
