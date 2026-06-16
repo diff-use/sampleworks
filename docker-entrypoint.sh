@@ -42,7 +42,7 @@ OPTIONS:
 
 ENVIRONMENTS:
     boltz       For boltz1 and boltz2 models
-    protenix    For protenix model  
+    protenix    For protenix model
     rf3         For RF3 model
     analysis    For scripts/eval analysis jobs
 
