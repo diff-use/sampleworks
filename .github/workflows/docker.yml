@@ -24,9 +24,6 @@ env:
   ASTERA_REGISTRY: harbor.astera.sh
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
   SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2bfc4bce3224a5940708fbaf7c161a2ef395ab272b568b3abfaf3ca48164b63d
-  # Update this only when the Astera overlay needs a newer EXT CLI; otherwise the
-  # repo variable can override it without changing this workflow.
-  EXT_CLI_IMAGE: ${{ vars.EXT_CLI_IMAGE || 'harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57' }}
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
@@ -225,7 +222,6 @@ jobs:
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
             PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
-            EXT_CLI_IMAGE=${{ env.EXT_CLI_IMAGE }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max
           provenance: false
