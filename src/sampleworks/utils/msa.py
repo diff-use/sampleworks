@@ -22,6 +22,13 @@ MAX_MSA_SEQS = 16384
 MSAData = Mapping[str, str] | Mapping[int, str] | Mapping[str | int, str]
 
 
+def _msa_data_key_sort_key(key: str | int) -> tuple[int, int | str]:
+    """Return a deterministic sort key for supported MSA sequence keys."""
+    if isinstance(key, int):
+        return (0, key)
+    return (1, key)
+
+
 def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
     """Validate the contents of the MSA cache.
     For each hash, there should be a set of files `"{hash}_{n}.csv", "{hash}_{n}.a3m"`
@@ -120,7 +127,7 @@ def _compute_msa(
 
     Parameters
     ----------
-    data : dict[str | int, str]
+    data : MSAData
         The input protein sequences.
     target_id : str
         The target id.
@@ -325,7 +332,7 @@ class MSAManager:
 
         Parameters
         ----------
-        data : dict[str | int, str]
+        data : MSAData
             A dictionary mapping target (usu. chain or index) names to protein sequences.
         msa_pairing_strategy : str
             The MSA pairing strategy to use (usually "greedy").
@@ -384,7 +391,7 @@ class MSAManager:
             protenix_dir.mkdir(parents=True, exist_ok=True)
             # Protenix adds extra information, easiest just to use their pipeline.
             # make sure sort order stays the same:
-            data_items = sorted(data.items(), key=lambda item: str(item[0]))
+            data_items = sorted(data.items(), key=lambda item: _msa_data_key_sort_key(item[0]))
             data_keys = [key for key, _ in data_items]
             sequences = [sequence for _, sequence in data_items]
             out_dir = self.msa_dir / "protenix" / hash_key
