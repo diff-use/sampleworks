@@ -4,12 +4,15 @@ import math
 import traceback
 from pathlib import Path
 
+import gemmi
+import numpy as np
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
 from sampleworks.eval.structure_utils import apply_selection
 from sampleworks.utils.atom_array_utils import (
     AltlocInfo,
+    BLANK_ALTLOC_IDS,
     detect_altlocs,
     keep_amino_acids,
     keep_polymer,
@@ -194,3 +197,66 @@ def load_structure_for_synthetic_reward(
         raise ValueError(f"Invalid occupancy mode '{occupancy_mode}'")
 
     return atom_array
+
+
+def atomarray_to_gemmi(
+    atom_array: AtomArray,
+    unit_cell: gemmi.UnitCell | None = None,
+    space_group: str | None = None,
+) -> gemmi.Structure:
+    """Convert a biotite AtomArray to a gemmi.Structure for SFcalculator.
+
+    Anisotropic B-factors are set to zero since biotite does not store them.
+    Blank altloc labels are converted from biotite's '' to gemmi's '\\x00'. If
+    the atom array has no ``altloc_id`` annotation (e.g. arrays reconstructed by
+    a model wrapper), all altlocs default to blank.
+
+    Parameters
+    ----------
+    atom_array
+        Input structure with occupancy and b_factor annotations
+    unit_cell
+        Crystallographic unit cell for the structure. If None, gemmi defaults
+        to (1.0, 1.0, 1.0, 90.0, 90.0, 90.0) in units of Angstroms and degrees.
+    space_group
+        Space group (in Hermann-Mauguin string format) for the structure. If
+        empty or invalid, SFcalculator defaults to P1.
+
+    Returns
+    -------
+    gemmi.Structure
+        Structure ready to be wrapped by SFC_Torch.io.PDBParser
+    """
+    # Lazy import so importing this module does not require SFC_Torch on paths
+    # that don't need it (e.g. synthetic density generation).
+    from SFC_Torch.io import array2hier
+
+    n = len(atom_array)
+    cra_names = [
+        f"{atom_array.chain_id[i]}-0-{atom_array.res_name[i]}-{atom_array.atom_name[i]}"
+        for i in range(n)
+    ]
+    # altloc_id is not a mandatory biotite annotation; default to blank when absent.
+    # gemmi uses '\x00' for blank altloc
+    if "altloc_id" in atom_array.get_annotation_categories():
+        atom_altloc = [
+            "\x00" if a in BLANK_ALTLOC_IDS else a
+            for a in atom_array.altloc_id
+        ]
+    else:
+        atom_altloc = ["\x00"] * n
+    structure: gemmi.Structure = array2hier(
+        atom_pos=atom_array.coord,
+        atom_b_aniso=np.zeros((n, 3, 3), dtype=np.float64),
+        atom_b_iso=atom_array.b_factor,
+        atom_occ=atom_array.occupancy,
+        atom_name=atom_array.element,
+        cra_name=cra_names,
+        atom_altloc=atom_altloc,
+        res_id=atom_array.res_id,
+    )
+    if unit_cell is not None:
+        structure.cell = unit_cell
+    if space_group is not None:
+        structure.spacegroup_hm = space_group
+    return structure
