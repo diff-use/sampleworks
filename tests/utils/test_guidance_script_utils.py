@@ -8,12 +8,29 @@ import pytest
 import torch
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 from sampleworks.utils.guidance_script_utils import (
+    _three_state_resolver,
     _write_job_metadata,
     get_reward_function_and_structure,
     save_everything,
 )
 
 from tests.utils.atom_array_builders import build_test_atom_array
+
+
+@pytest.mark.parametrize(
+    "override, is_boltz, expected",
+    [
+        (None, True, True),  # Boltz default: enabled
+        (None, False, False),  # other models default: disabled
+        (True, False, True),  # explicit opt-in on a non-Boltz model
+        (True, True, True),  # explicit on, agrees with Boltz default
+        (False, True, False),  # explicit opt-out overrides the Boltz default
+        (False, False, False),  # explicit off, agrees with non-Boltz default
+    ],
+)
+def test_resolve_alignment_reverse_diffusion(override, is_boltz, expected):
+    """The override wins when set, None means is_boltz default."""
+    assert _three_state_resolver(override, is_boltz) is expected
 
 
 def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):

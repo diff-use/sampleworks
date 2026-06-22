@@ -456,13 +456,13 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     )
     parser.add_argument(
         "--alignment-reverse-diffusion",
-        action="store_const",
-        const=True,
+        action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Enable alignment of the noisy state to the denoised prediction "
-            "during reverse diffusion (described in Boltz-1 paper). Default: enabled for Boltz, "
-            "disabled for other models."
+            "Align the noisy state to the denoised prediction during reverse "
+            "diffusion (described in Boltz-1 paper). Use "
+            "--no-alignment-reverse-diffusion to disable. Default: enabled for "
+            "Boltz, disabled for other models."
         ),
     )
     parser.add_argument(
