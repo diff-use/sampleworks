@@ -216,40 +216,25 @@ class StructureFactorRewardFunction:
             )
         self.expcolumns = expcolumns if expcolumns is not None else columns
 
-    def prepare(
-        self,
-        atom_array: AtomArray,
-        b_factors: Float[torch.Tensor, " n_atoms"],
-        occupancies: Float[torch.Tensor, " n_atoms"],
-    ) -> None:
-        """Build the SFcalculator from the model atom array and per-atom B/occ.
+    def prepare(self, atom_array: AtomArray) -> None:
+        """Build the SFcalculator from the model atom array.
 
         Must be called once before the first ``__call__``, with the same atom
         array that the sampled coordinates correspond to (model atom space:
         ``model_atom_array or atom_array``). The atom ordering of ``atom_array``
         defines the column order of the coordinate tensor passed to ``__call__``.
 
-        B-factors and occupancy are fixed throughout sampling, so they are set here
-        once (overriding the defaults ``atomarray_to_gemmi`` bakes from
-        ``atom_array``) rather than on every ``__call__``.
+        Per-atom B-factors / occupancy are set per ``__call__`` (not here), leaving
+        the door open to refining them during sampling.
 
         Parameters
         ----------
         atom_array
             Biotite AtomArray for the atoms the model operates on. Needs
             ``chain_id``, ``res_id``, ``res_name``, ``atom_name``, ``element``
-            annotations. A missing ``altloc_id`` is defaulted to blank inside
-            ``atomarray_to_gemmi``.
-        b_factors
-            Per-atom isotropic B-factors ``[n_atoms]`` (e.g. the pipeline's
-            reconciled values: real deposited where shared with the structure,
-            20.0 for model-only / NaN atoms). Set on ``sfc.atom_b_iso``.
-        occupancies
-            Per-atom occupancies ``[n_atoms]``. For the multi-conformer ensemble
-            this is ``1/E`` (E = ensemble size), so the per-member structure
-            factors summed in ``__call__`` form the multi-conformer total. Set on
-            ``sfc.atom_occ``. Required: omitting it would leave occ at 1.0 and
-            silently scale the amplitudes by E.
+            annotations (its ``b_factor``/``occupancy`` are baked as defaults but
+            overridden each ``__call__``). A missing ``altloc_id`` is defaulted to
+            blank inside ``atomarray_to_gemmi``.
         """
         gemmi_structure = atomarray_to_gemmi(
             atom_array,
@@ -257,14 +242,12 @@ class StructureFactorRewardFunction:
             space_group=self.space_group,
         )
         self.sfc = SFcalculator(pdbmodel=PDBParser(gemmi_structure), **self._sfc_kwargs)
-        # inspect_data estimates solvent % / grid size from atom positions + vdW radii
-        # (independent of occupancy / B-factor); run it before overriding occ to 1/E.
+        # inspect_data estimates solvent percentage and grid size from atom positions
+        # and vdW radii, independent of occupancy / B-factor.
         self.sfc.inspect_data()
-        self.sfc.atom_b_iso = b_factors
-        self.sfc.atom_occ = occupancies
 
-        # Reflection mask: drop outliers, and optionally the free (test) set.
-        # Outlier / free_flag are numpy bool arrays from SFcalculator.
+        # Reflection mask: drop outliers, and optionally the free (test) set, when
+        # computing the loss.Outlier / free_flag are numpy bool arrays from SFC.
         mask_np = ~self.sfc.Outlier
         if self.exclude_free_reflections:
             mask_np = mask_np & ~self.sfc.free_flag
@@ -291,16 +274,24 @@ class StructureFactorRewardFunction:
         Call ``.backward()`` on the result to get gradients w.r.t.
         ``coordinates``.
 
-        ``elements``, ``b_factors`` and ``occupancies`` are accepted for protocol
-        compatibility but ignored: topology and per-atom B-factors / occupancy are
-        fixed in the SFcalculator built by :meth:`prepare` and do not change during
-        sampling.
+        ``elements`` is ignored (topology is fixed in the SFcalculator built by
+        :meth:`prepare`). ``b_factors`` and ``occupancies`` are reset onto the
+        SFcalculator each call (mirroring ``RealSpaceRewardFunction``), and assumed
+        to be broadcast-identical across the batch dim.
 
         Parameters
         ----------
         coordinates
             Atomic coordinates ``[batch, n_atoms, 3]`` in model atom space,
             matching the atom ordering passed to :meth:`prepare`.
+        b_factors
+            Per-atom isotropic B-factors ``[batch, n_atoms]``, written to
+            ``sfc.atom_b_iso`` (reconciled: real deposited where shared with the
+            structure, 20.0 for model-only / NaN atoms).
+        occupancies
+            Per-atom occupancies ``[batch, n_atoms]`` (uniform ``1/E`` from the
+            pipeline), written to ``sfc.atom_occ``; the ``1/E`` weighting makes the
+            complex ensemble sum the multi-conformer total.
 
         Returns
         -------
@@ -313,8 +304,13 @@ class StructureFactorRewardFunction:
                 "atom array before the reward is evaluated."
             )
 
+        # B-factors / occupancy from the (reconciled) pipeline tensors, reset each call so
+        # they can be refined per step in the future. Broadcast-identical across batch dim.
+        self.sfc.atom_b_iso = b_factors[0]
+        self.sfc.atom_occ = occupancies[0]
+
         # Multi-conformer combination: complex sum over the ensemble [batch, n_hkl].
-        # occ = 1/E (baked in prepare) makes the summed |F| the multi-conformer total.
+        # occ = 1/E (set per call) makes the summed |F| the multi-conformer total.
         Fprotein_batch = self.sfc.calc_fprotein_batch(coordinates, Return=True)
         Fprotein = Fprotein_batch.sum(dim=0)
 
