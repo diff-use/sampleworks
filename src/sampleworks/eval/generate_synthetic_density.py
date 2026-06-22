@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import ClassVar
 
 import torch
-from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
 from sampleworks.eval.synthetic_utils import (
@@ -282,6 +281,8 @@ def process_batch(
     save_structure
         If True, save the processed structure to a CIF file in the input directory.
     """
+    from joblib import delayed, Parallel
+
     rows = load_batch_csv(csv_path)
     logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
 
