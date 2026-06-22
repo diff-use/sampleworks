@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from sampleworks.utils import msa as msa_module
 from sampleworks.utils.guidance_constants import StructurePredictor
-from sampleworks.utils.msa import _compute_msa, MSAManager
+from sampleworks.utils.msa import _compute_msa, _msa_data_key_sort_key, MSAManager
 
 
 # ============================================================================
@@ -28,6 +28,13 @@ def test_hash_arguments_is_deterministic_and_input_sensitive():
     assert base != MSAManager._hash_arguments(data, "complete")
     # Different value order -> different hash (hash is over tuple(values)).
     assert base != MSAManager._hash_arguments({"B": "GGGAA", "A": "MKTAY"}, "greedy")
+
+
+def test_msa_data_key_sort_preserves_numeric_order_and_handles_mixed_keys():
+    """Ensure Protenix MSA key sorting preserves numeric order and mixed-key stability."""
+    keys = [10, 2, "1", "A"]
+
+    assert sorted(keys, key=_msa_data_key_sort_key) == [2, 10, "1", "A"]
 
 
 # ============================================================================

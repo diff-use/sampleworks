@@ -184,8 +184,8 @@ def match_batch(array: Array | np.ndarray, target_batch_size: int) -> Array | np
 
     # singleton: lazy broadcast (no copy)
     if b == 1:
-        return _broadcast_to(array, (n, *array.shape[1:]))  # ty: ignore[invalid-argument-type]
+        return _broadcast_to(array, (n, *array.shape[1:]))
     # divisible: tile
     if n % b:
         raise ValueError(f"batch {b} not divisible into target {n}")
-    return _tile(array, (n // b, *(1,) * (array.ndim - 1)))  # ty: ignore[invalid-argument-type]
+    return _tile(array, (n // b, *(1,) * (array.ndim - 1)))

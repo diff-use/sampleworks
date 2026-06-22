@@ -336,11 +336,9 @@ class AllAtomLDDT(Metric):
         # Set token ids to something useful for residue-level LDDT (chain ID + residue number)
         # Note: add_global_token_id_annotation works with both AtomArray and
         # AtomArrayStack at runtime
-        predicted_atom_array_stack = add_global_token_id_annotation(
-            predicted_atom_array_stack  # ty: ignore[invalid-argument-type]
-        )
+        predicted_atom_array_stack = add_global_token_id_annotation(predicted_atom_array_stack)
         ground_truth_atom_array_stack = add_global_token_id_annotation(
-            ground_truth_atom_array_stack  # ty: ignore[invalid-argument-type]
+            ground_truth_atom_array_stack
         )
 
         # restrict to atoms that are present in both structures
@@ -477,12 +475,8 @@ class SelectedLDDT(Metric):
 
             # set the token ids, to avoid any possible confusion later on
             # Note: add_global_token_id_annotation works with AtomArrayStack at runtime
-            filtered_predicted = add_global_token_id_annotation(
-                filtered_predicted  # ty: ignore[invalid-argument-type]
-            )
-            filtered_ground_truth = add_global_token_id_annotation(
-                filtered_ground_truth  # ty: ignore[invalid-argument-type]
-            )
+            filtered_predicted = add_global_token_id_annotation(filtered_predicted)
+            filtered_ground_truth = add_global_token_id_annotation(filtered_ground_truth)
 
             lddt_features = extract_lddt_features_from_atom_arrays(
                 filtered_predicted, filtered_ground_truth
