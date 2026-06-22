@@ -739,7 +739,9 @@ class Boltz2Wrapper:
                 "x_init from prior. This means align_to_input will not work properly,"
                 " and reward functions dependent on this won't be accurate."
             )
-            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)
+            temp_features = GenerativeModelInput[BoltzConditioning](
+                x_init=cast(Any, None), conditioning=conditioning
+            )
             x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
@@ -810,7 +812,7 @@ class Boltz2Wrapper:
             z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)
 
             if self.model.is_pairformer_compiled:
-                pairformer_module = self.model.pairformer_module._orig_mod
+                pairformer_module = cast(Any, self.model.pairformer_module)._orig_mod
             else:
                 pairformer_module = self.model.pairformer_module
 
@@ -1078,8 +1080,9 @@ class Boltz1Wrapper:
         )
 
         processed_dir = out_dir / "processed"
+        load_manifest = cast(Any, Manifest.load)
         processed = BoltzProcessedInput(
-            manifest=Manifest.load(processed_dir / "manifest.json"),
+            manifest=load_manifest(processed_dir / "manifest.json"),
             targets_dir=processed_dir / "structures",
             msa_dir=processed_dir / "msa",
             constraints_dir=(processed_dir / "constraints")
@@ -1194,7 +1197,9 @@ class Boltz1Wrapper:
                 "x_init from prior. This means align_to_input will not work properly,"
                 " and reward functions dependent on this won't be accurate."
             )
-            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)
+            temp_features = GenerativeModelInput[BoltzConditioning](
+                x_init=cast(Any, None), conditioning=conditioning
+            )
             x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
@@ -1368,7 +1373,7 @@ class Boltz1Wrapper:
                 )
 
             if self.model.is_pairformer_compiled:
-                pairformer_module = self.model.pairformer_module._orig_mod
+                pairformer_module = cast(Any, self.model.pairformer_module)._orig_mod
             else:
                 pairformer_module = self.model.pairformer_module
 

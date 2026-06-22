@@ -1,6 +1,6 @@
 """Tests for atom_array_utils module."""
 
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -200,12 +200,12 @@ class TestSelectAltlocErrors:
         invalid_input = "not an atom array"
 
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            select_altloc(invalid_input, "A")
+            select_altloc(cast(Any, invalid_input), "A")
 
     def test_none_input_raises_error(self):
         """Test that None input raises TypeError."""
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            select_altloc(None, "A")
+            select_altloc(cast(Any, None), "A")
 
 
 class TestSelectAltlocEdgeCases:
@@ -358,7 +358,7 @@ class TestFilterToCommonAtoms:
         array.coord = np.random.rand(3, 3)
 
         with pytest.raises(TypeError, match="must be AtomArray or AtomArrayStack"):
-            filter_to_common_atoms("not an array", array)
+            filter_to_common_atoms(cast(Any, "not an array"), array)
 
     def test_invalid_type_second_arg(self):
         """Test that invalid second argument raises TypeError."""
@@ -366,7 +366,7 @@ class TestFilterToCommonAtoms:
         array.coord = np.random.rand(3, 3)
 
         with pytest.raises(TypeError, match="must be AtomArray or AtomArrayStack"):
-            filter_to_common_atoms(array, None)
+            filter_to_common_atoms(array, cast(Any, None))
 
     def test_preserves_coordinates(self, atom_array_partial_overlap):
         """Test that coordinates are preserved for common atoms."""
@@ -443,7 +443,7 @@ class TestRemoveHydrogens:
 
     def test_invalid_type_raises_error(self):
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            remove_hydrogens("bad input")
+            remove_hydrogens(cast(Any, "bad input"))
 
 
 class TestKeepPolymer:
@@ -467,7 +467,7 @@ class TestKeepPolymer:
 
     def test_invalid_type_raises_error(self):
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            keep_polymer(42)
+            keep_polymer(cast(Any, 42))
 
 
 class TestKeepAminoAcids:
@@ -494,7 +494,7 @@ class TestKeepAminoAcids:
 
     def test_invalid_type_raises_error(self):
         with pytest.raises(TypeError, match="can only accept AtomArray or AtomArrayStack"):
-            keep_amino_acids(None)
+            keep_amino_acids(cast(Any, None))
 
 
 class TestFilterFunctionsIntegration:
