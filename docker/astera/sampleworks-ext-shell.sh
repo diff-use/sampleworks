@@ -8,7 +8,6 @@ esac
 
 [ -t 0 ] || return 0 2>/dev/null || exit 0
 [ -t 1 ] || return 0 2>/dev/null || exit 0
-[ -z "${SAMPLEWORKS_DISABLE_EXT_SHELL:-}" ] || return 0 2>/dev/null || exit 0
 [ -z "${SAMPLEWORKS_EXT_SHELL_ATTEMPTED:-}" ] || return 0 2>/dev/null || exit 0
 [ -z "${EXT_SHELL_ACTIVE:-}" ] || return 0 2>/dev/null || exit 0
 [ -z "${BASH_EXECUTION_STRING:-}" ] || return 0 2>/dev/null || exit 0
