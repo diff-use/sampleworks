@@ -532,7 +532,7 @@ class ProtpardelleWrapper:
     ) -> Float[Tensor, "batch atoms 3"]:
         """
         Prepare data for and run the forward pass of the Protpardelle model.
-        To do this, it converts our coordinate representation to it's "atom37" format
+        To do this, it converts our coordinate representation to its "atom37" format
         which has one row per _residue_ and a coordinate for all 37 possible atom types.
         See protpardelle-1c/src/protpardelle/core/models.py:L1760
         (commit ee378400f25b801fa481028000f9060183d7fb4c on branch main)
