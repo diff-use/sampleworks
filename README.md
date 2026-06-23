@@ -322,7 +322,6 @@ CI configuration variables:
 | `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional private/source checkpoint image that CI mirrors to Docker Hub; defaults to the current digest-pinned Harbor image |
 | `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional public Docker Hub checkpoint mirror destination tag; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
 | `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
-| `EXT_CLI_IMAGE` | Optional EXT CLI image override for the Astera overlay |
 
 Build the public image locally:
 
