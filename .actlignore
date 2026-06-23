@@ -3,7 +3,9 @@
 .pixi/
 grid_search_results/
 outputs/
-/data/
+data/
+!/src/sampleworks/data/
+!/src/sampleworks/data/**
 initial_dataset_40*/
 checkpoints/
 release_data/
