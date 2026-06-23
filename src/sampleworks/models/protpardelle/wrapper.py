@@ -14,10 +14,12 @@ forward pass), this is a ``StructureModelWrapper`` rather than a
 ``FlowModelWrapper``.
 """
 
+from __future__ import annotations
+
 import copy
 from dataclasses import dataclass, field
-from pathlib import Path
 from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
 import biotite.structure as struc
@@ -45,6 +47,10 @@ ATOM37_NUM_ATOMS = residue_constants.atom_type_num
 # Number of aatype tokens for the 21-token alphabet (20 canonical + X).
 # Matches ``data.n_aatype_tokens`` in the Protpardelle-1c configs (e.g. cc89.yaml).
 NUM_AATYPE_TOKENS = 21
+
+# Atomworks keeps selenomethionine atoms as ``SE`` while Protpardelle's atom37
+# representation uses the canonical methionine sulfur slot, ``SD``.
+ATOM37_ATOM_NAME_ALIASES = {"SE": "SD"}
 
 # get default model configurations from protpardelle-1c/cc89
 sampling_partial_diffusion_all_atom = files("protpardelle").joinpath(
@@ -103,23 +109,28 @@ class ProtpardelleConditioning:
     residue_index: Float[Tensor, "batch L"]
     chain_index: Float[Tensor, "batch L"]
     atom_mask: Float[Tensor, "batch L 37"]
-    atom37_residue_index: Int[Tensor, "atoms"]
-    atom37_atom_index: Int[Tensor, "atoms"]
+    atom37_residue_index: Tensor
+    atom37_atom_index: Tensor
     sampling_kwargs: dict[str, Any]
     sequences: tuple[str, ...]
     x_self_conditioning: Float[Tensor, "batch L 37"] | None = None
+    _initialized: bool = field(default=False, init=False, repr=False)
 
     _FROZEN = frozenset(
         {"aatype", "seq_mask", "residue_index", "chain_index",
          "atom_mask", "sampling_kwargs", "sequences"}
     )
 
+    def __post_init__(self) -> None:
+        """Mark construction complete so selected conditioning fields become immutable."""
+        object.__setattr__(self, "_initialized", True)
+
     def __setattr__(self, key, value):
-        if key in self._FROZEN:
+        if key in self._FROZEN and getattr(self, "_initialized", False):
             raise AttributeError(
                 f"Cannot set attribute {key!r} on {self.__class__.__name__}, it is frozen!"
             )
-        super().__setattr__(key, value)
+        object.__setattr__(self, key, value)
 
 
 
@@ -362,18 +373,17 @@ class ProtpardelleWrapper:
 
         # Lay out chains exactly as Protpardelle's own sampling helper does so
         # residue/chain indexing (including inter-chain gaps) matches training.
-        prot_lens_per_chain = torch.tensor(
-            [[len(seq) for seq in sequences]], dtype=torch.long, device=self.device
-        )
+        # Keep the length tensor on CPU because Protpardelle's helper constructs
+        # intermediate residue indices on CPU before moving its outputs to the
+        # model device.
+        prot_lens_per_chain = torch.tensor([[len(seq) for seq in sequences]], dtype=torch.long)
         seq_mask, residue_index, chain_index = self.model.make_seq_mask_for_sampling(
             prot_lens_per_chain=prot_lens_per_chain
         )
 
         # Concatenate per-chain aatypes in chain order; chains are placed
         # contiguously at the front of the padded sequence by the helper above.
-        chain_aatypes = [
-            seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences  # ty: ignore
-        ]
+        chain_aatypes = [seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences]
         flat_aatype = torch.cat(chain_aatypes).to(self.device)
         padded_len = seq_mask.shape[1]
         aatype = torch.zeros((1, padded_len), dtype=torch.long, device=self.device)
@@ -413,7 +423,7 @@ class ProtpardelleWrapper:
             atom37_atom_index=atom37_atom_index,
             sampling_kwargs=sampling_kwargs,
             sequences=tuple(sequences),
-            x_self_conditioning=None
+            x_self_conditioning=None,
         )
 
         # x_init is a shape-compatible reference drawn from a Gaussian prior.
@@ -427,7 +437,7 @@ class ProtpardelleWrapper:
 
     def _atom37_indices_from_atom_array(
         self, atom_array
-    ) -> tuple[Int[Tensor, "atoms"], Int[Tensor, "atoms"]]:
+    ) -> tuple[Tensor, Tensor]:
         """Derive per-atom atom37 destination indices from an Atomworks atom array.
 
         For each atom in ``atom_array`` (the order the sampler's flat ``x_t``
@@ -455,8 +465,11 @@ class ProtpardelleWrapper:
             break the one-to-one correspondence with ``x_t``.
         """
         atom_names = np.asarray(atom_array.atom_name)
+        atom37_names = np.asarray(
+            [ATOM37_ATOM_NAME_ALIASES.get(str(name), str(name)) for name in atom_names]
+        )
 
-        unknown = sorted(set(atom_names) - set(residue_constants.atom_order))
+        unknown = sorted(set(atom37_names) - set(residue_constants.atom_order))
         if unknown:
             raise ValueError(
                 "asym_unit contains atom names not present in the atom37 "
@@ -465,7 +478,7 @@ class ProtpardelleWrapper:
             )
 
         atom_slots = np.array(
-            [residue_constants.atom_order[name] for name in atom_names], dtype=np.int64
+            [residue_constants.atom_order[name] for name in atom37_names], dtype=np.int64
         )
 
         # Contiguous residue ordinal (0..L-1) per atom, in atom order across chains.
@@ -572,11 +585,55 @@ class ProtpardelleWrapper:
         sampling_kwargs.update(config.extra_sampling_kwargs)
         return sampling_kwargs
 
+    def _expand_noise_level(
+        self,
+        t: Float[Tensor, "*batch"] | float,
+        conditioning: ProtpardelleConditioning,
+        dtype: torch.dtype,
+    ) -> Float[Tensor, "batch L"]:
+        """Convert a sampler timestep/noise scalar to Protpardelle's ``B x L`` tensor.
+
+        Parameters
+        ----------
+        t : Float[Tensor, "*batch"] | float
+            Sampler noise level for the current EDM step. May be a scalar or one
+            value per ensemble member.
+        conditioning : ProtpardelleConditioning
+            Conditioning whose sequence mask defines the batch and padded length.
+        dtype : torch.dtype
+            Floating dtype to use for the model call.
+
+        Returns
+        -------
+        Float[Tensor, "batch L"]
+            Noise level broadcast across valid/padded sequence positions on the
+            wrapper device.
+        """
+        seq_mask = conditioning.seq_mask.to(device=self.device, dtype=dtype)
+        noise_level = torch.as_tensor(t, device=self.device, dtype=dtype)
+
+        if noise_level.ndim == 0:
+            return noise_level.expand_as(seq_mask).clone()
+
+        if noise_level.ndim == 1:
+            if noise_level.shape[0] != seq_mask.shape[0]:
+                raise ValueError(
+                    f"Noise level batch size {noise_level.shape[0]} does not match "
+                    f"conditioning batch size {seq_mask.shape[0]}."
+                )
+            return noise_level[:, None].expand_as(seq_mask).clone()
+
+        if noise_level.shape != seq_mask.shape:
+            raise ValueError(
+                f"Noise level shape {tuple(noise_level.shape)} must be scalar, "
+                f"batch-sized, or match seq_mask shape {tuple(seq_mask.shape)}."
+            )
+        return noise_level
+
     def step(
         self,
         x_t: Float[Tensor, "batch atoms 3"],
         t: Float[Tensor, "*batch"] | float,
-        sigma_float: float,
         *,
         features: GenerativeModelInput[ProtpardelleConditioning] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
@@ -594,7 +651,7 @@ class ProtpardelleWrapper:
         x_t : Float[Tensor, "batch atoms 3"]
             Noisy structure at timestep :math:`t`.
         t : Float[Tensor, "*batch"] | float
-            Current timestep/noise level (:math:`\hat{t}` from EDM schedule).
+            Current timestep/noise level (:math:`\\hat{t}` from EDM schedule).
         features : GenerativeModelInput[BoltzConditioning] | None
             Model features as returned by ``featurize``.
 
@@ -608,12 +665,20 @@ class ProtpardelleWrapper:
             raise ValueError("features with conditioning required for step()")
 
         cond = features.conditioning
+        x_t = x_t.to(device=self.device)
 
         # Our x_t is B x N x 3 (N = number of atoms); Protpardelle expects
         # B x L x 37 x 3. Scatter into the atom37 layout (gradient-preserving).
         x_t_atom37 = self._convert_to_atom37(cond, x_t)
 
-        noise_level = torch.full((cond.seq_mask.shape[0],), sigma_float, device=self.device)
+        noise_level = self._expand_noise_level(t, cond, x_t_atom37.dtype)
+
+        seq_mask = cond.seq_mask.to(device=self.device, dtype=x_t_atom37.dtype)
+        residue_index = cond.residue_index.to(device=self.device)
+        chain_index = cond.chain_index.to(device=self.device)
+        struct_self_cond = cond.x_self_conditioning
+        if struct_self_cond is not None:
+            struct_self_cond = struct_self_cond.to(device=self.device, dtype=x_t_atom37.dtype)
 
         # To understand all these arguments better, you can study the (complicated)
         # Protpardelle.sample method. Hints: partial diffusion is enabled and cc.enabled = False!
@@ -622,12 +687,12 @@ class ProtpardelleWrapper:
         x0, s_logprobs, x_self_cond, s_self_cond = self.model.forward(
             noisy_coords=x_t_atom37,
             noise_level=noise_level,
-            seq_mask=cond.seq_mask,
-            residue_index=cond.residue_index,
-            chain_index=cond.chain_index,
+            seq_mask=seq_mask,
+            residue_index=residue_index,
+            chain_index=chain_index,
             hotspot_mask=None,  # we don't support this yet
             struct_self_cond=(
-                features.conditioning.x_self_conditioning
+                struct_self_cond
                 if self.model.config.train.self_cond_train_prob > 0.5  # true for cc89
                 else None
             ),
@@ -646,7 +711,7 @@ class ProtpardelleWrapper:
         # ai-allatom sampling, so select the correct atoms via the atom37 mask.
         # The mask is identical across the batch (single input sequence), so a
         # single 2-D mask flattens every ensemble member consistently.
-        atom_mask_2d = cond.atom_mask[0].bool()  # [L, 37]
+        atom_mask_2d = cond.atom_mask[0].to(device=x0.device).bool()  # [L, 37]
         flat_coords = x0[:, atom_mask_2d]  # [batch, atoms, 3]
 
         return flat_coords.float()
