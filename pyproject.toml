@@ -46,7 +46,7 @@ dependencies = [
 ]
 name = "sampleworks"
 requires-python = ">= 3.11, <3.14"
-version = "0.11.0"
+version = "0.11.1"
 
 [project.scripts]
 sampleworks-analysis = "sampleworks.runs.analysis_cli:main"
