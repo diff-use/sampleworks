@@ -1,6 +1,6 @@
-# Start ext only for real interactive terminal sessions. Non-interactive
-# commands such as `actl pod exec -- ...`, CI, and VS Code server probes must
-# keep their original process shape.
+# Enter ext only when ACTL sets EXT_SHELL=1.
+[ "${EXT_SHELL:-}" = "1" ] || return 0 2>/dev/null || exit 0
+
 case "$-" in
   *i*) ;;
   *) return 0 2>/dev/null || exit 0 ;;
@@ -25,15 +25,15 @@ fi
 unset __sampleworks_ext_config_template __sampleworks_ext_data_home
 unset __sampleworks_ext_config_dir __sampleworks_ext_config
 
-__sampleworks_ext_shell=""
+__sampleworks_ext_inner_shell=""
 if [ -n "${BASH_VERSION:-}" ]; then
-  __sampleworks_ext_shell="bash"
+  __sampleworks_ext_inner_shell="bash"
 elif [ -n "${ZSH_VERSION:-}" ]; then
-  __sampleworks_ext_shell="zsh"
+  __sampleworks_ext_inner_shell="zsh"
 fi
 
-if [ -n "${__sampleworks_ext_shell}" ]; then
+if [ -n "${__sampleworks_ext_inner_shell}" ]; then
   export SAMPLEWORKS_EXT_SHELL_ATTEMPTED=1
-  exec ext shell -shell "${__sampleworks_ext_shell}"
+  exec ext shell -shell "${__sampleworks_ext_inner_shell}"
 fi
-unset __sampleworks_ext_shell
+unset __sampleworks_ext_inner_shell
