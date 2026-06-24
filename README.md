@@ -352,7 +352,25 @@ credentials.
 
 ## Development
 
-We use [Pixi](https://pixi.sh/) to manage development environments and dependencies. Each model has its own environment, e.g. `boltz-dev`, `protenix-dev`, `rf3-dev`. To install dev dependencies and run tests:
+For lightweight source-checkout development, use [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync --group dev
+uv run sampleworks-guidance --help
+uv run pytest tests -m 'not slow'
+```
+
+Optional model and analysis dependencies are exposed as package extras:
+
+```bash
+uv sync --extra boltz --group dev
+uv sync --extra protenix --group dev    # Linux/CUDA only
+uv sync --extra rf3 --group dev         # uses tool.uv.sources for rc-foundry
+uv sync --extra analysis --extra eval --group dev
+```
+
+The existing GPU model environments are split by model, e.g. `boltz-dev`,
+`protenix-dev`, `rf3-dev`. To install dev dependencies and run tests there:
 
 ```bash
 pixi install -e [model]-dev    # add pytest, ruff, ty
@@ -373,19 +391,17 @@ See [`tests/README.md`](tests/README.md) for full testing instructions.
 
 ## macOS (experimental)
 
-To develop on OS X, ensure you have [homebrew](https://brew.sh/) installed and run the following commands to install dependencies:
+On macOS, use uv for source-checkout development and avoid Linux/CUDA-only model
+extras unless you know they are supported on your machine:
 
-1. Install hatch and uv
-    ```bash
-    brew install hatch uv
-    ```
-2. Move/copy `pyproject-hatch.toml` to `pyproject.toml`
-3. Use `uvx hatch run <command>` to run commands. Note the use of `uvx` instead of `uv`
-4. Use `uvx hatch run <env>:<command>` to run commands in a specific environment `<env>`.
+```bash
+brew install uv
+uv sync --group dev
+uv run pytest tests -m 'not slow'
+```
 
-There are different (and as yet untested) environments for `boltz`. `protenix` won't currently work on a Mac due to
-the strict requirement of `triton` which requires an NVIDIA GPU. You may find similar issues with other environments.
-Debug as needed.
+`protenix` currently requires `triton`/NVIDIA GPU support and is not expected to
+work on macOS. Some RF3/Boltz workflows may also require Linux/CUDA packages.
 
 
 ## Commit Messages
