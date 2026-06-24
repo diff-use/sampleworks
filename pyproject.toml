@@ -56,12 +56,9 @@ dependencies = [
   "jax",
   "jaxtyping",
   "loguru",
-  "numpy<2.0",
   "omegaconf",
   "python-dotenv",
-  "sfcalculator-torch>=0.3.2",
-  "torch",
-  "tqdm"
+  "sfcalculator-torch>=0.3.2"
 ]
 description = "Experimentally guided biomolecular ensemble generation."
 keywords = ["biomolecular-structure", "crystallography", "diffusion", "ensemble-generation", "protein-structure"]
@@ -70,32 +67,6 @@ name = "sampleworks"
 readme = "README.md"
 requires-python = ">= 3.11, <3.14"
 version = "0.10.0"
-
-[project.optional-dependencies]
-analysis = [
-  "ipython",
-  "joblib",
-  "marimo",
-  "matplotlib",
-  "mdtraj",
-  "pandas",
-  "peppr",
-  "polars",
-  "pyzmq",
-  "scikit-learn",
-  "seaborn"
-]
-boltz = [
-  "boltz",
-  "cuequivariance-ops-torch-cu12; platform_system == 'Linux' and platform_machine == 'x86_64'",
-  "cuequivariance-torch",
-  "rdkit>=2025.3.6"
-]
-dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru", "python-semantic-release"]
-eval = ["gemmi>=0.6.7", "joblib", "pandas>=2.2.3", "reciprocalspaceship>=1.0.3"]
-protenix = ["protenix", "triton; platform_system == 'Linux' and platform_machine == 'x86_64'"]
-rf3 = ["rc-foundry[rf3]; python_version >= '3.12' and python_version < '3.13'"]
-test = ["pytest", "pytest-cov", "pytest-loguru"]
 
 [project.urls]
 Changelog = "https://github.com/diff-use/sampleworks/blob/main/CHANGELOG.md"
@@ -296,6 +267,3 @@ unresolved-import = "ignore"
 unsupported-operator = "warn"
 unused-ignore-comment = "warn"
 unused-type-ignore-comment = "warn"
-
-[tool.uv.sources]
-rc-foundry = {git = "https://github.com/k-chrispens/foundry.git"}

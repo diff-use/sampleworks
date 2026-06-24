@@ -360,13 +360,12 @@ uv run sampleworks-guidance --help
 uv run pytest tests -m 'not slow'
 ```
 
-Optional model and analysis dependencies are exposed as package extras:
+Additional uv dependency groups are available for development and analysis:
 
 ```bash
-uv sync --extra boltz --group dev
-uv sync --extra protenix --group dev    # Linux/CUDA only
-uv sync --extra rf3 --group dev         # uses tool.uv.sources for rc-foundry
-uv sync --extra analysis --extra eval --group dev
+uv sync --group dev
+uv sync --group analysis
+uv sync --group test
 ```
 
 The existing GPU model environments are split by model, e.g. `boltz-dev`,
