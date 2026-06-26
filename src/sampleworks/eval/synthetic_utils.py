@@ -255,6 +255,18 @@ def atomarray_to_gemmi(
         atom_altloc=atom_altloc,
         res_id=atom_array.res_id,
     )
+    # array2hier names the single model "SFC" and its setup_entities() assigns auto-generated
+    # subchain ids (label_asym_id, e.g. "Axp"). Both corrupt a written-out mmCIF: the
+    # non-integer model name breaks mmCIF parsers' pdbx_PDB_model_num (biotite/atomworks read
+    # it as int), and the multi-char label_asym_id is re-read as the chain id (then rejected by
+    # SFcalculator's PDB-header step, which needs a <=1-char chain). Normalize both — a valid
+    # numeric model id and label_asym_id == the chain name — so saved structures
+    # (generate_synthetic_sf --save-structure) round-trip.
+    for model_idx, model in enumerate(structure):
+        model.name = str(model_idx + 1)
+        for chain in model:
+            for residue in chain:
+                residue.subchain = chain.name
     if unit_cell is not None:
         structure.cell = unit_cell
     if space_group is not None:
