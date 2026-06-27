@@ -97,6 +97,11 @@ class StructureFactorRewardFunction:
         Path to the MTZ holding the target amplitudes (and a sigma column).
         Loaded with ``set_experiment=True`` so ``sfc.Fo`` / HKL set / bins are
         populated and the calculation is aligned to the target reflections.
+    expcolumns
+        Column names ``[amplitude, sigma]`` in the MTZ. If ``None`` (default), the
+        first structure-factor-amplitude and standard-deviation columns are
+        auto-detected from the ``mtzfile``; if provided, used as-is but a warning is
+        logged when they differ from the detected columns.
     resolution
         High-resolution limit (dmin) in Angstrom, or ``None`` (default) to use
         the MTZ's own resolution. The HKL set comes from the ``mtzfile``; when
@@ -115,14 +120,14 @@ class StructureFactorRewardFunction:
         Callable ``(|Fcalc|, |Fobs|) -> scalar`` over masked reflections.
         Defaults to mean-squared error on amplitudes. Pass any callable
         (L1, R-factor-style, resolution-weighted, ...) to customize.
-    expcolumns
-        Column names ``[amplitude, sigma]`` in the MTZ. If ``None`` (default), the
-        first structure-factor-amplitude and standard-deviation columns are
-        auto-detected from the ``mtzfile``; if provided, used as-is but a warning is
-        logged when they differ from the detected columns.
+    normalize_amplitude
+        If True, score normalized structure factors (E-values) instead of ``|F|``.
     exclude_free_reflections
         If True, drop the R-free test-set reflections from the loss (use only
         the working set). Default False: use all non-outlier reflections.
+    batch_partition
+        Ensemble chunk size forwarded to ``SFcalculator.calc_fprotein_batch`` as its
+        ``PARTITION`` parameter. SFC's own default (20) can still lead to OOM.
     device
         Torch device. Auto-selects a GPU when omitted.
     sfcalculator_kwargs
@@ -142,7 +147,9 @@ class StructureFactorRewardFunction:
         space_group: str | None = None,
         scattering_factor_mode: str = "xray",
         loss: AmplitudeLoss | None = None,
+        normalize_amplitude: bool = False,
         exclude_free_reflections: bool = False,
+        batch_partition: int = 10,
         device: torch.device | None = None,
         sfcalculator_kwargs: dict | None = None,
     ):
@@ -153,7 +160,9 @@ class StructureFactorRewardFunction:
         self.resolution = resolution
         self.scattering_factor_mode = scattering_factor_mode
         self.exclude_free_reflections = exclude_free_reflections
+        self.batch_partition = batch_partition
         self.loss: AmplitudeLoss = loss if loss is not None else torch.nn.MSELoss()
+        self.normalize_amplitude = normalize_amplitude  # |F| vs resolution-bin normalized |E|
         self.sfcalculator_kwargs = dict(sfcalculator_kwargs) if sfcalculator_kwargs else {}
 
         # Resolve crystal metadata / column names against the MTZ.
@@ -246,8 +255,15 @@ class StructureFactorRewardFunction:
         # and vdW radii, independent of occupancy / B-factor.
         self.sfc.inspect_data()
 
+        # |Eo| are computed in SFC's experiment init (inside a try/except).
+        if self.normalize_amplitude and getattr(self.sfc, "Eo", None) is None:
+            raise RuntimeError(
+                "normalize_amplitude=True requires sfc.Eo, but "
+                "SFcalculator did not populate them from this MTZ."
+            )
+
         # Reflection mask: drop outliers, and optionally the free (test) set, when
-        # computing the loss.Outlier / free_flag are numpy bool arrays from SFC.
+        # computing the loss. Outlier / free_flag are numpy bool arrays from SFC.
         mask_np = ~self.sfc.Outlier
         if self.exclude_free_reflections:
             mask_np = mask_np & ~self.sfc.free_flag
@@ -276,8 +292,9 @@ class StructureFactorRewardFunction:
 
         ``elements`` is ignored (topology is fixed in the SFcalculator built by
         :meth:`prepare`). ``b_factors`` and ``occupancies`` are reset onto the
-        SFcalculator each call (mirroring ``RealSpaceRewardFunction``), and assumed
-        to be broadcast-identical across the batch dim.
+        SFcalculator each call (mirroring ``RealSpaceRewardFunction``), and must be
+        broadcast-identical across the batch dim (enforced; SFcalculator has no
+        per-conformer occupancy/B axis, so non-broadcast input raises ``ValueError``).
 
         Parameters
         ----------
@@ -304,16 +321,31 @@ class StructureFactorRewardFunction:
                 "atom array before the reward is evaluated."
             )
 
-        # B-factors / occupancy from the (reconciled) pipeline tensors, reset each call so
-        # they can be refined per step in the future. Broadcast-identical across batch dim.
+        # SFcalculator has no per-conformer (batch) occupancy/B axis, so these must be shared
+        # across the ensemble; row 0 is used. Reject non-broadcast input as a guard.
+        for name, tensor in (("occupancy", occupancies), ("B-factor", b_factors)):
+            if not torch.equal(tensor, tensor[:1].expand_as(tensor)):
+                raise ValueError(
+                    f"StructureFactorRewardFunction requires {name} identical across the "
+                    "batch dim (SFcalculator has no per-conformer occupancy/B axis); got "
+                    "per-conformer values."
+                )
         self.sfc.atom_b_iso = b_factors[0]
         self.sfc.atom_occ = occupancies[0]
 
         # Multi-conformer combination: complex sum over the ensemble [batch, n_hkl].
         # occ = 1/E (set per call) makes the summed |F| the multi-conformer total.
-        Fprotein_batch = self.sfc.calc_fprotein_batch(coordinates, Return=True)
+        Fprotein_batch = self.sfc.calc_fprotein_batch(
+            coordinates, Return=True, PARTITION=self.batch_partition
+        )
         Fprotein = Fprotein_batch.sum(dim=0)
 
-        Fcalc = torch.abs(Fprotein)
         mask = self._reflection_mask
-        return self.loss(Fcalc[mask], self.sfc.Fo[mask])
+        if self.normalize_amplitude:
+            calc = self.sfc.calc_Ec(Fprotein).abs()
+            obs = self.sfc.Eo
+        else:
+            # Raw amplitudes (arbitrary scale; relative comparisons only).
+            calc = torch.abs(Fprotein)
+            obs = self.sfc.Fo
+        return self.loss(calc[mask], obs[mask])
