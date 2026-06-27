@@ -13,6 +13,7 @@ from sampleworks.eval.generate_synthetic_sf import atomarray_to_gemmi
 from sampleworks.eval.synthetic_utils import assign_occupancies
 from sampleworks.utils.atom_array_utils import (
     detect_altlocs,
+    find_all_altloc_ids,
     keep_amino_acids,
     keep_polymer,
     load_structure_with_altlocs,
@@ -120,6 +121,22 @@ class TestAtomArrayToGemmi:
         f_atomarray = _compute_fprotein(gemmi_structure_from_atomarray, device)
         f_direct = _compute_fprotein(stripped_gemmi, device)
         np.testing.assert_allclose(np.abs(f_atomarray), np.abs(f_direct), atol=1e-3)
+
+    def test_saved_structure_loads_back_with_altlocs(
+        self, gemmi_structure_from_atomarray, stripped_atom_array, tmp_path
+    ):
+        """Altloc labels must survive the round trip atomarray_to_gemmi --> cif
+        --> atomarray. Regression guard."""
+        out = tmp_path / "saved.cif"
+        gemmi_structure_from_atomarray.make_mmcif_document().write_file(str(out))
+
+        loaded = load_structure_with_altlocs(out)
+
+        assert len(loaded) == len(stripped_atom_array)
+        assert "altloc_id" in loaded.get_annotation_categories()
+        # every real (non-blank) altloc label from the source must survive the round trip,
+        # not just one. find_all_altloc_ids already strips blank-altloc sentinels.
+        assert find_all_altloc_ids(loaded) == find_all_altloc_ids(stripped_atom_array)
 
     def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
         """A warning is logged when more occupancy values are provided than there are altlocs."""
