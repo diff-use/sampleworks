@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      checkpoints_image: ${{ steps.verify_checkpoints.outputs.checkpoints_image }}
+      checkpoints_digest: ${{ steps.verify_checkpoints.outputs.checkpoints_digest }}
 
     steps:
       - name: Copy checkpoint image to Docker Hub
@@ -99,9 +99,7 @@ jobs:
             exit 1
           fi
 
-          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
-          dockerhub_ref="${dockerhub_ref%:*}"
-          echo "checkpoints_image=${dockerhub_ref}@${actual_digest}" >> "$GITHUB_OUTPUT"
+          echo "checkpoints_digest=${actual_digest}" >> "$GITHUB_OUTPUT"
 
   public:
     name: Public pixi-with-checkpoints image
@@ -139,14 +137,22 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
-      - name: Validate mirrored checkpoint image input
+      - name: Resolve mirrored checkpoint image input
+        id: checkpoint-ref
         env:
-          CHECKPOINTS_IMAGE: ${{ needs.sync_checkpoints.outputs.checkpoints_image }}
+          CHECKPOINTS_DIGEST: ${{ needs.sync_checkpoints.outputs.checkpoints_digest }}
         run: |
-          if [ -z "${CHECKPOINTS_IMAGE}" ]; then
-            echo "sync-checkpoints did not produce a digest-pinned checkpoint image ref."
+          if [ -z "${CHECKPOINTS_DIGEST}" ]; then
+            echo "sync-checkpoints did not produce a checkpoint digest."
             exit 1
           fi
+          if [ "${CHECKPOINTS_DIGEST}" = "${CHECKPOINTS_DIGEST#sha256:}" ]; then
+            echo "sync-checkpoints produced a non-sha256 digest: ${CHECKPOINTS_DIGEST}"
+            exit 1
+          fi
+          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
+          dockerhub_ref="${dockerhub_ref%:*}"
+          echo "image=${dockerhub_ref}@${CHECKPOINTS_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push public image
         id: public-build
@@ -161,7 +167,7 @@ jobs:
           labels: ${{ steps.public-meta.outputs.labels }}
           build-args: |
             BASE_IMAGE=${{ env.CUDA_BASE_IMAGE }}
-            CHECKPOINTS_IMAGE=${{ needs.sync_checkpoints.outputs.checkpoints_image }}
+            CHECKPOINTS_IMAGE=${{ steps.checkpoint-ref.outputs.image }}
           cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max
           provenance: false
