@@ -29,6 +29,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
+from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.cif_utils import (
     add_category_to_cif,
     add_completeness_categories,
@@ -282,6 +283,7 @@ def save_everything(
     scaler_type: str,
     final_state: torch.Tensor | None = None,
     model_atom_array: AtomArray | None = None,
+    reconciler: AtomReconciler | None = None,
 ) -> None:
     """Save everything: refined structure/ensemble CIF, trajectories, and losses.
 
@@ -312,8 +314,14 @@ def save_everything(
         Final coordinates with shape ``(ensemble, atoms, 3)``.  If ``None``,
         the `refined_structure`'s existing coordinates are saved as-is.
     model_atom_array : AtomArray | None
-        Optional model-space atom template. When provided (mismatch runs),
-        this template is used for final structure and trajectory saving.
+        Optional model-space atom template. When provided (mismatch runs), it is
+        used for trajectory saving (which stays in model space).
+    reconciler : AtomReconciler | None
+        Optional model<->structure reconciler. When it reports a mismatch, the
+        predicted ``final_state`` coordinates are mapped back onto the input
+        structure array so the output ``refined.cif`` carries the input's
+        definitive numbering/chains (issue #68, R2b). Non-common input atoms keep
+        their input coordinates.
     """
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -325,11 +333,37 @@ def save_everything(
 
     # Use model's internal atom accounting template for mismatch runs when available
     # Wrappers must guarantee model atom arrays have valid coords and occupancy.
+    # (Trajectories are saved in model space using this template.)
     atom_array_for_saving: AtomArray = (
         model_atom_array if model_atom_array is not None else base_atom_array
     )
 
-    if final_state is not None:
+    # when the model ran in a different atom space than the input
+    # (renumbered / relabeled -- e.g. Protenix resets the chain to A and renumbers from 1),
+    # map the predicted coordinates back onto the input structure array so the output CIF
+    # carries the input's definitive res_id/chain_id. base_atom_array is the cleaned input
+    # array (process_structure_to_trajectory_input writes it back into "asym_unit"), and
+    # model_to_struct scatters the common model atoms onto it; non-common input atoms keep
+    # their input coordinates.
+    renumber_to_input = (
+        reconciler is not None and reconciler.has_mismatch and final_state is not None
+    )
+
+    if renumber_to_input:
+        reconciler = reconciler.to("cpu")
+        model_coords = final_state.detach().cpu()
+        ensemble_size = model_coords.shape[0]
+        struct_template = (
+            torch.as_tensor(base_atom_array.coord)
+            .to(model_coords.dtype)
+            .unsqueeze(0)
+            .expand(ensemble_size, -1, -1)
+        )
+        struct_coords = reconciler.model_to_struct(model_coords, struct_template)
+        ensemble_array = stack([base_atom_array.copy() for _ in range(ensemble_size)])
+        _write_coords_into_array(ensemble_array, struct_coords.numpy())
+        atom_array = ensemble_array
+    elif final_state is not None:
         ensemble_size = final_state.shape[0]
 
         ensemble_array = stack([atom_array_for_saving.copy() for _ in range(ensemble_size)])
@@ -596,6 +630,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         raise TypeError("Unknown guidance type!")
 
     model_atom_array = result.metadata.get("model_atom_array") if result.metadata else None
+    reconciler = result.metadata.get("reconciler") if result.metadata else None
 
     save_everything(
         args,
@@ -606,6 +641,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         guidance_type,
         final_state=torch.as_tensor(result.final_state),
         model_atom_array=model_atom_array,
+        reconciler=reconciler,
     )
 
     if hasattr(model_wrapper, "_chiral_grad_stats") and model_wrapper._chiral_grad_stats:
