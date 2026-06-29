@@ -309,9 +309,8 @@ CI publishes these tags:
 | Public | `latest` on `main`, `sha-<short-sha>`, release semver tags |
 | Astera/Harbor | `latest` and `sampleworks` on `main`, `sha-<short-sha>`, release semver tags |
 
-The Astera image is always built from the exact public `sha-<short-sha>` image
-produced earlier in the same workflow run, then adds EXT and small workspace
-tools on top.
+The Astera image is always built from the exact public image digest produced
+earlier in the same workflow run, then adds EXT and small workspace tools on top.
 
 CI configuration variables:
 

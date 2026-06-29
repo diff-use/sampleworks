@@ -3,7 +3,7 @@ name: Build and Push Docker Images
 # Two-image split:
 #   1. Public pixi-with-checkpoints image from Dockerfile -> public registry.
 #   2. Private Astera overlay from Dockerfile.astera -> Harbor, based on the
-#      exact public image SHA tag built in step 1.
+#      exact public image digest built in step 1.
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      checkpoints_image: ${{ steps.verify_checkpoints.outputs.checkpoints_image }}
+      checkpoints_digest: ${{ steps.verify_checkpoints.outputs.checkpoints_digest }}
 
     steps:
       - name: Copy checkpoint image to Docker Hub
@@ -99,9 +99,7 @@ jobs:
             exit 1
           fi
 
-          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
-          dockerhub_ref="${dockerhub_ref%:*}"
-          echo "checkpoints_image=${dockerhub_ref}@${actual_digest}" >> "$GITHUB_OUTPUT"
+          echo "checkpoints_digest=${actual_digest}" >> "$GITHUB_OUTPUT"
 
   public:
     name: Public pixi-with-checkpoints image
@@ -110,7 +108,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      image-ref: ${{ steps.public-ref.outputs.image }}
+      image_digest: ${{ steps.public-build.outputs.digest }}
 
     steps:
       - name: Checkout code
@@ -139,14 +137,23 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
-      - name: Validate mirrored checkpoint image input
+      - name: Resolve mirrored checkpoint image input
+        id: checkpoint_ref
         env:
-          CHECKPOINTS_IMAGE: ${{ needs.sync_checkpoints.outputs.checkpoints_image }}
+          CHECKPOINTS_DIGEST: ${{ needs.sync_checkpoints.outputs.checkpoints_digest }}
         run: |
-          if [ -z "${CHECKPOINTS_IMAGE}" ]; then
-            echo "sync-checkpoints did not produce a digest-pinned checkpoint image ref."
+          if [ -z "${CHECKPOINTS_DIGEST}" ]; then
+            echo "sync-checkpoints did not produce a checkpoint image digest."
             exit 1
           fi
+          if [ "${CHECKPOINTS_DIGEST}" = "${CHECKPOINTS_DIGEST#sha256:}" ]; then
+            echo "sync-checkpoints produced an invalid checkpoint digest: ${CHECKPOINTS_DIGEST}"
+            exit 1
+          fi
+
+          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
+          dockerhub_ref="${dockerhub_ref%:*}"
+          echo "checkpoints_image=${dockerhub_ref}@${CHECKPOINTS_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push public image
         id: public-build
@@ -161,16 +168,10 @@ jobs:
           labels: ${{ steps.public-meta.outputs.labels }}
           build-args: |
             BASE_IMAGE=${{ env.CUDA_BASE_IMAGE }}
-            CHECKPOINTS_IMAGE=${{ needs.sync_checkpoints.outputs.checkpoints_image }}
+            CHECKPOINTS_IMAGE=${{ steps.checkpoint_ref.outputs.checkpoints_image }}
           cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max
           provenance: false
-
-      - name: Publish public image ref for Astera overlay
-        id: public-ref
-        run: |
-          short_sha="${GITHUB_SHA:0:${DOCKER_METADATA_SHORT_SHA_LENGTH}}"
-          echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}:sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Public image digest
         run: echo "Public image pushed with digest ${{ steps.public-build.outputs.digest }}"
@@ -221,7 +222,7 @@ jobs:
           tags: ${{ steps.astera-meta.outputs.tags }}
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
-            PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
+            PIXI_WITH_CHECKPOINTS_IMAGE=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}@${{ needs.public.outputs.image_digest }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max
           provenance: false
