@@ -23,14 +23,14 @@ env:
 
   ASTERA_REGISTRY: harbor.astera.sh
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
-  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2bfc4bce3224a5940708fbaf7c161a2ef395ab272b568b3abfaf3ca48164b63d
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
 jobs:
   sync_checkpoints:
     name: Sync checkpoints to Docker Hub
-    runs-on: astera-sh-builder
+    runs-on: diffuse-sh-builder
     permissions:
       contents: read
     outputs:
@@ -105,7 +105,7 @@ jobs:
 
   public:
     name: Public pixi-with-checkpoints image
-    runs-on: astera-sh-builder
+    runs-on: diffuse-sh-builder
     needs: sync_checkpoints
     permissions:
       contents: read
@@ -177,7 +177,7 @@ jobs:
 
   astera:
     name: Astera EXT image
-    runs-on: astera-sh-builder
+    runs-on: diffuse-sh-builder
     needs: public
     permissions:
       contents: read
