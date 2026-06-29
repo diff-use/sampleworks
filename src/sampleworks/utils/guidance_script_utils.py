@@ -423,6 +423,12 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
     return job_result
 
 
+def _three_state_resolver(value: str | bool | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return bool(value)
+
+
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     """Run one configured guidance trajectory and save its outputs."""
@@ -479,8 +485,9 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
-    # Boltz was trained with this, others might not have been.
-    use_alignment_for_reverse_diffusion = is_boltz
+    use_alignment_for_reverse_diffusion = _three_state_resolver(
+        args.alignment_reverse_diffusion, is_boltz
+    )
 
     # Create sampler with model-appropriate settings
     sampler_config = EDMSamplerConfig(

@@ -13,11 +13,10 @@
 #     .
 
 ARG PIXI_WITH_CHECKPOINTS_IMAGE
-ARG EXT_CLI_IMAGE=harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57
-
-FROM ${EXT_CLI_IMAGE} AS ext-cli
 
 FROM ${PIXI_WITH_CHECKPOINTS_IMAGE} AS astera
+
+ARG EXT_VERSION=v0.1.1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/dev \
@@ -57,9 +56,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
           command -v "${cmd}" >/dev/null 2>&1 || exit 1; \
         done
 
-COPY --from=ext-cli /ext /usr/local/bin/ext
+COPY docker/astera/ /usr/local/share/sampleworks/astera/
 
-RUN chmod 0755 /usr/local/bin/ext
+RUN install -m 0644 \
+        /usr/local/share/sampleworks/astera/sampleworks-ext-shell.sh \
+        /etc/profile.d/sampleworks-ext-shell.sh \
+    && EXT_VERSION="${EXT_VERSION}" bash /usr/local/share/sampleworks/astera/install-ext.sh \
+    && bash /usr/local/share/sampleworks/astera/install-ext-shell-hooks.sh
 
 WORKDIR /home/dev
 
