@@ -37,6 +37,7 @@ tests/
 
 # Documentation
 *.md
+!README.md
 docs/
 
 # Pre-commit
