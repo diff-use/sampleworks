@@ -339,6 +339,27 @@ def get_mask_from_old_selection_string(
     return mask
 
 
+def selection_to_residues(atom_array: AtomArray, selection: str) -> set[tuple[str, int]]:
+    """Return the ``(chain_id, res_id)`` pairs covered by *selection*.
+
+    Accepts both legacy ``chain X and resi a-b`` strings and atomworks-style
+    selections (``==``, ``or``, ``in``, ...) by delegating to :func:`apply_selection`,
+    so callers can treat every selection syntax uniformly. Returns an empty set
+    when the selection matches no atoms.
+
+    TODO: make this work with ligands more robustly!
+    """
+    try:
+        selected = apply_selection(atom_array, selection)
+    except ValueError:
+        return set()
+    if selected.array_length() == 0:
+        return set()
+    return {
+        (str(c), int(r)) for c, r in zip(np.asarray(selected.chain_id), np.asarray(selected.res_id))
+    }
+
+
 def extract_selection_coordinates(
     atom_array: AtomArray | AtomArrayStack, selection: str
 ) -> np.ndarray:
