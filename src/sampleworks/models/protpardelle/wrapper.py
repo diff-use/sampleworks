@@ -705,6 +705,7 @@ class ProtpardelleWrapper:
         )
 
         # pass the self-conditioning to the next step by updating the features.
+        # TODO: I wonder if we need to adjust this since we will apply additional guidance.
         features.conditioning.x_self_conditioning = x_self_cond
 
         # x0: [batch, L, 37, 3]. Masked-out atom slots are zeroed during
@@ -714,7 +715,7 @@ class ProtpardelleWrapper:
         atom_mask_2d = cond.atom_mask[0].to(device=x0.device).bool()  # [L, 37]
         flat_coords = x0[:, atom_mask_2d]  # [batch, atoms, 3]
 
-        return flat_coords.float()
+        return flat_coords
 
     # This just generates the input noise. When doing partial diffusion, the
     # noise is added to the input coordinates with some weight..
