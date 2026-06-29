@@ -30,7 +30,7 @@ env:
 jobs:
   sync_checkpoints:
     name: Sync checkpoints to Docker Hub
-    runs-on: astera-sh-builder
+    runs-on: diffuse-sh-builder
     permissions:
       contents: read
     outputs:
@@ -105,7 +105,7 @@ jobs:
 
   public:
     name: Public pixi-with-checkpoints image
-    runs-on: astera-sh-builder
+    runs-on: diffuse-sh-builder
     needs: sync_checkpoints
     permissions:
       contents: read
@@ -177,7 +177,7 @@ jobs:
 
   astera:
     name: Astera EXT image
-    runs-on: astera-sh-builder
+    runs-on: diffuse-sh-builder
     needs: public
     permissions:
       contents: read
