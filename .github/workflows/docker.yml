@@ -23,7 +23,7 @@ env:
 
   ASTERA_REGISTRY: harbor.astera.sh
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
-  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2bfc4bce3224a5940708fbaf7c161a2ef395ab272b568b3abfaf3ca48164b63d
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
