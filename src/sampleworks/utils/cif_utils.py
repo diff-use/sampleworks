@@ -247,6 +247,27 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
     return tmp_path
 
 
+def _resolve_block(ciffile: CIFFile, block_name: str | None):
+    """Return the target CIFBlock, defaulting to the sole block when block_name is None.
+
+    Raises ValueError if the file is empty, or is multi-block and no block_name was given,
+    or the named block does not exist.
+    """
+    if block_name is None:
+        # CIFFile is a Mapping, so inherits .keys(), which ultimately iterates over blocks
+        blocks = list(ciffile.keys())
+        if len(blocks) == 0:
+            raise ValueError("CIFFile has no blocks. Cannot add category.")
+        if len(blocks) > 1:
+            raise ValueError(
+                f"CIFFile has multiple blocks: {blocks}. Please specify block_name parameter."
+            )
+        return ciffile[blocks[0]]
+    if block_name not in ciffile:
+        raise ValueError(f"Block '{block_name}' not found in CIFFile.")
+    return ciffile[block_name]
+
+
 def add_category_to_cif(
     ciffile: CIFFile,
     data: dict[str, Any],
@@ -297,21 +318,7 @@ def add_category_to_cif(
     _sampleworks_metadata.sampleworks_version 0.4.0
     _sampleworks_metadata.pdb_id              1L63
     """
-    # Determine which block to use
-    if block_name is None:
-        # CIFFile is a Mapping, so inherits .keys(), which ultimately iterates over blocks
-        blocks = list(ciffile.keys())
-        if len(blocks) == 0:
-            raise ValueError("CIFFile has no blocks. Cannot add category.")
-        elif len(blocks) > 1:
-            raise ValueError(
-                f"CIFFile has multiple blocks: {blocks}. Please specify block_name parameter."
-            )
-        block = ciffile[blocks[0]]
-    else:
-        if block_name not in ciffile:
-            raise ValueError(f"Block '{block_name}' not found in CIFFile.")
-        block = ciffile[block_name]
+    block = _resolve_block(ciffile, block_name)
 
     # Check if a category with name category_name already exists
     if category_name in block and not overwrite:
@@ -330,3 +337,73 @@ def _normalize_nulls(value: Any) -> Any:
     if isinstance(value, Iterable) and not isinstance(value, str | bytes):
         return ["?" if item is None else item for item in value]
     return "?" if value is None else value
+
+
+def _unique_preserve(values: Iterable[Any]) -> list[str]:
+    """Unique string values, preserving first-seen order (handles numpy str scalars)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        s = str(v)
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def add_completeness_categories(
+    ciffile: CIFFile,
+    block_name: str | None = None,
+    overwrite: bool = False,
+) -> None:
+    """Add the minimal parent categories required to pass the PDBe mmcif-validator.
+
+    The validator errors when an ``_atom_site`` item references a parent category that
+    is absent. For a sampleworks output CIF (which carries only ``_atom_site`` and the
+    custom ``_sampleworks`` category) the three blocking parents are:
+
+    ===========================  ==================  ====================
+    child item                   parent category     parent item written
+    ===========================  ==================  ====================
+    ``_atom_site.type_symbol``   ``atom_type``       ``_atom_type.symbol``
+    ``_atom_site.label_comp_id`` ``chem_comp``       ``_chem_comp.id``
+    ``_atom_site.label_entity_id`` ``entity``        ``_entity.id``
+    ===========================  ==================  ====================
+
+    Values are read from the ``_atom_site`` loop *as written* so the parent ids match the
+    child references exactly. This deliberately sidesteps the writer's ``chain_entity`` vs
+    ``label_entity_id`` discrepancy: whatever entity id ``set_structure`` actually emitted
+    into ``_atom_site`` is what ``_entity.id`` will list.
+
+    Must be called AFTER ``set_structure`` has populated ``_atom_site``.
+
+    Parameters
+    ----------
+    ciffile : CIFFile
+        The CIF file object to modify in place.
+    block_name : str | None, optional
+        Block to operate on. If None, the sole block is used (error if multi-block).
+    overwrite : bool, optional
+        If False and any of the categories already exist, raise (via add_category_to_cif).
+    """
+    block = _resolve_block(ciffile, block_name)
+    if "atom_site" not in block:
+        raise ValueError(
+            "CIFFile block has no 'atom_site' category; call set_structure before "
+            "add_completeness_categories."
+        )
+    atom_site = block["atom_site"]
+
+    symbols = _unique_preserve(atom_site["type_symbol"].as_array(str))
+    comp_ids = _unique_preserve(atom_site["label_comp_id"].as_array(str))
+    entity_ids = _unique_preserve(atom_site["label_entity_id"].as_array(str))
+
+    add_category_to_cif(
+        ciffile, {"symbol": symbols}, "atom_type", overwrite=overwrite, block_name=block_name
+    )
+    add_category_to_cif(
+        ciffile, {"id": comp_ids}, "chem_comp", overwrite=overwrite, block_name=block_name
+    )
+    add_category_to_cif(
+        ciffile, {"id": entity_ids}, "entity", overwrite=overwrite, block_name=block_name
+    )

@@ -263,3 +263,56 @@ class AtomReconciler:
         result = model_template.clone()
         result[..., self.model_indices, :] = struct_coords[..., self.struct_indices, :]
         return result
+
+    def model_to_struct(
+        self,
+        model_coords: Float[torch.Tensor, "*batch n_model 3"],
+        struct_template: Float[torch.Tensor, "*batch n_struct 3"],
+    ) -> torch.Tensor:
+        """Map model atom coordinates to structure space (mirror of :meth:`struct_to_model`).
+
+        Copies common atoms from ``model_coords`` into a clone of ``struct_template``.
+        Differentiable through ``model_coords``. Non-common structure atoms keep their
+        ``struct_template`` positions.
+
+        Parameters
+        ----------
+        model_coords
+            Coordinates in model space, shape ``(*batch, n_model, 3)``.
+        struct_template
+            Template in structure space, shape ``(*batch, n_struct, 3)``.
+
+        Returns
+        -------
+        Tensor
+            Structure-space coordinates, shape ``(*batch, n_struct, 3)``.
+        """
+        if model_coords.shape[-2] != self.n_model:
+            raise ValueError(
+                f"Expected model_coords with {self.n_model} atoms, got {model_coords.shape[-2]}"
+            )
+        if struct_template.shape[-2] != self.n_struct:
+            raise ValueError(
+                f"Expected struct_template with {self.n_struct} atoms, got {struct_template.shape[-2]}"
+            )
+
+        result = struct_template.clone()
+        result[..., self.struct_indices, :] = model_coords[..., self.model_indices, :]
+        return result
+
+    def model_common_coords(
+        self,
+        model_coords: Float[torch.Tensor, "*batch n_model 3"],
+    ) -> torch.Tensor:
+        """Gather the common-atom coordinates out of model space.
+
+        Returns the subset of ``model_coords`` that the reconciler matched to structure
+        atoms, in reconciler (``model_indices``) order, shape ``(*batch, n_common, 3)``.
+        The matching structure atoms are ``struct_array[self.struct_indices]`` in the same
+        order, so the result can be written straight onto a structure-numbered template.
+        """
+        if model_coords.shape[-2] != self.n_model:
+            raise ValueError(
+                f"Expected model_coords with {self.n_model} atoms, got {model_coords.shape[-2]}"
+            )
+        return model_coords[..., self.model_indices, :]

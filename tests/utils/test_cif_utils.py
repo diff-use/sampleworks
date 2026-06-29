@@ -7,9 +7,13 @@ import numpy as np
 import pytest
 from atomworks.io.utils.io_utils import load_any
 from biotite.structure import array, Atom, AtomArray, AtomArrayStack
-from biotite.structure.io.pdbx.cif import CIFColumn, CIFFile
+from biotite.structure.io.pdbx.cif import CIFBlock, CIFColumn, CIFFile
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
-from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.cif_utils import (
+    add_category_to_cif,
+    add_completeness_categories,
+    resolve_mixed_hetatm_atom_altlocs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +381,103 @@ class TestAddCategoryToCif:
         category = block["test_category"]
         # Verify None was replaced (with "none" or "?" depending on implementation)
         assert "missing" in category
+
+
+# ---------------------------------------------------------------------------
+# Tests for add_completeness_categories
+# ---------------------------------------------------------------------------
+
+
+def _cif_with_atom_site(type_symbol, label_comp_id, label_entity_id) -> CIFFile:
+    """A minimal CIFFile carrying only a synthetic _atom_site loop.
+
+    Mirrors a sampleworks output: _atom_site present, parent categories absent. The three
+    columns are set directly so the test does not depend on the writer's column choices
+    (notably the chain_entity vs label_entity_id behaviour of the patched set_structure).
+    """
+    cif = CIFFile()
+    cif["structure"] = CIFBlock()
+    add_category_to_cif(
+        cif,
+        {
+            "type_symbol": list(type_symbol),
+            "label_comp_id": list(label_comp_id),
+            "label_entity_id": list(label_entity_id),
+        },
+        "atom_site",
+        block_name="structure",
+    )
+    return cif
+
+
+class TestAddCompletenessCategories:
+    """add_completeness_categories synthesizes the parent categories the mmcif-validator needs."""
+
+    def test_creates_the_three_parent_categories(self):
+        cif = _cif_with_atom_site(
+            type_symbol=["N", "C", "C", "O", "S", "C"],
+            label_comp_id=["ALA", "ALA", "CYS", "CYS", "CYS", "GLY"],
+            label_entity_id=["1", "1", "1", "1", "1", "1"],
+        )
+        add_completeness_categories(cif)
+        block = cif["structure"]
+        assert "atom_type" in block
+        assert "chem_comp" in block
+        assert "entity" in block
+
+    def test_parent_ids_cover_atom_site_children_in_first_seen_order(self):
+        """The parent ids must be exactly the unique child references (the validator invariant)."""
+        cif = _cif_with_atom_site(
+            type_symbol=["N", "C", "C", "O", "S", "C"],
+            label_comp_id=["ALA", "ALA", "CYS", "CYS", "CYS", "GLY"],
+            label_entity_id=["1", "1", "1", "1", "1", "1"],
+        )
+        add_completeness_categories(cif)
+        block = cif["structure"]
+        assert list(block["atom_type"]["symbol"].as_array(str)) == ["N", "C", "O", "S"]
+        assert list(block["chem_comp"]["id"].as_array(str)) == ["ALA", "CYS", "GLY"]
+        assert list(block["entity"]["id"].as_array(str)) == ["1"]
+
+    def test_multiple_entities_are_all_listed(self):
+        cif = _cif_with_atom_site(
+            type_symbol=["C", "C"],
+            label_comp_id=["ALA", "HOH"],
+            label_entity_id=["1", "2"],
+        )
+        add_completeness_categories(cif)
+        assert list(cif["structure"]["entity"]["id"].as_array(str)) == ["1", "2"]
+
+    def test_survives_write_and_read_back(self, tmp_path):
+        cif = _cif_with_atom_site(
+            type_symbol=["N", "C", "S"],
+            label_comp_id=["ALA", "CYS", "CYS"],
+            label_entity_id=["1", "1", "1"],
+        )
+        add_completeness_categories(cif)
+        out = tmp_path / "completed.cif"
+        cif.write(str(out))
+
+        reloaded = CIFFile.read(str(out))
+        block = reloaded[list(reloaded.keys())[0]]
+        assert set(block["atom_type"]["symbol"].as_array(str)) == {"N", "C", "S"}
+        assert set(block["chem_comp"]["id"].as_array(str)) == {"ALA", "CYS"}
+        assert list(block["entity"]["id"].as_array(str)) == ["1"]
+
+    def test_missing_atom_site_raises(self):
+        cif = CIFFile()
+        cif["structure"] = CIFBlock()
+        with pytest.raises(ValueError, match="no 'atom_site'"):
+            add_completeness_categories(cif)
+
+    def test_existing_category_raises_without_overwrite(self):
+        cif = _cif_with_atom_site(["C"], ["ALA"], ["1"])
+        add_completeness_categories(cif)
+        with pytest.raises(RuntimeError, match="already exists"):
+            add_completeness_categories(cif)
+
+    def test_overwrite_reruns_cleanly(self):
+        cif = _cif_with_atom_site(["C"], ["ALA"], ["1"])
+        add_completeness_categories(cif)
+        # idempotent when overwrite is allowed
+        add_completeness_categories(cif, overwrite=True)
+        assert list(cif["structure"]["chem_comp"]["id"].as_array(str)) == ["ALA"]

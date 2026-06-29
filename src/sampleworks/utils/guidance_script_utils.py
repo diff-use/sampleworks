@@ -29,7 +29,11 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
-from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.cif_utils import (
+    add_category_to_cif,
+    add_completeness_categories,
+    resolve_mixed_hetatm_atom_altlocs,
+)
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -339,6 +343,9 @@ def save_everything(
     final_structure = CIFFile()
     set_structure(final_structure, atom_array)
     add_category_to_cif(final_structure, metadata, category_name="sampleworks")
+    # Add the minimal parent categories (atom_type/chem_comp/entity) so the output passes
+    # the PDBe mmcif-validator's dictionary parent-child checks (issue #68, R2 completeness).
+    add_completeness_categories(final_structure)
     final_structure.write(str(output_dir / "refined.cif"))
 
     # job_metadata.json (config + JobResult) is written by run_guidance after this returns;
