@@ -375,6 +375,13 @@ def add_completeness_categories(
     ``label_entity_id`` discrepancy: whatever entity id ``set_structure`` actually emitted
     into ``_atom_site`` is what ``_entity.id`` will list.
 
+    Additionally, when the structure was built from the input array, the
+    writer also emits ``_struct_conn`` (from bonds) and ``_cell`` (from the box). Those are
+    completed too: ``struct_conn_type`` is synthesized as the parent of
+    ``_struct_conn.conn_type_id``, and ``_cell.entry_id`` (plus its ``_entry`` parent) is
+    added. Both are skipped when the categories are absent, so the bare-predictor path is
+    unaffected.
+
     Must be called AFTER ``set_structure`` has populated ``_atom_site``.
 
     Parameters
@@ -407,3 +414,37 @@ def add_completeness_categories(
     add_category_to_cif(
         ciffile, {"id": entity_ids}, "entity", overwrite=overwrite, block_name=block_name
     )
+
+    # atomworks/biotite writer serializes the input's connectivity (_struct_conn, from
+    # the BondList) and unit cell (_cell, from the array box). Both are incomplete as written
+    # and fail the validator. Complete them here. These blocks are no-ops when the categories
+    # are absent (e.g. bare predictor output), so the non-renumber path is unchanged.
+    if (
+        "struct_conn" in block
+        and "conn_type_id" in block["struct_conn"]
+        and "struct_conn_type" not in block
+    ):
+        conn_types = _unique_preserve(block["struct_conn"]["conn_type_id"].as_array(str))
+        add_category_to_cif(
+            ciffile,
+            {"id": conn_types},
+            "struct_conn_type",
+            overwrite=overwrite,
+            block_name=block_name,
+        )
+
+    if "cell" in block:
+        # _cell.entry_id is mandatory and is a child of _entry.id, so provide both with a
+        # consistent value (the data block name).
+        resolved_block_name = block_name if block_name is not None else list(ciffile.keys())[0]
+        entry_id = resolved_block_name or "sampleworks"
+        if "entry" not in block:
+            add_category_to_cif(
+                ciffile, {"id": [entry_id]}, "entry", overwrite=overwrite, block_name=block_name
+            )
+        if "entry_id" not in block["cell"]:
+            cell = block["cell"]
+            # Preserve the existing cell parameters (length/angle) and add entry_id.
+            cell_data = {"entry_id": [entry_id]}
+            cell_data.update({key: list(cell[key].as_array(str)) for key in cell.keys()})
+            add_category_to_cif(ciffile, cell_data, "cell", overwrite=True, block_name=block_name)

@@ -410,6 +410,31 @@ def _cif_with_atom_site(type_symbol, label_comp_id, label_entity_id) -> CIFFile:
     return cif
 
 
+def _add_struct_conn_and_cell(cif: CIFFile) -> CIFFile:
+    """Augment the synthetic CIF with the incomplete _struct_conn / _cell that the writer
+    emits on the R2b renumber path (input bonds -> _struct_conn, input box -> _cell)."""
+    add_category_to_cif(
+        cif,
+        {"id": ["1", "2"], "conn_type_id": ["disulf", "covale"]},
+        "struct_conn",
+        block_name="structure",
+    )
+    add_category_to_cif(
+        cif,
+        {
+            "length_a": ["78.5"],
+            "length_b": ["78.5"],
+            "length_c": ["37.0"],
+            "angle_alpha": ["90.0"],
+            "angle_beta": ["90.0"],
+            "angle_gamma": ["120.0"],
+        },
+        "cell",
+        block_name="structure",
+    )
+    return cif
+
+
 class TestAddCompletenessCategories:
     """add_completeness_categories synthesizes the parent categories the mmcif-validator needs."""
 
@@ -481,3 +506,45 @@ class TestAddCompletenessCategories:
         # idempotent when overwrite is allowed
         add_completeness_categories(cif, overwrite=True)
         assert list(cif["structure"]["chem_comp"]["id"].as_array(str)) == ["ALA"]
+
+    def test_struct_conn_type_parent_synthesized(self):
+        cif = _add_struct_conn_and_cell(_cif_with_atom_site(["C"], ["ALA"], ["1"]))
+        add_completeness_categories(cif)
+        block = cif["structure"]
+        assert "struct_conn_type" in block
+        # parent ids are exactly the unique conn_type_id child references
+        assert list(block["struct_conn_type"]["id"].as_array(str)) == ["disulf", "covale"]
+
+    def test_cell_entry_id_and_entry_parent_added(self):
+        cif = _add_struct_conn_and_cell(_cif_with_atom_site(["C"], ["ALA"], ["1"]))
+        add_completeness_categories(cif)
+        block = cif["structure"]
+        # _cell gains the mandatory entry_id; original cell params are preserved
+        assert "entry_id" in block["cell"]
+        assert list(block["cell"]["length_a"].as_array(str)) == ["78.5"]
+        # _entry parent exists and its id matches _cell.entry_id
+        assert "entry" in block
+        assert (
+            list(block["cell"]["entry_id"].as_array(str))
+            == list(block["entry"]["id"].as_array(str))
+        )
+
+    def test_no_cell_or_struct_conn_is_a_noop(self):
+        """The bare-predictor path (no _cell/_struct_conn) is unchanged."""
+        cif = _cif_with_atom_site(["C"], ["ALA"], ["1"])
+        add_completeness_categories(cif)
+        block = cif["structure"]
+        assert "struct_conn_type" not in block
+        assert "entry" not in block
+        assert "cell" not in block
+
+    def test_struct_conn_and_cell_survive_write_and_read_back(self, tmp_path):
+        cif = _add_struct_conn_and_cell(_cif_with_atom_site(["C"], ["ALA"], ["1"]))
+        add_completeness_categories(cif)
+        out = tmp_path / "completed_full.cif"
+        cif.write(str(out))
+        reloaded = CIFFile.read(str(out))
+        block = reloaded[list(reloaded.keys())[0]]
+        assert "struct_conn_type" in block
+        assert "entry_id" in block["cell"]
+        assert "entry" in block
