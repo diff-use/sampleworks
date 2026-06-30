@@ -6,13 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 from atomworks.io.utils.io_utils import load_any
-from biotite.structure import array, Atom, AtomArray, AtomArrayStack
+from biotite.structure import array, Atom, AtomArray, AtomArrayStack, stack
+from biotite.structure.io.pdbx import set_structure
 from biotite.structure.io.pdbx.cif import CIFBlock, CIFColumn, CIFFile
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
 from sampleworks.utils.cif_utils import (
     add_category_to_cif,
     add_completeness_categories,
+    carry_entity_categories,
     copy_custom_categories,
+    extract_model,
+    fetch_rcsb_cif,
+    model_numbers,
     read_category_from_cif,
     resolve_mixed_hetatm_atom_altlocs,
 )
@@ -644,3 +649,202 @@ class TestRoundTripPreservesSampleworks:
         out = tmp_path / "bare.cif"
         save_structure_to_cif(_load(orig), out)
         assert read_category_from_cif(out, "sampleworks") is None
+
+
+# ---------------------------------------------------------------------------
+# carry_entity_categories / extract_model / model_numbers / fetch_rcsb_cif
+# ---------------------------------------------------------------------------
+
+
+def _structure_cif(atoms: list[Atom], model_count: int = 1) -> CIFFile:
+    """Build a CIFFile with a populated _atom_site from atoms (optionally an N-model stack)."""
+    arr = array(atoms)
+    arr.set_annotation("occupancy", np.ones(len(atoms), dtype=np.float32))
+    arr.set_annotation("b_factor", np.zeros(len(atoms), dtype=np.float32))
+    structure = stack([arr.copy() for _ in range(model_count)]) if model_count > 1 else arr
+    cif = CIFFile()
+    set_structure(cif, structure)
+    return cif
+
+
+def _reference_cif(entity: dict, entity_poly: dict, eps: dict | None) -> CIFFile:
+    """Build a reference deposit CIFFile carrying entity / entity_poly / entity_poly_seq."""
+    cif = CIFFile()
+    cif["ref"] = CIFBlock()
+    add_category_to_cif(cif, entity, "entity", block_name="ref")
+    add_category_to_cif(cif, entity_poly, "entity_poly", block_name="ref")
+    if eps is not None:
+        add_category_to_cif(cif, eps, "entity_poly_seq", block_name="ref")
+    return cif
+
+
+def _sole_block(cif: CIFFile) -> CIFBlock:
+    return cif[list(cif.keys())[0]]
+
+
+class TestCarryEntityCategories:
+    def test_relabels_and_subsets(self):
+        """Real entity is relabelled to the output id, stranded to the kept chain, num verbatim."""
+        dst = _structure_cif(
+            [
+                _atom("A", 9, "VAL", False),
+                _atom("A", 10, "CYS", False),
+                _atom("A", 11, "ALA", False),
+                _atom("A", 12, "GLY", False),
+            ]
+        )
+        ref = _reference_cif(
+            entity={"id": ["1"], "type": ["polymer"], "pdbx_description": ["Test"]},
+            entity_poly={
+                "entity_id": ["1"],
+                "type": ["polypeptide(L)"],
+                "pdbx_strand_id": ["A,B"],
+            },
+            eps={
+                "entity_id": ["1"] * 4,
+                "num": ["1", "2", "3", "4"],
+                "mon_id": ["VAL", "CYS", "ALA", "GLY"],
+                "hetero": ["n"] * 4,
+            },
+        )
+        written = carry_entity_categories(dst, ref, output_entity_id="0", reconcile=False)
+        assert set(written) == {
+            "entity",
+            "entity_poly",
+            "entity_poly_seq",
+            "struct_asym",
+            "chem_comp",
+        }
+        block = _sole_block(dst)
+        assert list(block["entity"]["id"].as_array(str)) == ["0"]
+        assert list(block["entity"]["type"].as_array(str)) == ["polymer"]
+        assert list(block["entity_poly"]["entity_id"].as_array(str)) == ["0"]
+        assert list(block["entity_poly"]["pdbx_strand_id"].as_array(str)) == ["A"]
+        assert list(block["entity_poly_seq"]["entity_id"].as_array(str)) == ["0"] * 4
+        assert list(block["entity_poly_seq"]["num"].as_array(str)) == ["1", "2", "3", "4"]
+        assert list(block["struct_asym"]["id"].as_array(str)) == ["A"]
+        assert list(block["struct_asym"]["entity_id"].as_array(str)) == ["0"]
+
+    def test_reconcile_shifts_num(self):
+        """reconcile=True renumbers entity_poly_seq.num onto the output's label_seq_id scheme."""
+        dst = _structure_cif(
+            [
+                _atom("A", 109, "VAL", False),
+                _atom("A", 110, "CYS", False),
+                _atom("A", 111, "ALA", False),
+                _atom("A", 112, "GLY", False),
+            ]
+        )
+        mons = ["SER"] * 8 + ["VAL", "CYS", "ALA", "GLY"]
+        ref = _reference_cif(
+            entity={"id": ["1"], "type": ["polymer"]},
+            entity_poly={"entity_id": ["1"], "type": ["polypeptide(L)"], "pdbx_strand_id": ["A"]},
+            eps={
+                "entity_id": ["1"] * 12,
+                "num": [str(i) for i in range(1, 13)],
+                "mon_id": mons,
+                "hetero": ["n"] * 12,
+            },
+        )
+        carry_entity_categories(dst, ref, output_entity_id="0", reconcile=True)
+        nums = list(_sole_block(dst)["entity_poly_seq"]["num"].as_array(str))
+        assert nums == [str(i) for i in range(101, 113)]  # shifted by +100
+
+    def test_selects_entity_by_chain(self):
+        """With multiple polymer entities, the one whose strand covers the kept chain is carried."""
+        dst = _structure_cif([_atom("B", 1, "SER", False), _atom("B", 2, "THR", False)])
+        ref = _reference_cif(
+            entity={"id": ["1", "2"], "type": ["polymer", "polymer"]},
+            entity_poly={
+                "entity_id": ["1", "2"],
+                "type": ["polypeptide(L)", "polypeptide(L)"],
+                "pdbx_strand_id": ["A", "B"],
+            },
+            eps={
+                "entity_id": ["1", "1", "2", "2"],
+                "num": ["1", "2", "1", "2"],
+                "mon_id": ["ALA", "GLY", "SER", "THR"],
+                "hetero": ["n"] * 4,
+            },
+        )
+        carry_entity_categories(dst, ref, output_entity_id="0", reconcile=False)
+        block = _sole_block(dst)
+        assert list(block["entity_poly_seq"]["mon_id"].as_array(str)) == ["SER", "THR"]
+        assert list(block["entity_poly_seq"]["entity_id"].as_array(str)) == ["0", "0"]
+        assert list(block["entity_poly"]["pdbx_strand_id"].as_array(str)) == ["B"]
+
+    def test_chem_comp_covers_unmodeled_seq_residues(self):
+        """_chem_comp must include canonical residues absent from the modeled atom_site.
+
+        ``_entity_poly_seq.mon_id`` is a foreign key into ``_chem_comp.id``; the carried canonical
+        sequence can reference residues (e.g. an N-terminal MET) that the modeled atom_site lacks,
+        which mmcif-validatorflags unless _chem_comp is extended to the union.
+        """
+        dst = _structure_cif([_atom("A", 9, "VAL", False), _atom("A", 10, "CYS", False)])
+        ref = _reference_cif(
+            entity={"id": ["1"], "type": ["polymer"]},
+            entity_poly={"entity_id": ["1"], "type": ["polypeptide(L)"], "pdbx_strand_id": ["A"]},
+            eps={
+                "entity_id": ["1"] * 3,
+                "num": ["1", "9", "10"],
+                "mon_id": ["MET", "VAL", "CYS"],  # MET (pos 1) is not in the modeled atom_site
+                "hetero": ["n"] * 3,
+            },
+        )
+        carry_entity_categories(dst, ref, output_entity_id="0", reconcile=False)
+        chem = set(_sole_block(dst)["chem_comp"]["id"].as_array(str))
+        assert {"MET", "VAL", "CYS"} <= chem
+
+    def test_missing_reference_categories_raises(self):
+        """A reference without the polymer-entity categories raises so callers can degrade."""
+        dst = _structure_cif([_atom("A", 1, "ALA", False)])
+        ref = CIFFile()
+        ref["ref"] = CIFBlock()
+        add_category_to_cif(ref, {"id": ["1"], "type": ["polymer"]}, "entity", block_name="ref")
+        with pytest.raises(ValueError, match="lacks"):
+            carry_entity_categories(dst, ref, output_entity_id="0")
+
+
+class TestExtractModel:
+    def test_model_numbers_and_extract_preserves_categories(self):
+        cif = _structure_cif(
+            [_atom("A", 1, "ALA", False), _atom("A", 2, "GLY", False)], model_count=3
+        )
+        assert model_numbers(cif) == ["1", "2", "3"]
+        add_category_to_cif(cif, {"k": ["v"]}, "sampleworks")
+        extract_model(cif, "2")
+        block = _sole_block(cif)
+        assert set(block["atom_site"]["pdbx_PDB_model_num"].as_array(str)) == {"2"}
+        assert "sampleworks" in block  # non-atom_site categories survive extraction
+        assert model_numbers(cif) == ["2"]
+
+    def test_single_model_extract_is_noop(self):
+        cif = _structure_cif([_atom("A", 1, "ALA", False)])
+        extract_model(cif, "1")  # must not raise
+        assert model_numbers(cif) == ["1"]
+
+    def test_missing_model_raises(self):
+        cif = _structure_cif([_atom("A", 1, "ALA", False)], model_count=2)
+        with pytest.raises(ValueError, match="not in atom_site"):
+            extract_model(cif, "9")
+
+
+def test_fetch_rcsb_cif_caches(tmp_path, monkeypatch):
+    """fetch_rcsb_cif creates the cache dir and delegates to biotite's fetch with format=cif."""
+    calls: dict = {}
+
+    def fake_fetch(pdb_id, **kwargs):
+        calls["pdb_id"] = pdb_id
+        calls.update(kwargs)
+        out = Path(kwargs["target_path"]) / f"{pdb_id}.cif"
+        out.write_text("data_x\n")
+        return str(out)
+
+    monkeypatch.setattr("biotite.database.rcsb.fetch", fake_fetch)
+    cache = tmp_path / "rcsb"
+    result = fetch_rcsb_cif("1abc", cache=cache)
+    assert result == cache / "1abc.cif"
+    assert calls["pdb_id"] == "1abc"
+    assert calls["format"] == "cif"
+    assert Path(calls["target_path"]) == cache
+    assert cache.is_dir()

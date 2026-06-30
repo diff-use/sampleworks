@@ -6,7 +6,7 @@ import pickle
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -33,6 +33,8 @@ from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.cif_utils import (
     add_category_to_cif,
     add_completeness_categories,
+    carry_entity_categories,
+    fetch_rcsb_cif,
     resolve_mixed_hetatm_atom_altlocs,
 )
 from sampleworks.utils.guidance_constants import (
@@ -46,6 +48,10 @@ from sampleworks.utils.guidance_script_arguments import (
     validate_model_checkpoint,
 )
 from sampleworks.utils.msa import MSAManager
+
+
+if TYPE_CHECKING:
+    from biotite.structure.io.pdbx import CIFFile
 
 
 # The following imports aren't compatible with each other and are supported in separate
@@ -390,6 +396,11 @@ def save_everything(
     # Add the minimal parent categories (atom_type/chem_comp/entity) so the output passes
     # the PDBe mmcif-validator's dictionary parent-child checks (issue #68, R2 completeness).
     add_completeness_categories(final_structure)
+    # Upgrade the stub _entity to the depositor's REAL _entity/_entity_poly/_entity_poly_seq,
+    # re-fetched from RCSB by pdb id. A typeless stub _entity is fatal to
+    # tortoize; carrying the real typed categories is the only thing that passes both
+    # mmcif-validator  and tortoize. Best-effort -- see the helper.
+    _carry_real_entity_categories(final_structure, args.protein)
     final_structure.write(str(output_dir / "refined.cif"))
 
     # job_metadata.json (config + JobResult) is written by run_guidance after this returns;
@@ -421,6 +432,35 @@ def save_everything(
         logger.info(f"Loss reduction: {valid_losses[0] - valid_losses[-1]:.6f}")
 
     logger.info(f"\nResults saved to {output_dir}/")
+
+
+def _carry_real_entity_categories(ciffile: CIFFile, pdb_id: str) -> None:
+    """Replace the stub ``_entity`` with the depositor's real polymer-entity categories from RCSB.
+
+    Re-fetches the original deposit (cached at ``~/.sampleworks/rcsb``) and grafts its typed
+    ``_entity`` / ``_entity_poly`` / ``_entity_poly_seq`` onto ``ciffile``, reconciling the
+    sequence numbering onto the output's ``label_seq_id`` (``reconcile=True``; a no-op when the
+    deposit already aligns). The output entity id is taken from the written ``_atom_site`` so the
+    parent matches the child.
+
+    Best-effort: any failure (offline, multi-entity, irreconcilable numbering) is logged and
+    swallowed, leaving the minimal ``add_completeness_categories`` synthesis in place so a fetch
+    hiccup never fails a run.
+    """
+    try:
+        block = ciffile[list(ciffile.keys())[0]]
+        entity_ids = list(dict.fromkeys(block["atom_site"]["label_entity_id"].as_array(str)))
+        output_entity_id = entity_ids[0] if len(entity_ids) == 1 else "0"
+        reference = fetch_rcsb_cif(pdb_id)
+        written = carry_entity_categories(
+            ciffile, reference, output_entity_id=str(output_entity_id), reconcile=True
+        )
+        logger.info(f"Carried real entity categories from {pdb_id}: {written}")
+    except Exception as e:  # noqa: BLE001 - provenance upgrade must never fail the run
+        logger.warning(
+            f"Could not carry real entity categories for {pdb_id} ({e}); "
+            "keeping minimal _entity synthesis."
+        )
 
 
 #####################
