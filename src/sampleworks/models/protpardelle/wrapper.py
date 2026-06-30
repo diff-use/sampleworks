@@ -708,8 +708,9 @@ class ProtpardelleWrapper:
         )
 
         # pass the self-conditioning to the next step by updating the features.
+        # Detach it since we don't want the gradient flowing back to a previous step.
         # TODO: I wonder if we need to adjust this since we will apply additional guidance.
-        features.conditioning.x_self_conditioning = x_self_cond
+        features.conditioning.x_self_conditioning = x_self_cond.detach()
 
         # x0: [batch, L, 37, 3]. Masked-out atom slots are zeroed during
         # ai-allatom sampling, so select the correct atoms via the atom37 mask.

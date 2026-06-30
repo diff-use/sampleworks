@@ -256,7 +256,8 @@ def require_any_model(message: str | None = None) -> Callable[[F], F]:
     default_message = (
         "No model wrappers are available. "
         "Please install at least one model wrapper with the appropriate feature group: "
-        "'pixi install -e boltz', 'pixi install -e protenix', or 'pixi install -e rf3'"
+        "'pixi install -e boltz', 'pixi install -e protpardelle', or "
+        "'pixi install -e protenix', or 'pixi install -e rf3'"
     )
 
     def decorator(func: F) -> F:
