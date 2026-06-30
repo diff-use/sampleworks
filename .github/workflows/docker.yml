@@ -23,7 +23,7 @@ env:
 
   ASTERA_REGISTRY: harbor.astera.sh
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
-  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2bfc4bce3224a5940708fbaf7c161a2ef395ab272b568b3abfaf3ca48164b63d
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      checkpoints_image: ${{ steps.verify_checkpoints.outputs.checkpoints_image }}
+      checkpoints_digest: ${{ steps.verify_checkpoints.outputs.checkpoints_digest }}
 
     steps:
       - name: Copy checkpoint image to Docker Hub
@@ -99,9 +99,7 @@ jobs:
             exit 1
           fi
 
-          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
-          dockerhub_ref="${dockerhub_ref%:*}"
-          echo "checkpoints_image=${dockerhub_ref}@${actual_digest}" >> "$GITHUB_OUTPUT"
+          echo "checkpoints_digest=${actual_digest}" >> "$GITHUB_OUTPUT"
 
   public:
     name: Public pixi-with-checkpoints image
@@ -110,7 +108,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      image-ref: ${{ steps.public-ref.outputs.image }}
+      image-digest: ${{ steps.public-build.outputs.digest }}
 
     steps:
       - name: Checkout code
@@ -139,14 +137,22 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
-      - name: Validate mirrored checkpoint image input
+      - name: Resolve mirrored checkpoint image input
+        id: checkpoint-ref
         env:
-          CHECKPOINTS_IMAGE: ${{ needs.sync_checkpoints.outputs.checkpoints_image }}
+          CHECKPOINTS_DIGEST: ${{ needs.sync_checkpoints.outputs.checkpoints_digest }}
         run: |
-          if [ -z "${CHECKPOINTS_IMAGE}" ]; then
-            echo "sync-checkpoints did not produce a digest-pinned checkpoint image ref."
+          if [ -z "${CHECKPOINTS_DIGEST}" ]; then
+            echo "sync-checkpoints did not produce a checkpoint digest."
             exit 1
           fi
+          if [ "${CHECKPOINTS_DIGEST}" = "${CHECKPOINTS_DIGEST#sha256:}" ]; then
+            echo "sync-checkpoints produced a non-sha256 digest: ${CHECKPOINTS_DIGEST}"
+            exit 1
+          fi
+          dockerhub_ref="${CHECKPOINTS_DOCKERHUB_IMAGE%@*}"
+          dockerhub_ref="${dockerhub_ref%:*}"
+          echo "image=${dockerhub_ref}@${CHECKPOINTS_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push public image
         id: public-build
@@ -161,16 +167,10 @@ jobs:
           labels: ${{ steps.public-meta.outputs.labels }}
           build-args: |
             BASE_IMAGE=${{ env.CUDA_BASE_IMAGE }}
-            CHECKPOINTS_IMAGE=${{ needs.sync_checkpoints.outputs.checkpoints_image }}
+            CHECKPOINTS_IMAGE=${{ steps.checkpoint-ref.outputs.image }}
           cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max
+          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
-
-      - name: Publish public image ref for Astera overlay
-        id: public-ref
-        run: |
-          short_sha="${GITHUB_SHA:0:${DOCKER_METADATA_SHORT_SHA_LENGTH}}"
-          echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}:sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Public image digest
         run: echo "Public image pushed with digest ${{ steps.public-build.outputs.digest }}"
@@ -198,6 +198,13 @@ jobs:
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
+      - name: Login to public registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ${{ env.PUBLIC_REGISTRY }}
+          username: ${{ secrets.SAMPLEWORKS_PUBLIC_REGISTRY_USERNAME || secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.SAMPLEWORKS_PUBLIC_REGISTRY_PASSWORD || secrets.DOCKERHUB_TOKEN }}
+
       - name: Docker metadata for Astera image
         id: astera-meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
@@ -210,6 +217,19 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
+      - name: Validate public image digest
+        env:
+          PUBLIC_IMAGE_DIGEST: ${{ needs.public.outputs.image-digest }}
+        run: |
+          if [ -z "${PUBLIC_IMAGE_DIGEST}" ]; then
+            echo "public job did not produce an image digest."
+            exit 1
+          fi
+          if [ "${PUBLIC_IMAGE_DIGEST}" = "${PUBLIC_IMAGE_DIGEST#sha256:}" ]; then
+            echo "public job produced a non-sha256 digest: ${PUBLIC_IMAGE_DIGEST}"
+            exit 1
+          fi
+
       - name: Build and push Astera image
         id: astera-build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
@@ -221,9 +241,9 @@ jobs:
           tags: ${{ steps.astera-meta.outputs.tags }}
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
-            PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
+            PIXI_WITH_CHECKPOINTS_IMAGE=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}@${{ needs.public.outputs.image-digest }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max
+          cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
 
       - name: Astera image digest

@@ -61,7 +61,8 @@ FROM os-base AS source
 # Copy only what the runtime image needs. The package is installed as an editable
 # pixi dependency (`sampleworks = { editable = true, path = "." }`), so source
 # must remain in the public image.
-COPY pyproject.toml pixi.lock ./
+COPY pyproject.toml pixi.lock LICENSE README.md ./
+COPY analyses/ ./analyses/
 COPY experiments/ ./experiments/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
