@@ -179,6 +179,9 @@ rdkit = ">=2024.3.5,<2025.9"
 [tool.pixi.feature.rf3.pypi-dependencies]
 rc-foundry = {editable = true, extras = ["rf3"], git = "https://github.com/k-chrispens/foundry.git"}
 
+# Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
+# caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins
+# pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
 [tool.pixi.pypi-options.dependency-overrides]
 pandas = "==2.3.1"
 gemmi = "==0.6.7"
@@ -186,12 +189,6 @@ gemmi = "==0.6.7"
 
 [tool.pixi.pypi-dependencies]
 sampleworks = {editable = true, path = "."}
-
-# Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
-# caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins
-# pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
-[tool.pixi.pypi-options.dependency-overrides]
-pandas = "==2.3.1"
 
 [tool.pixi.system-requirements]
 cuda = "12"

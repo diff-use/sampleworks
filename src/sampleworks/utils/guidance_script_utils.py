@@ -5,6 +5,7 @@ import os
 import pickle
 import traceback
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -62,9 +63,12 @@ except ImportError:
     logger.warning("Failed to import RF3, hopefully you're running a different model")
 try:
     from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
-except ImportError:
+except (ImportError, OSError):  # OSError can arise from a missing model_params directory
     ProtpardelleWrapper = None  # ty:ignore[invalid-assignment]
-    logger.warning("Failed to import Protpardelle, hopefully you're running a different model")
+    logger.warning("Failed to import Protpardelle, hopefully you're running a different model. "
+                   "If you intended to use Protpardelle, please additionally check that the "
+                   "model_params directory exists. You may need to set the environment variable"
+                   "PROTPARDELLE_MODEL_PARAMS.")
 
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -225,7 +229,9 @@ def get_model_and_device(
         if ProtpardelleWrapper is None:
             raise ImportError("Protpardelle dependencies not installed")
         logger.debug(f"Loading Protpardelle model from {validated_checkpoint_path}")
-        config_path = protpardelle_config_path or "src/sampleworks/data/cc89_epoch415.yaml"
+        config_path = (
+            protpardelle_config_path or files("sampleworks.data").joinpath("cc89_epoch415.yaml")
+        )
         model_wrapper = ProtpardelleWrapper(
             config_path=str(Path(config_path).expanduser().resolve()),
             checkpoint_path=validated_checkpoint_path,
