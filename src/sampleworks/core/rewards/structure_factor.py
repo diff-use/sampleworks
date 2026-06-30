@@ -53,29 +53,101 @@ _CELL_LENGTH_REL_TOL = 1e-2
 _CELL_ANGLE_DEG_TOL = 0.5
 
 
-def _detect_mtz_metadata(mtzfile: str) -> tuple[gemmi.UnitCell, str | None, list[str]]:
-    """Read crystal metadata and the experimental column names from an MTZ.
+def _detect_mtz_metadata(
+    mtzfile: str,
+) -> tuple[gemmi.UnitCell, str | None, list[str], list[str]]:
+    """Read crystal metadata and experimental-column candidates from an MTZ.
 
-    Returns ``(unit_cell, space_group_hm, [amplitude_column, sigma_column])``. The
-    columns are the first structure-factor-amplitude and standard-deviation columns
-    (mirroring the amplitude auto-detection in
-    ``generate_synthetic_sf.process_amplitudes_to_dataset``, but detecting the sigma
-    column too rather than assuming a ``SIG`` prefix). Used to fill any crystal /
-    column config the caller left as ``None``.
+    Parameters
+    ----------
+    mtzfile
+        Path to the MTZ to read.
+
+    Returns
+    -------
+    tuple
+        ``(unit_cell, space_group_hm, amplitude_columns, sigma_columns)``, where the last
+        two are *all* structure-factor-amplitude and standard-deviation columns found.
+        Pairing/selecting among them is left to :func:`_resolve_expcolumns`.
+
+    Raises
+    ------
+    ValueError
+        If the MTZ has no amplitude column or no sigma column.
     """
     import reciprocalspaceship as rs
 
     ds = rs.read_mtz(mtzfile)
-    amplitude_cols = ds.select_mtzdtype(rs.StructureFactorAmplitudeDtype()).columns
-    sigma_cols = ds.select_mtzdtype(rs.StandardDeviationDtype()).columns
-    if len(amplitude_cols) == 0 or len(sigma_cols) == 0:
+    amplitude_cols = list(ds.select_mtzdtype(rs.StructureFactorAmplitudeDtype()).columns)
+    sigma_cols = list(ds.select_mtzdtype(rs.StandardDeviationDtype()).columns)
+    if not amplitude_cols or not sigma_cols:
         raise ValueError(
-            f"MTZ '{mtzfile}' needs a structure-factor-amplitude column and a "
-            f"standard-deviation column; found amplitudes={list(amplitude_cols)}, "
-            f"sigmas={list(sigma_cols)}."
+            f"MTZ '{mtzfile}' needs both amplitude F and sigma SIGF columns for SFC; "
+            f"found amplitudes:{amplitude_cols}, sigmas:{sigma_cols}."
         )
     spacegroup = ds.spacegroup.hm if ds.spacegroup is not None else None
-    return ds.cell, spacegroup, [amplitude_cols[0], sigma_cols[0]]
+    return ds.cell, spacegroup, amplitude_cols, sigma_cols
+
+
+def _resolve_expcolumns(
+    expcolumns: list[str] | None,
+    amplitude_cols: list[str],
+    sigma_cols: list[str],
+) -> list[str]:
+    """Resolve the ``[amplitude, sigma]`` columns to read, logging the choice.
+
+    Parameters
+    ----------
+    expcolumns
+        Caller-provided ``[amplitude, sigma]`` to use verbatim, or ``None`` to auto-detect.
+    amplitude_cols, sigma_cols
+        Candidate amplitude and standard-deviation columns detected in the MTZ.
+
+    Returns
+    -------
+    list of str
+        The resolved ``[amplitude, sigma]`` pair.
+
+    Raises
+    ------
+    ValueError
+        If a provided ``expcolumns`` name is not an amplitude/sigma column in the MTZ.
+
+    Notes
+    -----
+    Auto-detection takes the first amplitude column and attempts to find a matching sigma
+    (e.g. ``Fprotein`` -> ``SIGFprotein``; case-insensitive), defaulting to the first sigma
+    column if no match is found.
+    """
+    if expcolumns is not None:
+        valid = set(amplitude_cols) | set(sigma_cols)
+        unknown = [c for c in expcolumns if c not in valid]
+        if unknown:
+            raise ValueError(
+                f"Provided expcolumns {list(expcolumns)} include {unknown}, not found as MTZ "
+                f"amplitude/sigma columns (amplitudes={amplitude_cols}, sigmas={sigma_cols})."
+            )
+        return list(expcolumns)
+
+    amplitude = amplitude_cols[0]
+    if len(amplitude_cols) > 1:
+        logger.warning(
+            f"MTZ has multiple amplitude columns {amplitude_cols}; auto-selected the first, "
+            f"'{amplitude}'. Pass expcolumns=[amplitude, sigma] to choose another."
+        )
+    expected_sigma = f"sig{amplitude}".lower()
+    sigma = next((s for s in sigma_cols if s.lower() == expected_sigma), None)
+    if sigma is None:
+        sigma = sigma_cols[0]
+        logger.warning(
+            f"No 'SIG{amplitude}' column to match the auto-selected amplitude; "
+            f"falling back to the first sigma column '{sigma}'."
+        )
+    logger.info(
+        f"No expcolumns provided; auto-detected SFC columns: "
+        f"amplitude='{amplitude}', sigma='{sigma}'."
+    )
+    return [amplitude, sigma]
 
 
 class StructureFactorRewardFunction:
@@ -98,10 +170,10 @@ class StructureFactorRewardFunction:
         Loaded with ``set_experiment=True`` so ``sfc.Fo`` / HKL set / bins are
         populated and the calculation is aligned to the target reflections.
     expcolumns
-        Column names ``[amplitude, sigma]`` in the MTZ. If ``None`` (default), the
-        first structure-factor-amplitude and standard-deviation columns are
-        auto-detected from the ``mtzfile``; if provided, used as-is but a warning is
-        logged when they differ from the detected columns.
+        Column names ``[amplitude, sigma]`` in the MTZ. If ``None`` (default), the first
+        amplitude column is auto-detected and paired with its ``SIG`` + amplitude sigma
+        (e.g. ``Fprotein`` -> ``SIGFprotein``); if provided, a ``ValueError`` is raised when
+        a name is absent from the MTZ.
     resolution
         High-resolution limit (dmin) in Angstrom, or ``None`` (default) to use
         the MTZ's own resolution. The HKL set comes from the ``mtzfile``; when
@@ -160,6 +232,8 @@ class StructureFactorRewardFunction:
         self.resolution = resolution
         self.scattering_factor_mode = scattering_factor_mode
         self.exclude_free_reflections = exclude_free_reflections
+        if batch_partition <= 0:
+            raise ValueError(f"batch_partition must be a positive integer, got {batch_partition}.")
         self.batch_partition = batch_partition
         self.loss: AmplitudeLoss = loss if loss is not None else torch.nn.MSELoss()
         self.normalize_amplitude = normalize_amplitude  # |F| vs resolution-bin normalized |E|
@@ -200,7 +274,7 @@ class StructureFactorRewardFunction:
         from the gemmi structure built in :meth:`prepare`, not the MTZ, so we must supply
         real values.)
         """
-        cell, spacegroup, columns = _detect_mtz_metadata(self.mtzfile)
+        cell, spacegroup, amplitude_cols, sigma_cols = _detect_mtz_metadata(self.mtzfile)
 
         if unit_cell is not None and not unit_cell.is_similar(
             cell, _CELL_LENGTH_REL_TOL, _CELL_ANGLE_DEG_TOL
@@ -218,12 +292,7 @@ class StructureFactorRewardFunction:
             )
         self.space_group = space_group if space_group is not None else spacegroup
 
-        if expcolumns is not None and list(expcolumns) != list(columns):
-            logger.warning(
-                f"Provided expcolumns {expcolumns} differ from the MTZ's detected "
-                f"{columns}; using the provided value."
-            )
-        self.expcolumns = expcolumns if expcolumns is not None else columns
+        self.expcolumns = _resolve_expcolumns(expcolumns, amplitude_cols, sigma_cols)
 
     def prepare(self, atom_array: AtomArray) -> None:
         """Build the SFcalculator from the model atom array.

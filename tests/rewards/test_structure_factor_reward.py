@@ -14,10 +14,71 @@ occupancy/B vector. Rather than silently using row 0 and dropping the rest, the 
 invariant instead of a latent footgun. See ``test_per_conformer_occupancy_or_b_raises``.
 """
 
+import logging
+
 import pytest
 import torch
+from sampleworks.core.rewards.structure_factor import (
+    _detect_mtz_metadata,
+    StructureFactorRewardFunction,
+)
 
 from tests.rewards.reward_input_helpers import build_scattering_indices
+
+
+class TestStructureFactorConstruction:
+    """Construction-time behavior. These resolve columns in ``__init__`` before any SF compute,
+    so they run on CPU (no GPU/``prepare()`` needed) and read only the MTZ header."""
+
+    @pytest.fixture
+    def mtz_columns(self, mtz_path_1vme):
+        """``(amplitude_cols, sigma_cols)`` detected in the test MTZ, in MTZ order.
+
+        The 1vme MTZ is multi-set, so ``amplitude_cols``/``sigma_cols`` each list more than one
+        column (e.g. ``[Fprotein, Ftotal]`` / ``[SIGFprotein, SIGFtotal]``). Tests assert by
+        position rather than literal names so they don't hard-code the layout.
+        """
+        _, _, amplitude_cols, sigma_cols = _detect_mtz_metadata(str(mtz_path_1vme))
+        assert len(amplitude_cols) > 1 and len(sigma_cols) > 1  # precondition: a multi-set MTZ
+        return amplitude_cols, sigma_cols
+
+    def test_multi_set_mtz_autoselects_first_and_warns(self, mtz_path_1vme, mtz_columns, caplog):
+        """A multi-set MTZ with no ``expcolumns`` auto-selects the first amplitude paired with its
+        matching sigma, and warns that it picked among several sets.
+        """
+        amplitude_cols, sigma_cols = mtz_columns
+        with caplog.at_level(logging.WARNING):
+            reward = StructureFactorRewardFunction(mtz_path_1vme, device=torch.device("cpu"))
+        assert reward.expcolumns == [amplitude_cols[0], sigma_cols[0]]
+        assert "multiple amplitude columns" in caplog.text
+
+    def test_explicit_expcolumns_override_selection(self, mtz_path_1vme, mtz_columns):
+        """Explicit ``expcolumns`` are used verbatim, overriding the auto-selected first pair."""
+        amplitude_cols, sigma_cols = mtz_columns
+        explicit = [amplitude_cols[-1], sigma_cols[-1]]  # the last set, not the default first
+        reward = StructureFactorRewardFunction(
+            mtz_path_1vme, expcolumns=explicit, device=torch.device("cpu")
+        )
+        assert reward.expcolumns == explicit
+
+    def test_unknown_expcolumns_raise(self, mtz_path_1vme, mtz_columns):
+        """Explicit ``expcolumns`` naming a column absent from the MTZ fail fast at construction."""
+        _, sigma_cols = mtz_columns
+        with pytest.raises(ValueError, match="not found as MTZ amplitude/sigma columns"):
+            StructureFactorRewardFunction(
+                mtz_path_1vme, expcolumns=["Fnope", sigma_cols[0]], device=torch.device("cpu")
+            )
+
+    @pytest.mark.parametrize("bad_partition", [0, -5])
+    def test_nonpositive_batch_partition_raises(self, mtz_path_1vme, bad_partition):
+        """A non-positive ``batch_partition`` (an OOM knob) fails fast at construction.
+
+        The check precedes column resolution, so no ``expcolumns`` are needed.
+        """
+        with pytest.raises(ValueError, match="batch_partition must be a positive integer"):
+            StructureFactorRewardFunction(
+                mtz_path_1vme, batch_partition=bad_partition, device=torch.device("cpu")
+            )
 
 
 @pytest.mark.gpu

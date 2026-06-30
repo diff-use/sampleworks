@@ -134,9 +134,14 @@ class TestAtomArrayToGemmi:
 
         assert len(loaded) == len(stripped_atom_array)
         assert "altloc_id" in loaded.get_annotation_categories()
-        # every real (non-blank) altloc label from the source must survive the round trip,
-        # not just one. find_all_altloc_ids already strips blank-altloc sentinels.
-        assert find_all_altloc_ids(loaded) == find_all_altloc_ids(stripped_atom_array)
+        # check the set of altloc ids is the same
+        expected_altloc_ids = find_all_altloc_ids(stripped_atom_array)
+        assert find_all_altloc_ids(loaded) == expected_altloc_ids
+        # check on a per-atom basis for source altloc id survival
+        for altloc_id in expected_altloc_ids:
+            assert np.count_nonzero(loaded.altloc_id == altloc_id) == np.count_nonzero(
+                stripped_atom_array.altloc_id == altloc_id
+            )
 
     def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
         """A warning is logged when more occupancy values are provided than there are altlocs."""

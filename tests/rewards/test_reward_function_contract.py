@@ -44,7 +44,7 @@ from tests.rewards.reward_input_helpers import build_scattering_indices
 pytestmark = pytest.mark.gpu
 
 
-@dataclass
+@dataclass(frozen=True)
 class RewardCase:
     """A reward function bundled with a standard set of per-atom inputs for one structure."""
 
@@ -164,14 +164,15 @@ class TestRewardCorrelation:
         assert loss_random > loss_true
 
     def test_loss_monotonic_with_perturbation(self, reward_case):
-        """Loss increases (non-strictly) with perturbation magnitude."""
+        """Loss increases (non-strictly) with per-atom perturbation magnitude."""
         torch.manual_seed(42)
+        # Per-atom Gaussian displacement (NOT normalized over the whole tensor): `scale` is the
+        # per-component std in Angstrom, so each step is a real, above-noise displacement.
         direction = torch.randn_like(reward_case.coords)
-        direction = direction / direction.norm()
 
         losses = []
-        for magnitude in [0.0, 0.2, 0.5, 1.0, 2.0]:
-            coords_pert = reward_case.coords + direction * magnitude
+        for scale in [0.0, 0.1, 0.25, 0.5, 1.0]:
+            coords_pert = reward_case.coords + direction * scale
             losses.append(
                 reward_case.reward_function(**reward_case.batch(1, coords=coords_pert)).item()
             )
@@ -244,30 +245,6 @@ class TestRewardGradientFlow:
         loss_final = loss_fn().item()
 
         assert loss_final < loss_initial
-
-    def test_gradient_descent_loss_trace(self, reward_case):
-        """TEMP (exploration): print the per-step loss for the 10-step descent."""
-        torch.manual_seed(42)
-        perturbation = torch.randn_like(reward_case.coords) * 0.5
-        coords_opt = (reward_case.coords + perturbation).unsqueeze(0).requires_grad_(True)
-        optimizer = torch.optim.Adam([coords_opt], lr=0.01)
-
-        def loss_fn():
-            return reward_case.reward_function(
-                coordinates=coords_opt,
-                elements=reward_case.elements.unsqueeze(0),
-                b_factors=reward_case.b_factors.unsqueeze(0),
-                occupancies=reward_case.occupancies.unsqueeze(0),
-            )
-
-        print(f"\n[{reward_case.name}] initial: {loss_fn().item():.6e}")
-        for i in range(10):
-            optimizer.zero_grad()
-            loss = loss_fn()
-            loss.backward()
-            optimizer.step()
-            with torch.no_grad():
-                print(f"[{reward_case.name}] after step {i + 1:2d}: {loss_fn().item():.6e}")
 
 
 # Batch sizes span a single conformer up to a 20-member ensemble. All run under the

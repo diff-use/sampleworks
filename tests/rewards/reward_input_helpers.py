@@ -10,6 +10,18 @@ def build_scattering_indices(atom_array, device: torch.device) -> torch.Tensor:
     Mirrors ``RewardInputs.from_atom_array``: uses ``elements_to_scattering_indices``
     (so ionic forms resolve correctly) and ``dtype=torch.long``. Shared by the reward
     test files (contract + structure-factor) so they build ``elements`` identically.
+
+    Parameters
+    ----------
+    atom_array : biotite.structure.AtomArray
+        Atoms whose ``element`` annotation is mapped to scattering-tensor indices.
+    device : torch.device
+        Device the returned tensor is placed on.
+
+    Returns
+    -------
+    torch.Tensor
+        1-D ``torch.long`` tensor of scattering-tensor indices, one per atom, on ``device``.
     """
     return torch.tensor(
         elements_to_scattering_indices(atom_array.element),

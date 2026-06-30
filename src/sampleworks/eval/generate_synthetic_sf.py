@@ -142,6 +142,24 @@ def _amplitude_phase_columns(
     rename them to ``F{label}`` / ``PHIF{label}``, and synthesize a ``SIGF{label}``
     column so several structure-factor sets (e.g. protein and total) can coexist in
     one MTZ.
+
+    Parameters
+    ----------
+    sfc : SFcalculator
+        Structure-factor calculator holding the requested ASU amplitudes and phases.
+    label : str
+        Output column-label suffix, e.g. ``"protein"`` or ``"total"``.
+    structure_factor_column : str
+        SFcalculator attribute name passed to ``prepare_dataset`` (the amplitudes to emit).
+    miller_index_column : str
+        SFcalculator attribute name holding the Miller indices for ``prepare_dataset``.
+    sigma_f_scale : float
+        Multiplier used to synthesize the ``SIGF{label}`` column from the amplitudes.
+
+    Returns
+    -------
+    rs.DataSet
+        Dataset with columns ``F{label}``, ``SIGF{label}``, ``PHIF{label}`` (in that order).
     """
     dataset: rs.DataSet = sfc.prepare_dataset(miller_index_column, structure_factor_column)
     amplitude_column = dataset.select_mtzdtype(rs.StructureFactorAmplitudeDtype()).columns[0]
@@ -543,7 +561,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Compute bulk solvent and overall scale factors and write both protein and "
             "total structure factor in one MTZ. Without this flag, protein only. Each "
-            "set contains F\\{label\\}/SIGF\\{label\\}/PHIF\\{label\\}."
+            "set contains F{label}/SIGF{label}/PHIF{label}."
         ),
     )
     sf_group.add_argument(
