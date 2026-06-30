@@ -423,7 +423,7 @@ class AF3EDMSampler:
         # Use no_grad when gradients aren't needed to avoid memory overhead from
         # gradient checkpointing holding intermediate activations
         # TODO testing adding eps to signature for use with Protpardelle-1c, if successful,
-        #   I need to modify the Protocol itself.
+        #   I need to modify the Protocol itself. @Michael Anzuoni
         with torch.set_grad_enabled(allow_gradients):
             x_hat_0 = model_wrapper.step(noisy_state, t_hat, eps, features=features)
 
