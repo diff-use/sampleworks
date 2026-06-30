@@ -239,10 +239,7 @@ def atomarray_to_gemmi(
     # altloc_id is not a mandatory biotite annotation; default to blank when absent.
     # gemmi uses '\x00' for blank altloc
     if "altloc_id" in atom_array.get_annotation_categories():
-        atom_altloc = [
-            "\x00" if a in BLANK_ALTLOC_IDS else a
-            for a in atom_array.altloc_id
-        ]
+        atom_altloc = ["\x00" if a in BLANK_ALTLOC_IDS else a for a in atom_array.altloc_id]
     else:
         atom_altloc = ["\x00"] * n
     structure: gemmi.Structure = array2hier(

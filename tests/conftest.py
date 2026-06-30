@@ -669,6 +669,7 @@ def temp_output_dir(tmp_path: Path) -> Generator[Path, None, None]:
 # Reward function fixtures
 # ============================================================================
 
+
 @pytest.fixture(scope="session")
 def density_map_1vme(resources_dir: Path):
     from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import (
@@ -754,6 +755,7 @@ def test_coordinates_1vme_sf(structure_1vme_sf, device: torch.device):
 @pytest.fixture(scope="session")
 def reward_function_1vme_sf(mtz_path_1vme, test_coordinates_1vme_sf, device: torch.device):
     from sampleworks.core.rewards.structure_factor import StructureFactorRewardFunction
+
     _, atom_array = test_coordinates_1vme_sf
 
     # normalize_amplitude=True scores normalized E-values (|Ec| vs sfc.Eo), which are
