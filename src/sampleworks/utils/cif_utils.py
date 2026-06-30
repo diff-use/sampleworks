@@ -339,6 +339,116 @@ def _normalize_nulls(value: Any) -> Any:
     return "?" if value is None else value
 
 
+# Categories that biotite's ``set_structure`` plus ``add_completeness_categories`` regenerate
+# from the AtomArray / box. These are deliberately NOT copied on a metadata-preserving round-trip:
+# the structural ones are rewritten from the fresh ``_atom_site``, and the completeness parents are
+# regenerated against it (copying them stale would reference the old atom_site).
+_STRUCTURAL_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "atom_site",
+        "struct_conn",
+        "chem_comp_bond",
+        "cell",
+        "atom_type",
+        "chem_comp",
+        "entity",
+        "struct_conn_type",
+        "entry",
+    }
+)
+
+
+def read_category_from_cif(
+    source: str | Path | CIFFile,
+    category_name: str,
+    block_name: str | None = None,
+    strict: bool = False,
+) -> dict[str, str | list[str]] | None:
+    """Read a custom category from a CIF file into a plain dict.
+
+    The inverse of ``add_category_to_cif``. A single-row category (such as our ``_sampleworks``
+    metadata) yields scalar string values; a multi-row category yields lists. Everything comes
+    back as **strings** -- numeric / null coercion is the caller's job. A CIF null is the literal
+    ``"?"`` and is returned verbatim.
+
+    Parameters
+    ----------
+    source : str | Path | CIFFile
+        Path to a CIF file, or an already-open ``CIFFile``.
+    category_name : str
+        Category to read, without the leading underscore (e.g. ``"sampleworks"``).
+    block_name : str | None, optional
+        Block to read from. If None, the sole block is used (error if multi-block).
+    strict : bool, optional
+        If False (default), any failure (missing file, multi-block ambiguity, resolve error)
+        returns None so callers can fall back cleanly. If True, the underlying error is raised.
+
+    Returns
+    -------
+    dict[str, str | list[str]] | None
+        The category's columns, or None if the category (or file/block) is absent.
+    """
+    try:
+        ciffile = source if isinstance(source, CIFFile) else CIFFile.read(str(source))
+        block = _resolve_block(ciffile, block_name)
+        if category_name not in block:
+            return None
+        category = block[category_name]
+        result: dict[str, str | list[str]] = {}
+        for key in category:
+            values = category[key].as_array(str)
+            result[key] = str(values[0]) if len(values) == 1 else [str(v) for v in values]
+        return result
+    except Exception:
+        if strict:
+            raise
+        return None
+
+
+def copy_custom_categories(
+    src: CIFFile,
+    dst: CIFFile,
+    block_name: str | None = None,
+    exclude: Iterable[str] = _STRUCTURAL_CATEGORIES,
+    overwrite: bool = True,
+) -> list[str]:
+    """Copy non-structural (custom) categories from one CIF block into another, in place.
+
+    Used to carry custom metadata (e.g. ``_sampleworks``) across a
+    ``load_any -> set_structure -> write`` round-trip, which otherwise drops everything but the
+    structural categories biotite regenerates from the AtomArray. Categories in ``exclude`` are
+    skipped (see ``_STRUCTURAL_CATEGORIES``).
+
+    Parameters
+    ----------
+    src, dst : CIFFile
+        Source and destination CIF files. The matching block in each is used.
+    block_name : str | None, optional
+        Block to operate on. If None, the sole block of each file is used.
+    exclude : Iterable[str], optional
+        Category names to skip. Defaults to the structural / completeness set.
+    overwrite : bool, optional
+        If True (default), replace categories already present in dst; if False, skip them.
+
+    Returns
+    -------
+    list[str]
+        Names of the categories copied.
+    """
+    src_block = _resolve_block(src, block_name)
+    dst_block = _resolve_block(dst, block_name)
+    exclude_set = set(exclude)
+    copied: list[str] = []
+    for name in src_block:
+        if name in exclude_set:
+            continue
+        if name in dst_block and not overwrite:
+            continue
+        dst_block[name] = src_block[name]
+        copied.append(name)
+    return copied
+
+
 def _unique_preserve(values: Iterable[Any]) -> list[str]:
     """Unique string values, preserving first-seen order (handles numpy str scalars)."""
     seen: set[str] = set()

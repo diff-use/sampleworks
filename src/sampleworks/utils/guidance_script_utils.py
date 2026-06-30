@@ -373,6 +373,16 @@ def save_everything(
         atom_array = base_atom_array
 
     metadata = args.as_dict()
+    # Canonical, scaler-agnostic eval keys. `args.as_dict()` carries the swept weight under
+    # different names per scaler (fk_steering -> guidance_weight, pure_guidance -> step_size),
+    # and JobResult records sentinels for pure runs -- so neither is a reliable eval source.
+    # These mirror the directory-name tokens (ens{N}_gw{W}_gd{D}) the path-regex eval parses
+    # today, resolving the aliasing once here at the write site (issue #121).
+    metadata["sampleworks_scaler"] = args.guidance_type
+    metadata["sampleworks_gradient_weight"] = metadata.get(
+        "guidance_weight", metadata.get("step_size")
+    )
+    metadata["sampleworks_gd_steps"] = metadata.get("num_gd_steps")
 
     final_structure = CIFFile()
     set_structure(final_structure, atom_array)
@@ -461,7 +471,36 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
         logger.remove(handle)
 
     _write_job_metadata(args.output_dir, args, job_result)
+    _append_job_result_to_cif(args.output_dir, job_result)
     return job_result
+
+
+def _append_job_result_to_cif(output_dir: str | Path, job_result: JobResult) -> None:
+    """Append the JobResult to ``refined.cif`` as a separate ``_sampleworks_result`` category.
+
+    JobResult (status / exit_code / runtime / timestamps) is only known after the run finishes,
+    so it cannot be written inside ``save_everything``. This re-opens the already-written
+    ``refined.cif`` and adds the category via a pure-biotite ``read -> write`` (no
+    ``set_structure``, so nothing on disk is stripped). It is kept separate from ``_sampleworks``
+    so the config category eval reads stays free of outcome data (including the pure-run
+    guidance_weight / gd_steps sentinels).
+
+    Best-effort: a failed provenance append must never fail the run, so all errors are logged and
+    swallowed, and a missing ``refined.cif`` (e.g. a job that died before saving) is a no-op.
+    """
+    from biotite.structure.io.pdbx import CIFFile
+
+    refined_cif = Path(output_dir) / "refined.cif"
+    if not refined_cif.exists():
+        return
+    try:
+        ciffile = CIFFile.read(str(refined_cif))
+        add_category_to_cif(
+            ciffile, job_result.as_dict(), category_name="sampleworks_result", overwrite=True
+        )
+        ciffile.write(str(refined_cif))
+    except Exception as e:
+        logger.warning(f"Could not append _sampleworks_result to {refined_cif}: {e}")
 
 
 def _three_state_resolver(value: str | bool | None, default: bool) -> bool:

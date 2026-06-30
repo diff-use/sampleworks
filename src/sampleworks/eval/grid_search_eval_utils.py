@@ -14,6 +14,7 @@ from loguru import logger
 from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial, TrialList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
+from sampleworks.utils.cif_utils import read_category_from_cif
 from sampleworks.utils.guidance_constants import StructurePredictor
 
 
@@ -109,6 +110,138 @@ def parse_trial_dir(trial_dir: Path) -> dict[str, int | float | None]:
     }
 
 
+def _none_if_null(value: str | None) -> str | None:
+    """Normalize CIF nulls / blanks (``?`` / ``.`` / empty) to None; else the stripped string."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    return None if s in {"?", ".", ""} else s
+
+
+def _to_int(value: str | None) -> int | None:
+    s = _none_if_null(value)
+    return None if s is None else int(float(s))
+
+
+def _to_float(value: str | None) -> float | None:
+    s = _none_if_null(value)
+    return None if s is None else float(s)
+
+
+def _normalize_method(value: str | None) -> str | None:
+    """Match the short method label the legacy directory-parse produces.
+
+    The CIF metadata carries the full config value (e.g. ``"X-RAY DIFFRACTION"``) whereas the
+    directory suffix collapses it to ``"X-RAY"``; normalize so metadata- and path-sourced trials
+    don't split in downstream grouping.
+    """
+    s = _none_if_null(value)
+    if s is None:
+        return None
+    if "MD" in s:
+        return "MD"
+    if "X-RAY" in s:
+        return "X-RAY"
+    return s
+
+
+def _trial_from_metadata(refined_cif: Path, trial_dir: Path) -> Trial | None:
+    """Build a Trial from the refined.cif's ``_sampleworks`` category.
+
+    Returns None when the category is absent or missing a required field, so the caller can fall
+    back to directory-name parsing (older outputs). Applies the same validation gate as
+    ``_trial_from_paths`` to keep behavior parity.
+    """
+    meta = read_category_from_cif(refined_cif, "sampleworks")
+    if not meta:
+        return None
+
+    protein_field = _none_if_null(meta.get("protein"))
+    if protein_field is None:
+        return None
+    protein, altloc_occupancies = extract_protein_and_occupancy(protein_field)
+
+    model = _none_if_null(meta.get("model"))
+    method = _normalize_method(meta.get("method"))
+    scaler = _none_if_null(meta.get("sampleworks_scaler")) or _none_if_null(
+        meta.get("guidance_type")
+    )
+    try:
+        ensemble_size = _to_int(meta.get("ensemble_size"))
+        guidance_weight = _to_float(meta.get("sampleworks_gradient_weight"))
+        gd_steps = _to_int(meta.get("sampleworks_gd_steps"))
+    except (TypeError, ValueError):
+        return None
+
+    if (
+        protein is None
+        or not altloc_occupancies
+        or model is None
+        or scaler is None
+        or (model == StructurePredictor.BOLTZ_2 and method is None)
+        or ensemble_size is None
+        or (guidance_weight is None and gd_steps is None)
+    ):
+        return None
+
+    return Trial(
+        protein=protein,
+        altloc_occupancies=altloc_occupancies,
+        model=model,
+        method=method,
+        scaler=scaler,
+        ensemble_size=ensemble_size,
+        guidance_weight=guidance_weight,
+        gd_steps=gd_steps,
+        trial_dir=trial_dir,
+        refined_cif_path=refined_cif,
+        protein_dir_name=trial_dir.parent.parent.parent.name,
+    )
+
+
+def _trial_from_paths(refined_cif: Path, trial_dir: Path) -> Trial | None:
+    """Reconstruct a Trial from the directory structure (legacy fallback).
+
+    Expected layout: ``.../protein_dir/model_dir/scaler_dir/trial_dir/refined.cif``.
+    """
+    scaler_dir = trial_dir.parent
+    model_dir = scaler_dir.parent
+    protein_dir = model_dir.parent
+
+    protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
+    method, model = get_method_and_model_name(model_dir.name)
+
+    params = parse_trial_dir(trial_dir)
+    guidance_weight = None
+    if params["guidance_weight"] is not None:
+        guidance_weight = float(params["guidance_weight"])
+    gd_steps = int(params["gd_steps"]) if params["gd_steps"] is not None else None
+
+    # Validate parameters to satisfy ty
+    if (
+        protein is None
+        or not altloc_occupancies
+        or (model == StructurePredictor.BOLTZ_2 and method is None)
+        or params["ensemble_size"] is None
+        or (guidance_weight is None and gd_steps is None)
+    ):
+        return None
+
+    return Trial(
+        protein=protein,
+        altloc_occupancies=altloc_occupancies,
+        model=model,
+        method=method,
+        scaler=scaler_dir.name,
+        ensemble_size=int(params["ensemble_size"]),
+        guidance_weight=guidance_weight,
+        gd_steps=gd_steps,
+        trial_dir=trial_dir,
+        refined_cif_path=refined_cif,
+        protein_dir_name=protein_dir.name,
+    )
+
+
 # TODO: this method is now more flexible about how it scans the grid search results directory,
 #  but that means we should be more strict about the output "API" directory structure.
 def scan_grid_search_results(
@@ -149,48 +282,16 @@ def scan_grid_search_results(
     # Check if we found a refined.cif file in the current directory
     refined_cif = current_directory / target_filename
     if current_depth == target_depth and refined_cif.exists():
-        # Reconstruct metadata from path structure
-        # Expected structure: .../protein_dir/model_dir/scaler_dir/trial_dir/refined.cif
         trial_dir = current_directory
-        scaler_dir = trial_dir.parent
-        model_dir = scaler_dir.parent
-        protein_dir = model_dir.parent
-
-        protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
-        method, model = get_method_and_model_name(model_dir.name)
-
-        params = parse_trial_dir(trial_dir)
-        guidance_weight = None
-        if params["guidance_weight"] is not None:
-            guidance_weight = float(params["guidance_weight"])
-        gd_steps = int(params["gd_steps"]) if params["gd_steps"] is not None else None
-
-        # Validate parameters to satisfy ty
-        if (
-            protein is None
-            or not altloc_occupancies
-            or (model == StructurePredictor.BOLTZ_2 and method is None)
-            or params["ensemble_size"] is None
-            or (guidance_weight is None and gd_steps is None)
-        ):
-            logger.warning(f"Skipping trial in {trial_dir} due to missing metadata")
-            return trials
-
-        trials.append(
-            Trial(
-                protein=protein,
-                altloc_occupancies=altloc_occupancies,
-                model=model,
-                method=method,
-                scaler=scaler_dir.name,
-                ensemble_size=int(params["ensemble_size"]),
-                guidance_weight=guidance_weight,
-                gd_steps=gd_steps,
-                trial_dir=trial_dir,
-                refined_cif_path=refined_cif,
-                protein_dir_name=protein_dir.name,
-            )
+        # Prefer the trial metadata embedded in the CIF; fall back to the legacy
+        # directory-name parsing for older outputs that lack the canonical _sampleworks keys.
+        trial = _trial_from_metadata(refined_cif, trial_dir) or _trial_from_paths(
+            refined_cif, trial_dir
         )
+        if trial is None:
+            logger.warning(f"Skipping trial in {trial_dir} due to missing metadata")
+        else:
+            trials.append(trial)
 
         return trials
 

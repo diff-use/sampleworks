@@ -12,6 +12,8 @@ from sampleworks.utils.atom_array_utils import save_structure_to_cif
 from sampleworks.utils.cif_utils import (
     add_category_to_cif,
     add_completeness_categories,
+    copy_custom_categories,
+    read_category_from_cif,
     resolve_mixed_hetatm_atom_altlocs,
 )
 
@@ -524,9 +526,8 @@ class TestAddCompletenessCategories:
         assert list(block["cell"]["length_a"].as_array(str)) == ["78.5"]
         # _entry parent exists and its id matches _cell.entry_id
         assert "entry" in block
-        assert (
-            list(block["cell"]["entry_id"].as_array(str))
-            == list(block["entry"]["id"].as_array(str))
+        assert list(block["cell"]["entry_id"].as_array(str)) == list(
+            block["entry"]["id"].as_array(str)
         )
 
     def test_no_cell_or_struct_conn_is_a_noop(self):
@@ -548,3 +549,98 @@ class TestAddCompletenessCategories:
         assert "struct_conn_type" in block
         assert "entry_id" in block["cell"]
         assert "entry" in block
+
+
+# ---------------------------------------------------------------------------
+#  metadata read-back, category copying, round-trip preservation
+# ---------------------------------------------------------------------------
+
+_SW_META = {
+    "protein": "1vme_0.5occA_0.5occB",
+    "model": "boltz2",
+    "ensemble_size": 4,
+    "guidance_type": "fk_steering",
+    "sampleworks_scaler": "fk_steering",
+    "sampleworks_gradient_weight": 1.5,
+    "sampleworks_gd_steps": 100,
+    "method": None,
+}
+
+
+def _cif_with_sampleworks(path: Path, meta: dict) -> Path:
+    """A sampleworks-style output CIF: _atom_site + _sampleworks + completeness parents."""
+    _write_cif([_atom("A", 9, "MET", False, "N"), _atom("A", 10, "GLY", False, "CA")], path)
+    cif = CIFFile.read(str(path))
+    add_category_to_cif(cif, dict(meta), category_name="sampleworks")
+    add_completeness_categories(cif)
+    cif.write(str(path))
+    return path
+
+
+class TestReadCategoryFromCif:
+    def test_reads_scalars_as_strings(self, tmp_path):
+        out = read_category_from_cif(
+            _cif_with_sampleworks(tmp_path / "m.cif", _SW_META), "sampleworks"
+        )
+        assert out is not None
+        assert out["protein"] == "1vme_0.5occA_0.5occB"
+        # everything comes back as strings -- coercion is the caller's job
+        assert out["ensemble_size"] == "4"
+        assert out["sampleworks_gradient_weight"] == "1.5"
+
+    def test_null_returned_verbatim(self, tmp_path):
+        out = read_category_from_cif(
+            _cif_with_sampleworks(tmp_path / "m.cif", _SW_META), "sampleworks"
+        )
+        assert out["method"] == "?"  # None normalized to "?" on write, read back literally
+
+    def test_missing_category_returns_none(self, tmp_path):
+        p = _cif_with_sampleworks(tmp_path / "m.cif", _SW_META)
+        assert read_category_from_cif(p, "not_a_category") is None
+
+    def test_missing_file_non_strict_returns_none(self, tmp_path):
+        assert read_category_from_cif(tmp_path / "nope.cif", "sampleworks") is None
+
+    def test_missing_file_strict_raises(self, tmp_path):
+        with pytest.raises(Exception):
+            read_category_from_cif(tmp_path / "nope.cif", "sampleworks", strict=True)
+
+    def test_accepts_open_ciffile(self, tmp_path):
+        p = _cif_with_sampleworks(tmp_path / "m.cif", _SW_META)
+        assert read_category_from_cif(CIFFile.read(str(p)), "sampleworks") is not None
+
+
+class TestCopyCustomCategories:
+    def test_copies_custom_excludes_structural(self, tmp_path):
+        src = CIFFile.read(str(_cif_with_sampleworks(tmp_path / "src.cif", _SW_META)))
+        dst = CIFFile.read(
+            str(_write_cif([_atom("A", 9, "MET", False, "N")], tmp_path / "dst.cif"))
+        )
+        copied = copy_custom_categories(src, dst)
+        assert "sampleworks" in copied
+        assert "atom_site" not in copied
+        assert not ({"atom_type", "chem_comp", "entity"} & set(copied))
+        assert read_category_from_cif(dst, "sampleworks") is not None
+
+    def test_no_overwrite_skips_existing(self, tmp_path):
+        src = CIFFile.read(str(_cif_with_sampleworks(tmp_path / "src.cif", _SW_META)))
+        dst = CIFFile.read(str(_cif_with_sampleworks(tmp_path / "dst.cif", _SW_META)))
+        assert copy_custom_categories(src, dst, overwrite=False) == []
+
+
+class TestRoundTripPreservesSampleworks:
+    def test_preserve_keeps_metadata(self, tmp_path):
+        orig = _cif_with_sampleworks(tmp_path / "orig.cif", _SW_META)
+        out = tmp_path / "rt.cif"
+        save_structure_to_cif(
+            _load(orig), out, preserve_metadata_from=orig, complete_categories=True
+        )
+        assert read_category_from_cif(out, "sampleworks") is not None
+        assert read_category_from_cif(out, "atom_type") is not None  # completeness regenerated
+
+    def test_bare_save_strips_metadata(self, tmp_path):
+        """Without preserve_metadata_from, set_structure drops custom categories."""
+        orig = _cif_with_sampleworks(tmp_path / "orig.cif", _SW_META)
+        out = tmp_path / "bare.cif"
+        save_structure_to_cif(_load(orig), out)
+        assert read_category_from_cif(out, "sampleworks") is None
