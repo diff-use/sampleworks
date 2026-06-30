@@ -383,7 +383,9 @@ class ProtpardelleWrapper:
 
         # Concatenate per-chain aatypes in chain order; chains are placed
         # contiguously at the front of the padded sequence by the helper above.
-        chain_aatypes = [seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences]
+        chain_aatypes = [
+            seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences  # ty: ignore
+        ]
         flat_aatype = torch.cat(chain_aatypes).to(self.device)
         padded_len = seq_mask.shape[1]
         aatype = torch.zeros((1, padded_len), dtype=torch.long, device=self.device)
@@ -423,7 +425,7 @@ class ProtpardelleWrapper:
             atom37_atom_index=atom37_atom_index,
             sampling_kwargs=sampling_kwargs,
             sequences=tuple(sequences),
-            x_self_conditioning=None,
+            x_self_conditioning=None
         )
 
         # x_init is a shape-compatible reference drawn from a Gaussian prior.
@@ -437,7 +439,7 @@ class ProtpardelleWrapper:
 
     def _atom37_indices_from_atom_array(
         self, atom_array
-    ) -> tuple[Tensor, Tensor]:
+    ) -> tuple[Int[Tensor, "atoms"], Int[Tensor, "atoms"]]:
         """Derive per-atom atom37 destination indices from an Atomworks atom array.
 
         For each atom in ``atom_array`` (the order the sampler's flat ``x_t``
@@ -634,6 +636,7 @@ class ProtpardelleWrapper:
         self,
         x_t: Float[Tensor, "batch atoms 3"],
         t: Float[Tensor, "*batch"] | float,
+        sigma_float: float,
         *,
         features: GenerativeModelInput[ProtpardelleConditioning] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
@@ -642,16 +645,16 @@ class ProtpardelleWrapper:
         protpardelle-1c/src/protpardelle/core/models.py:L1760
         (commit ee378400f25b801fa481028000f9060183d7fb4c on branch main)
 
-        The entire reverse-diffusion loop runs internally; the returned tensor
-        is the final all-atom prediction, flattened to the atoms implied by the
-        input sequence (the ``atom_mask`` in the conditioning).
+        The returned tensor is the final all-atom prediction, flattened to the 
+        atoms implied by the input sequence (the ``atom_mask`` in the 
+        conditioning).
 
         Parameters
         ----------
         x_t : Float[Tensor, "batch atoms 3"]
             Noisy structure at timestep :math:`t`.
         t : Float[Tensor, "*batch"] | float
-            Current timestep/noise level (:math:`\\hat{t}` from EDM schedule).
+            Current timestep/noise level (:math:`\hat{t}` from EDM schedule).
         features : GenerativeModelInput[BoltzConditioning] | None
             Model features as returned by ``featurize``.
 

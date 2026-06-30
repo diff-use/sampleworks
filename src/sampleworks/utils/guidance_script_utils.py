@@ -64,7 +64,7 @@ except ImportError:
 try:
     from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
 except ImportError:
-    ProtpardelleWrapper = None
+    ProtpardelleWrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import Protpardelle, hopefully you're running a different model")
 
 from sampleworks.utils.torch_utils import try_gpu
@@ -175,6 +175,7 @@ def get_model_and_device(
     model_type: str,
     method: str | None = None,
     model: Any = None,
+    protpardelle_config_path: str | None = None,
 ) -> tuple[torch.device, Any]:
     """Validate a checkpoint, choose a device, and construct the model wrapper."""
     validated_checkpoint_path = validate_model_checkpoint(model_type, model_checkpoint_path)
@@ -226,8 +227,9 @@ def get_model_and_device(
         if ProtpardelleWrapper is None:
             raise ImportError("Protpardelle dependencies not installed")
         logger.debug(f"Loading Protpardelle model from {validated_checkpoint_path}")
+        config_path = protpardelle_config_path or "src/sampleworks/data/cc89_epoch415.yaml"
         model_wrapper = ProtpardelleWrapper(
-            config_path=str(Path("src/sampleworks/data/cc89_epoch415.yaml").expanduser().resolve()),
+            config_path=str(Path(config_path).expanduser().resolve()),
             checkpoint_path=validated_checkpoint_path,
             device=device,
         )
@@ -499,11 +501,18 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     elif "Protpardelle" in wrapper_class_name:
         from sampleworks.models.protpardelle.wrapper import annotate_structure_for_protpardelle
 
-        # TODO: this is where we need to pass in things like step scale, s_churn, etc...
-        #   I'm not entirely sure what all the args are yet though.
         structure = annotate_structure_for_protpardelle(
             structure,
-            ensemble_size=args.ensemble_size
+            ensemble_size=args.ensemble_size,
+            num_steps=args.num_diffusion_steps,
+            s_churn=getattr(args, "protpardelle_s_churn", 40.0),
+            step_scale=getattr(args, "protpardelle_step_scale", 1.0),
+            sidechain_mode=getattr(args, "protpardelle_sidechain_mode", False),
+            skip_mpnn_proportion=getattr(args, "protpardelle_skip_mpnn_proportion", 1.0),
+            jump_steps=getattr(args, "protpardelle_jump_steps", False),
+            uniform_steps=getattr(args, "protpardelle_uniform_steps", True),
+            temperature=getattr(args, "protpardelle_temperature", 1.0),
+            top_p=getattr(args, "protpardelle_top_p", 1.0),
         )
         edm_sampler_kwargs = {
             "s_max": 80, "s_min": 0.001, "gamma_0": 0.08, "gamma_min": 0.00,
@@ -726,6 +735,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         template_job.model_checkpoint,
         template_job.model_name,
         method=template_job.method if hasattr(template_job, "method") else None,
+        protpardelle_config_path=getattr(template_job, "protpardelle_config_path", None),
     )
     job_results = []
     for i, job in enumerate(job_queue):
