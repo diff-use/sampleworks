@@ -108,7 +108,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      image-ref: ${{ steps.public-ref.outputs.image }}
+      image-digest: ${{ steps.public-build.outputs.digest }}
 
     steps:
       - name: Checkout code
@@ -172,12 +172,6 @@ jobs:
           cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
 
-      - name: Publish public image ref for Astera overlay
-        id: public-ref
-        run: |
-          short_sha="${GITHUB_SHA:0:${DOCKER_METADATA_SHORT_SHA_LENGTH}}"
-          echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}:sha-${short_sha}" >> "$GITHUB_OUTPUT"
-
       - name: Public image digest
         run: echo "Public image pushed with digest ${{ steps.public-build.outputs.digest }}"
 
@@ -216,6 +210,21 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
+      - name: Resolve public image input
+        id: public-ref
+        env:
+          PUBLIC_IMAGE_DIGEST: ${{ needs.public.outputs.image-digest }}
+        run: |
+          if [ -z "${PUBLIC_IMAGE_DIGEST}" ]; then
+            echo "public job did not produce an image digest."
+            exit 1
+          fi
+          if [ "${PUBLIC_IMAGE_DIGEST}" = "${PUBLIC_IMAGE_DIGEST#sha256:}" ]; then
+            echo "public job produced a non-sha256 digest: ${PUBLIC_IMAGE_DIGEST}"
+            exit 1
+          fi
+          echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}@${PUBLIC_IMAGE_DIGEST}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Astera image
         id: astera-build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
@@ -227,7 +236,7 @@ jobs:
           tags: ${{ steps.astera-meta.outputs.tags }}
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
-            PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
+            PIXI_WITH_CHECKPOINTS_IMAGE=${{ steps.public-ref.outputs.image }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
