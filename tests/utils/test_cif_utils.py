@@ -750,6 +750,27 @@ class TestCarryEntityCategories:
         nums = list(_sole_block(dst)["entity_poly_seq"]["num"].as_array(str))
         assert nums == [str(i) for i in range(101, 113)]  # shifted by +100
 
+    def test_reconcile_ambiguous_alignment_raises(self):
+        """reconcile raises (so the caller degrades to the stub) when the match is not unique.
+
+        ``_seq_renumber_offset`` requires the modeled residues to be a *unique* contiguous block of
+        the canonical sequence; a repeating motif aligns at several starts, so no single offset is
+        defined and the carry must refuse rather than guess.
+        """
+        dst = _structure_cif([_atom("A", 5, "ALA", False), _atom("A", 6, "GLY", False)])
+        ref = _reference_cif(
+            entity={"id": ["1"], "type": ["polymer"]},
+            entity_poly={"entity_id": ["1"], "type": ["polypeptide(L)"], "pdbx_strand_id": ["A"]},
+            eps={
+                "entity_id": ["1"] * 4,
+                "num": ["1", "2", "3", "4"],
+                "mon_id": ["ALA", "GLY", "ALA", "GLY"],  # [ALA, GLY] matches at index 0 and 2
+                "hetero": ["n"] * 4,
+            },
+        )
+        with pytest.raises(ValueError, match="uniquely align"):
+            carry_entity_categories(dst, ref, output_entity_id="0", reconcile=True)
+
     def test_selects_entity_by_chain(self):
         """With multiple polymer entities, the one whose strand covers the kept chain is carried."""
         dst = _structure_cif([_atom("B", 1, "SER", False), _atom("B", 2, "THR", False)])
