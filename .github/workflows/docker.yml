@@ -23,27 +23,20 @@ env:
 
   ASTERA_REGISTRY: harbor.astera.sh
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
-  # Update this only when the Astera overlay needs a newer EXT CLI; otherwise the
-  # repo variable can override it without changing this workflow.
-  EXT_CLI_IMAGE: ${{ vars.EXT_CLI_IMAGE || 'harbor.astera.sh/library/ext-cli:sha-724abde27fdfa15b23adb112d2e1dc83dd533a57' }}
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2bfc4bce3224a5940708fbaf7c161a2ef395ab272b568b3abfaf3ca48164b63d
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
 jobs:
   sync_checkpoints:
     name: Sync checkpoints to Docker Hub
-    runs-on: ubuntu-latest
+    runs-on: diffuse-sh-builder
     permissions:
       contents: read
     outputs:
       checkpoints_image: ${{ steps.verify_checkpoints.outputs.checkpoints_image }}
 
     steps:
-      - name: Install skopeo
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-
       - name: Copy checkpoint image to Docker Hub
         env:
           HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
@@ -68,11 +61,20 @@ jobs:
             exit 1
           fi
 
-          skopeo copy --preserve-digests \
-            --src-creds "${HARBOR_USERNAME}:${HARBOR_PASSWORD}" \
-            --dest-creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-            "docker://${CHECKPOINTS_SOURCE_IMAGE}" \
-            "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}"
+          docker run --rm \
+            --entrypoint /bin/sh \
+            -e CHECKPOINTS_SOURCE_IMAGE \
+            -e CHECKPOINTS_DOCKERHUB_IMAGE \
+            -e HARBOR_USERNAME \
+            -e HARBOR_PASSWORD \
+            -e DOCKERHUB_USERNAME \
+            -e DOCKERHUB_TOKEN \
+            "${SKOPEO_IMAGE}" \
+            -ceu 'skopeo copy --preserve-digests \
+              --src-creds "${HARBOR_USERNAME}:${HARBOR_PASSWORD}" \
+              --dest-creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+              "docker://${CHECKPOINTS_SOURCE_IMAGE}" \
+              "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}"'
 
       - name: Verify Docker Hub checkpoint digest
         id: verify_checkpoints
@@ -81,10 +83,16 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           expected_digest="${CHECKPOINTS_SOURCE_IMAGE##*@}"
-          actual_digest="$(skopeo inspect \
-            --creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-            --format '{{.Digest}}' \
-            "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}")"
+          actual_digest="$(docker run --rm \
+            --entrypoint /bin/sh \
+            -e CHECKPOINTS_DOCKERHUB_IMAGE \
+            -e DOCKERHUB_USERNAME \
+            -e DOCKERHUB_TOKEN \
+            "${SKOPEO_IMAGE}" \
+            -ceu 'skopeo inspect \
+              --creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+              --format "{{.Digest}}" \
+              "docker://${CHECKPOINTS_DOCKERHUB_IMAGE}"')"
 
           if [ "${actual_digest}" != "${expected_digest}" ]; then
             echo "Docker Hub checkpoint digest mismatch: expected ${expected_digest}, got ${actual_digest}"
@@ -97,7 +105,7 @@ jobs:
 
   public:
     name: Public pixi-with-checkpoints image
-    runs-on: ubuntu-latest
+    runs-on: diffuse-sh-builder
     needs: sync_checkpoints
     permissions:
       contents: read
@@ -105,16 +113,6 @@ jobs:
       image-ref: ${{ steps.public-ref.outputs.image }}
 
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
-
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -179,22 +177,12 @@ jobs:
 
   astera:
     name: Astera EXT image
-    runs-on: ubuntu-latest
+    runs-on: diffuse-sh-builder
     needs: public
     permissions:
       contents: read
 
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
-
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -234,7 +222,6 @@ jobs:
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
             PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
-            EXT_CLI_IMAGE=${{ env.EXT_CLI_IMAGE }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max
           provenance: false

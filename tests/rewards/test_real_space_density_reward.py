@@ -476,8 +476,8 @@ class TestVmapCompatibility:
 
             unique_combinations, inverse_indices = (
                 reward_function_1vme.precompute_unique_combinations(
-                    elements_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
-                    b_factors_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
+                    elements_batch[0, 0],
+                    b_factors_batch[0, 0],
                 )
             )
 
@@ -496,7 +496,7 @@ class TestVmapCompatibility:
                 op=rf_partial,
             )
 
-            assert result.shape == torch.Size([num_particles])  # ty: ignore[unresolved-attribute]
+            assert result.shape == torch.Size([num_particles])
 
     def test_vmap_consistency(self, reward_function_1vme, test_coordinates_1vme, device):
         """Test vmap results match sequential calls."""
@@ -520,8 +520,8 @@ class TestVmapCompatibility:
         occupancies_batch = einx.rearrange("n -> p e n", occupancies, p=num_particles, e=1)
 
         unique_combinations, inverse_indices = reward_function_1vme.precompute_unique_combinations(
-            elements_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
-            b_factors_batch[0, 0],  # ty: ignore[no-matching-overload, invalid-argument-type]
+            elements_batch[0, 0],
+            b_factors_batch[0, 0],
         )
 
         rf_partial = partial(
@@ -549,7 +549,7 @@ class TestVmapCompatibility:
             )
             result_sequential.append(loss.item())
 
-        result_sequential = torch.tensor(result_sequential, device=result_vmap.device)  # ty: ignore[unresolved-attribute]
+        result_sequential = torch.tensor(result_sequential, device=result_vmap.device)
 
         # GPU vmap and sequential loops accumulate floating-point reductions in
         # different orders, yielding abs diffs up to ~1.3e-4 and rel diffs up to

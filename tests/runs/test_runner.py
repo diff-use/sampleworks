@@ -351,6 +351,7 @@ def test_pre_jobs_run_before_main_jobs(tmp_path: Path, monkeypatch: pytest.Monke
     """Sequential pre-jobs complete before regular jobs are launched."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(tmp_path))
+    monkeypatch.delenv("SAMPLEWORKS_FORCE_PIXI", raising=False)
     monkeypatch.setenv("SAMPLEWORKS_ANALYSIS_PYTHON", sys.executable)
     pre_script = tmp_path / "pre.py"
     main_script = tmp_path / "main.py"

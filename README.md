@@ -14,6 +14,11 @@ Biomolecular structure prediction and design models are currently trained on sin
 
 Currently, each structure prediction model has a different implementation, requiring bespoke boilerplate code to plug each model into experimental guidance. Our goal is to resolve this and expand the experimental methods we can provide guidance with. This will open new opportunities for model evaluation directly against experimental data, and help unlock new sources of data for training the next generation of biomolecular structure predictors.
 
+## Citation
+If you use **sampleworks**, please cite:
+ 
+Chrispens, K., Collins, M., Mai, D., Wankowicz, S. A., Fraser, J. S., & van den Bedem, H. (2026). sampleworks: A Modular Platform for Experimentally Guided Biomolecular Ensemble Generation. https://doi.org/10.82153/jkxj-tw08
+
 ## Installation
 
 **Requirements**: Linux x86-64, CUDA 12, Python ≥ 3.11, < 3.14
@@ -317,7 +322,6 @@ CI configuration variables:
 | `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional private/source checkpoint image that CI mirrors to Docker Hub; defaults to the current digest-pinned Harbor image |
 | `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional public Docker Hub checkpoint mirror destination tag; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
 | `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
-| `EXT_CLI_IMAGE` | Optional EXT CLI image override for the Astera overlay |
 
 Build the public image locally:
 

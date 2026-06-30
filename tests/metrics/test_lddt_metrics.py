@@ -1,28 +1,11 @@
 from typing import cast
 
 import pytest
-from atomworks.io.transforms.atom_array import ensure_atom_array_stack
-from biotite.structure import AtomArrayStack
 from sampleworks.metrics.lddt import AllAtomLDDT, SelectedLDDT
-from sampleworks.utils.atom_array_utils import select_altloc, select_backbone
 
 
 # These tests are currently too high level, but they will serve for now to demonstrate
 # the expected behavior and make sure nothing gets broken.
-
-
-@pytest.fixture(scope="module")
-def altlocA_backbone(structure_6b8x_with_altlocs) -> AtomArrayStack:
-    altlocA = select_altloc(structure_6b8x_with_altlocs, "A", return_full_array=True)
-    altlocA_bb = select_backbone(altlocA)
-    return ensure_atom_array_stack(altlocA_bb)
-
-
-@pytest.fixture(scope="module")
-def altlocB_backbone(structure_6b8x_with_altlocs) -> AtomArrayStack:
-    altlocB = select_altloc(structure_6b8x_with_altlocs, "B", return_full_array=True)
-    altlocB_bb = select_backbone(altlocB)
-    return ensure_atom_array_stack(altlocB_bb)
 
 
 @pytest.mark.gpu

@@ -231,3 +231,5 @@ initial_dataset_40*/
 
 # Reinclude
 !src/sampleworks/data/protein_configs.csv
+
+.idea

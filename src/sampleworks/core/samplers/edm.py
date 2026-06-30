@@ -415,7 +415,7 @@ class AF3EDMSampler:
 
         # Store eps separately for proper frame transformation
         # eps_scale will be float if check_context didn't raise
-        eps = torch.randn_like(maybe_augmented_state) * eps_scale  # ty: ignore[unsupported-operator]
+        eps = torch.randn_like(maybe_augmented_state) * eps_scale
         noisy_state = maybe_augmented_state + eps
         noisy_state = torch.as_tensor(noisy_state).detach().requires_grad_(allow_gradients)
 

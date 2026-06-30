@@ -415,7 +415,7 @@ def main(args: argparse.Namespace) -> None:
             )
         )
 
-    out_df = pd.DataFrame(all_rows, columns=OUTPUT_COLUMNS)
+    out_df = pd.DataFrame(all_rows, columns=pd.Index(OUTPUT_COLUMNS))
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(args.output_file, index=False)
     logger.info(f"Wrote {len(out_df)} classified spans to {args.output_file}")

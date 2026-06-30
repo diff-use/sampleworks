@@ -237,6 +237,7 @@ class GuidanceConfig:
     guidance_start: int = -1
     augmentation: bool = False
     align_to_input: bool = False
+    alignment_reverse_diffusion: bool | None = None
     recycling_steps: int | None = None
     num_diffusion_steps: int = 200
 
@@ -350,6 +351,7 @@ class GuidanceConfig:
             guidance_start=args.guidance_start,
             augmentation=args.augmentation,
             align_to_input=args.align_to_input,
+            alignment_reverse_diffusion=args.alignment_reverse_diffusion,
         )
 
         # __post_init__ already set defaults for model/guidance-specific
@@ -460,6 +462,17 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
         "--align-to-input",
         action="store_true",
         help="Enable alignment to input",
+    )
+    parser.add_argument(
+        "--alignment-reverse-diffusion",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Align the noisy state to the denoised prediction during reverse "
+            "diffusion (described in Boltz-1 paper). Use "
+            "--no-alignment-reverse-diffusion to disable. Default: enabled for "
+            "Boltz, disabled for other models."
+        ),
     )
     parser.add_argument(
         "--ensemble-size",

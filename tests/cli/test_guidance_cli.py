@@ -609,3 +609,22 @@ class TestEntrypointSmoke:
     def test_invalid_preset_guidance_type_raises(self):
         with pytest.raises(ValueError, match="Unknown guidance type"):
             GuidanceConfig.from_cli(COMMON_ARGS, model="boltz1", guidance_type="typo")
+
+
+class TestAlignmentReverseDiffusion:
+    """--alignment-reverse-diffusion can be none, yes, or no and propagates into the config."""
+
+    BASE = ["--model", "boltz2", "--guidance-type", "pure_guidance"] + COMMON_ARGS
+
+    def test_omitted_defaults_to_none(self):
+        config = GuidanceConfig.from_cli(self.BASE)
+        assert config.alignment_reverse_diffusion is None
+
+    def test_enable_flag_sets_true(self):
+        config = GuidanceConfig.from_cli(self.BASE + ["--alignment-reverse-diffusion"])
+        assert config.alignment_reverse_diffusion is True
+
+    def test_disable_flag_sets_false(self):
+        """--no-alignment-reverse-diffusion must be able to force the feature off."""
+        config = GuidanceConfig.from_cli(self.BASE + ["--no-alignment-reverse-diffusion"])
+        assert config.alignment_reverse_diffusion is False

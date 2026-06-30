@@ -297,6 +297,10 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
                     update_M = False
                     if M not in a3m_lines:
                         a3m_lines[M] = []
+                if M is None:
+                    # Well-formed A3M files always begin with a `>` header that sets M,
+                    # so this only triggers on malformed input. Skip rather than KeyError.
+                    continue
                 a3m_lines[M].append(line)
 
     # we run all the sequences together in one string, so this is really just a list of file dumps

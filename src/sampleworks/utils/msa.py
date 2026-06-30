@@ -397,7 +397,9 @@ class MSAManager:
             else:
                 self._cache_hits += 1
 
-            msa_path_dict = {key: path for key, path in zip(data_keys, msa_directories)}
+            # protenix_msa_search returns string-style paths; normalize to Path so the
+            # return type matches the declared dict[str | int, Path] (idempotent on Paths).
+            msa_path_dict = {key: Path(path) for key, path in zip(data_keys, msa_directories)}
 
         else:
             raise ValueError(f"Unknown structure predictor: {structure_predictor}")

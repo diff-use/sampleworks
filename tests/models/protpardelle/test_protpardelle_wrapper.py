@@ -258,6 +258,17 @@ class TestFeaturize:
         assert int(cond.atom37_atom_index.max()) < 37
         assert int(cond.atom37_residue_index.max()) == len(SEQ_A) - 1
 
+    def test_mse_selenium_maps_to_methionine_sd(self, protpardelle_wrapper):
+        structure = _protein_structure("M")
+        atom_array = structure["asym_unit"]
+        selenium_mask = atom_array.atom_name == "SD"
+        atom_array.atom_name[selenium_mask] = "SE"
+
+        cond = protpardelle_wrapper.featurize(structure).conditioning
+        selenium_index = int(np.flatnonzero(selenium_mask)[0])
+
+        assert cond.atom37_atom_index[selenium_index].item() == residue_constants.atom_order["SD"]
+
     def test_featurize_requires_asym_unit(self, protpardelle_wrapper):
         structure = _protein_structure(SEQ_A)
         del structure["asym_unit"]
@@ -342,10 +353,6 @@ class TestStep:
         with pytest.raises(ValueError, match="features"):
             protpardelle_wrapper.step(torch.zeros(1, 1, 3), 0.0)
 
-    @pytest.mark.skip(
-        reason="step() is intentionally incomplete (noise level / conditioning "
-        "wiring still TODO); only _convert_to_atom37 is implemented so far."
-    )
     @pytest.mark.slow
     def test_step_returns_coords(self, protpardelle_wrapper):
         short_seq = "ACDEFG"
@@ -353,7 +360,7 @@ class TestStep:
             _protein_structure(short_seq), ensemble_size=1, num_steps=3, s_churn=0.0
         )
         features = protpardelle_wrapper.featurize(structure)
-        result = protpardelle_wrapper.step(features)
+        result = protpardelle_wrapper.step(features.x_init, 1.0, features=features)
         assert torch.is_tensor(result)
         assert result.shape == features.x_init.shape
         assert result.shape[-1] == 3

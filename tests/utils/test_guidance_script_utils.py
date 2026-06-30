@@ -2,13 +2,35 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import torch
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
-from sampleworks.utils.guidance_script_utils import _write_job_metadata, save_everything
+from sampleworks.utils.guidance_script_utils import (
+    _three_state_resolver,
+    _write_job_metadata,
+    get_reward_function_and_structure,
+    save_everything,
+)
 
 from tests.utils.atom_array_builders import build_test_atom_array
+
+
+@pytest.mark.parametrize(
+    "override, is_boltz, expected",
+    [
+        (None, True, True),  # Boltz default: enabled
+        (None, False, False),  # other models default: disabled
+        (True, False, True),  # explicit opt-in on a non-Boltz model
+        (True, True, True),  # explicit on, agrees with Boltz default
+        (False, True, False),  # explicit opt-out overrides the Boltz default
+        (False, False, False),  # explicit off, agrees with non-Boltz default
+    ],
+)
+def test_resolve_alignment_reverse_diffusion(override, is_boltz, expected):
+    """The override wins when set, None means is_boltz default."""
+    assert _three_state_resolver(override, is_boltz) is expected
 
 
 def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
@@ -40,6 +62,56 @@ def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
     )
 
     assert (tmp_path / "refined.cif").exists()
+
+
+def test_get_reward_function_keeps_original_structure_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The input structure file must survive when altloc resolution leaves it unchanged.
+
+    ``resolve_mixed_hetatm_atom_altlocs`` returns a ``Path`` even when it makes no
+    copy, so the original path may compare unequal to the returned one (``Path(x)
+    != str(x)``). The unlink branch must compare by string value, otherwise the
+    caller's real input file is deleted.
+    """
+    structure_file = tmp_path / "input.cif"
+    structure_file.write_text("dummy structure")
+
+    # Altloc resolution makes no copy: it returns the same path (as a Path object).
+    monkeypatch.setattr(
+        "sampleworks.utils.guidance_script_utils.resolve_mixed_hetatm_atom_altlocs",
+        lambda path: Path(path),
+    )
+    monkeypatch.setattr(
+        "sampleworks.utils.guidance_script_utils.parse",
+        lambda *args, **kwargs: {
+            "asym_unit": build_test_atom_array(n_atoms=3, with_occupancy=True)
+        },
+    )
+    monkeypatch.setattr(
+        "sampleworks.utils.guidance_script_utils.XMap",
+        MagicMock(fromfile=MagicMock(return_value=MagicMock())),
+    )
+    monkeypatch.setattr(
+        "sampleworks.utils.guidance_script_utils.setup_scattering_params",
+        MagicMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        "sampleworks.utils.guidance_script_utils.RealSpaceRewardFunction",
+        MagicMock(return_value=MagicMock()),
+    )
+
+    # Pass the path as a string to exercise the str-vs-Path comparison.
+    get_reward_function_and_structure(
+        density="dummy_density.mrc",
+        device=torch.device("cpu"),
+        em=False,
+        loss_order=2,
+        resolution=2.0,
+        structure_path=str(structure_file),
+    )
+
+    assert structure_file.exists(), "original structure file must not be deleted"
 
 
 def test_write_job_metadata_with_job_result_appends_timing_and_status(

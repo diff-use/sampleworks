@@ -257,7 +257,8 @@ def get_reward_function_and_structure(
         ccd_mirror_path=None,
     )
 
-    # make sure to cast paths to strings, Path(x) != x!!
+    # make sure to cast paths to strings, since Path(x) != str(x) we don't want to
+    # accidentally delete the originals.
     if str(safe_structure_path) != str(structure_path):
         safe_structure_path.unlink()  # delete the temporary file if it was created
 
@@ -439,6 +440,12 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
     return job_result
 
 
+def _three_state_resolver(value: str | bool | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return bool(value)
+
+
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     """Run one configured guidance trajectory and save its outputs."""
@@ -463,6 +470,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     if args.num_diffusion_steps is not None and args.num_diffusion_steps <= 0:
         raise ValueError("num_diffusion_steps must be > 0")
 
+    edm_sampler_kwargs = {}  # i.e. use defaults.
     if "Protenix" in wrapper_class_name:
         from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
 
@@ -508,18 +516,25 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             temperature=getattr(args, "protpardelle_temperature", 1.0),
             top_p=getattr(args, "protpardelle_top_p", 1.0),
         )
+        edm_sampler_kwargs = {
+            "s_max": 80, "s_min": 0.001, "gamma_0": 0.08, "gamma_min": 0.00,
+            "sigma_data": 10.3, "step_scale": 1.0
+        }
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
-    # Boltz was trained with this, others might not have been.
-    use_alignment_for_reverse_diffusion = is_boltz
+    use_alignment_for_reverse_diffusion = _three_state_resolver(
+        args.alignment_reverse_diffusion, is_boltz
+    )
 
     # Create sampler with model-appropriate settings
+
     sampler_config = EDMSamplerConfig(
         device=str(device),
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
         alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
+        **edm_sampler_kwargs
     )
     sampler = AF3EDMSampler(
         config=sampler_config,
