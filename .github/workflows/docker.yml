@@ -7,7 +7,7 @@ name: Build and Push Docker Images
 
 on:
   push:
-    branches: [main]
+    branches: [main, test-build]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -169,7 +169,7 @@ jobs:
             BASE_IMAGE=${{ env.CUDA_BASE_IMAGE }}
             CHECKPOINTS_IMAGE=${{ steps.checkpoint-ref.outputs.image }}
           cache-from: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max
+          cache-to: type=registry,ref=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
 
       - name: Publish public image ref for Astera overlay
@@ -229,7 +229,7 @@ jobs:
           build-args: |
             PIXI_WITH_CHECKPOINTS_IMAGE=${{ needs.public.outputs.image-ref }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max
+          cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
 
       - name: Astera image digest
