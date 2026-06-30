@@ -443,18 +443,15 @@ def _carry_real_entity_categories(ciffile: CIFFile, pdb_id: str) -> None:
     deposit already aligns). The output entity id is taken from the written ``_atom_site`` so the
     parent matches the child.
 
-    Best-effort: any failure (offline, multi-entity, irreconcilable numbering) is logged and
+    Each output polymer entity is carried under its own id (a complex carries all its entities;
+    an entity that cannot be matched degrades to a typeless stub -- see ``carry_entity_categories``).
+    Best-effort: any failure (offline, no entity matched, irreconcilable numbering) is logged and
     swallowed, leaving the minimal ``add_completeness_categories`` synthesis in place so a fetch
     hiccup never fails a run.
     """
     try:
-        block = ciffile[list(ciffile.keys())[0]]
-        entity_ids = list(dict.fromkeys(block["atom_site"]["label_entity_id"].as_array(str)))
-        output_entity_id = entity_ids[0] if len(entity_ids) == 1 else "0"
         reference = fetch_rcsb_cif(pdb_id)
-        written = carry_entity_categories(
-            ciffile, reference, output_entity_id=str(output_entity_id), reconcile=True
-        )
+        written = carry_entity_categories(ciffile, reference, reconcile=True)
         logger.info(f"Carried real entity categories from {pdb_id}: {written}")
     except Exception as e:  # noqa: BLE001 - provenance upgrade must never fail the run
         logger.warning(

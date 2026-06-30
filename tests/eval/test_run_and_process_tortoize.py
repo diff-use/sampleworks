@@ -17,7 +17,6 @@ from biotite.structure import array, Atom, stack
 from biotite.structure.io.pdbx import set_structure
 from biotite.structure.io.pdbx.cif import CIFFile
 
-
 _SCRIPT_PATH = (
     Path(__file__).resolve().parents[2] / "scripts" / "eval" / "run_and_process_tortoize.py"
 )

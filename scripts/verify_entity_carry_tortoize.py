@@ -115,8 +115,8 @@ def _bare_single_model_from_deposit(
     """Derive a bare single-model coordinate source from an RCSB deposit.
 
     Keeps one polymer chain's primary conformer (group_PDB == ATOM, single altloc, first model)
-    restricted to its largest gap-free residue run (so the residues form a contiguous block that
-    ``_seq_renumber_offset`` can match), strips the entity family, makes the chain/entity ids
+    restricted to its largest gap-free residue run (so the residues form a contiguous block the
+    carry's reconcile can match), strips the entity family, makes the chain/entity ids
     self-consistent, and sets ``label_seq_id := auth_seq_id + inject_offset`` so the numbering
     matches what ``save_everything`` emits (auth == label == res_id).
 
@@ -174,6 +174,64 @@ def _bare_single_model_from_deposit(
     return bare
 
 
+def _bare_multi_model_from_deposit(
+    reference: Path, workdir: Path, chains: list[str], *, inject_offset: int = 0
+) -> Path:
+    """Derive a bare multi-chain coordinate source: one polymer chain per output entity.
+
+    Like :func:`_bare_single_model_from_deposit` but keeps several chains, each given its own
+    sequential ``label_entity_id`` (mirroring what the production writer emits for a complex), so the
+    auto path of ``carry_entity_categories`` carries every entity. Each chain is restricted to its
+    largest gap-free residue run; ``label_seq_id := auth_seq_id + inject_offset``.
+    """
+    ref = CIFFile.read(str(reference))
+    atom_site = _block(ref)["atom_site"]
+    cols = {k: np.asarray(atom_site[k].as_array(str)) for k in atom_site}
+    n = len(next(iter(cols.values())))
+
+    group = cols.get("group_PDB", np.array(["ATOM"] * n))
+    chain_col = "auth_asym_id" if "auth_asym_id" in atom_site else "label_asym_id"
+    all_chains = cols[chain_col]
+    alt = cols.get("label_alt_id", np.array(["."] * n))
+    first_model = (
+        list(dict.fromkeys(cols["pdbx_PDB_model_num"].tolist()))[0]
+        if "pdbx_PDB_model_num" in cols
+        else None
+    )
+    auth_seq = cols["auth_seq_id"]
+
+    total = np.zeros(n, dtype=bool)
+    entity_out = np.array(["?"] * n, dtype=object)
+    for idx, chain in enumerate(chains, start=1):
+        mask = (group == "ATOM") & (all_chains == chain) & np.isin(alt, _PRIMARY_ALTLOCS)
+        if first_model is not None:
+            mask &= cols["pdbx_PDB_model_num"] == first_model
+        if not mask.any():
+            raise ValueError(f"no primary-conformer ATOM rows for chain {chain!r} in {reference}")
+        present = sorted({int(r) for r in auth_seq[mask] if r.lstrip("-").isdigit()})
+        run = set(_longest_consecutive(present))
+        mask &= np.array([r.lstrip("-").isdigit() and int(r) in run for r in auth_seq])
+        total |= mask
+        entity_out[mask] = str(idx)
+        logger.info(
+            f"[deposit->modeled] chain {chain} -> entity {idx}: {int(mask.sum())} atoms over "
+            f"res {min(run)}-{max(run)}"
+        )
+
+    new_cols = {k: list(v[total]) for k, v in cols.items()}
+    new_cols["label_asym_id"] = list(all_chains[total])
+    new_cols["auth_asym_id"] = list(all_chains[total])
+    new_cols["label_entity_id"] = list(entity_out[total])
+    new_cols["label_seq_id"] = [str(int(r) + inject_offset) for r in auth_seq[total]]
+
+    out = CIFFile()
+    out["model"] = CIFBlock()
+    out["model"]["atom_site"] = CIFCategory(columns=new_cols, name="atom_site")
+    bare = workdir / "bare_multi.cif"
+    out.write(str(bare))
+    return bare
+
+
 def _summarize(scores: dict) -> str:
     if not scores:
         return "NO MODELS (0 atoms loaded)"
@@ -213,14 +271,22 @@ def _run_one(pdb_id: str, args: argparse.Namespace, workdir_root: Path) -> tuple
     reference = fetch_rcsb_cif(pdb_id)
     logger.info(f"[{pdb_id}] reference deposit: {reference}")
 
+    carry_output_id: str | None = args.entity_id
     if args.from_deposit:
-        bare = _bare_single_model_from_deposit(
-            reference,
-            workdir,
-            chain=args.chain,
-            entity_id=args.entity_id,
-            inject_offset=args.inject_offset,
-        )
+        if args.chains:
+            chains = [c.strip() for c in args.chains.split(",") if c.strip()]
+            bare = _bare_multi_model_from_deposit(
+                reference, workdir, chains, inject_offset=args.inject_offset
+            )
+            carry_output_id = None  # auto: carry every output entity under its own id
+        else:
+            bare = _bare_single_model_from_deposit(
+                reference,
+                workdir,
+                chain=args.chain,
+                entity_id=args.entity_id,
+                inject_offset=args.inject_offset,
+            )
     else:
         if args.refined is None:
             raise ValueError("--refined is required unless --from-deposit is set")
@@ -242,7 +308,7 @@ def _run_one(pdb_id: str, args: argparse.Namespace, workdir_root: Path) -> tuple
         cif = fresh()
         try:
             written = carry_entity_categories(
-                cif, reference, output_entity_id=args.entity_id, reconcile=reconcile
+                cif, reference, output_entity_id=carry_output_id, reconcile=reconcile
             )
             logger.info(f"[{pdb_id}][{name}] wrote {written}")
             variants[name] = cif
@@ -290,6 +356,12 @@ def main() -> int:
         "--chain",
         default=None,
         help="(--from-deposit) which chain to keep; default the first polymer chain.",
+    )
+    parser.add_argument(
+        "--chains",
+        default=None,
+        help="(--from-deposit) comma-separated chains to keep as a multi-entity complex, each as "
+        "its own entity carried via the auto path. Overrides --chain/--entity-id.",
     )
     parser.add_argument(
         "--inject-offset",

@@ -594,25 +594,136 @@ def fetch_rcsb_cif(pdb_id: str, cache: str | Path = _RCSB_CACHE) -> Path:
     return Path(fetch(pdb_id, format="cif", target_path=str(cache_dir)))
 
 
-def _select_polymer_entity_index(entity_poly: CIFCategory, kept_chains: set[str]) -> int:
-    """Pick the row of ``_entity_poly`` whose strands cover ``kept_chains``.
+def _contiguous_block_offsets(
+    ref_nums: Iterable[str],
+    ref_mons: Iterable[str],
+    present_nums: list[int],
+    present_mons: list[str],
+) -> list[int]:
+    """Offsets aligning the modeled residues onto one entity's canonical sequence.
 
-    Falls back to the sole row when there is exactly one polymer entity (
-    sufficient for single-chain inputs). Raises when neither resolves, so the caller can degrade.
+    The modeled residues should appear as a contiguous block of the entity's ``_entity_poly_seq``
+    residue-name sequence. Returns the integer shift (``label_seq_id - num``) for every position
+    where the block matches; an empty list means the entity's sequence does not contain the block
+    (so it is not a match for these residues). A gapped modeled region matches nothing -- the
+    caller degrades, as production carves are contiguous.
     """
-    entity_ids = entity_poly["entity_id"].as_array(str)
-    if "pdbx_strand_id" in entity_poly:
-        strands = entity_poly["pdbx_strand_id"].as_array(str)
-        for i, strand_field in enumerate(strands):
-            strand_set = {s.strip() for s in str(strand_field).split(",")}
-            if strand_set & kept_chains:
-                return i
-    if len(entity_ids) == 1:
-        return 0
+    ref_pairs = sorted(zip((int(n) for n in ref_nums), [str(m) for m in ref_mons], strict=True))
+    ref_num_seq = [n for n, _ in ref_pairs]
+    ref_mon_seq = [m for _, m in ref_pairs]
+    span = len(present_mons)
+    if span == 0:
+        return []
+    return [
+        present_nums[0] - ref_num_seq[i]
+        for i in range(len(ref_mon_seq) - span + 1)
+        if ref_mon_seq[i : i + span] == present_mons
+    ]
+
+
+def _entity_sort_key(entity_id: str) -> tuple[int, Any]:
+    """Sort entity ids numerically when possible, else lexicographically."""
+    return (0, int(entity_id)) if entity_id.lstrip("-").isdigit() else (1, entity_id)
+
+
+def _break_entity_tie(
+    candidates: list[tuple[str, list[int]]],
+    strand_by_id: dict[str, str] | None,
+    kept_chains: set[str],
+) -> tuple[str, list[int]]:
+    """Disambiguate several reference entities that all contain the modeled residues.
+
+    Strand id (``pdbx_strand_id`` overlap with the kept chains) is tried first; it is a weak signal
+    under predictor chain-relabeling, so when it does not resolve and every candidate aligns
+    identically (a homodimer's repeated entity, sequence- and offset-equal) the lowest entity id is
+    chosen. Otherwise the tie is genuine and we raise so the caller degrades.
+    """
+    if strand_by_id is not None:
+        stranded = [
+            (eid, offs)
+            for eid, offs in candidates
+            if {s.strip() for s in strand_by_id.get(eid, "").split(",")} & kept_chains
+        ]
+        if len(stranded) == 1:
+            return stranded[0]
+    if len({tuple(offs) for _, offs in candidates}) == 1:
+        return min(candidates, key=lambda c: _entity_sort_key(c[0]))
     raise ValueError(
-        f"could not match a single polymer entity to chains {sorted(kept_chains)} "
-        f"(found {len(entity_ids)} polymer entities)"
+        f"multiple reference polymer entities match chains {sorted(kept_chains)}; "
+        "cannot disambiguate by sequence or strand"
     )
+
+
+def _match_polymer_entity(
+    ref_block,
+    present_nums: list[int],
+    present_mons: list[str],
+    kept_chains: set[str],
+    *,
+    require_offset: bool,
+) -> tuple[str, int]:
+    """Pick the reference polymer entity whose sequence contains the modeled residues.
+
+    Matches by residue-name sequence (robust to chain relabeling -- e.g. a predictor that resets
+    chains to "A"), not by strand id. Returns ``(reference entity_id, renumber offset)``. The unique
+    entity whose canonical sequence contains the modeled block is chosen; ties are broken by
+    :func:`_break_entity_tie`. With ``require_offset`` (i.e. ``reconcile``) the chosen entity's block
+    must align at exactly one position, else the offset is undefined and we raise.
+
+    Raises ValueError when there are no modeled residues, no entity contains the block, the tie
+    cannot be broken, or (with ``require_offset``) the alignment is not unique. Callers degrade.
+    """
+    if not present_mons:
+        raise ValueError("no kept-chain residues with a label_seq_id in the output")
+
+    entity_poly = ref_block["entity_poly"]
+    poly_ids = [str(e) for e in entity_poly["entity_id"].as_array(str)]
+    strand_by_id = (
+        dict(
+            zip(
+                poly_ids,
+                [str(s) for s in entity_poly["pdbx_strand_id"].as_array(str)],
+                strict=True,
+            )
+        )
+        if "pdbx_strand_id" in entity_poly
+        else None
+    )
+
+    eps = ref_block["entity_poly_seq"]
+    eps_eid = np.asarray(eps["entity_id"].as_array(str))
+    eps_num = np.asarray(eps["num"].as_array(str))
+    eps_mon = np.asarray(eps["mon_id"].as_array(str))
+
+    candidates: list[tuple[str, list[int]]] = []
+    for eid in poly_ids:
+        mask = eps_eid == eid
+        offsets = _contiguous_block_offsets(
+            list(eps_num[mask]), list(eps_mon[mask]), present_nums, present_mons
+        )
+        if offsets:
+            candidates.append((eid, offsets))
+
+    if not candidates:
+        raise ValueError(
+            f"no reference polymer entity contains the {len(present_mons)} modeled residues "
+            f"for chains {sorted(kept_chains)}"
+        )
+
+    eid, offsets = (
+        candidates[0]
+        if len(candidates) == 1
+        else _break_entity_tie(candidates, strand_by_id, kept_chains)
+    )
+
+    if len(offsets) == 1:
+        return eid, offsets[0]
+    if require_offset:
+        raise ValueError(
+            f"cannot uniquely align {len(present_mons)} output residues to the reference "
+            f"sequence ({len(offsets)} candidate alignments)"
+        )
+    return eid, offsets[0]
 
 
 def _present_residues(dst_block, kept_chains: set[str]) -> tuple[list[int], list[str]]:
@@ -634,38 +745,80 @@ def _present_residues(dst_block, kept_chains: set[str]) -> tuple[list[int], list
     return nums, [present[n] for n in nums]
 
 
-def _seq_renumber_offset(
-    dst_block, ref_nums: list[str], ref_mons: list[str], kept_chains: set[str]
-) -> int:
-    """Offset to renumber ``_entity_poly_seq.num`` into the dst ``label_seq_id`` scheme.
+def _build_carried_rows(
+    ref_block,
+    ref_entity_id: str,
+    output_entity_id: str,
+    kept_chains: set[str],
+    offset: int,
+) -> tuple[dict, dict, dict]:
+    """Relabel one reference polymer entity onto an output entity id and chain set.
 
-    The output's present residues should form a contiguous block of the canonical sequence; we
-    locate that block by matching the residue-name sequence and return the integer shift that
-    lines ``num`` up with ``label_seq_id``. Raises if the match is not unique (caller degrades).
+    Returns ``(entity_row, entity_poly_row, entity_poly_seq_dict)`` as plain column dicts: the
+    reference rows for ``ref_entity_id`` with ``entity_id`` / ``id`` rewritten to
+    ``output_entity_id``, the strand list reset to the kept chains, and ``num`` shifted by
+    ``offset`` (0 = verbatim). Relabel happens here, before any cross-entity concatenation, so a
+    reference id can never leak into the output even when output ids differ.
     """
-    dst_nums, dst_comps = _present_residues(dst_block, kept_chains)
-    if not dst_nums:
-        raise ValueError("no kept-chain residues with a label_seq_id in the output")
-    ref_pairs = sorted(zip((int(n) for n in ref_nums), ref_mons, strict=True))
-    ref_num_seq = [n for n, _ in ref_pairs]
-    ref_mon_seq = [m for _, m in ref_pairs]
-    span = len(dst_comps)
-    starts = [
-        i for i in range(len(ref_mon_seq) - span + 1) if ref_mon_seq[i : i + span] == dst_comps
-    ]
-    if len(starts) != 1:
-        raise ValueError(
-            f"cannot uniquely align {span} output residues to the reference sequence "
-            f"({len(starts)} candidate alignments)"
-        )
-    return dst_nums[0] - ref_num_seq[starts[0]]
+    entity = ref_block["entity"]
+    ent_mask = np.asarray(entity["id"].as_array(str)) == ref_entity_id
+    entity_row = {k: list(np.asarray(entity[k].as_array(str))[ent_mask]) for k in entity}
+    entity_row["id"] = [output_entity_id]
+
+    entity_poly = ref_block["entity_poly"]
+    poly_ids = np.asarray(entity_poly["entity_id"].as_array(str))
+    poly_idx = int(np.flatnonzero(poly_ids == ref_entity_id)[0])
+    poly_row = {k: [str(entity_poly[k].as_array(str)[poly_idx])] for k in entity_poly}
+    poly_row["entity_id"] = [output_entity_id]
+    if "pdbx_strand_id" in poly_row:
+        poly_row["pdbx_strand_id"] = [",".join(sorted(kept_chains))]
+
+    eps = ref_block["entity_poly_seq"]
+    eps_mask = np.asarray(eps["entity_id"].as_array(str)) == ref_entity_id
+    eps_dict = {k: list(np.asarray(eps[k].as_array(str))[eps_mask]) for k in eps}
+    eps_dict["entity_id"] = [output_entity_id] * int(eps_mask.sum())
+    if offset:
+        eps_dict["num"] = [str(int(n) + offset) for n in eps_dict["num"]]
+    return entity_row, poly_row, eps_dict
+
+
+def _concat_row_dicts(rows: list[dict]) -> dict:
+    """Flatten per-entity column dicts (sharing one key set) into a single column dict."""
+    if not rows:
+        return {}
+    keys = list(rows[0].keys())
+    cols: dict[str, list[str]] = {k: [] for k in keys}
+    for row in rows:
+        for k in keys:
+            cols[k].extend(row[k])
+    return cols
+
+
+def _merge_entity_rows(matched_rows: list[dict], stub_ids: list[str]) -> dict:
+    """Concatenate matched ``_entity`` rows and append typeless ``?`` stubs for unmatched ids.
+
+    ``add_category_to_cif`` overwrites the whole ``_entity`` category, so every output
+    ``label_entity_id`` -- including those that could not be matched (a degraded polymer entity, or
+    a ligand/water) -- must reappear here or mmcif-validator flags an ``_atom_site`` reference with
+    no parent. Stub rows carry the same columns as the matched rows (filled with the CIF null
+    ``"?"``) so the category stays rectangular and survives a write/read round-trip.
+    """
+    keys = list(matched_rows[0].keys()) if matched_rows else ["id"]
+    cols: dict[str, list[str]] = {k: [] for k in keys}
+    for row in matched_rows:
+        for k in keys:
+            cols[k].extend(row[k])
+    for sid in stub_ids:
+        for k in keys:
+            cols[k].append(sid if k == "id" else "?")
+    return cols
 
 
 def carry_entity_categories(
     dst: CIFFile,
     reference: str | Path | CIFFile,
     *,
-    output_entity_id: str = "0",
+    output_entity_id: str | None = None,
     kept_chains: Iterable[str] | None = None,
     reconcile: bool = False,
     block_name: str | None = None,
@@ -674,13 +827,25 @@ def carry_entity_categories(
 
     Replaces the minimal ``_entity`` stub from :func:`add_completeness_categories` with the real
     ``_entity`` (typed) / ``_entity_poly`` (sequence) / ``_entity_poly_seq`` (numbered residues)
-    read from ``reference`` (a full RCSB deposit), so tortoize (G2) can produce real z-scores while
-    G1 stays satisfied. Also writes a fresh ``_struct_asym`` mapping each kept chain to the entity.
+    read from ``reference`` (a full RCSB deposit), so tortoize can produce real z-scores while the
+    mmcif-validator stays satisfied. Also writes ``_struct_asym`` mapping each output chain to its
+    entity.
 
-    The reference entity is subset to the chain(s) actually present in the output and relabelled to
-    ``output_entity_id`` (the id ``set_structure`` emitted into the output ``_atom_site``). When
-    ``reconcile`` is set, ``_entity_poly_seq.num`` is shifted into the output's ``label_seq_id``
-    numbering (needed when the raw deposit numbers its sequence differently from the SW input).
+    Each output **polymer** entity is matched to the reference entity whose canonical sequence
+    contains its modeled residues (by residue-name sequence, robust to predictor chain-relabeling),
+    subset to that entity's chains, and relabelled to the output id. With ``reconcile``,
+    ``_entity_poly_seq.num`` is shifted per entity into the output's ``label_seq_id`` numbering.
+
+    Two modes:
+
+    - **Auto** (``output_entity_id is None`` and ``kept_chains is None``): every distinct
+      ``_atom_site.label_entity_id`` is carried under its own id; non-polymer entities (ligand/water,
+      no numeric ``label_seq_id``) and any entity that cannot be matched are left as a typeless
+      ``_entity`` stub so the file stays mmcif-validator-clean. Raises only if *nothing* matched, so
+      the caller degrades to the pure stub.
+    - **Forced** (explicit ``output_entity_id`` and/or ``kept_chains``): a single entity is carried
+      and relabelled onto ``output_entity_id`` (default "0") over ``kept_chains`` (default: all
+      output chains). Any match failure raises (callers wrap this to degrade).
 
     Parameters
     ----------
@@ -688,12 +853,12 @@ def carry_entity_categories(
         The output CIF to modify in place. Must already carry ``_atom_site``.
     reference : str | Path | CIFFile
         The full deposit (e.g. from :func:`fetch_rcsb_cif`) carrying the real entity categories.
-    output_entity_id : str, optional
-        Entity id to relabel onto, matching the output ``_atom_site.label_entity_id``. Default "0".
+    output_entity_id : str | None, optional
+        If given, force single-entity mode and relabel onto this id. Default None (auto).
     kept_chains : Iterable[str] | None, optional
-        Chains to keep. Defaults to the chains present in the dst ``_atom_site``.
+        If given, force single-entity mode over these chains. Default None (auto).
     reconcile : bool, optional
-        If True, renumber ``_entity_poly_seq.num`` to the output's ``label_seq_id`` scheme.
+        If True, renumber ``_entity_poly_seq.num`` per entity to the output's ``label_seq_id`` scheme.
     block_name : str | None, optional
         Block of ``dst`` to operate on. If None, its sole block is used.
 
@@ -701,14 +866,14 @@ def carry_entity_categories(
     -------
     list[str]
         Names of the categories written (``entity``, ``entity_poly``, ``entity_poly_seq``,
-        ``struct_asym``).
+        ``struct_asym``, ``chem_comp``).
 
     Raises
     ------
     ValueError
-        If the reference lacks the polymer-entity categories, no single polymer entity matches the
-        kept chains, or (with ``reconcile``) the sequence cannot be uniquely aligned. Callers wrap
-        this to degrade to the minimal synthesis.
+        If the reference lacks the polymer-entity categories, or no output polymer entity could be
+        matched (in forced mode, the single entity; in auto mode, every entity). Callers wrap this
+        to degrade to the minimal synthesis.
     """
     ref_file = reference if isinstance(reference, CIFFile) else CIFFile.read(str(reference))
     dst_block = _resolve_block(dst, block_name)
@@ -718,55 +883,93 @@ def carry_entity_categories(
     if missing:
         raise ValueError(f"reference CIF lacks {missing}; cannot carry entity categories")
 
-    if kept_chains is None:
-        atom_site = dst_block["atom_site"]
-        chain_col = "auth_asym_id" if "auth_asym_id" in atom_site else "label_asym_id"
-        kept = set(_unique_preserve(atom_site[chain_col].as_array(str)))
+    atom_site = dst_block["atom_site"]
+    chain_col = "auth_asym_id" if "auth_asym_id" in atom_site else "label_asym_id"
+    out_chains = [str(c) for c in atom_site[chain_col].as_array(str)]
+    out_entities = [str(e) for e in atom_site["label_entity_id"].as_array(str)]
+
+    forced = output_entity_id is not None or kept_chains is not None
+    if forced:
+        forced_chains = (
+            {str(c) for c in kept_chains}
+            if kept_chains is not None
+            else set(_unique_preserve(out_chains))
+        )
+        pairs = [(output_entity_id if output_entity_id is not None else "0", forced_chains)]
     else:
-        kept = {str(c) for c in kept_chains}
+        pairs = [
+            (eid, {c for c, e in zip(out_chains, out_entities, strict=True) if e == eid})
+            for eid in _unique_preserve(out_entities)
+        ]
 
-    entity_poly = ref_block["entity_poly"]
-    poly_idx = _select_polymer_entity_index(entity_poly, kept)
-    ref_entity_id = str(entity_poly["entity_id"].as_array(str)[poly_idx])
+    entity_rows: list[dict] = []
+    entity_poly_rows: list[dict] = []
+    eps_dicts: list[dict] = []
+    carried_mons: list[str] = []
+    outcomes: list[tuple[str, set[str], bool]] = []  # (output id, chains, matched)
 
-    # _entity: the single row for the chosen entity, relabelled.
-    entity = ref_block["entity"]
-    ent_mask = np.asarray(entity["id"].as_array(str)) == ref_entity_id
-    entity_data = {k: list(np.asarray(entity[k].as_array(str))[ent_mask]) for k in entity}
-    entity_data["id"] = [output_entity_id]
+    for out_id, chains_e in pairs:
+        nums_e, mons_e = _present_residues(dst_block, chains_e)
+        if not nums_e and not forced:
+            outcomes.append((out_id, chains_e, False))  # non-polymer (ligand/water) -> stub
+            continue
+        try:
+            ref_id, offset = _match_polymer_entity(
+                ref_block, nums_e, mons_e, chains_e, require_offset=reconcile
+            )
+        except ValueError:
+            if forced:
+                raise
+            outcomes.append((out_id, chains_e, False))  # degrade this entity to a stub
+            continue
+        entity_row, poly_row, eps_dict = _build_carried_rows(
+            ref_block, ref_id, out_id, chains_e, offset if reconcile else 0
+        )
+        entity_rows.append(entity_row)
+        entity_poly_rows.append(poly_row)
+        eps_dicts.append(eps_dict)
+        carried_mons.extend(eps_dict["mon_id"])
+        outcomes.append((out_id, chains_e, True))
 
-    # _entity_poly: the chosen row, relabelled and re-stranded to the kept chains.
-    entity_poly_data = {k: [str(entity_poly[k].as_array(str)[poly_idx])] for k in entity_poly}
-    entity_poly_data["entity_id"] = [output_entity_id]
-    if "pdbx_strand_id" in entity_poly_data:
-        entity_poly_data["pdbx_strand_id"] = [",".join(sorted(kept))]
+    if not any(matched for _, _, matched in outcomes):
+        raise ValueError(
+            "no output polymer entity could be matched to a reference entity "
+            f"(output entities {[out_id for out_id, _, _ in outcomes]})"
+        )
 
-    # _entity_poly_seq: all residues for the chosen entity, relabelled (and optionally renumbered).
-    eps = ref_block["entity_poly_seq"]
-    eps_mask = np.asarray(eps["entity_id"].as_array(str)) == ref_entity_id
-    eps_data = {k: list(np.asarray(eps[k].as_array(str))[eps_mask]) for k in eps}
-    eps_data["entity_id"] = [output_entity_id] * int(eps_mask.sum())
-    if reconcile:
-        offset = _seq_renumber_offset(dst_block, eps_data["num"], eps_data["mon_id"], kept)
-        eps_data["num"] = [str(int(n) + offset) for n in eps_data["num"]]
+    stub_ids = [out_id for out_id, _, matched in outcomes if not matched]
+    entity_data = _merge_entity_rows(entity_rows, stub_ids)
+    entity_poly_data = _concat_row_dicts(entity_poly_rows)
+    eps_data = _concat_row_dicts(eps_dicts)
 
-    # _struct_asym: one row per kept chain -> the entity (built fresh, not copied).
-    struct_asym_data = {"id": sorted(kept), "entity_id": [output_entity_id] * len(kept)}
+    # _struct_asym: one row per output chain -> its entity id (matched and degraded), so every
+    # _atom_site.label_asym_id resolves to a parent and each entity_id resolves to an _entity row.
+    struct_ids: list[str] = []
+    struct_eids: list[str] = []
+    for out_id, chains_e, _ in outcomes:
+        for chain in sorted(chains_e):
+            struct_ids.append(chain)
+            struct_eids.append(out_id)
+    struct_asym_data = {"id": struct_ids, "entity_id": struct_eids}
 
     # _chem_comp must list every residue the carried _entity_poly_seq references (mon_id is a
     # foreign key into _chem_comp.id), not just the modeled residues add_completeness_categories
     # saw in _atom_site. The canonical sequence can include residues absent from the modeled subset
-    # (e.g. an N-terminal MET), so extend _chem_comp to the union or mmcif-validator (G1) errors.
-    atom_site = dst_block["atom_site"]
-    comp_ids = _unique_preserve(
-        list(atom_site["label_comp_id"].as_array(str)) + list(eps_data["mon_id"])
-    )
+    # (e.g. an N-terminal MET), so extend _chem_comp to the union or mmcif-validator errors.
+    comp_ids = _unique_preserve(list(atom_site["label_comp_id"].as_array(str)) + carried_mons)
 
     add_category_to_cif(dst, entity_data, "entity", overwrite=True, block_name=block_name)
     add_category_to_cif(dst, entity_poly_data, "entity_poly", overwrite=True, block_name=block_name)
     add_category_to_cif(dst, eps_data, "entity_poly_seq", overwrite=True, block_name=block_name)
     add_category_to_cif(dst, struct_asym_data, "struct_asym", overwrite=True, block_name=block_name)
     add_category_to_cif(dst, {"id": comp_ids}, "chem_comp", overwrite=True, block_name=block_name)
+
+    if stub_ids:
+        matched_ids = [out_id for out_id, _, matched in outcomes if matched]
+        logger.info(
+            f"carry_entity_categories: carried {len(matched_ids)} entity(ies) {matched_ids}; "
+            f"degraded {len(stub_ids)} to stub {stub_ids}"
+        )
     return ["entity", "entity_poly", "entity_poly_seq", "struct_asym", "chem_comp"]
 
 
