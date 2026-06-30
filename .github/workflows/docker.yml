@@ -210,8 +210,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
 
-      - name: Resolve public image input
-        id: public-ref
+      - name: Validate public image digest
         env:
           PUBLIC_IMAGE_DIGEST: ${{ needs.public.outputs.image-digest }}
         run: |
@@ -223,7 +222,6 @@ jobs:
             echo "public job produced a non-sha256 digest: ${PUBLIC_IMAGE_DIGEST}"
             exit 1
           fi
-          echo "image=${PUBLIC_REGISTRY}/${PUBLIC_IMAGE_NAME}@${PUBLIC_IMAGE_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Astera image
         id: astera-build
@@ -236,7 +234,7 @@ jobs:
           tags: ${{ steps.astera-meta.outputs.tags }}
           labels: ${{ steps.astera-meta.outputs.labels }}
           build-args: |
-            PIXI_WITH_CHECKPOINTS_IMAGE=${{ steps.public-ref.outputs.image }}
+            PIXI_WITH_CHECKPOINTS_IMAGE=${{ env.PUBLIC_REGISTRY }}/${{ env.PUBLIC_IMAGE_NAME }}@${{ needs.public.outputs.image-digest }}
           cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
           provenance: false
