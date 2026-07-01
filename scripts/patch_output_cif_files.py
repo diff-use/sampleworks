@@ -66,7 +66,7 @@ def parse_args():
     )
     parser.add_argument(
         "--rcsb-pattern",
-        default="grid_search_results/(.{4})",
+        default="grid_search_results/(pdb_[A-Za-z0-9]{8}|.{4})",
         help="Regex pattern for rcsb ids in file paths. "
         "Must have only one group, surrounding the id",
     )
@@ -89,7 +89,7 @@ def main(
     input_dir: str | Path,
     grid_search_input_dir: str | Path,
     target_pattern: str,
-    rcsb_regex: str = r"grid_search_results/(.{4})",
+    rcsb_regex: str = r"grid_search_results/(pdb_[A-Za-z0-9]{8}|.{4})",
     depth: int = 4,
     input_pdb_pattern: str = "{pdb_id}/{pdb_id}_single_001_density_input.cif",
 ) -> int:
@@ -137,19 +137,51 @@ def main(
     return 0
 
 
+# A real RCSB id is either the extended 12-char form `pdb_########` or the legacy
+# 4-char form, whose first character is always a digit (0-9). The leading-digit rule
+# is what distinguishes a real legacy id from a stray folder name like `TEST`/`logs`.
+_VALID_RCSB_ID = re.compile(r"pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3}")
+
+
+def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
+    """Extract and validate the RCSB id from a cif path.
+
+    ``rcsb_regex`` only locates the candidate in the path (it must contain exactly one
+    capturing group around the id; see ``--rcsb-pattern``). The captured token is then
+    checked against the actual PDB-id grammar and returned *verbatim* -- legacy ``4hhb``
+    or extended ``pdb_00004hhb``, whatever the folder is named, with no normalization.
+
+    Returns ``None`` when the path contains no match, or when the captured token is not a
+    well-formed PDB id -- so a stray folder such as ``TEST/`` is rejected here rather than
+    silently fetched. This is the main checkpoint: a wrong id here would patch coordinates
+    into the wrong template without erroring.
+    """
+    m = re.search(rcsb_regex, str(cif_path))
+    if not m:
+        return None
+    if m.re.groups != 1:
+        raise ValueError(
+            f"--rcsb-pattern must have exactly one capturing group, "
+            f"got {m.re.groups}: {rcsb_regex!r}"
+        )
+    token = m.group(1)
+    if not _VALID_RCSB_ID.fullmatch(token):
+        return None
+    return token
+
+
 def patch_individual_cif_file(
     cif_file: Path, rcsb_regex: str, reference_dir: Path, input_pdb_pattern: str
 ) -> str | None:  # returns an error message if there was one
     cif_path = Path(cif_file)
-    m = re.search(rcsb_regex, str(cif_path))
-    rcsb_id = m.group(1) if m else None
-    if not m:
+    rcsb_id = extract_rcsb_id(cif_path, rcsb_regex)
+    if rcsb_id is None:
         msg = (
-            f"Unable to parse an RCSB structure id: from path {cif_file} with pattern {rcsb_regex}"
+            f"Unable to parse a valid RCSB structure id from path {cif_file} "
+            f"with pattern {rcsb_regex}"
         )
         logger.warning(msg)
         return msg
-
     # Get the offset for residue numbering in the reference structure
     try:
         reference_path = reference_dir / input_pdb_pattern.format(pdb_id=rcsb_id)
