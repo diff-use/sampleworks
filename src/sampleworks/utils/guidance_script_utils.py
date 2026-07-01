@@ -65,10 +65,12 @@ try:
     from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
 except (ImportError, OSError):  # OSError can arise from a missing model_params directory
     ProtpardelleWrapper = None  # ty:ignore[invalid-assignment]
-    logger.warning("Failed to import Protpardelle, hopefully you're running a different model. "
-                   "If you intended to use Protpardelle, please additionally check that the "
-                   "model_params directory exists. You may need to set the environment variable"
-                   "PROTPARDELLE_MODEL_PARAMS.")
+    logger.warning(
+        "Failed to import Protpardelle, hopefully you're running a different model. "
+        "If you intended to use Protpardelle, please additionally check that the "
+        "model_params directory exists. You may need to set the environment variable"
+        "PROTPARDELLE_MODEL_PARAMS."
+    )
 
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -176,11 +178,24 @@ def get_model_and_device(
     device_str: str,
     model_checkpoint_path: str | None,
     model_type: str,
-    method: str | None = None,
+    config: GuidanceConfig | None = None,
     model: Any = None,
-    protpardelle_config_path: str | None = None,
 ) -> tuple[torch.device, Any]:
-    """Validate a checkpoint, choose a device, and construct the model wrapper."""
+    """Validate a checkpoint, choose a device, and construct the model wrapper.
+
+    Arguments:
+        device_str: The device to use, e.g. "cuda:0" or "cpu".
+        model_checkpoint_path: The path to the model checkpoint.
+        model_type: The type of model to use.
+        config: The configuration object, usually GuidanceConfig, from which extra
+           model-specific settings are read, e.g. a path to a YAML config file.
+        model: The model to use, if provided, helps to prevent re-loading the actual weights.
+
+    Model-specific settings are read from ``config`` rather than passed as
+    separate arguments: ``method`` is used only by the Boltz2 wrapper, and
+    ``protpardelle_config_path`` only by the Protpardelle wrapper.
+    """
+
     validated_checkpoint_path = validate_model_checkpoint(model_type, model_checkpoint_path)
 
     device = torch.device(device_str) if device_str else try_gpu()
@@ -205,6 +220,7 @@ def get_model_and_device(
     elif model_type == StructurePredictor.BOLTZ_2:
         if Boltz2Wrapper is None:
             raise ImportError("Boltz dependencies not installed")
+        method = getattr(config, "method", None)
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
@@ -229,8 +245,9 @@ def get_model_and_device(
         if ProtpardelleWrapper is None:
             raise ImportError("Protpardelle dependencies not installed")
         logger.debug(f"Loading Protpardelle model from {validated_checkpoint_path}")
-        config_path = (
-            protpardelle_config_path or files("sampleworks.data").joinpath("cc89_epoch415.yaml")
+        protpardelle_config_path = getattr(config, "protpardelle_config_path", None)
+        config_path = protpardelle_config_path or files("sampleworks.data").joinpath(
+            "cc89_epoch415.yaml"
         )
         model_wrapper = ProtpardelleWrapper(
             config_path=str(Path(config_path).expanduser().resolve()),
@@ -512,7 +529,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = annotate_structure_for_protpardelle(
             structure,
             ensemble_size=args.ensemble_size,
-            num_steps=args.num_diffusion_steps,
+            num_steps=args.num_diffusion_steps or 500,
             s_churn=getattr(args, "protpardelle_s_churn", 40.0),
             step_scale=getattr(args, "protpardelle_step_scale", 1.0),
             sidechain_mode=getattr(args, "protpardelle_sidechain_mode", False),
@@ -523,8 +540,12 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             top_p=getattr(args, "protpardelle_top_p", 1.0),
         )
         edm_sampler_kwargs = {
-            "s_max": 80, "s_min": 0.001, "gamma_0": 0.08, "gamma_min": 0.00,
-            "sigma_data": 10.3, "step_scale": 1.0
+            "s_max": 80,
+            "s_min": 0.001,
+            "gamma_0": 0.08,
+            "gamma_min": 0.00,
+            "sigma_data": 10.3,
+            "step_scale": 1.0,
         }
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
@@ -540,7 +561,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
         alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
-        **edm_sampler_kwargs
+        **edm_sampler_kwargs,
     )
     sampler = AF3EDMSampler(
         config=sampler_config,
@@ -739,8 +760,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
         str(template_job.device),
         template_job.model_checkpoint,
         template_job.model,  # this is not actually the model, it's the model name, e.g. boltz2
-        method=template_job.method if hasattr(template_job, "method") else None,
-        protpardelle_config_path=getattr(template_job, "protpardelle_config_path", None),
+        config=template_job,
     )
     job_results = []
     for i, job in enumerate(job_queue):

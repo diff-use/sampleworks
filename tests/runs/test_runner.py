@@ -47,8 +47,7 @@ def test_argv_omits_false_bool_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     """False boolean args are omitted rather than emitted as bare CLI flags."""
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset(
-        "rf3_partial",
-        overrides=["shared_args.gradient-normalization=false", "jobs.0.gpu_count=1"]
+        "rf3_partial", overrides=["shared_args.gradient-normalization=false", "jobs.0.gpu_count=1"]
     )
     inv = runner.build_invocations(preset, results_dir=Path("/results"))[0]
     assert "--gradient-normalization" not in inv.argv
@@ -149,8 +148,9 @@ def test_gpu_count_rejects_insufficient_visible_gpus(
 def test_protenix_dual_uses_different_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     """The Protenix dual preset uses separate tiny and mini checkpoints."""
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("protenix_dual",
-                                overrides=["jobs.0.gpu_count=1", "jobs.1.gpu_count=1"])
+    preset = loader.load_preset(
+        "protenix_dual", overrides=["jobs.0.gpu_count=1", "jobs.1.gpu_count=1"]
+    )
     invocations = runner.build_invocations(preset, results_dir=Path("/r"))
     pairs = [_argv_to_dict(i.argv[6:]) for i in invocations]
     assert pairs[0]["--model-checkpoint"] == "/extra_checkpoints/protenix_tiny_default_v0.5.0.pt"

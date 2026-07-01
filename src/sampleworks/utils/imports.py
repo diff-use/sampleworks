@@ -208,8 +208,7 @@ def require_protpardelle(message: str | None = None) -> Callable[[F], F]:
     ...     pass
     """
     default_message = (
-        "Protpardelle model wrapper is not available. Install with: "
-        "pixi install -e protpardelle"
+        "Protpardelle model wrapper is not available. Install with: pixi install -e protpardelle"
     )
 
     def decorator(func: F) -> F:
