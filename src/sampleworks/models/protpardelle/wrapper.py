@@ -1,6 +1,6 @@
 """Wrapper for Protpardelle-1c models.
 
-Follows the ``StructureModelWrapper`` protocol in
+Follows the ``FlowModelWrapper`` protocol in
 ``sampleworks.models.protocol`` so Protpardelle can be used interchangeably
 with other structure predictors in sampling pipelines.
 
@@ -8,10 +8,9 @@ This wrapper targets the *sequence-conditioned* all-atom Protpardelle-1c
 models (``task: "ai-allatom"``, e.g. the model defined by ``cc89.yaml``).
 These models take a protein sequence as their only conditioning input and
 generate an all-atom structure by running the full reverse-diffusion
-trajectory internally. Because a single ``step`` call encapsulates the entire
-diffusion loop (analogous to AlphaFold2 recycling being hidden inside one
-forward pass), this is a ``StructureModelWrapper`` rather than a
-``FlowModelWrapper``.
+trajectory internally. However, note that we pass a "sequence" as coordinates
+for all possible atoms (Protpardelle's atom37 representation), with unused
+atoms zeroed out.
 """
 
 from __future__ import annotations
@@ -117,8 +116,15 @@ class ProtpardelleConditioning:
     _initialized: bool = field(default=False, init=False, repr=False)
 
     _FROZEN = frozenset(
-        {"aatype", "seq_mask", "residue_index", "chain_index",
-         "atom_mask", "sampling_kwargs", "sequences"}
+        {
+            "aatype",
+            "seq_mask",
+            "residue_index",
+            "chain_index",
+            "atom_mask",
+            "sampling_kwargs",
+            "sequences",
+        }
     )
 
     def __post_init__(self) -> None:
@@ -131,7 +137,6 @@ class ProtpardelleConditioning:
                 f"Cannot set attribute {key!r} on {self.__class__.__name__}, it is frozen!"
             )
         object.__setattr__(self, key, value)
-
 
 
 @dataclass
@@ -208,6 +213,11 @@ def annotate_structure_for_protpardelle(
     extra_sampling_kwargs: dict[str, Any] | None = None,
 ) -> dict:
     """Annotate an Atomworks structure with Protpardelle-specific configuration.
+
+    Note that many of these parameters are related to protein design, or are relevant only
+    if one is using Protpardelle for design (e.g. jump_steps, temperature, top_p). We have
+    decided to leave these accessible for the future, envisioning that SW may be useful for
+    ensemble-conditioned sequence design.
 
     Parameters
     ----------
@@ -384,7 +394,8 @@ class ProtpardelleWrapper:
         # Concatenate per-chain aatypes in chain order; chains are placed
         # contiguously at the front of the padded sequence by the helper above.
         chain_aatypes = [
-            seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS) for seq in sequences  # ty: ignore
+            seq_to_aatype(seq, num_tokens=NUM_AATYPE_TOKENS)
+            for seq in sequences  # ty: ignore
         ]
         flat_aatype = torch.cat(chain_aatypes).to(self.device)
         padded_len = seq_mask.shape[1]
@@ -402,9 +413,7 @@ class ProtpardelleWrapper:
         # shape ``batch x N x 3``) onto the model's ``batch x L x 37 x 3`` atom37
         # layout. The mapping is derived from the input structure's atom names.
         atom_array = get_asym_unit_from_structure(structure, atom_array_index=0)
-        atom37_residue_index, atom37_atom_index = self._atom37_indices_from_atom_array(
-            atom_array
-        )
+        atom37_residue_index, atom37_atom_index = self._atom37_indices_from_atom_array(atom_array)
 
         # This should be the way to make the atom mask:
         #   atom_mask = atom37_mask_from_aatype(aatype, seq_mask) but it doesn't handle OXT, so:
@@ -425,7 +434,7 @@ class ProtpardelleWrapper:
             atom37_atom_index=atom37_atom_index,
             sampling_kwargs=sampling_kwargs,
             sequences=tuple(sequences),
-            x_self_conditioning=None
+            x_self_conditioning=None,
         )
 
         # x_init is a shape-compatible reference drawn from a Gaussian prior.
@@ -492,9 +501,7 @@ class ProtpardelleWrapper:
         atom37_residue_index = torch.as_tensor(
             residue_ordinals, dtype=torch.long, device=self.device
         )
-        atom37_atom_index = torch.as_tensor(
-            atom_slots, dtype=torch.long, device=self.device
-        )
+        atom37_atom_index = torch.as_tensor(atom_slots, dtype=torch.long, device=self.device)
         return atom37_residue_index, atom37_atom_index
 
     def _convert_to_atom37(
@@ -552,9 +559,7 @@ class ProtpardelleWrapper:
         )
 
         # Flatten (batch, atom) so a single index_put scatters every coordinate.
-        batch_index = torch.arange(batch_size, device=x_t.device).repeat_interleave(
-            num_atoms
-        )
+        batch_index = torch.arange(batch_size, device=x_t.device).repeat_interleave(num_atoms)
         flat_residue_index = residue_index.repeat(batch_size)
         flat_atom_index = atom_index.repeat(batch_size)
         values = x_t.reshape(batch_size * num_atoms, 3)
@@ -640,12 +645,14 @@ class ProtpardelleWrapper:
         features: GenerativeModelInput[ProtpardelleConditioning] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
         """
-        This runs just the forward pass of the Protpardelle model. See
-        protpardelle-1c/src/protpardelle/core/models.py:L1760
+        Prepare data for and run the forward pass of the Protpardelle model.
+        To do this, it converts our coordinate representation to it's "atom37" format
+        which has one row per _residue_ and a coordinate for all 37 possible atom types.
+        See protpardelle-1c/src/protpardelle/core/models.py:L1760
         (commit ee378400f25b801fa481028000f9060183d7fb4c on branch main)
 
-        The returned tensor is the final all-atom prediction, flattened to the 
-        atoms implied by the input sequence (the ``atom_mask`` in the 
+        The returned tensor is the final all-atom prediction, flattened to the
+        atoms implied by the input sequence (the ``seq_mask``  attribute in the
         conditioning).
 
         Parameters
@@ -684,8 +691,8 @@ class ProtpardelleWrapper:
 
         # To understand all these arguments better, you can study the (complicated)
         # Protpardelle.sample method. Hints: partial diffusion is enabled and cc.enabled = False!
-        # https://github.com/ProteinDesignLab/protpardelle-1c/src/protpardelle/core/models.py
-        # The call to .forward() is at line 1766
+        # Inside that method, the call to .forward() is at
+        # https://github.com/ProteinDesignLab/protpardelle-1c/blob/ee378400f25b801fa481028000f9060183d7fb4c/src/protpardelle/core/models.py#L1766
         x0, s_logprobs, x_self_cond, s_self_cond = self.model.forward(
             noisy_coords=x_t_atom37,
             noise_level=noise_level,
@@ -757,9 +764,7 @@ class ProtpardelleWrapper:
             return torch.randn((batch_size, *shape), device=self.device)
 
         if features is None or features.conditioning is None:
-            raise ValueError(
-                "Either features or shape must be provided to initialize_from_prior()"
-            )
+            raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
         num_atoms = int(features.conditioning.atom_mask[0].sum().item())
         return torch.randn((batch_size, num_atoms, 3), device=self.device)

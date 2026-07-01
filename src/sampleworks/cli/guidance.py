@@ -19,8 +19,7 @@ def main(argv: list[str] | None = None) -> int:
         config.device,
         getattr(config, "model_checkpoint", None),
         config.model_name,
-        method=getattr(config, "method", None),
-        protpardelle_config_path=getattr(config, "protpardelle_config_path", None),
+        config=config,
     )
     result = run_guidance(config, config.guidance_type, model_wrapper, device)
     return result.exit_code
