@@ -127,9 +127,7 @@ class TestExtractProteinSequences:
 class TestAnnotateStructure:
     def test_adds_config(self):
         structure = _protein_structure(SEQ_A)
-        annotated = annotate_structure_for_protpardelle(
-            structure, ensemble_size=4, num_steps=10
-        )
+        annotated = annotate_structure_for_protpardelle(structure, ensemble_size=4, num_steps=10)
         config = annotated["_protpardelle_config"]
         assert isinstance(config, ProtpardelleConfig)
         assert config.ensemble_size == 4
@@ -214,18 +212,14 @@ class TestFeaturize:
         assert features.x_init is not None
 
     def test_x_init_shape(self, protpardelle_wrapper):
-        structure = annotate_structure_for_protpardelle(
-            _protein_structure(SEQ_A), ensemble_size=3
-        )
+        structure = annotate_structure_for_protpardelle(_protein_structure(SEQ_A), ensemble_size=3)
         features = protpardelle_wrapper.featurize(structure)
         assert features.x_init.ndim == 3
         assert features.x_init.shape[0] == 3
         assert features.x_init.shape[2] == 3
 
     def test_conditioning_shapes(self, protpardelle_wrapper):
-        structure = annotate_structure_for_protpardelle(
-            _protein_structure(SEQ_A), ensemble_size=2
-        )
+        structure = annotate_structure_for_protpardelle(_protein_structure(SEQ_A), ensemble_size=2)
         cond = protpardelle_wrapper.featurize(structure).conditioning
         length = len(SEQ_A)
         assert cond.aatype.shape == (2, length)
