@@ -439,7 +439,7 @@ class ProtpardelleWrapper:
 
     def _atom37_indices_from_atom_array(
         self, atom_array
-    ) -> tuple[Int[Tensor, "atoms"], Int[Tensor, "atoms"]]:
+    ) -> tuple[Int[Tensor, " atoms"], Int[Tensor, " atoms"]]:
         """Derive per-atom atom37 destination indices from an Atomworks atom array.
 
         For each atom in ``atom_array`` (the order the sampler's flat ``x_t``
@@ -636,7 +636,6 @@ class ProtpardelleWrapper:
         self,
         x_t: Float[Tensor, "batch atoms 3"],
         t: Float[Tensor, "*batch"] | float,
-        sigma_float: float,
         *,
         features: GenerativeModelInput[ProtpardelleConditioning] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
