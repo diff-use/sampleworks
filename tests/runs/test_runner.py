@@ -265,7 +265,8 @@ def test_dry_run_does_not_create_directories(
     """--dry-run prints commands but never touches the filesystem."""
     monkeypatch.setenv("HOME", str(tmp_path))
     results_dir = tmp_path / "results"
-    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])  # use 1 gpu so we don't need big nodes to test
+    # use 1 gpu so we don't need big nodes to test
+    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])
     runner.run(preset, results_dir=results_dir, dry_run=True)
     # results_dir gets created by run() (for log file location) but per-job
     # output subdirs must NOT exist after dry-run.

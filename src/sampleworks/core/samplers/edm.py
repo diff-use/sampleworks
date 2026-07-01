@@ -423,10 +423,8 @@ class AF3EDMSampler:
         # t_hat will be float if check_context didn't raise
         # Use no_grad when gradients aren't needed to avoid memory overhead from
         # gradient checkpointing holding intermediate activations
-        # TODO testing adding eps to signature for use with Protpardelle-1c, if successful,
-        #   I need to modify the Protocol itself. @Michael Anzuoni
         with torch.set_grad_enabled(allow_gradients):
-            x_hat_0 = model_wrapper.step(noisy_state, t_hat, eps, features=features)
+            x_hat_0 = model_wrapper.step(noisy_state, t_hat, features=features)
 
         reconciler = (
             context.reconciler.to(torch.as_tensor(x_hat_0).device)
