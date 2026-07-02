@@ -76,6 +76,11 @@ def require_boltz(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
+    if callable(message):
+        # Bare ``@require_boltz`` usage: the decorated function arrives as ``message``.
+        # Re-dispatch so both ``@require_boltz`` and ``@require_boltz("msg")`` work.
+        return require_boltz()(message)
+
     default_message = "Boltz model wrapper is not available. Install with: pixi install -e boltz"
 
     def decorator(func: F) -> F:
@@ -119,6 +124,11 @@ def require_protenix(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
+    if callable(message):
+        # Bare ``@require_protenix`` usage: the decorated function arrives as ``message``.
+        # Re-dispatch so both ``@require_protenix`` and ``@require_protenix("msg")`` work.
+        return require_protenix()(message)
+
     default_message = (
         "Protenix model wrapper is not available. Install with: pixi install -e protenix"
     )
@@ -164,6 +174,11 @@ def require_rf3(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
+    if callable(message):
+        # Bare ``@require_rf3`` usage: the decorated function arrives as ``message``.
+        # Re-dispatch so both ``@require_rf3`` and ``@require_rf3("msg")`` work.
+        return require_rf3()(message)
+
     default_message = "RF3 model wrapper is not available. Install with: pixi install -e rf3"
 
     def decorator(func: F) -> F:
@@ -207,6 +222,11 @@ def require_protpardelle(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
+    if callable(message):
+        # Bare ``@require_protpardelle`` usage: the decorated function arrives as ``message``.
+        # Re-dispatch so both ``@require_protpardelle`` and ``@require_protpardelle("msg")`` work.
+        return require_protpardelle()(message)
+
     default_message = (
         "Protpardelle model wrapper is not available. Install with: pixi install -e protpardelle"
     )
@@ -252,6 +272,11 @@ def require_any_model(message: str | None = None) -> Callable[[F], F]:
     ... def custom_function():
     ...     pass
     """
+    if callable(message):
+        # Bare ``@require_any_model`` usage: the decorated function arrives as ``message``.
+        # Re-dispatch so both ``@require_any_model`` and ``@require_any_model("msg")`` work.
+        return require_any_model()(message)
+
     default_message = (
         "No model wrappers are available. "
         "Please install at least one model wrapper with the appropriate feature group: "
