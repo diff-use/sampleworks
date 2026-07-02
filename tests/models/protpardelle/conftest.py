@@ -6,7 +6,9 @@ directory to exist. The tests don't need real weights, so point
 imported, then build a small randomly-initialized ``ai-allatom`` model.
 """
 
+import atexit
 import os
+import shutil
 import tempfile
 import textwrap
 from pathlib import Path
@@ -14,11 +16,15 @@ from pathlib import Path
 import pytest
 
 
-# Must be set before any `import protpardelle...` happens. Respect an
-# externally configured directory (e.g. when real weights are available).
-os.environ.setdefault(
-    "PROTPARDELLE_MODEL_PARAMS", tempfile.mkdtemp(prefix="protpardelle_model_params_")
-)
+# Must be set before any `import protpardelle...` happens. Respect an externally
+# configured directory (e.g. when real weights are available); otherwise create a
+# throwaway dir and remove it at process exit so tests don't leak temp dirs.
+# `setdefault` can't own the created dir (it eagerly evaluates mkdtemp even when the
+# var is already set), so guard explicitly and register cleanup only when we created it.
+if "PROTPARDELLE_MODEL_PARAMS" not in os.environ:
+    _model_params_dir = tempfile.mkdtemp(prefix="protpardelle_model_params_")
+    os.environ["PROTPARDELLE_MODEL_PARAMS"] = _model_params_dir
+    atexit.register(shutil.rmtree, _model_params_dir, ignore_errors=True)
 
 protpardelle_models = pytest.importorskip(
     "protpardelle.core.models", reason="Protpardelle not installed in this environment"
