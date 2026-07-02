@@ -44,7 +44,9 @@ class RF3Conditioning:
     true_atom_array : AtomArray | None
         The AtomArray of the true structure, used for determining proper atom counts.
     model_atom_array : AtomArray | None
-        The AtomArray of the model's internal representation, used for atom reconciliation.
+        The AtomArray of the atoms the model actually operates on for the current
+        sequence. May differ from ``true_atom_array`` (padding, added/missing atoms,
+        element differences, etc.). Used for atom reconciliation against the true structure.
     """
 
     s_inputs: Tensor

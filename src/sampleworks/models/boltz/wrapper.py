@@ -288,8 +288,10 @@ class BoltzConditioning:
     true_atom_array : AtomArray | None
         Original structure's atom array (occupancy-filtered) for reward computation.
         Boltz's internal atom representation may differ from this due to padding, etc.
-        # TODO: figure out a standardized way of handling all these! related to several
-        todos elsewhere
+    model_atom_array : AtomArray | None
+        The AtomArray of the atoms the model actually operates on for the current
+        sequence. May differ from ``true_atom_array`` (padding, added/missing atoms,
+        element differences, etc.). Used for atom reconciliation against the true structure.
     """
 
     s: Tensor
