@@ -1,0 +1,24 @@
+# Codecov configuration — https://docs.codecov.com/docs/codecov-yaml
+#
+# Coverage is collected per model environment (boltz-dev / protenix-dev / rf3-dev)
+# in the `cpu-tests` CI job and uploaded with a matching flag, so per-env coverage
+# can be viewed independently and merged for the overall project number.
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: true
+
+flag_management:
+  default_rules:
+    carryforward: true

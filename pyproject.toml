@@ -198,7 +198,7 @@ args = [{arg = "flags", default = ""}]
 cmd = "pytest {{ flags }}"
 
 [tool.pixi.tasks.cpu-tests]
-cmd = "pytest -m 'not gpu'"
+cmd = "pytest -m 'not gpu' --cov=sampleworks --cov-report=xml --cov-report=term"
 
 [tool.pixi.tasks.gpu-tests]
 cmd = "pytest -m gpu"

@@ -229,46 +229,6 @@ def _compute_msa(
 
         outputs[name] = msa_path
 
-        """
-        a3m files for Protenix.
-        In case we weren't having enough fun, we need to write it all out in yet a third
-        # format, for use by Protenix. Protenix expects a JSON blob like so:
-        [
-          {
-            "sequences": [
-              {"proteinChain":
-                {
-                  "sequence": "ACDE...",
-                  "msa":
-                    {
-                      "precomputed_msa_dir:": "/path/to/msa_directory"
-                      "pairing_db": "uniref100"
-                    },
-                  ... other fields
-                }
-              }, ...
-            ]
-          }, ...
-        ]
-
-        It expects /path/to/msa_directory to look like this:
-        0:  # index corresponds to position in the list "sequences"
-            non_pairing.a3m
-            pairing.a3m  # only present if pairing was used.
-        1:
-            non_pairing.a3m
-            pairing.a3m
-        etc...
-        """
-
-        # TODO I don't think these are actually used anywhere. We can probably remove them.
-        msa_idx_idr = msa_dir / f"{idx}"
-        msa_idx_idr.mkdir(exist_ok=True, parents=True)
-        logger.info(f"Writing MSA for target {target_id} sequence {idx} to {msa_idx_idr.resolve()}")
-        msa_idx_idr.joinpath("non_pairing.a3m").write_text(unpaired_msa[idx])
-        if paired:
-            msa_idx_idr.joinpath("pairing.a3m").write_text(paired_msas[idx])
-
     return outputs
 
 
