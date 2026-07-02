@@ -1,0 +1,11 @@
+* @diff-use/sampleworks-core abbas@astera.org denis@astera.org @mag-astera
+
+/analyses/ @diff-use/sampleworks-core
+/docker/ @diff-use/sampleworks-core abbas@astera.org @mag-astera
+/experiments/ @diff-use/sampleworks-core
+
+# The core code should require scientist approval to merge
+/src/sampleworks/ @k-chrispens @marcuscollins @DorisMai
+
+/src/sampleworks/runs/ @diff-use/sampleworks-core abbas@astera.org
+/tests/ @diff-use/sampleworks-core
