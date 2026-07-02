@@ -28,3 +28,36 @@ def build_scattering_indices(atom_array, device: torch.device) -> torch.Tensor:
         device=device,
         dtype=torch.long,
     )
+
+
+def build_reward_input_tensors_without_coords(
+    atom_array, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build ``(elements, b_factors, occupancies)`` reward inputs from an atom array.
+
+    Uses the atom array's **actual** per-atom occupancy and B-factor — unlike
+    ``RewardInputs.from_atom_array``, which overrides occupancy to a uniform
+    ``1/ensemble_size``. Reward unit tests score against ground truth (e.g. the 1vme
+    0.5/0.5 altloc occupancies), so they need the real values. Elements use
+    :func:`build_scattering_indices` (scattering-tensor indices, ``torch.long``).
+
+    Coordinates are intentionally left out: callers already hold them from their
+    coordinate fixture (and often perturb them), so only the element/B/occupancy trio is
+    genuinely shared across the reward test files.
+
+    Parameters
+    ----------
+    atom_array : biotite.structure.AtomArray
+        Atoms whose ``element``/``b_factor``/``occupancy`` annotations are extracted.
+    device : torch.device
+        Device the returned tensors are placed on.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(elements [N] long, b_factors [N] float32, occupancies [N] float32)`` on ``device``.
+    """
+    elements = build_scattering_indices(atom_array, device)
+    b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
+    occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
+    return elements, b_factors, occupancies

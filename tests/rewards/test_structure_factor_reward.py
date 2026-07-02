@@ -23,7 +23,38 @@ from sampleworks.core.rewards.structure_factor import (
     StructureFactorRewardFunction,
 )
 
-from tests.rewards.reward_input_helpers import build_scattering_indices
+from tests.rewards.reward_input_helpers import build_reward_input_tensors_without_coords
+
+
+def make_prepared_reward(mtz_path, atom_array, device: torch.device, **kwargs):
+    """Construct and ``prepare()`` an SF reward with a per-test config.
+
+    Touches the SFcalculator forward model (heavier than a header read), so callers are marked
+    ``gpu``. ``kwargs`` pass straight to the constructor (e.g. ``bulk_solvent``,
+    ``normalize_amplitude``, ``exclude_free_reflections``, ``expcolumns``). The single fixed
+    config lives in the ``reward_function_1vme_sf`` fixture; these tests need varied configs.
+    """
+    rf = StructureFactorRewardFunction(mtz_path, device=device, **kwargs)
+    rf.prepare(atom_array)
+    return rf
+
+
+@pytest.fixture(scope="module")
+def sf_true_inputs(test_coordinates_1vme_sf, device: torch.device) -> dict:
+    """``__call__`` kwargs (batch=1) for the true 1vme structure.
+
+    The reward-agnostic contract tests already exercise the generic interface/gradient/batch
+    behavior against the SF reward's default config, so the tests here only add the
+    config-specific deltas and reuse these inputs.
+    """
+    coords, atom_array = test_coordinates_1vme_sf
+    elements, b_factors, occupancies = build_reward_input_tensors_without_coords(atom_array, device)
+    return dict(
+        coordinates=coords.unsqueeze(0),
+        elements=elements.unsqueeze(0),
+        b_factors=b_factors.unsqueeze(0),
+        occupancies=occupancies.unsqueeze(0),
+    )
 
 
 class TestStructureFactorConstruction:
@@ -100,9 +131,9 @@ class TestStructureFactorOccupancy:
         per-conformer occupancy/B is supported.
         """
         coords, atom_array = test_coordinates_1vme_sf
-        elements = build_scattering_indices(atom_array, device)
-        b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
-        occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
+        elements, b_factors, occupancies = build_reward_input_tensors_without_coords(
+            atom_array, device
+        )
 
         batch = 3
         kwargs = dict(
@@ -118,3 +149,151 @@ class TestStructureFactorOccupancy:
 
         with pytest.raises(ValueError, match="identical across the batch"):
             reward_function_1vme_sf(**kwargs)
+
+
+@pytest.mark.gpu
+class TestStructureFactorBulkSolvent:
+    """The bulk-solvent modes. ``off`` scores ``|Fprotein|`` (covered by the contract tests);
+    ``combined``/``per_conformer`` score ``|Ftotal|`` with default-scaled solvent. The two
+    ``|Ftotal|`` modes differ only for a real ensemble. Comparisons are relative, so they don't
+    depend on the raw ``|F|`` scale.
+    """
+
+    def test_combined_fits_ftotal_column(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+    ):
+        """Adding default-scaled bulk solvent (``combined``) fits the synthetic ``Ftotal``
+        column far better than protein-only (``off``) — the synthetic ground truth was generated
+        with the same default scales."""
+        _, atom_array = test_coordinates_1vme_sf
+        reward_with_solvent_off = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="off",
+            normalize_amplitude=False,
+        )
+        reward_with_solvent_combined = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="combined",
+            normalize_amplitude=False,
+        )
+        loss_combined = reward_with_solvent_combined(**sf_true_inputs)
+        loss_off = reward_with_solvent_off(**sf_true_inputs)
+        assert loss_combined < loss_off
+
+    def test_ftotal_modes_agree_for_single_conformer(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+    ):
+        """For a single conformer (E=1) ``mask(<rho>)`` and ``<mask(rho)>`` are the same mask,
+        so ``combined`` and ``per_conformer`` give the same loss."""
+        _, atom_array = test_coordinates_1vme_sf
+        reward_with_solvent_combined = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="combined",
+            normalize_amplitude=False,
+        )
+        reward_with_solvent_per_conformer = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="per_conformer",
+            normalize_amplitude=False,
+        )
+        torch.testing.assert_close(
+            reward_with_solvent_combined(**sf_true_inputs),
+            reward_with_solvent_per_conformer(**sf_true_inputs),
+        )
+
+    def test_per_conformer_averages_masks_over_ensemble(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+    ):
+        """E=2 *identical* conformers (occ 1/2 each) score the same as the single conformer.
+
+        This guards the equal-population assumption in ``per_conformer``: the protein path bakes
+        ``atom_occ`` into each conformer and *sums*, while the solvent path averages
+        scale-invariant per-conformer masks (``Fmask_HKL_batch.mean(dim=0)``) — a hardcoded
+        uniform ``1/E`` weight. Both are population *averages*, so occ = 1/E keeps them
+        consistent and the ensemble matches the single conformer; this would break if
+        ``per_conformer`` summed (rather than averaged) the masks. Non-uniform per-conformer
+        occupancy is properly rejected by the reward now — see
+        ``TestStructureFactorOccupancy.test_per_conformer_occupancy_or_b_raises``.
+        """
+        _, atom_array = test_coordinates_1vme_sf
+        reward = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="per_conformer",
+            normalize_amplitude=False,
+        )
+        ensemble = dict(
+            coordinates=sf_true_inputs["coordinates"].expand(2, -1, -1),
+            elements=sf_true_inputs["elements"].expand(2, -1),
+            b_factors=sf_true_inputs["b_factors"].expand(2, -1),
+            occupancies=(sf_true_inputs["occupancies"] / 2).expand(2, -1),
+        )
+        torch.testing.assert_close(reward(**sf_true_inputs), reward(**ensemble))
+
+
+@pytest.mark.gpu
+class TestStructureFactorConfig:
+    """Config knobs beyond the fixture default: the raw-amplitude path and reflection selection."""
+
+    def test_perturbed_has_higher_loss_with_unnormalized_amplitude(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+    ):
+        """The ``normalize_amplitude=False`` branch (raw ``|F|`` vs ``sfc.Fo``) runs and ranks
+        the true structure below a perturbed one. The normalized path is the fixture default,
+        covered by the contract tests."""
+        _, atom_array = test_coordinates_1vme_sf
+        reward = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Fprotein", "SIGFprotein"],
+            normalize_amplitude=False,
+        )
+        torch.manual_seed(42)
+        coords = sf_true_inputs["coordinates"]
+        perturbed = {**sf_true_inputs, "coordinates": coords + torch.randn_like(coords) * 0.5}
+        assert reward(**perturbed) > reward(**sf_true_inputs)
+
+    def test_exclude_free_set_drops_reflections(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, device
+    ):
+        """``exclude_free_reflections=True`` drops the R-free test set from the scored mask.
+
+        The synthetic MTZ's free column is ``R-free-flags`` with the test set flagged 1
+        (rs/Phenix convention), so SFcalculator is pointed at it explicitly — its defaults
+        (``FreeR_flag`` / testset value 0) don't match. Outliers are always excluded regardless.
+        """
+        _, atom_array = test_coordinates_1vme_sf
+        free_flag_kwargs = {"freeflag": "R-free-flags", "testset_value": 1}
+        reward_all = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Fprotein", "SIGFprotein"],
+            exclude_free_reflections=False,
+            sfcalculator_kwargs=free_flag_kwargs,
+        )
+        reward_work = make_prepared_reward(
+            mtz_path_1vme,
+            atom_array,
+            device,
+            expcolumns=["Fprotein", "SIGFprotein"],
+            exclude_free_reflections=True,
+            sfcalculator_kwargs=free_flag_kwargs,
+        )
+        assert reward_all.sfc.free_flag.any()  # safety: the free set is actually recognized
+        assert int(reward_work._reflection_mask.sum()) < int(reward_all._reflection_mask.sum())

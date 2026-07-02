@@ -18,9 +18,24 @@ therefore split construction in two:
 * :meth:`prepare` builds ``SFcalculator`` from the model atom array. The caller
   (a step scaler) is responsible for invoking it before the first ``__call__``.
 
-v1 computes ``|Fprotein|`` (no bulk solvent, no scales). The roadmap to
-``|Ftotal|`` reuses the same ``__call__`` shape via ``calc_fsolvent_batch`` /
-``calc_ftotal_batch`` with frozen, periodically-refit scales.
+``bulk_solvent`` selects the scored amplitude and, when solvent is included, how
+it is combined across an ensemble (see :meth:`_compute_ensemble_ftotal`):
+
+* ``"off"`` (default): ``|Fprotein|`` — bare protein, no solvent, no scales.
+* ``"combined"``: ``|Ftotal|`` with one bulk-solvent mask from the *combined*
+  protein density, ``mask(<rho>)`` — matches the altloc single-structure
+  ``Ftotal`` that ``generate_synthetic_sf`` writes to the MTZ.
+* ``"per_conformer"``: ``|Ftotal|`` with the occupancy-weighted mean of
+  per-conformer masks, ``<mask(rho)>`` — the ensemble-averaged bulk solvent
+  (each unit cell holds one conformer with its own solvent), a more faithful
+  forward model for experimental ``|Fobs|``.
+
+``"combined"`` and ``"per_conformer"`` differ only for a real ensemble
+(batch > 1); the mask operator is nonlinear, so ``mask(<rho>) != <mask(rho)>``.
+Both use the default, *unrefined* scales ``kiso=1``, ``kmask=0.35``, small
+``uaniso``; refining them during sampling is left for a later revision.
+``normalize_amplitude`` (``|F|`` vs ``|E|``) is orthogonal and composes with any
+``bulk_solvent`` choice.
 """
 
 from __future__ import annotations
@@ -31,7 +46,7 @@ from typing import TYPE_CHECKING
 
 import gemmi
 import torch
-from jaxtyping import Float, Int
+from jaxtyping import Complex, Float, Int
 from loguru import logger
 from sampleworks.eval.synthetic_utils import atomarray_to_gemmi
 from sampleworks.utils.torch_utils import try_gpu
@@ -45,6 +60,11 @@ if TYPE_CHECKING:
 
 # Loss callable: maps (|Fcalc|, |Fobs|) over the masked reflections to a scalar.
 AmplitudeLoss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+# Bulk-solvent treatment for the scored amplitude. "off": |Fprotein|. "combined":
+# |Ftotal| with one mask from the combined density. "per_conformer": |Ftotal| with
+# the mean of per-conformer masks (see the class docstring / _compute_ensemble_ftotal).
+_BULK_SOLVENT_MODES = ("off", "combined", "per_conformer")
 
 # Tolerances for warning when a caller-supplied unit cell disagrees with the MTZ's,
 # passed to gemmi.UnitCell.is_similar: relative tolerance on the cell edges (a, b, c)
@@ -188,6 +208,13 @@ class StructureFactorRewardFunction:
         structure. Same MTZ-default / warn-on-mismatch behavior as ``unit_cell``.
     scattering_factor_mode
         SFcalculator scattering mode: ``"xray"`` or ``"cryoem"``.
+    bulk_solvent
+        Bulk-solvent treatment, one of ``"off"`` (default; score ``|Fprotein|``),
+        ``"combined"`` (``|Ftotal|`` with one mask from the combined density), or
+        ``"per_conformer"`` (``|Ftotal|`` with the occupancy-weighted mean of
+        per-conformer masks). For the ``|Ftotal|`` modes, point ``expcolumns`` at
+        the MTZ's Ftotal amplitude so ``|Fobs|`` is the matching observation.
+        ``"combined"`` and ``"per_conformer"`` coincide for a single conformer.
     loss
         Callable ``(|Fcalc|, |Fobs|) -> scalar`` over masked reflections.
         Defaults to mean-squared error on amplitudes. Pass any callable
@@ -218,6 +245,7 @@ class StructureFactorRewardFunction:
         unit_cell: gemmi.UnitCell | None = None,
         space_group: str | None = None,
         scattering_factor_mode: str = "xray",
+        bulk_solvent: str = "off",
         loss: AmplitudeLoss | None = None,
         normalize_amplitude: bool = False,
         exclude_free_reflections: bool = False,
@@ -231,6 +259,11 @@ class StructureFactorRewardFunction:
         self.mtzfile = str(mtzfile)
         self.resolution = resolution
         self.scattering_factor_mode = scattering_factor_mode
+        if bulk_solvent not in _BULK_SOLVENT_MODES:
+            raise ValueError(
+                f"bulk_solvent must be one of {_BULK_SOLVENT_MODES}, got {bulk_solvent!r}."
+            )
+        self.bulk_solvent = bulk_solvent
         self.exclude_free_reflections = exclude_free_reflections
         if batch_partition <= 0:
             raise ValueError(f"batch_partition must be a positive integer, got {batch_partition}.")
@@ -324,6 +357,13 @@ class StructureFactorRewardFunction:
         # and vdW radii, independent of occupancy / B-factor.
         self.sfc.inspect_data()
 
+        # Ftotal uses the default (unrefined) scales kiso=1, kmask=0.35, small uaniso,
+        # matching generate_synthetic_sf's Ftotal. They don't depend on coordinates, so
+        # set them once here. _set_scales only needs atom_pos_frac (set at construction)
+        # and n_bins (set by the experiment init) for dtype/device and bin count.
+        if self.bulk_solvent != "off":
+            self.sfc._set_scales(requires_grad=False)
+
         # |Eo| are computed in SFC's experiment init (inside a try/except).
         if self.normalize_amplitude and getattr(self.sfc, "Eo", None) is None:
             raise RuntimeError(
@@ -409,12 +449,65 @@ class StructureFactorRewardFunction:
         )
         Fprotein = Fprotein_batch.sum(dim=0)
 
+        fcalc = Fprotein if self.bulk_solvent == "off" else self._compute_ensemble_ftotal(Fprotein)
+
         mask = self._reflection_mask
         if self.normalize_amplitude:
-            calc = self.sfc.calc_Ec(Fprotein).abs()
+            calc = self.sfc.calc_Ec(fcalc).abs()
             obs = self.sfc.Eo
         else:
-            # Raw amplitudes (arbitrary scale; relative comparisons only).
-            calc = torch.abs(Fprotein)
+            calc = torch.abs(fcalc)
             obs = self.sfc.Fo
         return self.loss(calc[mask], obs[mask])
+
+    def _compute_ensemble_ftotal(
+        self,
+        Fprotein_HKL: Complex[torch.Tensor, "n_hkl"],  # noqa F821
+    ) -> Complex[torch.Tensor, "n_hkl"]:  # noqa F821
+        """Add default-scaled bulk solvent to the ensemble Fprotein to form Ftotal.
+
+        ``Ftotal(h) = kiso * aniso(h) * (Fprotein(h) + kmask * Fmask(h))`` with the
+        default (unrefined) scales set in :meth:`prepare`, evaluated on the
+        experimental HKL set. ``Fprotein`` is the ensemble complex sum; the
+        bulk-solvent ``Fmask`` is combined per :attr:`bulk_solvent`. The two
+        ``|Ftotal|`` modes are identical for a single conformer.
+
+        ``bulk_solvent="combined"`` (``mask(<rho>)``)
+            One mask built from the combined protein density. ``calc_fsolvent``
+            builds the mask by FFT over the full ASU set, so the combined
+            ``Fprotein_asu`` (not just the HKL subset) is fed to it. Matches the
+            altloc single-structure Ftotal in the synthetic MTZ.
+
+        ``bulk_solvent="per_conformer"`` (``<mask(rho)>``)
+            The occupancy-weighted mean of per-conformer masks. ``rsgrid2realmask``
+            normalizes the density and cuts at a quantile, so each per-conformer
+            ``Fmask`` is scale-invariant (full strength regardless of the 1/E
+            occupancy); the mean supplies the 1/E population weight. The
+            ensemble-averaged solvent (each unit cell holds one conformer), a more
+            faithful forward model for experimental data.
+
+        Parameters
+        ----------
+        Fprotein_HKL
+            Ensemble complex-sum Fprotein on the experimental HKL set ``[n_hkl]``.
+
+        Returns
+        -------
+        torch.Tensor
+            Complex Ftotal on the experimental HKL set ``[n_hkl]``.
+        """
+        assert self.sfc is not None  # prepare() built it; __call__ guards before dispatching here
+        self.sfc.Fprotein_HKL = Fprotein_HKL  # drives calc_ftotal on the HKL set
+        if self.bulk_solvent == "per_conformer":
+            # calc_fsolvent_batch masks each conformer (from Fprotein_asu_batch, set by
+            # calc_fprotein_batch); the mean applies the 1/E weight -> <mask(rho)>.
+            Fmask_HKL_batch = self.sfc.calc_fsolvent_batch(
+                Return=True, PARTITION=self.batch_partition
+            )
+            self.sfc.Fmask_HKL = Fmask_HKL_batch.mean(dim=0)
+        else:
+            # One mask from the combined density -> mask(<rho>). SFC calc_solvent() requires
+            # having the Fprotein_asu set, but batch mode only sets Fprotein_asu_batch.
+            self.sfc.Fprotein_asu = self.sfc.Fprotein_asu_batch.sum(dim=0)
+            self.sfc.calc_fsolvent()  # sets Fmask_HKL
+        return self.sfc.calc_ftotal()  # default scales set in prepare()

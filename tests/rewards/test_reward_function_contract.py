@@ -33,7 +33,7 @@ import pytest
 import torch
 from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 
-from tests.rewards.reward_input_helpers import build_scattering_indices
+from tests.rewards.reward_input_helpers import build_reward_input_tensors_without_coords
 
 
 # Every test exercises CUDA-targeted reward code on the `device` fixture (try_gpu), so the
@@ -93,9 +93,7 @@ _LOSS_THRESHOLDS = {
 def reward_case(request, device: torch.device) -> RewardCase:
     coords_fixture, reward_fixture = _REWARD_BUNDLES[request.param]
     coords, atom_array = request.getfixturevalue(coords_fixture)
-    elements = build_scattering_indices(atom_array, device)
-    b_factors = torch.from_numpy(atom_array.b_factor).to(device=device, dtype=torch.float32)
-    occupancies = torch.from_numpy(atom_array.occupancy).to(device=device, dtype=torch.float32)
+    elements, b_factors, occupancies = build_reward_input_tensors_without_coords(atom_array, device)
 
     reward_function = request.getfixturevalue(reward_fixture)  # SFC skips here if the MTZ is absent
     return RewardCase(request.param, reward_function, coords, elements, b_factors, occupancies)
@@ -166,9 +164,9 @@ class TestRewardCorrelation:
     def test_loss_monotonic_with_perturbation(self, reward_case):
         """Loss increases (non-strictly) with per-atom perturbation magnitude."""
         torch.manual_seed(42)
-        # Per-atom Gaussian displacement (NOT normalized over the whole tensor): `scale` is the
-        # per-component std in Angstrom, so each step is a real, above-noise displacement.
+        # Per-atom unit direction (normalized over dim=-1, NOT the whole tensor like before).
         direction = torch.randn_like(reward_case.coords)
+        direction = direction / direction.norm(dim=-1, keepdim=True)
 
         losses = []
         for scale in [0.0, 0.1, 0.25, 0.5, 1.0]:
