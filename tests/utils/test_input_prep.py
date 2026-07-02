@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from sampleworks.utils.input_prep import (
     carve,
     CarveSpec,
     load_registry,
+    prepare_from_registry,
     prepare_input,
 )
 
@@ -492,3 +494,76 @@ class TestParseAcceptance:
         assert seq and seq.isalpha()  # one canonical polymer sequence for the kept chain
         if label == "1vme":
             assert "X" not in seq  # selenomethionine canonicalized to M, not unknown
+
+
+# ---------------------------------------------------------------------------
+# prepare_from_registry() + the production registry
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareFromRegistry:
+    def _registry(self, tmp_path) -> Path:
+        path = tmp_path / "reg.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "1abc": {"chains": ["A"], "numbering": "preserve_auth"},
+                    "2def": {"chains": ["A"], "numbering": "from_one"},
+                }
+            )
+        )
+        return path
+
+    def _patch_fetch(self, tmp_path, monkeypatch) -> list[str]:
+        deposit = tmp_path / "deposit.cif"
+        _single_chain_deposit().write(str(deposit))
+        calls: list[str] = []
+
+        def _fake_fetch(pdb_id, *args, **kwargs):
+            calls.append(pdb_id)
+            return deposit
+
+        monkeypatch.setattr("sampleworks.utils.input_prep.fetch_rcsb_cif", _fake_fetch)
+        return calls
+
+    def test_prepares_every_entry_by_default(self, tmp_path, monkeypatch):
+        calls = self._patch_fetch(tmp_path, monkeypatch)
+        result = prepare_from_registry(self._registry(tmp_path), cache_dir=tmp_path / "inputs")
+        assert set(result) == {"1abc", "2def"}
+        assert all(path.exists() for path in result.values())
+        assert sorted(calls) == ["1abc", "2def"]  # one fetch per prepared input
+
+    def test_subset_selection_is_case_insensitive(self, tmp_path, monkeypatch):
+        self._patch_fetch(tmp_path, monkeypatch)
+        result = prepare_from_registry(
+            self._registry(tmp_path), ["1ABC"], cache_dir=tmp_path / "inputs"
+        )
+        assert set(result) == {"1abc"}
+
+    def test_unknown_pdb_id_raises_before_any_fetch(self, tmp_path, monkeypatch):
+        calls = self._patch_fetch(tmp_path, monkeypatch)
+        with pytest.raises(KeyError, match="9zzz"):
+            prepare_from_registry(
+                self._registry(tmp_path), ["1abc", "9zzz"], cache_dir=tmp_path / "inputs"
+            )
+        assert calls == []  # fail-fast: nothing fetched when any id is bogus
+
+    def test_second_call_is_a_cache_hit(self, tmp_path, monkeypatch):
+        calls = self._patch_fetch(tmp_path, monkeypatch)
+        registry = self._registry(tmp_path)
+        cache = tmp_path / "inputs"
+        prepare_from_registry(registry, ["1abc"], cache_dir=cache)
+        prepare_from_registry(registry, ["1abc"], cache_dir=cache)
+        assert calls == ["1abc"]  # served from cache the second time, no re-fetch
+
+
+class TestProductionRegistry:
+    """The registry the prep script defaults to must stay loadable and cover the knowns."""
+
+    def test_known_specs_present(self):
+        registry = load_registry(files("sampleworks.data") / "input_registry.json")
+        assert {"2yl0", "9bn8", "1vme", "4ole"} <= set(registry)
+        assert registry["1vme"].numbering == "preserve_label"
+        assert registry["2yl0"].numbering == "preserve_auth"
+        assert registry["9bn8"].numbering == "preserve_auth"
+        assert registry["4ole"].chains == ["B"]

@@ -459,3 +459,28 @@ def prepare_input(
     cif = carve(original, spec, source=pdb_id.lower())
     cif.write(str(out_path))
     return out_path
+
+
+def prepare_from_registry(
+    registry_path: str | Path,
+    pdb_ids: list[str] | None = None,
+    *,
+    cache_dir: str | Path = _DEFAULT_INPUT_CACHE,
+    rcsb_cache: str | Path | None = None,
+) -> dict[str, Path]:
+    """Prepare inputs for a carve registry, returning ``{pdb_id: cached path}``.
+
+    ``pdb_ids`` selects a subset (case-insensitive); ``None`` prepares every entry in the registry,
+    in registry order. A requested id absent from the registry raises :class:`KeyError` *before* any
+    fetch, so a typo fails fast rather than after preparing the others. Each input is produced by
+    :func:`prepare_input`, so an already-cached file is reused rather than re-fetched.
+    """
+    registry = load_registry(registry_path)
+    ids = [p.lower() for p in pdb_ids] if pdb_ids is not None else list(registry)
+    missing = [p for p in ids if p not in registry]
+    if missing:
+        raise KeyError(f"pdb ids not in registry {registry_path}: {sorted(missing)}")
+    return {
+        pdb_id: prepare_input(pdb_id, registry[pdb_id], cache_dir=cache_dir, rcsb_cache=rcsb_cache)
+        for pdb_id in ids
+    }
