@@ -294,30 +294,11 @@ def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.Monk
 
     pre_invocations = runner.build_pre_invocations(preset, results_dir=Path("/analysis-logs"))
     invocations = runner.build_invocations(preset, results_dir=Path("/analysis-logs"))
-    patch = pre_invocations[0]
     rscc = invocations[0]
 
-    assert patch.job.name == "patch_outputs"
-    assert patch.env["CUDA_VISIBLE_DEVICES"] == "none"
-    assert patch.argv[:6] == [
-        "pixi",
-        "run",
-        "-e",
-        "analysis",
-        "python",
-        str(repo_root / "scripts/patch_output_cif_files.py"),
-    ]
-    patch_args = _argv_to_dict(patch.argv[6:])
-    assert patch_args["--input-dir"] == "/grid/results"
-    assert patch_args["--grid-search-input-dir"] == "/grid/inputs"
-    assert patch_args["--cif-pattern"] == "refined.cif"
-    assert patch_args["--rcsb-pattern"] == "/grid/results/([A-Za-z0-9]{4})"
-    assert patch_args["--input-pdb-pattern"] == (
-        "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
-    )
-    assert patch_args["--depth"] == "4"
-    assert "--target-filename" not in patch_args
-    assert "--protein-configs-csv" not in patch_args
+    # The patch_outputs pre-job was retired; eval now runs directly on refined.cif, so the
+    # analysis preset has no pre-jobs.
+    assert pre_invocations == []
 
     assert rscc.job.name == "rscc"
     assert rscc.env["CUDA_VISIBLE_DEVICES"] == "0"

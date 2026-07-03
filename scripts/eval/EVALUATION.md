@@ -16,6 +16,11 @@ running, raising an error if it is not available.
 
 # Running the evaluations
 ## Preparing the output CIF files
+
+> Obsolete. Sampleworks now writes eval-ready `refined.cif` directly — the generation pipeline
+> carries the depositor's real entity categories and the input residue numbering onto the output, so
+> the metric scripts run against `refined.cif` with no preparation. The `patch_output_cif_files.py`
+> step described below has been retired and removed; run the scripts against `refined.cif`.
 As of this writing, Sampleworks outputs CIF files that primarily contain the output atomic 
 coordinates, and not the additional information that many programs, like `tortoize` and 
 `phenix.clashscore`, require. Furthermore, many protein structure predictors effectively 
@@ -76,10 +81,8 @@ run_analysis altloc_classify
 run_analysis analyze_grid_search --jobs rscc --set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'
 ```
 
-The `analyze_grid_search`, `all`, and `external_tools` presets run the CIF patching pre-step before these
-evaluation scripts. If you run the scripts directly, run `scripts/patch_output_cif_files.py` first
-or point `--target-filename` at files that already contain the required metadata. If patched CIFs
-already exist, add `--skip-pre-jobs` to rerun the analyses without repeating the patching step.
+The `analyze_grid_search`, `all`, and `external_tools` presets run these evaluation scripts directly
+on `refined.cif`; no patching pre-step is required.
 
 For direct script invocation, the equivalent command shape is:
 
@@ -87,7 +90,7 @@ For direct script invocation, the equivalent command shape is:
 pixi run -e analysis python scripts/eval/<script> \
 --grid-search-results-path /home/ubuntu/grid_search_results \
 --grid-search-inputs-path /home/ubuntu/grid_search_inputs \
---target-filename 'refined-patched.cif' \
+--target-filename 'refined.cif' \
 --depth 4 \
 --protein-configs-csv /home/ubuntu/protein_analysis_config.csv \
 --occupancies 0.0 0.25 0.5 0.75 1.0 \

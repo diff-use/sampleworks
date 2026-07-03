@@ -2,5 +2,6 @@
   "2yl0": {"chains": ["A"], "drop": ["water", "ligand"], "numbering": "preserve_auth"},
   "9bn8": {"chains": ["A"], "drop": ["water", "ligand"], "numbering": "preserve_auth"},
   "1vme": {"chains": ["A"], "drop": ["water", "ligand"], "numbering": "preserve_label"},
-  "4ole": {"chains": ["B"], "drop": ["water", "ligand"], "numbering": "preserve_auth"}
+  "4ole": {"chains": ["B"], "drop": ["water", "ligand"], "numbering": "preserve_auth"},
+  "6b8x": {"chains": ["A"], "drop": ["water", "ligand"], "numbering": "preserve_auth"}
 }
