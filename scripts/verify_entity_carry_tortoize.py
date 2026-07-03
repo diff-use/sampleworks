@@ -180,9 +180,9 @@ def _bare_multi_model_from_deposit(
     """Derive a bare multi-chain coordinate source: one polymer chain per output entity.
 
     Like :func:`_bare_single_model_from_deposit` but keeps several chains, each given its own
-    sequential ``label_entity_id`` (mirroring what the production writer emits for a complex), so the
-    auto path of ``carry_entity_categories`` carries every entity. Each chain is restricted to its
-    largest gap-free residue run; ``label_seq_id := auth_seq_id + inject_offset``.
+    sequential ``label_entity_id`` (mirroring what the production writer emits for a complex),
+    so the auto path of ``carry_entity_categories`` carries every entity. Each chain is
+    restricted to its largest gap-free residue run; ``label_seq_id := auth_seq_id + inject_offset``.
     """
     ref = CIFFile.read(str(reference))
     atom_site = _block(ref)["atom_site"]

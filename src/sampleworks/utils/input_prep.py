@@ -283,6 +283,7 @@ def _carry_cell_and_struct_conn(
         return
 
     new_cols = {key: [values[i] for i in keep] for key, values in cols.items()}
+
     # Rewrite each partner onto the carved atom_site: identify the residue by its deposit author
     # (chain, seq), then set both the label and auth asym/seq ids to the carved chain and number
     # (label == auth in the carve) so the connectivity resolves against the new _atom_site.

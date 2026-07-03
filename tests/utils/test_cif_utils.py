@@ -661,10 +661,11 @@ def _structure_cif(
 ) -> CIFFile:
     """Build a CIFFile with a populated _atom_site from atoms (optionally an N-model stack).
 
-    ``entity_ids`` overrides ``label_entity_id`` (one per atom) after writing, to construct an output
-    where two chains share one entity id. The atomworks-patched ``set_structure`` re-derives the id
-    per chain and ignores an input annotation, so the override is applied to the written category
-    instead; ``carry_entity_categories`` groups by whatever ids the ``_atom_site`` carries.
+    ``entity_ids`` overrides ``label_entity_id`` (one per atom) after writing, to construct an
+    output where two chains share one entity id. The atomworks-patched ``set_structure``
+    re-derives the id per chain and ignores an input annotation, so the override is applied to
+    the written category instead; ``carry_entity_categories`` groups by whatever ids the
+    ``_atom_site`` carries.
     """
     arr = array(atoms)
     arr.set_annotation("occupancy", np.ones(len(atoms), dtype=np.float32))

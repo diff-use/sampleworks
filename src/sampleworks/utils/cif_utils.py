@@ -667,8 +667,8 @@ def _match_polymer_entity(
     Matches by residue-name sequence (robust to chain relabeling -- e.g. a predictor that resets
     chains to "A"), not by strand id. Returns ``(reference entity_id, renumber offset)``. The unique
     entity whose canonical sequence contains the modeled block is chosen; ties are broken by
-    :func:`_break_entity_tie`. With ``require_offset`` (i.e. ``reconcile``) the chosen entity's block
-    must align at exactly one position, else the offset is undefined and we raise.
+    :func:`_break_entity_tie`. With ``require_offset`` (i.e. ``reconcile``) the chosen entity's
+    block must align at exactly one position, else the offset is undefined and we raise.
 
     Raises ValueError when there are no modeled residues, no entity contains the block, the tie
     cannot be broken, or (with ``require_offset``) the alignment is not unique. Callers degrade.
@@ -839,10 +839,10 @@ def carry_entity_categories(
     Two modes:
 
     - **Auto** (``output_entity_id is None`` and ``kept_chains is None``): every distinct
-      ``_atom_site.label_entity_id`` is carried under its own id; non-polymer entities (ligand/water,
-      no numeric ``label_seq_id``) and any entity that cannot be matched are left as a typeless
-      ``_entity`` stub so the file stays mmcif-validator-clean. Raises only if *nothing* matched, so
-      the caller degrades to the pure stub.
+      ``_atom_site.label_entity_id`` is carried under its own id; non-polymer entities
+      (ligand/water, no numeric ``label_seq_id``) and any entity that cannot be matched are
+      left as a typeless ``_entity`` stub so the file stays mmcif-validator-clean. Raises only
+      if *nothing* matched, so the caller degrades to the pure stub.
     - **Forced** (explicit ``output_entity_id`` and/or ``kept_chains``): a single entity is carried
       and relabelled onto ``output_entity_id`` (default "0") over ``kept_chains`` (default: all
       output chains). Any match failure raises (callers wrap this to degrade).
@@ -858,7 +858,8 @@ def carry_entity_categories(
     kept_chains : Iterable[str] | None, optional
         If given, force single-entity mode over these chains. Default None (auto).
     reconcile : bool, optional
-        If True, renumber ``_entity_poly_seq.num`` per entity to the output's ``label_seq_id`` scheme.
+        If True, renumber ``_entity_poly_seq.num`` per entity to the output's
+        ``label_seq_id`` scheme.
     block_name : str | None, optional
         Block of ``dst`` to operate on. If None, its sole block is used.
 

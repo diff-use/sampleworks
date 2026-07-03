@@ -444,7 +444,8 @@ def _carry_real_entity_categories(ciffile: CIFFile, pdb_id: str) -> None:
     parent matches the child.
 
     Each output polymer entity is carried under its own id (a complex carries all its entities;
-    an entity that cannot be matched degrades to a typeless stub -- see ``carry_entity_categories``).
+    an entity that cannot be matched degrades to a typeless stub
+    -- see ``carry_entity_categories``).
     Best-effort: any failure (offline, no entity matched, irreconcilable numbering) is logged and
     swallowed, leaving the minimal ``add_completeness_categories`` synthesis in place so a fetch
     hiccup never fails a run.

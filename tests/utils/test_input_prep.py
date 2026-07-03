@@ -164,9 +164,7 @@ def _single_chain_deposit() -> CIFFile:
         "angle_beta": ["90.00"],
         "angle_gamma": ["90.00"],
     }
-    return _deposit(
-        rows, entity, entity_poly, entity_poly_seq, struct_conn=struct_conn, cell=cell
-    )
+    return _deposit(rows, entity, entity_poly, entity_poly_seq, struct_conn=struct_conn, cell=cell)
 
 
 def _two_chain_deposit() -> CIFFile:

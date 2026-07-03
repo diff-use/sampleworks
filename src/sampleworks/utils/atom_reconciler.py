@@ -293,7 +293,8 @@ class AtomReconciler:
             )
         if struct_template.shape[-2] != self.n_struct:
             raise ValueError(
-                f"Expected struct_template with {self.n_struct} atoms, got {struct_template.shape[-2]}"
+                f"Expected struct_template with {self.n_struct} atoms, "
+                f"got {struct_template.shape[-2]}"
             )
 
         result = struct_template.clone()

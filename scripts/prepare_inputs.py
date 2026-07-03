@@ -29,6 +29,7 @@ from pathlib import Path
 
 from sampleworks.utils.input_prep import prepare_from_registry
 
+
 _DEFAULT_REGISTRY = files("sampleworks.data") / "input_registry.json"
 
 
