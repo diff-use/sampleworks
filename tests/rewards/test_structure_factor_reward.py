@@ -18,9 +18,14 @@ import logging
 
 import pytest
 import torch
+from biotite.structure import AtomArray
 from sampleworks.core.rewards.structure_factor import (
     _detect_mtz_metadata,
     StructureFactorRewardFunction,
+)
+from sampleworks.utils.atom_array_utils import (
+    build_pairwise_altloc_arrays,
+    find_all_altloc_ids,
 )
 
 from tests.rewards.reward_input_helpers import build_reward_input_tensors_without_coords
@@ -113,7 +118,6 @@ class TestStructureFactorConstruction:
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 class TestStructureFactorOccupancy:
     """SFC has no per-conformer occupancy/B axis; the reward enforces broadcast-identical input."""
 
@@ -158,6 +162,44 @@ class TestStructureFactorBulkSolvent:
     ``|Ftotal|`` modes differ only for a real ensemble. Comparisons are relative, so they don't
     depend on the raw ``|F|`` scale.
     """
+
+    @pytest.fixture(scope="class")
+    def sf_ensemble_inputs(
+        self, structure_1vme_sf, device: torch.device
+    ) -> tuple[dict[str, torch.Tensor], AtomArray]:
+        """A genuine 2-conformer ensemble (altloc A vs B) as ``(__call__ kwargs, state-A reference)``.
+
+        ``build_pairwise_altloc_arrays`` pairs each altloc with the shared blank-altloc atoms and
+        filters to their common atoms, so both frames share one topology and differ *only* in the
+        alternate-conformation coordinates — the divergence that drives ``combined`` and
+        ``per_conformer`` apart. Residues modeled in only one altloc have no counterpart and are
+        dropped to keep that shared topology.
+
+        SFcalculator has no per-conformer occ/B axis, so ``b_factors`` is shared from altloc-A
+        across the batch, and occupancy shared at the uniform ``1/E = 0.5``.
+        """
+        aa = structure_1vme_sf
+        altloc_ids = sorted(find_all_altloc_ids(aa))  # ["A", "B"]
+        array_a, array_b = build_pairwise_altloc_arrays(aa, altloc_ids)[tuple(altloc_ids)]
+        ref = array_a[0]  # single-conformer state-A reference; retains element/b_factor/occupancy
+
+        coords = torch.stack(
+            [
+                torch.from_numpy(array_a.coord[0]),  # altloc-A conformer [N, 3]
+                torch.from_numpy(array_b.coord[0]),  # altloc-B conformer [N, 3]
+            ]
+        ).to(device=device, dtype=torch.float32)  # [2, N, 3]
+
+        elements, b_factors, _ = build_reward_input_tensors_without_coords(ref, device)
+        n_atoms = coords.shape[1]
+        occ = torch.full((n_atoms,), 0.5, device=device)  # uniform 1/E
+        kwargs = dict(
+            coordinates=coords,
+            elements=elements.unsqueeze(0).expand(2, -1),
+            b_factors=b_factors.unsqueeze(0).expand(2, -1),
+            occupancies=occ.unsqueeze(0).expand(2, -1),
+        )
+        return kwargs, ref
 
     def test_combined_fits_ftotal_column(
         self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
@@ -243,6 +285,39 @@ class TestStructureFactorBulkSolvent:
             occupancies=(sf_true_inputs["occupancies"] / 2).expand(2, -1),
         )
         torch.testing.assert_close(reward(**sf_true_inputs), reward(**ensemble))
+
+    def test_ftotal_modes_diverge_for_distinct_conformer_ensemble(
+        self, mtz_path_1vme, sf_ensemble_inputs, device
+    ):
+        """For a genuine 2-conformer ensemble (altloc A vs B), ``mask(<rho>) != <mask(rho)>``, so
+        ``combined`` and ``per_conformer`` give *different* losses.
+
+        This is the behavior that justifies keeping both modes — the agree-cases above (E=1 and
+        E=2 *identical* conformers) never exercise the nonlinearity. Here the two frames differ in
+        the alternate-conformation coordinates, so the combined mask (built from the summed
+        density) and the per-conformer mean of masks genuinely diverge.
+        """
+        ensemble, ref = sf_ensemble_inputs
+        reward_combined = make_prepared_reward(
+            mtz_path_1vme,
+            ref,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="combined",
+            normalize_amplitude=False,
+        )
+        reward_per_conformer = make_prepared_reward(
+            mtz_path_1vme,
+            ref,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="per_conformer",
+            normalize_amplitude=False,
+        )
+        loss_combined = reward_combined(**ensemble)
+        loss_per_conformer = reward_per_conformer(**ensemble)
+        assert torch.isfinite(loss_combined) and torch.isfinite(loss_per_conformer)
+        assert not torch.allclose(loss_combined, loss_per_conformer)
 
 
 @pytest.mark.gpu
