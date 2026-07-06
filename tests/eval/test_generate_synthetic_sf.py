@@ -122,26 +122,77 @@ class TestAtomArrayToGemmi:
         f_direct = _compute_fprotein(stripped_gemmi, device)
         np.testing.assert_allclose(np.abs(f_atomarray), np.abs(f_direct), atol=1e-3)
 
-    def test_saved_structure_loads_back_with_altlocs(
+    def test_saved_structure_round_trips_annotations(
         self, gemmi_structure_from_atomarray, stripped_atom_array, tmp_path
     ):
-        """Altloc labels must survive the round trip atomarray_to_gemmi --> cif
-        --> atomarray. Regression guard."""
+        """Every per-atom field must survive atomarray_to_gemmi --> cif --> atomarray.
+
+        One reload guarding each column a write can silently drop/garble. Scattering-physics
+        fields (coords, element, b_factor, occupancy) would corrupt structure factors without
+        raising if lost; topology fields (chain_id, res_id, res_name, atom_name) drive residue/
+        altloc matching and reconciliation. res_id and label_seq_id are the field that regressed:
+        array2hier set only the author seqid, so label_seq_id wrote as "." and atomworks (label
+        scheme) collapsed every residue to -1 on re-read.
+        """
         out = tmp_path / "saved.cif"
         gemmi_structure_from_atomarray.make_mmcif_document().write_file(str(out))
 
         loaded = load_structure_with_altlocs(out)
+        ref = stripped_atom_array
 
-        assert len(loaded) == len(stripped_atom_array)
+        assert len(loaded) == len(ref)
+
+        # topology / matching labels (exact)
+        assert np.array_equal(loaded.chain_id, ref.chain_id)
+        assert np.array_equal(loaded.res_id, ref.res_id)
+        assert set(np.unique(loaded.res_id)) != {-1}  # not collapsed to the degenerate -1
+        assert np.array_equal(loaded.res_name, ref.res_name)
+        assert np.array_equal(loaded.atom_name, ref.atom_name)
+
+        # scattering-physics fields (element exact; floats within mmCIF write precision)
+        assert np.array_equal(loaded.element, ref.element)
+        assert len(np.unique(loaded.element)) > 1  # not collapsed to a single/blank symbol
+        np.testing.assert_allclose(loaded.coord, ref.coord, atol=1e-3)
+        np.testing.assert_allclose(loaded.b_factor, ref.b_factor, atol=1e-2)
+        np.testing.assert_allclose(loaded.occupancy, ref.occupancy, atol=1e-2)
+
+        # altloc: same id set, and same per-id atom counts
         assert "altloc_id" in loaded.get_annotation_categories()
-        # check the set of altloc ids is the same
-        expected_altloc_ids = find_all_altloc_ids(stripped_atom_array)
+        expected_altloc_ids = find_all_altloc_ids(ref)
         assert find_all_altloc_ids(loaded) == expected_altloc_ids
-        # check on a per-atom basis for source altloc id survival
         for altloc_id in expected_altloc_ids:
             assert np.count_nonzero(loaded.altloc_id == altloc_id) == np.count_nonzero(
-                stripped_atom_array.altloc_id == altloc_id
+                ref.altloc_id == altloc_id
             )
+
+    def test_multichain_shared_res_ids_survive_round_trip(self, tmp_path):
+        """Two chains that share res_ids must not be merged across the chain boundary.
+
+        array2hier keyed residue boundaries on res_id alone, so a chain boundary where both
+        sides share a res_id (chains independently numbered from 1) merged the two residues.
+        The direct builder keys on (chain_id, res_id); this guards that.
+        """
+        # Two chains A and B, each with residues 1 and 2 (overlapping numbering).
+        n = 4
+        arr = AtomArray(n)
+        arr.coord = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
+        arr.chain_id = np.array(["A", "A", "B", "B"])
+        arr.res_id = np.array([1, 2, 1, 2])
+        arr.res_name = np.array(["ALA", "GLY", "ALA", "GLY"])
+        arr.atom_name = np.array(["CA", "CA", "CA", "CA"])
+        arr.element = np.array(["C", "C", "C", "C"])
+        arr.set_annotation("b_factor", np.full(n, 20.0))
+        arr.set_annotation("occupancy", np.ones(n))
+
+        out = tmp_path / "multichain.cif"
+        atomarray_to_gemmi(arr).make_mmcif_document().write_file(str(out))
+        loaded = load_structure_with_altlocs(out)
+
+        assert len(loaded) == n
+        assert np.array_equal(loaded.chain_id, arr.chain_id)
+        assert np.array_equal(loaded.res_id, arr.res_id)
+        # distinct per-atom coords pin identity+order: a boundary merge would drop/reorder atoms
+        np.testing.assert_allclose(loaded.coord, arr.coord, atol=1e-3)
 
     def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
         """A warning is logged when more occupancy values are provided than there are altlocs."""

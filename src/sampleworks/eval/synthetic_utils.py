@@ -5,7 +5,6 @@ import traceback
 from pathlib import Path
 
 import gemmi
-import numpy as np
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
@@ -226,44 +225,75 @@ def atomarray_to_gemmi(
     -------
     gemmi.Structure
         Structure ready to be wrapped by SFC_Torch.io.PDBParser
-    """
-    # Lazy import so importing this module does not require SFC_Torch on paths
-    # that don't need it (e.g. synthetic density generation).
-    from SFC_Torch.io import array2hier
 
+    Notes
+    -----
+    Built directly rather than via ``SFC_Torch.io.array2hier``: that helper packs atom
+    identity into a hyphen-delimited ``cra_name`` string, sets only the author seqid, and
+    keys residue boundaries on ``res_id`` alone (merging residues that share a res_id across
+    a chain boundary). Building the hierarchy here from the AtomArray annotations avoids the
+    string round-trip and lets us set the author seqid, ``label_seq`` (so ``label_seq_id``
+    survives a write -> atomworks reload; otherwise res_id collapses to -1), and ``subchain``
+    (a <=1-char ``label_asym_id`` that SFcalculator's PDB-header step accepts) at construction.
+    """
     n = len(atom_array)
-    cra_names = [
-        f"{atom_array.chain_id[i]}-0-{atom_array.res_name[i]}-{atom_array.atom_name[i]}"
-        for i in range(n)
-    ]
     # altloc_id is not a mandatory biotite annotation; default to blank when absent.
-    # gemmi uses '\x00' for blank altloc
+    # gemmi uses '\x00' for blank altloc.
     if "altloc_id" in atom_array.get_annotation_categories():
         atom_altloc = ["\x00" if a in BLANK_ALTLOC_IDS else a for a in atom_array.altloc_id]
     else:
         atom_altloc = ["\x00"] * n
-    structure: gemmi.Structure = array2hier(
-        atom_pos=atom_array.coord,
-        atom_b_aniso=np.zeros((n, 3, 3), dtype=np.float64),
-        atom_b_iso=atom_array.b_factor,
-        atom_occ=atom_array.occupancy,
-        atom_name=atom_array.element,
-        cra_name=cra_names,
-        atom_altloc=atom_altloc,
-        res_id=atom_array.res_id,
-    )
-    # array2hier names the single model "SFC" and its setup_entities() assigns auto-generated
-    # subchain ids (label_asym_id, e.g. "Axp"). Both corrupt a written-out mmCIF: the
-    # non-integer model name breaks mmCIF parsers' pdbx_PDB_model_num (biotite/atomworks read
-    # it as int), and the multi-char label_asym_id is re-read as the chain id (then rejected by
-    # SFcalculator's PDB-header step, which needs a <=1-char chain). Normalize both — a valid
-    # numeric model id and label_asym_id == the chain name — so saved structures
-    # (generate_synthetic_sf --save-structure) round-trip.
-    for model_idx, model in enumerate(structure):
-        model.name = str(model_idx + 1)
-        for chain in model:
-            for residue in chain:
-                residue.subchain = chain.name
+
+    model = gemmi.Model("1")  # numeric name -> valid mmCIF pdbx_PDB_model_num
+    current_chain: gemmi.Chain | None = None
+    current_res: gemmi.Residue | None = None
+    prev_key: tuple[str, int] | None = None  # (chain_id, res_id) of the previous atom
+
+    for i in range(n):
+        chain_id = str(atom_array.chain_id[i])
+        res_id = int(atom_array.res_id[i])
+        key = (chain_id, res_id)
+
+        if current_chain is None or chain_id != current_chain.name:
+            if current_chain is not None:
+                assert current_res is not None  # a chain always holds >=1 residue here
+                current_chain.add_residue(current_res)
+                model.add_chain(current_chain)
+            current_chain = gemmi.Chain(chain_id)
+            prev_key = None  # force a fresh residue for the new chain
+
+        # New residue on any (chain_id, res_id) change. Keying on the pair (not res_id
+        # alone) keeps residues that share a res_id across a chain boundary separate.
+        if key != prev_key:
+            if prev_key is not None:
+                assert current_res is not None  # prev_key set implies a residue exists
+                current_chain.add_residue(current_res)
+            current_res = gemmi.Residue()
+            current_res.name = str(atom_array.res_name[i])
+            current_res.seqid = gemmi.SeqId(str(res_id))  # author numbering
+            current_res.label_seq = res_id  # label numbering -> label_seq_id on write
+            current_res.subchain = chain_id  # label_asym_id == chain name
+            prev_key = key
+
+        assert current_res is not None  # created on the first atom / every chain switch
+        atom = gemmi.Atom()
+        atom.name = str(atom_array.atom_name[i])
+        atom.element = gemmi.Element(str(atom_array.element[i]))
+        atom.pos = gemmi.Position(*atom_array.coord[i])  # coord[i]: (3,) float
+        atom.b_iso = float(atom_array.b_factor[i])
+        atom.aniso = gemmi.SMat33f(0, 0, 0, 0, 0, 0)  # biotite stores no anisotropic B
+        atom.occ = float(atom_array.occupancy[i])
+        atom.altloc = atom_altloc[i]
+        current_res.add_atom(atom)
+
+    if current_chain is not None:  # flush the trailing residue + chain
+        assert current_res is not None  # non-empty input -> a residue was built
+        current_chain.add_residue(current_res)
+        model.add_chain(current_chain)
+
+    structure = gemmi.Structure()
+    structure.add_model(model)
+    structure.setup_entities()  # SFcalculator/PDBParser expects entities assigned
     if unit_cell is not None:
         structure.cell = unit_cell
     if space_group is not None:
