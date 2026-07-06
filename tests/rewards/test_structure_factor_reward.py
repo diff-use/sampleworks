@@ -167,7 +167,7 @@ class TestStructureFactorBulkSolvent:
     def sf_ensemble_inputs(
         self, structure_1vme_sf, device: torch.device
     ) -> tuple[dict[str, torch.Tensor], AtomArray]:
-        """A genuine 2-conformer ensemble (altloc A vs B) as ``(__call__ kwargs, state-A reference)``.
+        """A 2-conformer ensemble (altloc A vs B) as ``(__call__ kwargs, state-A reference)``.
 
         ``build_pairwise_altloc_arrays`` pairs each altloc with the shared blank-altloc atoms and
         filters to their common atoms, so both frames share one topology and differ *only* in the

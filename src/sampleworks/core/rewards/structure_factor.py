@@ -462,8 +462,8 @@ class StructureFactorRewardFunction:
 
     def _compute_ensemble_ftotal(
         self,
-        Fprotein_HKL: Complex[torch.Tensor, "n_hkl"],  # noqa F821
-    ) -> Complex[torch.Tensor, "n_hkl"]:  # noqa F821
+        Fprotein_HKL: Complex[torch.Tensor, "n_hkl"],  # noqa: F821, UP037
+    ) -> Complex[torch.Tensor, "n_hkl"]:  # noqa: F821, UP037
         """Add default-scaled bulk solvent to the ensemble Fprotein to form Ftotal.
 
         ``Ftotal(h) = kiso * aniso(h) * (Fprotein(h) + kmask * Fmask(h))`` with the
