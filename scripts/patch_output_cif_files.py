@@ -19,6 +19,17 @@ from sampleworks.utils.cif_utils import add_category_to_cif
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 
 
+# A real RCSB id is either the extended 12-char form `pdb_########` or the legacy 4-char
+# form, whose first character is always a digit (0-9). The leading-digit rule is what
+# distinguishes a real legacy id from a stray folder name like `TEST`/`logs`.
+_VALID_RCSB_ID = re.compile(r"pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3}")
+
+# Default --rcsb-pattern: locate the id (one capturing group) right after the
+# grid_search_results/ folder. Its group IS _VALID_RCSB_ID, so the default pattern and the
+# validator can never drift apart.
+DEFAULT_RCSB_PATTERN = rf"grid_search_results/({_VALID_RCSB_ID.pattern})"
+
+
 def crawl_dir_by_depth(
     root_dir: str | Path,
     target_pattern: str,
@@ -66,7 +77,7 @@ def parse_args():
     )
     parser.add_argument(
         "--rcsb-pattern",
-        default="grid_search_results/(pdb_[A-Za-z0-9]{8}|.{4})",
+        default=DEFAULT_RCSB_PATTERN,
         help="Regex pattern for rcsb ids in file paths. "
         "Must have only one group, surrounding the id",
     )
@@ -89,7 +100,7 @@ def main(
     input_dir: str | Path,
     grid_search_input_dir: str | Path,
     target_pattern: str,
-    rcsb_regex: str = r"grid_search_results/(pdb_[A-Za-z0-9]{8}|.{4})",
+    rcsb_regex: str = DEFAULT_RCSB_PATTERN,
     depth: int = 4,
     input_pdb_pattern: str = "{pdb_id}/{pdb_id}_single_001_density_input.cif",
 ) -> int:
@@ -137,36 +148,67 @@ def main(
     return 0
 
 
-# A real RCSB id is either the extended 12-char form `pdb_########` or the legacy
-# 4-char form, whose first character is always a digit (0-9). The leading-digit rule
-# is what distinguishes a real legacy id from a stray folder name like `TEST`/`logs`.
-_VALID_RCSB_ID = re.compile(r"pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3}")
+class InvalidRcsbIdError(ValueError):
+    """Raised when ``--rcsb-pattern`` matches a path but its capturing group captured a
+    string that is not a valid PDB id -- usually a sign the pattern targets the wrong part
+    of the path. Distinct from a plain no-match so the caller can warn specifically."""
+
+    def __init__(self, token: str, rcsb_regex: str) -> None:
+        self.token = token
+        self.rcsb_regex = rcsb_regex
+        super().__init__(f"--rcsb-pattern captured {token!r}, which is not a valid PDB id")
 
 
 def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
     """Extract and validate the RCSB id from a cif path.
 
-    ``rcsb_regex`` only locates the candidate in the path (it must contain exactly one
-    capturing group around the id; see ``--rcsb-pattern``). The captured token is then
-    checked against the actual PDB-id grammar and returned *verbatim* -- legacy ``4hhb``
-    or extended ``pdb_00004hhb``, whatever the folder is named, with no normalization.
+    ``rcsb_regex`` locates the candidate (it must contain exactly one capturing group around
+    the id; see ``--rcsb-pattern``). The id must be a **complete folder component**: a
+    capture that is only the prefix of a longer folder name is rejected, so a stray suffix
+    can't silently resolve to the wrong entry. The whole-component token is then checked
+    against the PDB-id grammar and returned *verbatim* (legacy ``4hhb`` or extended
+    ``pdb_00004hhb`` -- no normalization).
 
-    Returns ``None`` when the path contains no match, or when the captured token is not a
-    well-formed PDB id -- so a stray folder such as ``TEST/`` is rejected here rather than
-    silently fetched. This is the main checkpoint: a wrong id here would patch coordinates
-    into the wrong template without erroring.
+    Examples with the default pattern (folder -> result)::
+
+        4hhb                  -> "4hhb"          (works)
+        pdb_00004hhb          -> "pdb_00004hhb"  (works)
+        1VME                  -> "1VME"          (works)
+        4hhb_final            -> None  (id is only a prefix of the folder)
+        protease_pdb_1000abcd -> None  (id is not at the component start)
+        1abc_pdb_1000abcd     -> None  (two id-like parts -- ambiguous)
+        logs                  -> None  (not a PDB id)
+
+    Possible problem this guards against: without the whole-component rule, ``4hhb_final``
+    would yield ``4hhb`` and ``1abc_pdb_1000abcd`` would yield ``1abc`` -- both silently
+    patching the wrong entry. Such folders are skipped with a warning instead. If your
+    folders embed the id in a larger name, pass a custom ``--rcsb-pattern`` (beware names
+    with more than one id-like substring).
+
+    Returns ``None`` when no complete PDB-id folder is found. Raises ``InvalidRcsbIdError``
+    when a whole component is captured but is not a valid PDB id (a likely sign the pattern
+    targets the wrong part of the path), and ``ValueError`` when the pattern does not have
+    exactly one capturing group. This is the main checkpoint: a wrong id here would patch
+    coordinates into the wrong template.
     """
-    m = re.search(rcsb_regex, str(cif_path))
-    if not m:
-        return None
-    if m.re.groups != 1:
+    rcsb_re = re.compile(rcsb_regex)
+    if rcsb_re.groups != 1:
         raise ValueError(
             f"--rcsb-pattern must have exactly one capturing group, "
-            f"got {m.re.groups}: {rcsb_regex!r}"
+            f"got {rcsb_re.groups}: {rcsb_regex!r}"
         )
+    path_str = str(cif_path)
+    m = rcsb_re.search(path_str)
+    if not m:
+        return None
+    # The id must be a whole folder component: reject a capture that is only the prefix of a
+    # longer name (e.g. "4hhb" out of "4hhb_final"), which would silently resolve to the
+    # wrong entry. A whole-component id is followed by a path separator (or ends the path).
+    if m.end(1) < len(path_str) and path_str[m.end(1)] != "/":
+        return None
     token = m.group(1)
     if not _VALID_RCSB_ID.fullmatch(token):
-        return None
+        raise InvalidRcsbIdError(token, rcsb_regex)
     return token
 
 
@@ -174,11 +216,22 @@ def patch_individual_cif_file(
     cif_file: Path, rcsb_regex: str, reference_dir: Path, input_pdb_pattern: str
 ) -> str | None:  # returns an error message if there was one
     cif_path = Path(cif_file)
-    rcsb_id = extract_rcsb_id(cif_path, rcsb_regex)
+    try:
+        rcsb_id = extract_rcsb_id(cif_path, rcsb_regex)
+    except InvalidRcsbIdError as exc:
+        msg = (
+            f"--rcsb-pattern {rcsb_regex!r} matched {cif_file} but captured {exc.token!r}, "
+            f"which is not a valid PDB id (expected e.g. '4hhb' or 'pdb_00004hhb'; "
+            f"regex {_VALID_RCSB_ID.pattern!r}). Check that the capturing group targets the id."
+        )
+        logger.warning(msg)
+        return msg
     if rcsb_id is None:
         msg = (
-            f"Unable to parse a valid RCSB structure id from path {cif_file} "
-            f"with pattern {rcsb_regex}"
+            f"--rcsb-pattern {rcsb_regex!r} did not find a complete PDB-id folder in "
+            f"{cif_file}. Expected a folder named exactly a PDB id (e.g. '4hhb' or "
+            f"'pdb_00004hhb'; regex {_VALID_RCSB_ID.pattern!r}). "
+            f"Check the directory layout or the pattern."
         )
         logger.warning(msg)
         return msg

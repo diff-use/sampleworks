@@ -46,7 +46,7 @@ You can run the following command, which assumes:
 ```shell
 pixi run -e analysis python scripts/patch_output_cif_files.py \
   --input-dir /home/ubuntu/grid_search_results \
-  --rcsb-pattern 'grid_search_results/(pdb_[A-Za-z0-9]{8}|.{4})/...' \
+  --rcsb-pattern 'grid_search_results/(pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3})/...' \
   --cif-pattern 'refined.cif' \
   --grid-search-input-dir /home/ubuntu/grid_search_inputs \
   --input-pdb-pattern '{pdb_id}/{pdb_id}_original.cif'
