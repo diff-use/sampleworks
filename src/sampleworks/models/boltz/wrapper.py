@@ -288,8 +288,10 @@ class BoltzConditioning:
     true_atom_array : AtomArray | None
         Original structure's atom array (occupancy-filtered) for reward computation.
         Boltz's internal atom representation may differ from this due to padding, etc.
-        # TODO: figure out a standardized way of handling all these! related to several
-        todos elsewhere
+    model_atom_array : AtomArray | None
+        The AtomArray of the atoms the model actually operates on for the current
+        sequence. May differ from ``true_atom_array`` (padding, added/missing atoms,
+        element differences, etc.). Used for atom reconciliation against the true structure.
     """
 
     s: Tensor
@@ -454,7 +456,7 @@ def create_boltz_input_from_structure(
             sequence_to_chains.setdefault(seq, []).append(chain_id)
 
         unique_chain_sequences = {chains[0]: seq for seq, chains in sequence_to_chains.items()}
-        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)  # ty: ignore[invalid-argument-type]
+        msa_paths_unique = msa_manager.get_msa(unique_chain_sequences, msa_pairing_strategy)
 
         msa_paths = {}
         for seq, chains_with_seq in sequence_to_chains.items():
@@ -739,7 +741,9 @@ class Boltz2Wrapper:
                 "x_init from prior. This means align_to_input will not work properly,"
                 " and reward functions dependent on this won't be accurate."
             )
-            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # ty: ignore[invalid-argument-type]
+            temp_features = GenerativeModelInput[BoltzConditioning](
+                x_init=cast(Any, None), conditioning=conditioning
+            )
             x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
@@ -810,7 +814,7 @@ class Boltz2Wrapper:
             z = z + msa_module(z, s_inputs, features, use_kernels=self.model.use_kernels)
 
             if self.model.is_pairformer_compiled:
-                pairformer_module = self.model.pairformer_module._orig_mod
+                pairformer_module = cast(Any, self.model.pairformer_module)._orig_mod
             else:
                 pairformer_module = self.model.pairformer_module
 
@@ -1078,8 +1082,9 @@ class Boltz1Wrapper:
         )
 
         processed_dir = out_dir / "processed"
+        load_manifest = cast(Any, Manifest.load)
         processed = BoltzProcessedInput(
-            manifest=Manifest.load(processed_dir / "manifest.json"),
+            manifest=load_manifest(processed_dir / "manifest.json"),
             targets_dir=processed_dir / "structures",
             msa_dir=processed_dir / "msa",
             constraints_dir=(processed_dir / "constraints")
@@ -1194,7 +1199,9 @@ class Boltz1Wrapper:
                 "x_init from prior. This means align_to_input will not work properly,"
                 " and reward functions dependent on this won't be accurate."
             )
-            temp_features = GenerativeModelInput(x_init=None, conditioning=conditioning)  # ty: ignore[invalid-argument-type]
+            temp_features = GenerativeModelInput[BoltzConditioning](
+                x_init=cast(Any, None), conditioning=conditioning
+            )
             x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
 
         return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
@@ -1368,7 +1375,7 @@ class Boltz1Wrapper:
                 )
 
             if self.model.is_pairformer_compiled:
-                pairformer_module = self.model.pairformer_module._orig_mod
+                pairformer_module = cast(Any, self.model.pairformer_module)._orig_mod
             else:
                 pairformer_module = self.model.pairformer_module
 

@@ -1,6 +1,3 @@
-# type: ignore
-# ty: ignore
-
 """Classes for handling unit cell transformation."""
 
 from itertools import product

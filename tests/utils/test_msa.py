@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from sampleworks.utils import msa as msa_module
 from sampleworks.utils.guidance_constants import StructurePredictor
-from sampleworks.utils.msa import _compute_msa, MSAManager
+from sampleworks.utils.msa import _compute_msa, _msa_data_key_sort_key, MSAManager
 
 
 # ============================================================================
@@ -28,6 +28,13 @@ def test_hash_arguments_is_deterministic_and_input_sensitive():
     assert base != MSAManager._hash_arguments(data, "complete")
     # Different value order -> different hash (hash is over tuple(values)).
     assert base != MSAManager._hash_arguments({"B": "GGGAA", "A": "MKTAY"}, "greedy")
+
+
+def test_msa_data_key_sort_preserves_numeric_order_and_handles_mixed_keys():
+    """Ensure Protenix MSA key sorting preserves numeric order and mixed-key stability."""
+    keys = [10, 2, "1", "A"]
+
+    assert sorted(keys, key=_msa_data_key_sort_key) == [2, 10, "1", "A"]
 
 
 # ============================================================================
@@ -192,3 +199,58 @@ def test_compute_msa_writes_matching_csv_and_a3m(tmp_path: Path):
     a3m_sequences = [line for i, line in enumerate(a3m_lines) if i % 2 == 1]
 
     assert csv_sequences == a3m_sequences == ["MKTAY", "MKTAC", "MKTAG"]
+
+
+# ============================================================================
+# get_msa Protenix cache path (regression guard)
+# ============================================================================
+
+
+def test_get_msa_protenix_caches_under_protenix_subdir_and_skips_second_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Protenix MSAs are cached under ``msa_dir/protenix/<hash>/<key>/`` (written by
+    ``protenix_msa_search``), independent of the boltz/rf3 ``_compute_msa`` path. A warm
+    cache must not re-invoke ``protenix_msa_search`` — that call is the live MSA-server
+    request we must not regress into. Also guards that the Protenix path does not depend
+    on any files under ``msa_dir/<idx>/``.
+    """
+    manager = MSAManager(msa_cache_dir=tmp_path)
+    data = {"A": "MKTAY"}
+    pairing = "greedy"
+    hash_key = MSAManager._hash_arguments(data, pairing)
+    out_dir = tmp_path / "protenix" / hash_key
+
+    call_count = {"n": 0}
+
+    def fake_protenix_search(sequences, search_out_dir, mode):
+        # Mirror protenix_msa_search: write per-key non_pairing/pairing.a3m into out_dir.
+        call_count["n"] += 1
+        search_out_dir = Path(search_out_dir)
+        dirs = []
+        for key in sorted(data.keys()):
+            d = search_out_dir / str(key)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "non_pairing.a3m").write_text(f">{key}\n{data[key]}\n")
+            (d / "pairing.a3m").write_text(f">{key}\n{data[key]}\n")
+            dirs.append(d)
+        return dirs
+
+    monkeypatch.setattr(msa_module, "PROTENIX_AVAILABLE", True)
+    monkeypatch.setattr(msa_module, "protenix_msa_search", fake_protenix_search, raising=False)
+
+    # Cold cache: the search runs once and writes under msa_dir/protenix/<hash>/<key>/.
+    result = manager.get_msa(data, pairing, structure_predictor=StructurePredictor.PROTENIX)
+    assert call_count["n"] == 1
+    assert manager._api_calls == 1
+    assert manager._cache_hits == 0
+    assert (out_dir / "A" / "non_pairing.a3m").exists()
+    # The Protenix path never reads the (removed) msa_dir/<idx>/ files.
+    assert not (tmp_path / "0").exists()
+    assert result == {"A": out_dir / "A"}
+
+    # Warm cache: an identical request must NOT hit the MSA server again.
+    manager.get_msa(data, pairing, structure_predictor=StructurePredictor.PROTENIX)
+    assert call_count["n"] == 1
+    assert manager._api_calls == 1
+    assert manager._cache_hits == 1

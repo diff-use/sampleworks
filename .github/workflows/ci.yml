@@ -107,3 +107,12 @@ jobs:
 
       - name: Run CPU tests
         run: pixi run -e ${{ matrix.environment }} cpu-tests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: ${{ matrix.environment }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # Don't fail the test job if the Codecov app/token isn't configured yet.
+          fail_ci_if_error: false
