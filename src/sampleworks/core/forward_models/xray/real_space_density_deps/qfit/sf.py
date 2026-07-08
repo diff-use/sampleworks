@@ -1,4 +1,3 @@
-# ty: ignore
 # ruff: ignore
 """Cromer-Mann coefficents and related constants
 

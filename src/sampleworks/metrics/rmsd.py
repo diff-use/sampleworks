@@ -92,11 +92,13 @@ class AllAtomRMSD(Metric):
             - ``best_of_{N}_segment_rmsd``: minimum of ``segment_rmsd``.
         """
         # 1. Annotate token IDs so atoms can be grouped into residues downstream.
-        predicted_atom_array_stack = add_global_token_id_annotation(
-            predicted_atom_array_stack  # ty: ignore[invalid-argument-type]  (accepts AtomArray|AtomArrayStack at runtime; stub is narrower)
+        predicted_atom_array_stack = cast(
+            AtomArrayStack,
+            add_global_token_id_annotation(cast(Any, predicted_atom_array_stack)),
         )
-        ground_truth_atom_array_stack = add_global_token_id_annotation(
-            ground_truth_atom_array_stack  # ty: ignore[invalid-argument-type]  (accepts AtomArray|AtomArrayStack at runtime; stub is narrower)
+        ground_truth_atom_array_stack = cast(
+            AtomArrayStack,
+            add_global_token_id_annotation(cast(Any, ground_truth_atom_array_stack)),
         )
 
         # 2. Restrict both stacks to atoms present in both structures, in matching order.

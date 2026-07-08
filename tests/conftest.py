@@ -1094,5 +1094,7 @@ def perturbed_coords(
     """
     torch.manual_seed(42)
     base = converging_mock_wrapper.target
-    perturbation = torch.randn_like(base) * 0.1  # ty: ignore[invalid-argument-type]
-    return base, base + perturbation  # ty: ignore[invalid-return-type, unsupported-operator]
+    if base is None:
+        raise ValueError("converging_mock_wrapper must provide target coordinates")
+    perturbation = torch.randn_like(base) * 0.1
+    return base, base + perturbation

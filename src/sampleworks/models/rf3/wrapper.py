@@ -365,8 +365,10 @@ class RF3Wrapper:
             InferenceInput, input_batch[0]
         )  # since we're not batching, the loader returns a list of length 1
 
-        # (Hydra instantiation of pipeline means it is going to be hard to type check here)
-        pipeline_output = self.inference_engine.pipeline(input_spec.to_pipeline_input())  # ty: ignore[call-non-callable]
+        # Hydra instantiation leaves pipeline imprecisely typed even though it is callable
+        # at runtime.
+        pipeline = cast(Any, self.inference_engine.pipeline)
+        pipeline_output = pipeline(input_spec.to_pipeline_input())
         pipeline_output = trainer.fabric.to_device(pipeline_output)
 
         features = trainer._assemble_network_inputs(pipeline_output)
