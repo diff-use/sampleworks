@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast, overload
 
 
 BOLTZ_AVAILABLE = False
@@ -53,7 +53,11 @@ except (ImportError, ModuleNotFoundError, OSError):
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def require_boltz(message: str | None = None) -> Callable[[F], F]:
+@overload
+def require_boltz(message: F) -> F: ...
+@overload
+def require_boltz(message: str | None = None) -> Callable[[F], F]: ...
+def require_boltz(message: F | str | None = None) -> F | Callable[[F], F]:
     """Decorator to require Boltz model availability.
 
     Parameters
@@ -79,7 +83,7 @@ def require_boltz(message: str | None = None) -> Callable[[F], F]:
     if callable(message):
         # Bare ``@require_boltz`` usage: the decorated function arrives as ``message``.
         # Re-dispatch so both ``@require_boltz`` and ``@require_boltz("msg")`` work.
-        return require_boltz()(message)
+        return require_boltz()(cast("F", message))
 
     default_message = "Boltz model wrapper is not available. Install with: pixi install -e boltz"
 
@@ -101,7 +105,11 @@ def require_boltz(message: str | None = None) -> Callable[[F], F]:
     return decorator
 
 
-def require_protenix(message: str | None = None) -> Callable[[F], F]:
+@overload
+def require_protenix(message: F) -> F: ...
+@overload
+def require_protenix(message: str | None = None) -> Callable[[F], F]: ...
+def require_protenix(message: F | str | None = None) -> F | Callable[[F], F]:
     """Decorator to require Protenix model availability.
 
     Parameters
@@ -127,7 +135,7 @@ def require_protenix(message: str | None = None) -> Callable[[F], F]:
     if callable(message):
         # Bare ``@require_protenix`` usage: the decorated function arrives as ``message``.
         # Re-dispatch so both ``@require_protenix`` and ``@require_protenix("msg")`` work.
-        return require_protenix()(message)
+        return require_protenix()(cast("F", message))
 
     default_message = (
         "Protenix model wrapper is not available. Install with: pixi install -e protenix"
@@ -151,7 +159,11 @@ def require_protenix(message: str | None = None) -> Callable[[F], F]:
     return decorator
 
 
-def require_rf3(message: str | None = None) -> Callable[[F], F]:
+@overload
+def require_rf3(message: F) -> F: ...
+@overload
+def require_rf3(message: str | None = None) -> Callable[[F], F]: ...
+def require_rf3(message: F | str | None = None) -> F | Callable[[F], F]:
     """Decorator to require RF3 model availability.
 
     Parameters
@@ -177,7 +189,7 @@ def require_rf3(message: str | None = None) -> Callable[[F], F]:
     if callable(message):
         # Bare ``@require_rf3`` usage: the decorated function arrives as ``message``.
         # Re-dispatch so both ``@require_rf3`` and ``@require_rf3("msg")`` work.
-        return require_rf3()(message)
+        return require_rf3()(cast("F", message))
 
     default_message = "RF3 model wrapper is not available. Install with: pixi install -e rf3"
 
@@ -199,7 +211,11 @@ def require_rf3(message: str | None = None) -> Callable[[F], F]:
     return decorator
 
 
-def require_protpardelle(message: str | None = None) -> Callable[[F], F]:
+@overload
+def require_protpardelle(message: F) -> F: ...
+@overload
+def require_protpardelle(message: str | None = None) -> Callable[[F], F]: ...
+def require_protpardelle(message: F | str | None = None) -> F | Callable[[F], F]:
     """Decorator to require Protpardelle model availability.
 
     Parameters
@@ -225,7 +241,7 @@ def require_protpardelle(message: str | None = None) -> Callable[[F], F]:
     if callable(message):
         # Bare ``@require_protpardelle`` usage: the decorated function arrives as ``message``.
         # Re-dispatch so both ``@require_protpardelle`` and ``@require_protpardelle("msg")`` work.
-        return require_protpardelle()(message)
+        return require_protpardelle()(cast("F", message))
 
     default_message = (
         "Protpardelle model wrapper is not available. Install with: pixi install -e protpardelle"
@@ -249,7 +265,11 @@ def require_protpardelle(message: str | None = None) -> Callable[[F], F]:
     return decorator
 
 
-def require_any_model(message: str | None = None) -> Callable[[F], F]:
+@overload
+def require_any_model(message: F) -> F: ...
+@overload
+def require_any_model(message: str | None = None) -> Callable[[F], F]: ...
+def require_any_model(message: F | str | None = None) -> F | Callable[[F], F]:
     """Decorator to require at least one model wrapper availability.
 
     Parameters
@@ -275,7 +295,7 @@ def require_any_model(message: str | None = None) -> Callable[[F], F]:
     if callable(message):
         # Bare ``@require_any_model`` usage: the decorated function arrives as ``message``.
         # Re-dispatch so both ``@require_any_model`` and ``@require_any_model("msg")`` work.
-        return require_any_model()(message)
+        return require_any_model()(cast("F", message))
 
     default_message = (
         "No model wrappers are available. "
