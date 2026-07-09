@@ -286,6 +286,52 @@ class FKSteering:
 
             return step_output, denoised_4d
 
+        return self._run_guided_step_per_particle(
+            coords_4d, model, sampler, features, context, step_scaler, num_particles
+        )
+
+    def _run_guided_step_per_particle(
+        self,
+        coords_4d: torch.Tensor,
+        model: FlowModelWrapper,
+        sampler: TrajectorySampler,
+        features: GenerativeModelInput,
+        context: StepParams,
+        step_scaler: StepScalerProtocol,
+        num_particles: int,
+    ) -> tuple[SamplerStepOutput, torch.Tensor | None]:
+        r"""Run the denoising step one particle at a time, then restack to a batch.
+
+        Each particle is stepped independently so its guidance gradient is computed
+        only from its own state (correct FK semantics). This is the guided
+        counterpart to the batched fast path in :meth:`_run_step`; the two are kept
+        separate because the fast path runs a single forward pass over all particles,
+        which cannot provide per-particle gradients.
+
+        Parameters
+        ----------
+        coords_4d : torch.Tensor
+            Current coordinates, shape ``(particles, ensemble, atoms, 3)``.
+        model : FlowModelWrapper
+            Model wrapper for denoising.
+        sampler : TrajectorySampler
+            Sampler that handles the step mechanics.
+        features : GenerativeModelInput
+            Model features/inputs.
+        context : StepParams
+            Step context with time info and optionally reward.
+        step_scaler : StepScalerProtocol
+            Active step scaler providing per-particle guidance.
+        num_particles : int
+            Number of particles to iterate over.
+
+        Returns
+        -------
+        tuple[SamplerStepOutput, torch.Tensor | None]
+            ``(step_output, denoised_4d)`` matching :meth:`_run_step`, with
+            ``step_output.state`` shape ``(particles * ensemble, atoms, 3)`` and
+            ``denoised_4d`` shape ``(particles, ensemble, atoms, 3)``.
+        """
         states_per_particle: list[torch.Tensor] = []
         denoised_per_particle: list[torch.Tensor] = []
         losses_per_particle: list[torch.Tensor] = []
