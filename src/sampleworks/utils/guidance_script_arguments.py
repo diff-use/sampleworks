@@ -198,14 +198,6 @@ _DYNAMIC_ATTRS = [
     "disable_chiral_features",
     "track_chiral_features",
     "protpardelle_config_path",
-    "protpardelle_s_churn",
-    "protpardelle_step_scale",
-    "protpardelle_sidechain_mode",
-    "protpardelle_skip_mpnn_proportion",
-    "protpardelle_jump_steps",
-    "protpardelle_uniform_steps",
-    "protpardelle_temperature",
-    "protpardelle_top_p",
     # generic (overridable)
     "ensemble_size",
     "recycling_steps",
@@ -643,52 +635,6 @@ def add_protpardelle_specific_args(parser: argparse.ArgumentParser | GuidanceCon
         type=str,
         default=None,
         help="Path to the Protpardelle model config YAML (default: bundled cc89 config)",
-    )
-    parser.add_argument(
-        "--protpardelle-s-churn",
-        type=float,
-        default=40.0,
-        help="Protpardelle stochasticity parameter forwarded as s_churn",
-    )
-    parser.add_argument(
-        "--protpardelle-step-scale",
-        type=float,
-        default=1.0,
-        help="Protpardelle score inverse-temperature scale forwarded as step_scale",
-    )
-    parser.add_argument(
-        "--protpardelle-sidechain-mode",
-        action="store_true",
-        help="Enable Protpardelle all-atom MiniMPNN side-chain co-design",
-    )
-    parser.add_argument(
-        "--protpardelle-skip-mpnn-proportion",
-        type=float,
-        default=1.0,
-        help="Fraction of denoising steps to skip MiniMPNN at the start",
-    )
-    parser.add_argument(
-        "--protpardelle-jump-steps",
-        action="store_true",
-        help="Use Protpardelle superposition jump-step sampling",
-    )
-    parser.add_argument(
-        "--protpardelle-uniform-steps",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Use Protpardelle uniform-step sampling (default: enabled)",
-    )
-    parser.add_argument(
-        "--protpardelle-temperature",
-        type=float,
-        default=1.0,
-        help="Temperature applied to Protpardelle aatype logits",
-    )
-    parser.add_argument(
-        "--protpardelle-top-p",
-        type=float,
-        default=1.0,
-        help="Top-p truncation for Protpardelle aatype sampling",
     )
 
 

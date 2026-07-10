@@ -527,15 +527,6 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = annotate_structure_for_protpardelle(
             structure,
             ensemble_size=args.ensemble_size,
-            num_steps=args.num_diffusion_steps or 500,
-            s_churn=getattr(args, "protpardelle_s_churn", 40.0),
-            step_scale=getattr(args, "protpardelle_step_scale", 1.0),
-            sidechain_mode=getattr(args, "protpardelle_sidechain_mode", False),
-            skip_mpnn_proportion=getattr(args, "protpardelle_skip_mpnn_proportion", 1.0),
-            jump_steps=getattr(args, "protpardelle_jump_steps", False),
-            uniform_steps=getattr(args, "protpardelle_uniform_steps", True),
-            temperature=getattr(args, "protpardelle_temperature", 1.0),
-            top_p=getattr(args, "protpardelle_top_p", 1.0),
         )
         edm_sampler_kwargs = {
             "s_max": 80,
