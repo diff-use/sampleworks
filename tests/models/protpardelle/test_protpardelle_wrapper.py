@@ -1,4 +1,4 @@
-"""Tests for the Protpardelle structure-model wrapper.
+"""Tests for the Protpardelle flow-model wrapper.
 
 These tests build a small, randomly-initialized ``ai-allatom`` model (see
 ``conftest.py``) so they exercise real featurization/sampling logic without

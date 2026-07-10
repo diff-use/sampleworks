@@ -355,7 +355,7 @@ class ProtpardelleWrapper:
 
     def _atom37_indices_from_atom_array(
         self, atom_array
-    ) -> tuple[Tensor, Tensor]:
+    ) -> tuple[Int[Tensor, "atoms"], Int[Tensor, "atoms"]]:
         """Derive per-atom atom37 destination indices from an Atomworks atom array.
 
         For each atom in ``atom_array`` (the order the sampler's flat ``x_t``
@@ -546,8 +546,8 @@ class ProtpardelleWrapper:
         x_t : Float[Tensor, "batch atoms 3"]
             Noisy structure at timestep :math:`t`.
         t : Float[Tensor, "*batch"] | float
-            Current timestep/noise level (:math:`\\hat{t}` from EDM schedule).
-        features : GenerativeModelInput[BoltzConditioning] | None
+            Current timestep/noise level (:math:`\hat{t}` from EDM schedule).
+        features : GenerativeModelInput[ProtpardelleConditioning] | None
             Model features as returned by ``featurize``.
 
         Returns
