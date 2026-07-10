@@ -69,7 +69,7 @@ except (ImportError, OSError):  # OSError can arise from a missing model_params 
     logger.warning(
         "Failed to import Protpardelle, hopefully you're running a different model. "
         "If you intended to use Protpardelle, please additionally check that the "
-        "model_params directory exists. You may need to set the environment variable"
+        "model_params directory exists. You may need to set the environment variable "
         "PROTPARDELLE_MODEL_PARAMS."
     )
 
@@ -255,6 +255,7 @@ def get_model_and_device(
             config_path=str(Path(config_path).expanduser().resolve()),
             checkpoint_path=validated_checkpoint_path,
             device=device,
+            model=model,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")

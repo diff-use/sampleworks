@@ -1,8 +1,10 @@
+# ruff: noqa: UP047
+
 from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import Any, TypeVar, cast, overload
+from typing import Any, cast, overload, TypeVar
 
 
 BOLTZ_AVAILABLE = False
