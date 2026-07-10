@@ -78,33 +78,12 @@ class TestFromCliUnified:
             "/data/cc89.pth",
             "--protpardelle-config-path",
             "/data/cc89.yaml",
-            "--protpardelle-s-churn",
-            "2.5",
-            "--protpardelle-step-scale",
-            "0.75",
-            "--protpardelle-sidechain-mode",
-            "--protpardelle-skip-mpnn-proportion",
-            "0.25",
-            "--protpardelle-jump-steps",
-            "--no-protpardelle-uniform-steps",
-            "--protpardelle-temperature",
-            "0.9",
-            "--protpardelle-top-p",
-            "0.8",
             "--num-diffusion-steps",
             "64",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
         assert getattr(config, "model_checkpoint") == "/data/cc89.pth"
         assert getattr(config, "protpardelle_config_path") == "/data/cc89.yaml"
-        assert getattr(config, "protpardelle_s_churn") == 2.5
-        assert getattr(config, "protpardelle_step_scale") == 0.75
-        assert getattr(config, "protpardelle_sidechain_mode") is True
-        assert getattr(config, "protpardelle_skip_mpnn_proportion") == 0.25
-        assert getattr(config, "protpardelle_jump_steps") is True
-        assert getattr(config, "protpardelle_uniform_steps") is False
-        assert getattr(config, "protpardelle_temperature") == 0.9
-        assert getattr(config, "protpardelle_top_p") == 0.8
         assert config.num_diffusion_steps == 64
 
     def test_guidance_specific_args_fk(self):

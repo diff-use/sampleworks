@@ -133,63 +133,16 @@ class TestExtractProteinSequences:
 class TestAnnotateStructure:
     def test_adds_config(self):
         structure = _protein_structure(SEQ_A)
-        annotated = annotate_structure_for_protpardelle(structure, ensemble_size=4, num_steps=10)
+        annotated = annotate_structure_for_protpardelle(structure, ensemble_size=4)
         config = annotated["_protpardelle_config"]
         assert isinstance(config, ProtpardelleConfig)
         assert config.ensemble_size == 4
-        assert config.num_steps == 10
         # Original structure is not mutated.
         assert "_protpardelle_config" not in structure
 
-    def test_defaults_match_ai_allatom_recipe(self):
+    def test_default_ensemble_size(self):
         config = ProtpardelleConfig()
-        assert config.uniform_steps is True
-        assert config.jump_steps is False
-        assert config.sidechain_mode is False
-
-    def test_adds_sampling_options(self):
-        structure = _protein_structure(SEQ_A)
-        annotated = annotate_structure_for_protpardelle(
-            structure,
-            ensemble_size=2,
-            num_steps=64,
-            s_churn=2.5,
-            step_scale=0.75,
-            sidechain_mode=True,
-            skip_mpnn_proportion=0.25,
-            jump_steps=True,
-            uniform_steps=False,
-            temperature=0.9,
-            top_p=0.8,
-        )
-
-        config = annotated["_protpardelle_config"]
-        assert config.ensemble_size == 2
-        assert config.num_steps == 64
-        assert config.s_churn == 2.5
-        assert config.step_scale == 0.75
-        assert config.sidechain_mode is True
-        assert config.skip_mpnn_proportion == 0.25
-        assert config.jump_steps is True
-        assert config.uniform_steps is False
-        assert config.temperature == 0.9
-        assert config.top_p == 0.8
-
-
-class TestBuildSamplingKwargs:
-    def test_defaults(self):
-        kwargs = ProtpardelleWrapper._build_sampling_kwargs(ProtpardelleConfig())
-        assert kwargs["uniform_steps"] is True
-        assert kwargs["jump_steps"] is False
-        assert kwargs["num_steps"] == ProtpardelleConfig().num_steps
-
-    def test_extra_overrides_take_precedence(self):
-        config = ProtpardelleConfig(
-            num_steps=500, extra_sampling_kwargs={"num_steps": 7, "noise_scale": 2.0}
-        )
-        kwargs = ProtpardelleWrapper._build_sampling_kwargs(config)
-        assert kwargs["num_steps"] == 7
-        assert kwargs["noise_scale"] == 2.0
+        assert config.ensemble_size == 8
 
 
 class TestConstructorValidation:
@@ -357,7 +310,7 @@ class TestStep:
     def test_step_returns_coords(self, protpardelle_wrapper):
         short_seq = "ACDEFG"
         structure = annotate_structure_for_protpardelle(
-            _protein_structure(short_seq), ensemble_size=1, num_steps=3, s_churn=0.0
+            _protein_structure(short_seq), ensemble_size=1
         )
         features = protpardelle_wrapper.featurize(structure)
         result = protpardelle_wrapper.step(features.x_init, 1.0, features=features)

@@ -15,16 +15,12 @@ atoms zeroed out.
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass, field
-from importlib.resources import files
 from pathlib import Path
-from typing import Any
 
 import biotite.structure as struc
 import numpy as np
 import torch
-import yaml
 from atomworks.enums import ChainType
 from jaxtyping import Float, Int
 from loguru import logger
@@ -50,16 +46,6 @@ NUM_AATYPE_TOKENS = 21
 # Atomworks keeps selenomethionine atoms as ``SE`` while Protpardelle's atom37
 # representation uses the canonical methionine sulfur slot, ``SD``.
 ATOM37_ATOM_NAME_ALIASES = {"SE": "SD"}
-
-# get default model configurations from protpardelle-1c/cc89
-sampling_partial_diffusion_all_atom = files("protpardelle").joinpath(
-    "configs/running/sampling_partial_diffusion_allatom.yaml"
-)
-with open(str(sampling_partial_diffusion_all_atom), "r") as f:
-    DEFAULT_CONFIG = yaml.safe_load(f)
-
-DEFAULT_CONDITIONAL_CFG: dict[str, Any] = DEFAULT_CONFIG["sampling"]["conditional_cfg"]
-DEFAULT_PARTIAL_DIFFUSION: dict[str, Any] = DEFAULT_CONFIG["sampling"]["partial_diffusion"]
 
 
 # TODO: I believe this can be cleaned up, not all of this is necessary for a forward pass
@@ -94,11 +80,9 @@ class ProtpardelleConditioning:
     atom37_atom_index : Int[Tensor, "atoms"]
         For each of the ``N`` flat atoms, the atom37 slot ``0..36`` it occupies,
         i.e. ``residue_constants.atom_order[atom_name]``.
-    sampling_kwargs : dict[str, Any]
-        Keyword arguments forwarded to ``Protpardelle.sample``.
     sequences : tuple[str, ...]
         The input one-letter sequences, one per protein chain (for reference).
-    x_self_conditioning: Float[Tensor, "batch L 37"]
+    x_self_conditioning: Float[Tensor, "batch L 37 3"]
         Self-conditioning for the input structure,
         essentially the previously denoised coordinates (optional).
     """
@@ -110,9 +94,8 @@ class ProtpardelleConditioning:
     atom_mask: Float[Tensor, "batch L 37"]
     atom37_residue_index: Tensor
     atom37_atom_index: Tensor
-    sampling_kwargs: dict[str, Any]
     sequences: tuple[str, ...]
-    x_self_conditioning: Float[Tensor, "batch L 37"] | None = None
+    x_self_conditioning: Float[Tensor, "batch L 37 3"] | None = None
     _initialized: bool = field(default=False, init=False, repr=False)
 
     _FROZEN = frozenset(
@@ -122,7 +105,6 @@ class ProtpardelleConditioning:
             "residue_index",
             "chain_index",
             "atom_mask",
-            "sampling_kwargs",
             "sequences",
         }
     )
@@ -141,91 +123,33 @@ class ProtpardelleConditioning:
 
 @dataclass
 class ProtpardelleConfig:
-    """Configuration for Protpardelle featurization and sampling.
+    """Configuration for Protpardelle featurization.
 
-    Defaults follow the ``ai-allatom`` / ``uniform_steps`` recipe used by the
-    sequence-conditioned Protpardelle-1c models (see the ``allatom_cfg`` block
-    of ``configs/running/sampling_partial_diffusion_allatom.yaml`` in the
-    Protpardelle-1c repository).
+    The denoising loop is driven by the sampleworks sampler (``AF3EDMSampler``),
+    which owns the schedule, stochasticity, and step scaling. The only setting
+    this wrapper reads is therefore the ensemble size.
 
     Attributes
     ----------
     ensemble_size : int
         Number of structures to sample for the input sequence (batch dim). Default 8.
-    num_steps : int
-        Number of denoising (ODE discretization) steps. Defaults to 200.
-    s_churn : float
-        Stochasticity: ``gamma = s_churn / num_steps`` extra noise per step.
-        Protpardelle recommends 0.2 * num_steps. 0 is deterministic sampling
-        Defaults to 40.0
-    step_scale : float
-        Inverse-temperature scale applied to the score. Default 1.0
-    sidechain_mode : bool
-        All-atom MiniMPNN side-chain co-design. Left False for ai-allatom
-        sequence-conditioned models (which do not use MiniMPNN).
-    skip_mpnn_proportion : float
-        Fraction of steps from the start to skip running MiniMPNN. Default 1.0. (no MPNN)
-    jump_steps : bool
-        Use the superposition sampling scheme (mutually exclusive with
-        ``uniform_steps``). Default False.
-    uniform_steps : bool
-        All-atom denoising with a uniform noise-level change each step. This is
-        the scheme used by ``ai-allatom`` models. Default True.
-    temperature : float
-        Temperature applied to aatype logits (unused when the sequence is
-        fully specified, but forwarded for completeness).
-    top_p : float
-        Top-p truncation for aatype sampling (also kept only for completeness, this is for MPNN).
-    extra_sampling_kwargs : dict[str, Any]
-        Additional keyword overrides merged into the ``Protpardelle.sample``
-        call, taking precedence over the fields above.
     """
 
     ensemble_size: int = 8
-    num_steps: int = 200
-    s_churn: float = 40.0  # Protpardelle recommends 0.2 * num_steps. 0 is deterministic sampling
-    step_scale: float = 1.0
-    sidechain_mode: bool = False
-    skip_mpnn_proportion: float = 1.0
-    jump_steps: bool = False
-    uniform_steps: bool = True
-    temperature: float = 1.0
-    top_p: float = 1.0
-    extra_sampling_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
-# TODO: I need to check whether these defaults make sense. In fact I don't think
-#  we will use most of these (e.g. skip_mpnn_proportion, since we don't do seq design.
-#  Check the Protpardelle configs.
 def annotate_structure_for_protpardelle(
     structure: dict,
     *,
     ensemble_size: int = 8,
-    num_steps: int = 200,
-    s_churn: float = 40.0,
-    step_scale: float = 1.0,
-    sidechain_mode: bool = False,
-    skip_mpnn_proportion: float = 1.0,
-    jump_steps: bool = False,
-    uniform_steps: bool = True,
-    temperature: float = 1.0,
-    top_p: float = 1.0,
-    extra_sampling_kwargs: dict[str, Any] | None = None,
 ) -> dict:
     """Annotate an Atomworks structure with Protpardelle-specific configuration.
-
-    Note that many of these parameters are related to protein design, or are relevant only
-    if one is using Protpardelle for design (e.g. jump_steps, temperature, top_p). We have
-    decided to leave these accessible for the future, envisioning that SW may be useful for
-    ensemble-conditioned sequence design.
 
     Parameters
     ----------
     structure : dict
         Atomworks structure dictionary.
-    ensemble_size, num_steps, s_churn, step_scale, sidechain_mode, \
-    skip_mpnn_proportion, jump_steps, uniform_steps, temperature, top_p, \
-    extra_sampling_kwargs
+    ensemble_size : int
         See :class:`ProtpardelleConfig`.
 
     Returns
@@ -233,19 +157,7 @@ def annotate_structure_for_protpardelle(
     dict
         Structure dict with a ``"_protpardelle_config"`` key added.
     """
-    config = ProtpardelleConfig(
-        ensemble_size=ensemble_size,
-        num_steps=num_steps,
-        s_churn=s_churn,
-        step_scale=step_scale,
-        sidechain_mode=sidechain_mode,
-        skip_mpnn_proportion=skip_mpnn_proportion,
-        jump_steps=jump_steps,
-        uniform_steps=uniform_steps,
-        temperature=temperature,
-        top_p=top_p,
-        extra_sampling_kwargs=extra_sampling_kwargs or {},
-    )
+    config = ProtpardelleConfig(ensemble_size=ensemble_size)
     return {**structure, "_protpardelle_config": config}
 
 
@@ -420,7 +332,6 @@ class ProtpardelleWrapper:
         atom_mask[atom37_residue_index, atom37_atom_index] = 1
         atom_mask = match_batch(atom_mask[None, :, :], target_batch_size=ensemble_size)
 
-        sampling_kwargs = self._build_sampling_kwargs(config)
         conditioning = ProtpardelleConditioning(
             aatype=aatype,
             seq_mask=seq_mask,
@@ -429,7 +340,6 @@ class ProtpardelleWrapper:
             atom_mask=atom_mask,
             atom37_residue_index=atom37_residue_index,
             atom37_atom_index=atom37_atom_index,
-            sampling_kwargs=sampling_kwargs,
             sequences=tuple(sequences),
             x_self_conditioning=None,
         )
@@ -567,27 +477,6 @@ class ProtpardelleWrapper:
             (batch_index, flat_residue_index, flat_atom_index), values
         )
         return x_t_atom37
-
-    @staticmethod
-    def _build_sampling_kwargs(config: ProtpardelleConfig) -> dict[str, Any]:
-        """Assemble the keyword arguments for ``Protpardelle.sample``."""
-        sampling_kwargs: dict[str, Any] = {
-            "num_steps": config.num_steps,
-            "s_churn": config.s_churn,
-            "step_scale": config.step_scale,
-            "sidechain_mode": config.sidechain_mode,
-            "skip_mpnn_proportion": config.skip_mpnn_proportion,
-            "jump_steps": config.jump_steps,
-            "uniform_steps": config.uniform_steps,
-            "temperature": config.temperature,
-            "top_p": config.top_p,
-            # Disable conditional generation / partial diffusion by default;
-            # sample() reads nested fields off these even when disabled.
-            "conditional_cfg": copy.deepcopy(DEFAULT_CONDITIONAL_CFG),
-            "partial_diffusion": copy.deepcopy(DEFAULT_PARTIAL_DIFFUSION),
-        }
-        sampling_kwargs.update(config.extra_sampling_kwargs)
-        return sampling_kwargs
 
     def _expand_noise_level(
         self,
