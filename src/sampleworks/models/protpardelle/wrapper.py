@@ -324,8 +324,16 @@ class ProtpardelleWrapper:
         atom_array = get_asym_unit_from_structure(structure, atom_array_index=0)
         atom37_residue_index, atom37_atom_index = self._atom37_indices_from_atom_array(atom_array)
 
+        # the atom_mask created here is used in two ways. First it is used to generate
+        # the initial noisy coordinates (see initialize_from_prior() below) simply for the
+        # atom count. Second it is used in .step() to convert back from atom37 coordinates
+        # (B x res x 37 x 3) to (B x atoms x 3) coordinates. It is only used to operate on
+        # the structure we will model, never the reference structure which may have missing
+        # atoms.
+        #
         # This should be the way to make the atom mask:
-        #   atom_mask = atom37_mask_from_aatype(aatype, seq_mask) but it doesn't handle OXT, so:
+        #   atom_mask = atom37_mask_from_aatype(aatype, seq_mask) but it doesn't handle OXT,
+        # so:
         atom_mask = torch.zeros(
             (padded_len, ATOM37_NUM_ATOMS), dtype=torch.float, device=self.device
         )
