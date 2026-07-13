@@ -5,11 +5,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import sampleworks.utils.guidance_script_utils as guidance_script_utils
 import torch
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 from sampleworks.utils.guidance_script_utils import (
     _three_state_resolver,
     _write_job_metadata,
+    get_model_and_device,
     get_reward_function_and_structure,
     save_everything,
 )
@@ -31,6 +33,35 @@ from tests.utils.atom_array_builders import build_test_atom_array
 def test_resolve_alignment_reverse_diffusion(override, is_boltz, expected):
     """The override wins when set, None means is_boltz default."""
     assert _three_state_resolver(override, is_boltz) is expected
+
+
+def test_get_model_and_device_forwards_preloaded_model_to_rf3(monkeypatch):
+    """RF3 construction receives the pre-loaded model supplied by callers."""
+    preloaded_model = object()
+
+    class StubRF3Wrapper:
+        """Capture RF3 constructor arguments without loading model dependencies."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(guidance_script_utils, "RF3Wrapper", StubRF3Wrapper)
+    monkeypatch.setattr(
+        guidance_script_utils,
+        "validate_model_checkpoint",
+        lambda model_type, checkpoint: checkpoint,
+    )
+    monkeypatch.setattr(guidance_script_utils, "MSAManager", lambda: object())
+
+    device, wrapper = get_model_and_device(
+        "cpu",
+        "rf3.ckpt",
+        "rf3",
+        model=preloaded_model,
+    )
+
+    assert device == torch.device("cpu")
+    assert wrapper.kwargs["model"] is preloaded_model
 
 
 def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):

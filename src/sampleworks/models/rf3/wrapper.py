@@ -25,6 +25,9 @@ from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 
 
+_INFERENCE_ENGINE_ATTR = "_sampleworks_rf3_inference_engine"
+
+
 @dataclass(frozen=True, slots=True)
 class RF3Conditioning:
     """Conditioning tensors from RF3 trunk forward pass.
@@ -218,6 +221,7 @@ class RF3Wrapper:
         checkpoint_path: str | Path,
         msa_manager: MSAManager | None = None,
         device: torch.device | str | None = None,
+        model: Any | None = None,
     ):
         """
         Parameters
@@ -232,6 +236,11 @@ class RF3Wrapper:
             parallel jobs that must target distinct GPUs — passing an ``int``
             to Fabric (the default) always resolves to GPU 0, which serialises
             otherwise-parallel workers onto a single device.
+        model: Any | None
+            Model previously obtained from another ``RF3Wrapper``. RF3 model
+            reuse also reuses the originating inference engine because its
+            trainer, preprocessing pipeline, Fabric strategy, and model are a
+            single initialized runtime context.
 
             References: https://lightning.ai/docs/fabric/stable/fundamentals/launch.html
               devices argument to fabric run
@@ -242,22 +251,47 @@ class RF3Wrapper:
         self.checkpoint_path = Path(checkpoint_path).expanduser().resolve()
         self.msa_manager = msa_manager
         self.msa_pairing_strategy = "greedy"
+        self.inference_engine: RF3InferenceEngine
 
-        engine_kwargs: dict[str, Any] = {
-            "ckpt_path": str(self.checkpoint_path),
-            "diffusion_batch_size": 1,
-        }
-        if device is not None:
-            engine_kwargs["devices_per_node"] = [_cuda_index(device)]
+        if model is None:
+            engine_kwargs: dict[str, Any] = {
+                "ckpt_path": str(self.checkpoint_path),
+                "diffusion_batch_size": 1,
+            }
+            if device is not None:
+                engine_kwargs["devices_per_node"] = [_cuda_index(device)]
 
-        self.inference_engine = RF3InferenceEngine(**engine_kwargs)
-        self.inference_engine.initialize()
+            self.inference_engine = RF3InferenceEngine(**engine_kwargs)
+            self.inference_engine.initialize()
+        else:
+            inference_engine = getattr(model, _INFERENCE_ENGINE_ATTR, None)
+            if inference_engine is None:
+                raise ValueError(
+                    "RF3 model reuse requires a model created by RF3Wrapper so its "
+                    "initialized inference engine and Fabric context can also be reused"
+                )
+            self.inference_engine = cast(RF3InferenceEngine, inference_engine)
+            engine_checkpoint = Path(self.inference_engine.ckpt_path).expanduser().resolve()
+            if engine_checkpoint != self.checkpoint_path:
+                raise ValueError(
+                    f"Pre-loaded RF3 model uses checkpoint {engine_checkpoint}, "
+                    f"not requested checkpoint {self.checkpoint_path}"
+                )
 
         self.inference_engine.trainer = cast(
             RF3TrainerWithConfidence, self.inference_engine.trainer
         )
-        self.model = self.inference_engine.trainer.state["model"]
         self._device = self.inference_engine.trainer.fabric.device
+        if device is not None and _cuda_index(device) != _cuda_index(self._device):
+            raise ValueError(
+                f"Pre-loaded RF3 model is on {self._device}, not requested device {device}"
+            )
+
+        if model is None:
+            self.model = self.inference_engine.trainer.state["model"]
+            object.__setattr__(self.model, _INFERENCE_ENGINE_ATTR, self.inference_engine)
+        else:
+            self.model = model
 
         # Chiral feature state, set in featurize()
         self._track_chiral_features: bool = False
