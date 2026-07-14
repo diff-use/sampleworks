@@ -91,9 +91,15 @@ class ProteinConfig:
         return None
 
     def load_map(
-        self, map_path: Path, canonical_unit_cell=True, selection_coords=None, padding=0.0
+        self,
+        map_path: Path,
+        canonical_unit_cell=True,
+        selection_coords=None,
+        padding=0.0,
+        resolution: float | None = None,
     ) -> XMap | None:
-        xmap = XMap.fromfile(str(map_path), resolution=self.resolution)
+        """Load a map using recorded trial resolution when available."""
+        xmap = XMap.fromfile(str(map_path), resolution=resolution or self.resolution)
         if canonical_unit_cell:
             xmap = xmap.canonical_unit_cell()
         if selection_coords is not None:
