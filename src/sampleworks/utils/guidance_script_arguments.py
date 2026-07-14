@@ -430,8 +430,8 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
         "--reward-type",
         type=str,
         default="density",
-        choices=["density", "plausibility"],
-        help="Reward: experimental density fit, or tmol beta2016 plausibility energy",
+        choices=["density", "plausibility","composite"],
+        help="Reward: experimental density fit, or tmol beta2016 plausibility energy, or a weighted combination",
     )
     parser.add_argument(
         "--tmol-weight",
@@ -520,7 +520,7 @@ def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
         "--step-scaler-type",
         type=str,
         default="noisespace",
-        choices=["dataspace", "noisespace", "none"],
+        choices=["dataspace", "noisespace", "none",],
         help="Type of step scaler to use: dataspace (DataSpaceDPSScaler), noisespace "
         "(NoiseSpaceDPSScaler), or none (NoScalingScaler)",
     )
