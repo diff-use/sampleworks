@@ -115,6 +115,8 @@ PYTHONNOUSERSITE = "1"
 
 [tool.pixi.dependencies]
 ninja = "*"
+# boltz 2.2.1 requires numpy>=1.26,<2.0. Keep this workspace-wide cap until
+# Boltz supports NumPy 2.x so the shared boltz environments remain solvable.
 numpy = "<2.0"
 pyarrow = "==17.0.0"
 
