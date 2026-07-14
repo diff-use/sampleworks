@@ -9,6 +9,7 @@ from jaxtyping import Float, Int
 from loguru import logger
 from tmol.io.pose_stack_construction import pose_stack_from_canonical_form
 
+
 """Physical-plausibility reward via tmol (differentiable Rosetta ``beta2016`` energy).
 
 This reward complements the density-fit reward (:mod:`core.rewards.real_space_density`):
@@ -31,14 +32,32 @@ Hydrogens and terminal OXT atoms are left as NaN in the canonical grid; tmol's
 """
 
 
-
 # Standard amino acids + MSE (selenomethionine). tmol can build missing leaf atoms (H, OXT)
 # for these from their heavy atoms, but cannot build e.g. water hydrogens from a lone oxygen,
 # so waters / ligands / modified residues are dropped from the plausibility score.
 _AA20 = frozenset(
     {
-        "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
-        "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL", "MSE",
+        "ALA",
+        "ARG",
+        "ASN",
+        "ASP",
+        "CYS",
+        "GLN",
+        "GLU",
+        "GLY",
+        "HIS",
+        "ILE",
+        "LEU",
+        "LYS",
+        "MET",
+        "PHE",
+        "PRO",
+        "SER",
+        "THR",
+        "TRP",
+        "TYR",
+        "VAL",
+        "MSE",
     }
 )
 
@@ -166,7 +185,7 @@ class TmolPlausibilityReward:
         self.weight = weight
         self._m: dict[str, Any] | None = None
 
-    def prepare(self, atom_array: Any) -> "TmolPlausibilityReward":
+    def prepare(self, atom_array: Any) -> TmolPlausibilityReward:
         """Build the scatter map from the array whose order matches the sampler coordinates.
 
         Call once before sampling with ``processed.model_atom_array or processed.atom_array``.

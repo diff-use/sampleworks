@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol
+from sampleworks.core.rewards.protocol import PreparableRewardProtocol, RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import (
     SamplerStepOutput,
     StepParams,
@@ -114,7 +114,7 @@ class FKSteering:
 
         # Optional structural hook (see PureGuidance): tmol-style rewards build their
         # atom map here against the array to_reward_inputs uses; others skip.
-        if hasattr(reward, "prepare"):
+        if isinstance(reward, PreparableRewardProtocol):
             reward.prepare(processed.model_atom_array or processed.atom_array)
 
         reconciler = processed.reconciler.to(coords.device)

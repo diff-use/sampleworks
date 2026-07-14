@@ -321,28 +321,37 @@ def get_tmol_reward_and_structure(
     reward_function = TmolPlausibilityReward(co, pbt, sfxn, device, weight=weight)
     return reward_function, structure
 
+
 def get_composite_reward_and_structure(
     args,
-    device:torch.device,
-)-> tuple[Any, dict[str,Any]]:
+    device: torch.device,
+) -> tuple[Any, dict[str, Any]]:
     """Build a CompositeReward = density fit + tmol plausibility, weighted.
-    
+
     Reuses the two single-reward constructors so we don't reimplement reward
     setup; the density term needs a map(--density/--resolution)"""
 
     from sampleworks.core.rewards.composite import CompositeReward
 
     if args.density is None or args.resolution is None:
-        raise ValueError("--reward-type composite needs --density and --resolution for the density term.")
+        raise ValueError(
+            "--reward-type composite needs --density and --resolution for the density term."
+        )
 
     density_reward, structure = get_reward_function_and_structure(
-        args.density, device, args.em, args.loss_order, args.resolution, args.structure,
+        args.density,
+        device,
+        args.em,
+        args.loss_order,
+        args.resolution,
+        args.structure,
     )
-    tmol_reward, _ = get_tmol_reward_and_structure(args.structure,device,weight=1.0)
+    tmol_reward, _ = get_tmol_reward_and_structure(args.structure, device, weight=1.0)
 
-    weights = [1.0, getattr(args, "tmol_weight",1.0)]
-    composite = CompositeReward([density_reward,tmol_reward],weights)
+    weights = [1.0, getattr(args, "tmol_weight", 1.0)]
+    composite = CompositeReward([density_reward, tmol_reward], weights)
     return composite, structure
+
 
 def save_everything(
     args: GuidanceConfig,
@@ -515,11 +524,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             device,
             weight=getattr(args, "tmol_weight", 1.0),
         )
-    elif getattr(args,"reward_type","density")=="composite":
-        reward_function, structure = get_composite_reward_and_structure(
-            args,
-            device
-        )
+    elif getattr(args, "reward_type", "density") == "composite":
+        reward_function, structure = get_composite_reward_and_structure(args, device)
     else:
         if args.density is None or args.resolution is None:
             raise ValueError(

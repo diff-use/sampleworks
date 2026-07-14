@@ -6,7 +6,7 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol
+from sampleworks.core.rewards.protocol import PreparableRewardProtocol, RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
@@ -90,7 +90,7 @@ class PureGuidance:
         # Optional structural hook (Protocol, not inheritance): rewards that need the
         # concrete atom ordering of the coordinates -- e.g. tmol builds its scatter map --
         # prepare against the same array to_reward_inputs uses. Rewards without prepare skip.
-        if hasattr(reward, "prepare"):
+        if isinstance(reward, PreparableRewardProtocol):
             reward.prepare(processed_structure.model_atom_array or processed_structure.atom_array)
 
         reconciler = processed_structure.reconciler.to(coords.device)
