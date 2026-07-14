@@ -75,7 +75,7 @@ def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(tmp_path),
@@ -153,7 +153,7 @@ def test_write_job_metadata_with_job_result_appends_timing_and_status(
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(tmp_path),
@@ -165,6 +165,8 @@ def test_write_job_metadata_with_job_result_appends_timing_and_status(
     # GuidanceConfig keys are preserved
     assert metadata["protein"] == "1l63"
     assert metadata["guidance_type"] == "pure_guidance"
+    assert metadata["model_name"] == "boltz2"
+    assert "model" not in metadata
     # JobResult-only keys are appended
     assert metadata["started_at"] == "2026-05-05T10:00:00"
     assert metadata["finished_at"] == "2026-05-05T10:00:12.340000"
@@ -182,7 +184,7 @@ def test_write_job_metadata_creates_missing_output_dir(
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(nested),
@@ -201,7 +203,7 @@ def test_write_job_metadata_records_altloc_occupancies(
         protein="1l63_0.25occA_0.75occB",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(tmp_path),
@@ -233,14 +235,14 @@ def test_write_job_metadata_remaps_job_result_paths_to_host(
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path=container_log,
         output_dir=container_output,
     )
     job_result = JobResult(
         protein="1l63",
-        model="boltz2",
+        model_name="boltz2",
         method=None,
         scaler="pure_guidance",
         ensemble_size=8,

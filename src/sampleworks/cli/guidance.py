@@ -13,7 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     device, model_wrapper = get_model_and_device(
         config.device,
         getattr(config, "model_checkpoint", None),
-        config.model,
+        config.model_name,
         method=getattr(config, "method", None),
     )
     result = run_guidance(config, config.guidance_type, model_wrapper, device)

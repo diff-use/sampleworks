@@ -661,7 +661,7 @@ def get_job_result(
     end_time = epoch_seconds(ended_at)
     result = JobResult(
         protein=args.protein,
-        model=args.model,
+        model_name=args.model_name,
         method=getattr(args, "method", None),
         scaler=args.guidance_type,
         ensemble_size=args.ensemble_size,
@@ -686,7 +686,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     template_job = job_queue[0]
     if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
         # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
-        model_key = str(template_job.model).lower().replace("structurepredictor.", "")
+        model_key = str(template_job.model_name).lower().replace("structurepredictor.", "")
         resolved = _resolve_checkpoint(model_key)  # will raise if not found
         template_job.model_checkpoint = resolved
         # Propagate to all jobs in the queue
@@ -697,7 +697,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     device, model_wrapper = get_model_and_device(
         str(template_job.device),
         template_job.model_checkpoint,
-        template_job.model,
+        template_job.model_name,
         method=template_job.method if hasattr(template_job, "method") else None,
     )
     job_results = []
