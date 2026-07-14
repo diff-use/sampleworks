@@ -135,7 +135,9 @@ def build_tmol_map(atom_array: Any, co: Any, device: torch.device) -> dict[str, 
     n_res = r + 1
 
     if missing:
-        print("UNMAPPED tmol atoms:", Counter(missing).most_common())
+        logger.warning(
+            f"tmol: dropped unmapped atoms (residue, atom): {Counter(missing).most_common()}"
+        )
 
     chains = list(dict.fromkeys(chain_of_res))
     return {
