@@ -87,6 +87,12 @@ class PureGuidance:
             ensemble_size=self.ensemble_size,
         )
 
+        # Optional structural hook (Protocol, not inheritance): rewards that need the
+        # concrete atom ordering of the coordinates -- e.g. tmol builds its scatter map --
+        # prepare against the same array to_reward_inputs uses. Rewards without prepare skip.
+        if hasattr(reward, "prepare"):
+            reward.prepare(processed_structure.model_atom_array or processed_structure.atom_array)
+
         reconciler = processed_structure.reconciler.to(coords.device)
         reward_inputs = processed_structure.to_reward_inputs(device=coords.device)
 

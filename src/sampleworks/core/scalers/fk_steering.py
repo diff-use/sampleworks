@@ -112,6 +112,11 @@ class FKSteering:
             ensemble_size=self.ensemble_size,
         )
 
+        # Optional structural hook (see PureGuidance): tmol-style rewards build their
+        # atom map here against the array to_reward_inputs uses; others skip.
+        if hasattr(reward, "prepare"):
+            reward.prepare(processed.model_atom_array or processed.atom_array)
+
         reconciler = processed.reconciler.to(coords.device)
         reward_inputs = processed.to_reward_inputs(device=coords.device)
 

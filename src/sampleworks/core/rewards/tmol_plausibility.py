@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import torch
 from jaxtyping import Float, Int
+from loguru import logger
 from tmol.io.pose_stack_construction import pose_stack_from_canonical_form
 
 """Physical-plausibility reward via tmol (differentiable Rosetta ``beta2016`` energy).
@@ -181,6 +182,10 @@ class TmolPlausibilityReward:
             ``self``, for chaining.
         """
         self._m = build_tmol_map(atom_array, self.co, self.device)
+        logger.info(
+            f"tmol plausibility map: {self._m['n_res']} residues, "
+            f"{len(self._m['sel'])} scored atoms"
+        )
         return self
 
     def __call__(
