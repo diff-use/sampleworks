@@ -10,7 +10,7 @@ from loguru import logger
 from tmol.io.pose_stack_construction import pose_stack_from_canonical_form
 
 
-"""Physical-plausibility reward via tmol (differentiable Rosetta ``beta2016`` energy).
+__doc__ = """Physical-plausibility reward via tmol (differentiable Rosetta ``beta2016`` energy).
 
 This reward complements the density-fit reward (:mod:`core.rewards.real_space_density`):
 where the density term is the *likelihood* (per-atom agreement with the experimental map),
