@@ -1,0 +1,46 @@
+"""Tests for metadata-backed grid-search trial discovery."""
+
+import json
+from pathlib import Path
+
+from sampleworks.eval.grid_search_eval_utils import load_job_metadata, scan_grid_search_results
+
+
+def test_scan_grid_search_results_prefers_job_metadata(tmp_path) -> None:
+    """Trial identity and input paths come from recorded job metadata."""
+    trial_dir = tmp_path / "1ABC_0.5occA_0.5occB" / "wrong_model" / "wrong_scaler" / "ens1_gw0.1"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "refined.cif").write_text("data_test")
+    metadata = {
+        "protein": "1ABC",
+        "model_name": "boltz2",
+        "method": "MD",
+        "guidance_type": "pure_guidance",
+        "ensemble_size": 8,
+        "step_size": 0.25,
+        "structure": "/inputs/1abc.cif",
+        "density": "/inputs/1abc.ccp4",
+        "resolution": 1.8,
+    }
+    (trial_dir / "job_metadata.json").write_text(json.dumps(metadata))
+
+    trials = scan_grid_search_results(trial_dir, current_depth=4, target_depth=4)
+
+    assert len(trials) == 1
+    trial = trials[0]
+    assert trial.protein == "1ABC"
+    assert trial.model == "boltz2"
+    assert trial.method == "MD"
+    assert trial.scaler == "pure_guidance"
+    assert trial.ensemble_size == 8
+    assert trial.guidance_weight == 0.25
+    assert trial.input_structure_path == Path("/inputs/1abc.cif")
+    assert trial.density_path == Path("/inputs/1abc.ccp4")
+    assert trial.resolution == 1.8
+
+
+def test_load_job_metadata_rejects_non_object_json(tmp_path) -> None:
+    """Metadata arrays are ignored rather than breaking trial discovery."""
+    (tmp_path / "job_metadata.json").write_text("[]")
+
+    assert load_job_metadata(tmp_path) is None

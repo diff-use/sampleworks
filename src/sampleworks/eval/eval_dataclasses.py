@@ -21,6 +21,9 @@ class Trial:
     trial_dir: Path
     refined_cif_path: Path
     protein_dir_name: str
+    input_structure_path: Path | None = None
+    density_path: Path | None = None
+    resolution: float | None = None
     rscc: float = np.nan  # these last three are placeholders for RSCC calculations.
     base_map_path: Path | None = None
     error: Exception | None = None

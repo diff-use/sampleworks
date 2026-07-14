@@ -4,6 +4,7 @@ All eval scripts should use these methods to avoid any deviations.
 """
 
 import argparse
+import json
 import re
 import sys
 from importlib.resources import files
@@ -15,6 +16,34 @@ from sampleworks.eval.constants import OCCUPANCY_LEVELS
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial, TrialList
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
+
+
+def load_job_metadata(trial_dir: Path) -> dict[str, object] | None:
+    """Load a trial's ``job_metadata.json`` when it is present and valid.
+
+    Parameters
+    ----------
+    trial_dir
+        Directory containing one grid-search trial.
+
+    Returns
+    -------
+    dict[str, object] | None
+        Parsed metadata, or ``None`` when no usable metadata file exists.
+    """
+    metadata_path = trial_dir / "job_metadata.json"
+    if not metadata_path.is_file():
+        return None
+    try:
+        with open(metadata_path) as handle:
+            metadata = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(f"Could not load trial metadata from {metadata_path}: {exc}")
+        return None
+    if not isinstance(metadata, dict):
+        logger.warning(f"Trial metadata must be a JSON object: {metadata_path}")
+        return None
+    return metadata
 
 
 def resolve_cif_path(row: pd.Series, cif_root: Path | None) -> Path:
@@ -149,28 +178,43 @@ def scan_grid_search_results(
     # Check if we found a refined.cif file in the current directory
     refined_cif = current_directory / target_filename
     if current_depth == target_depth and refined_cif.exists():
-        # Reconstruct metadata from path structure
+        metadata = load_job_metadata(current_directory) or {}
+
+        # Retain path parsing as a compatibility fallback for historical runs
+        # that predate job_metadata.json.
         # Expected structure: .../protein_dir/model_dir/scaler_dir/trial_dir/refined.cif
         trial_dir = current_directory
         scaler_dir = trial_dir.parent
         model_dir = scaler_dir.parent
         protein_dir = model_dir.parent
 
-        protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
-        method, model = get_method_and_model_name(model_dir.name)
+        path_protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
+        method, path_model = get_method_and_model_name(model_dir.name)
+        protein_value = metadata.get("protein", path_protein)
+        protein = str(protein_value) if protein_value is not None else None
+        model_value = metadata.get("model_name", metadata.get("model", path_model))
+        model = str(model_value)
+        method_value = metadata.get("method", method)
+        method = str(method_value) if method_value is not None else None
+        scaler = str(metadata.get("guidance_type", scaler_dir.name))
 
         params = parse_trial_dir(trial_dir)
-        guidance_weight = None
-        if params["guidance_weight"] is not None:
-            guidance_weight = float(params["guidance_weight"])
-        gd_steps = int(params["gd_steps"]) if params["gd_steps"] is not None else None
+        guidance_weight_value = metadata.get(
+            "guidance_weight", metadata.get("step_size", params["guidance_weight"])
+        )
+        guidance_weight = (
+            float(str(guidance_weight_value)) if guidance_weight_value is not None else None
+        )
+        gd_steps_value = metadata.get("num_gd_steps", params["gd_steps"])
+        gd_steps = int(str(gd_steps_value)) if gd_steps_value is not None else None
+        ensemble_size_value = metadata.get("ensemble_size", params["ensemble_size"])
 
         # Validate parameters to satisfy ty
         if (
             protein is None
             or not altloc_occupancies
             or (model == StructurePredictor.BOLTZ_2 and method is None)
-            or params["ensemble_size"] is None
+            or ensemble_size_value is None
             or (guidance_weight is None and gd_steps is None)
         ):
             logger.warning(f"Skipping trial in {trial_dir} due to missing metadata")
@@ -182,13 +226,22 @@ def scan_grid_search_results(
                 altloc_occupancies=altloc_occupancies,
                 model=model,
                 method=method,
-                scaler=scaler_dir.name,
-                ensemble_size=int(params["ensemble_size"]),
+                scaler=scaler,
+                ensemble_size=int(str(ensemble_size_value)),
                 guidance_weight=guidance_weight,
                 gd_steps=gd_steps,
                 trial_dir=trial_dir,
                 refined_cif_path=refined_cif,
                 protein_dir_name=protein_dir.name,
+                input_structure_path=(
+                    Path(str(metadata["structure"])) if metadata.get("structure") else None
+                ),
+                density_path=(Path(str(metadata["density"])) if metadata.get("density") else None),
+                resolution=(
+                    float(str(metadata["resolution"]))
+                    if metadata.get("resolution") is not None
+                    else None
+                ),
             )
         )
 
