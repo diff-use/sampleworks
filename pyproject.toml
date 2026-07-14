@@ -35,37 +35,23 @@ platforms = ["linux-64"]
 # tmol (Rosetta energy fn) as a reward for guided sampling — any strategy, all
 # model envs, linux-64. No wheel matches torch 2.7.1, so it builds from source:
 # scikit-build-core/pybind11/packaging are PEP517 build deps; build isolation is
-# off (see [tool.pixi.pypi-options]) so nvcc sees the env's torch. See TMOL_BUILD.md.
+# off (see [tool.pixi.pypi-options]) so nvcc sees the env's torch.
 [tool.pixi.feature.tmol]
 pypi-dependencies = {"tmol" = "*", "scikit-build-core" = ">=0.10", "pybind11" = ">=2.12", "packaging" = "*"}
 platforms = ["linux-64"]
 
-# tmol compiles torch C++/CUDA extensions from source. Three conda-CUDA quirks
-# must be papered over for torch's cmake to find everything:
-#   1. torch's legacy FindCUDA wants the CUDA root at $PREFIX/targets/<arch>,
-#      not $PREFIX (headers live under targets/x86_64-linux/include).
-#   2. CUDA 12 dropped the nvToolsExt lib; torch needs header-only NVTX3, which
-#      conda's cuda-nvtx does NOT ship — only torch's bundled nvidia-nvtx wheel
-#      has the headers. USE_SYSTEM_NVTX=ON + that include dir points cmake at them.
-#   3. TMOL_DISABLE_WHEEL_FETCH skips the (futile, no torch-2.7 lane) GitHub probe.
-# SKBUILD_CMAKE_DEFINE is scikit-build-core's env channel for -D cmake args.
+# tmol builds torch C++/CUDA extensions from source against the conda CUDA toolkit.
+# The cmake needs: the CUDA root at $CONDA_PREFIX/targets/<arch> (torch's legacy
+# FindCUDA looks there, not $CONDA_PREFIX); USE_SYSTEM_NVTX + the nvidia-nvtx include
+# dir (CUDA 12 replaced nvToolsExt with header-only NVTX3, shipped only by torch's
+# bundled nvidia-nvtx); and TMOL_DISABLE_WHEEL_FETCH to skip the sdist backend's
+# prebuilt-wheel probe. CMAKE_CUDA_ARCHITECTURES is passed via CMAKE_ARGS because
+# SKBUILD_CMAKE_DEFINE splits values on ';' and cannot carry an arch list.
+# CMAKE_BUILD_PARALLEL_LEVEL bounds concurrent nvcc to avoid OOM on limited builders.
 [tool.pixi.feature.tmol.activation.env]
 CUDACXX = "$CONDA_PREFIX/bin/nvcc"
 CUDA_PATH = "$CONDA_PREFIX/targets/x86_64-linux"
 TMOL_DISABLE_WHEEL_FETCH = "1"
-# tmol's CUDA kernels are template-heavy (each nvcc cicc peaks ~3.4 GB) and it
-# builds every arch of CMAKE_CUDA_ARCHITECTURES concurrently per file. The default
-# 4 archs at ninja's default parallelism OOM-kills the build on memory-capped
-# sessions (Wynton caps each user at 48 GB). Fix = few archs + bounded parallelism:
-#   * CMAKE_CUDA_ARCHITECTURES=80;86 targets sm_80 (A100, 3 nodes) and sm_86
-#     (RTX 3090 / A40, 29 nodes) — everything a `-l compute_cap=80` request can
-#     land on. This is passed via CMAKE_ARGS, NOT SKBUILD_CMAKE_DEFINE: the latter
-#     splits entries on ';' (a literal '\;' crashes its parser), whereas CMAKE_ARGS
-#     is shlex-split on spaces so the ';' arch separator survives. Add archs to run
-#     elsewhere (8.9 L40, 9.0 H100) but each extra arch adds a concurrent cicc per
-#     file (~3.4 GB), so lower the parallelism below if you do.
-#   * 6 ninja jobs at 2 archs ~= 34 GB peak (~2 cicc/job). Must live in
-#     activation.env — pixi does not forward shell exports into the build.
 CMAKE_BUILD_PARALLEL_LEVEL = "6"
 CMAKE_ARGS = "-DCMAKE_CUDA_ARCHITECTURES=80;86"
 SKBUILD_CMAKE_DEFINE = "CUDA_TOOLKIT_ROOT_DIR=$CONDA_PREFIX/targets/x86_64-linux;CUDAToolkit_ROOT=$CONDA_PREFIX/targets/x86_64-linux;USE_SYSTEM_NVTX=ON;CMAKE_INCLUDE_PATH=$CONDA_PREFIX/lib/python3.12/site-packages/nvidia/nvtx/include"
