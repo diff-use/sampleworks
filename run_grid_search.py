@@ -27,7 +27,7 @@ from sampleworks.utils.protein_input import ProteinInput
 class GridSearchConfig:
     """Serializable summary of the grid-search dimensions and output location."""
 
-    model: str
+    model_name: str
     scalers: list[str]
     ensemble_sizes: list[int]
     gradient_weights: list[float]
@@ -180,7 +180,7 @@ def build_args_for_process_pool(
         protein=job.protein,
         structure=job.structure_path,
         density=job.density_path,
-        model=job.model,
+        model_name=job.model_name,
         guidance_type=job.scaler,
         log_path=job.log_path,
         output_dir=job.output_dir,
@@ -266,7 +266,7 @@ def run_grid_search(
         futures = {}
 
         for worker_num, job_queue_path in enumerate(job_queue_paths):
-            model = worker_job_queues[worker_num][0].model
+            model = worker_job_queues[worker_num][0].model_name
             future = executor.submit(
                 run_guidance_queue_script,
                 job_queue_path,
@@ -286,13 +286,13 @@ def run_grid_search(
                     if r.status == "success":
                         successful += 1
                         log.info(
-                            f"SUCCESS ({r.protein}, {r.model}, {r.method}, {r.scaler} "
+                            f"SUCCESS ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
                             f"{r.runtime_seconds:.1f}s): {r.log_path}"
                         )
                     else:
                         failed += 1
                         log.error(
-                            f"FAILED ({r.protein}, {r.model}, {r.method}, {r.scaler} "
+                            f"FAILED ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
                             f"exit={r.exit_code}): {r.log_path}"
                         )
             except Exception as e:
@@ -447,7 +447,7 @@ def main(args: argparse.Namespace):
         return
 
     config = GridSearchConfig(
-        model=args.model,
+        model_name=args.model,
         scalers=args.scalers.split(),
         ensemble_sizes=[int(x) for x in args.ensemble_sizes.split()],
         gradient_weights=[float(x) for x in args.gradient_weights.split()],
@@ -506,7 +506,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
                                     structure_path=structure,
                                     density_path=density,
                                     resolution=resolution,
-                                    model=model,
+                                    model_name=model,
                                     scaler=scaler,
                                     ensemble_size=ens,
                                     gradient_weight=gw,
@@ -533,7 +533,7 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
                                 structure_path=structure,
                                 density_path=density,
                                 resolution=resolution,
-                                model=model,
+                                model_name=model,
                                 scaler=scaler,
                                 ensemble_size=ens,
                                 gradient_weight=gw,
@@ -573,7 +573,7 @@ def save_results(
     new_run_keys = {
         (
             r.protein,
-            r.model,
+            r.model_name,
             r.method,
             r.scaler,
             r.ensemble_size,
@@ -585,17 +585,20 @@ def save_results(
 
     merged_runs = [asdict(r) for r in results]
     for existing_run in existing_runs:
+        normalized_run = existing_run.copy()
+        if "model" in normalized_run:
+            normalized_run.setdefault("model_name", normalized_run.pop("model"))
         key = (
-            existing_run.get("protein"),
-            existing_run.get("model"),
-            existing_run.get("method"),
-            existing_run.get("scaler"),
-            existing_run.get("ensemble_size"),
-            existing_run.get("gradient_weight"),
-            existing_run.get("gd_steps"),
+            normalized_run.get("protein"),
+            normalized_run.get("model_name"),
+            normalized_run.get("method"),
+            normalized_run.get("scaler"),
+            normalized_run.get("ensemble_size"),
+            normalized_run.get("gradient_weight"),
+            normalized_run.get("gd_steps"),
         )
         if key not in new_run_keys:
-            merged_runs.append(existing_run)
+            merged_runs.append(normalized_run)
 
     output = {
         "config": asdict(config),

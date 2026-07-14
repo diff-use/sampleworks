@@ -29,7 +29,7 @@ class TestFromCliUnified:
     def test_boltz2_pure_guidance(self):
         argv = ["--model", "boltz2", "--guidance-type", "pure_guidance"] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
-        assert config.model == "boltz2"
+        assert config.model_name == "boltz2"
         assert config.guidance_type == "pure_guidance"
         assert config.protein == "1VME"
         assert config.structure == "test.cif"
@@ -39,7 +39,7 @@ class TestFromCliUnified:
     def test_rf3_fk_steering(self):
         argv = ["--model", "rf3", "--guidance-type", "fk_steering"] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
-        assert config.model == "rf3"
+        assert config.model_name == "rf3"
         assert config.guidance_type == "fk_steering"
         assert hasattr(config, "num_particles")
         assert hasattr(config, "fk_lambda")
@@ -123,10 +123,10 @@ class TestFromCliLegacyScripts:
     def test_preset_model_and_guidance_type(self):
         config = GuidanceConfig.from_cli(
             COMMON_ARGS,
-            model="boltz2",
+            model_name="boltz2",
             guidance_type="pure_guidance",
         )
-        assert config.model == "boltz2"
+        assert config.model_name == "boltz2"
         assert config.guidance_type == "pure_guidance"
         assert config.protein == "1VME"
 
@@ -134,10 +134,10 @@ class TestFromCliLegacyScripts:
         """Legacy scripts should not require --model/--guidance-type on CLI."""
         config = GuidanceConfig.from_cli(
             COMMON_ARGS,
-            model="protenix",
+            model_name="protenix",
             guidance_type="fk_steering",
         )
-        assert config.model == "protenix"
+        assert config.model_name == "protenix"
         assert config.guidance_type == "fk_steering"
 
     @pytest.mark.parametrize("model", ["boltz1", "boltz2", "protenix", "rf3"])
@@ -145,10 +145,10 @@ class TestFromCliLegacyScripts:
     def test_all_model_guidance_combos(self, model, guidance_type):
         config = GuidanceConfig.from_cli(
             COMMON_ARGS,
-            model=model,
+            model_name=model,
             guidance_type=guidance_type,
         )
-        assert config.model == model
+        assert config.model_name == model
         assert config.guidance_type == guidance_type
 
 
@@ -272,12 +272,12 @@ class TestCrossModelArgRejection:
     def test_conflicting_model_in_preset_mode(self):
         argv = ["--model", "boltz2"] + COMMON_ARGS
         with pytest.raises(SystemExit):
-            GuidanceConfig.from_cli(argv, model="rf3", guidance_type="fk_steering")
+            GuidanceConfig.from_cli(argv, model_name="rf3", guidance_type="fk_steering")
 
     def test_conflicting_guidance_type_in_preset_mode(self):
         argv = ["--guidance-type", "fk_steering"] + COMMON_ARGS
         with pytest.raises(SystemExit):
-            GuidanceConfig.from_cli(argv, model="boltz1", guidance_type="pure_guidance")
+            GuidanceConfig.from_cli(argv, model_name="boltz1", guidance_type="pure_guidance")
 
     def test_fk_args_rejected_for_pure_guidance(self):
         argv = [
@@ -332,12 +332,12 @@ class TestPresetMatchingAccepted:
 
     def test_matching_model_accepted(self):
         argv = ["--model", "boltz1"] + COMMON_ARGS
-        config = GuidanceConfig.from_cli(argv, model="boltz1", guidance_type="fk_steering")
-        assert config.model == "boltz1"
+        config = GuidanceConfig.from_cli(argv, model_name="boltz1", guidance_type="fk_steering")
+        assert config.model_name == "boltz1"
 
     def test_matching_guidance_type_accepted(self):
         argv = ["--guidance-type", "pure_guidance"] + COMMON_ARGS
-        config = GuidanceConfig.from_cli(argv, model="boltz2", guidance_type="pure_guidance")
+        config = GuidanceConfig.from_cli(argv, model_name="boltz2", guidance_type="pure_guidance")
         assert config.guidance_type == "pure_guidance"
 
 
@@ -583,11 +583,11 @@ class TestEntrypointSmoke:
 
     def test_invalid_preset_model_raises(self):
         with pytest.raises(ValueError, match="Unknown model type"):
-            GuidanceConfig.from_cli(COMMON_ARGS, model="typo", guidance_type="fk_steering")
+            GuidanceConfig.from_cli(COMMON_ARGS, model_name="typo", guidance_type="fk_steering")
 
     def test_invalid_preset_guidance_type_raises(self):
         with pytest.raises(ValueError, match="Unknown guidance type"):
-            GuidanceConfig.from_cli(COMMON_ARGS, model="boltz1", guidance_type="typo")
+            GuidanceConfig.from_cli(COMMON_ARGS, model_name="boltz1", guidance_type="typo")
 
 
 class TestAlignmentReverseDiffusion:
