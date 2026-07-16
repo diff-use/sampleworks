@@ -620,8 +620,13 @@ def boltz2_wrapper(boltz2_checkpoint_path: Path, device: torch.device):
 def protenix_checkpoint_path() -> Path:
     if not PROTENIX_AVAILABLE:
         pytest.skip("Protenix dependencies not installed in this environment")
-    # Protenix downloads checkpoint on first use if missing, so no existence check needed
-    return Path(getsitepackages()[0]) / "release_data/checkpoint/protenix_base_default_v0.5.0.pt"
+    # Protenix would auto-download the checkpoint on first use if missing. Skip instead of
+    # reaching out to the network so non-GPU/offline runs (e.g. CI) don't hang or time out
+    # constructing the wrapper (see #216). Provision the checkpoint to run these tests.
+    path = Path(getsitepackages()[0]) / "release_data/checkpoint/protenix_base_default_v0.5.0.pt"
+    if not path.exists():
+        pytest.skip(f"Protenix checkpoint not found at {path}")
+    return path
 
 
 @pytest.fixture(scope="session")
@@ -1089,5 +1094,7 @@ def perturbed_coords(
     """
     torch.manual_seed(42)
     base = converging_mock_wrapper.target
-    perturbation = torch.randn_like(base) * 0.1  # ty: ignore[invalid-argument-type]
-    return base, base + perturbation  # ty: ignore[invalid-return-type, unsupported-operator]
+    if base is None:
+        raise ValueError("converging_mock_wrapper must provide target coordinates")
+    perturbation = torch.randn_like(base) * 0.1
+    return base, base + perturbation

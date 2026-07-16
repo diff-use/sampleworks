@@ -67,7 +67,7 @@ license = {file = "LICENSE"}
 name = "sampleworks"
 readme = "README.md"
 requires-python = ">= 3.11, <3.14"
-version = "0.12.0"
+version = "0.12.2"
 
 [project.urls]
 Changelog = "https://github.com/diff-use/sampleworks/blob/main/CHANGELOG.md"
@@ -115,6 +115,8 @@ PYTHONNOUSERSITE = "1"
 
 [tool.pixi.dependencies]
 ninja = "*"
+# boltz 2.2.1 requires numpy>=1.26,<2.0. Keep this workspace-wide cap until
+# Boltz supports NumPy 2.x so the shared boltz environments remain solvable.
 numpy = "<2.0"
 pyarrow = "==17.0.0"
 
@@ -159,7 +161,7 @@ args = [{arg = "flags", default = ""}]
 cmd = "pytest {{ flags }}"
 
 [tool.pixi.tasks.cpu-tests]
-cmd = "pytest -m 'not gpu'"
+cmd = "pytest -m 'not gpu' --cov=sampleworks --cov-report=xml --cov-report=term"
 
 [tool.pixi.tasks.gpu-tests]
 cmd = "pytest -m gpu"

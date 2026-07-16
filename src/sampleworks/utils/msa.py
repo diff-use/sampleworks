@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from hashlib import sha3_256
 from pathlib import Path
 
@@ -18,6 +19,14 @@ else:
 
 MAX_PAIRED_SEQS = 8192
 MAX_MSA_SEQS = 16384
+MSAData = Mapping[str, str] | Mapping[int, str] | Mapping[str | int, str]
+
+
+def _msa_data_key_sort_key(key: str | int) -> tuple[int, int | str]:
+    """Return a deterministic sort key for supported MSA sequence keys."""
+    if isinstance(key, int):
+        return (0, key)
+    return (1, key)
 
 
 def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
@@ -104,7 +113,7 @@ def _validate_msa_cache_contents(msa_hash: str, msa_dir: Path) -> None:
 #   For the love of decent code, don't copy this and use it somewhere else and respect the
 #   leading underscore!
 def _compute_msa(
-    data: dict[str | int, str],
+    data: MSAData,
     target_id: str,
     msa_dir: Path,
     msa_server_url: str,
@@ -118,7 +127,7 @@ def _compute_msa(
 
     Parameters
     ----------
-    data : dict[str | int, str]
+    data : MSAData
         The input protein sequences.
     target_id : str
         The target id.
@@ -192,7 +201,7 @@ def _compute_msa(
     #  order as they are in `data`, and furthermore just returns a list of strings, the content
     #  of each string being a single sequence alignment. It's some weird file parsing that we
     #  should clean up so users don't break it or have to worry about it.
-    outputs = {}
+    outputs: dict[str | int, Path] = {}
     for idx, name in enumerate(data):
         # Get paired sequences
         paired = paired_msas[idx].strip().splitlines()
@@ -228,46 +237,6 @@ def _compute_msa(
                 f.write(f">{target_id}_{idx}_{seq_idx}\n{seq}\n")
 
         outputs[name] = msa_path
-
-        """
-        a3m files for Protenix.
-        In case we weren't having enough fun, we need to write it all out in yet a third
-        # format, for use by Protenix. Protenix expects a JSON blob like so:
-        [
-          {
-            "sequences": [
-              {"proteinChain":
-                {
-                  "sequence": "ACDE...",
-                  "msa":
-                    {
-                      "precomputed_msa_dir:": "/path/to/msa_directory"
-                      "pairing_db": "uniref100"
-                    },
-                  ... other fields
-                }
-              }, ...
-            ]
-          }, ...
-        ]
-
-        It expects /path/to/msa_directory to look like this:
-        0:  # index corresponds to position in the list "sequences"
-            non_pairing.a3m
-            pairing.a3m  # only present if pairing was used.
-        1:
-            non_pairing.a3m
-            pairing.a3m
-        etc...
-        """
-
-        # TODO I don't think these are actually used anywhere. We can probably remove them.
-        msa_idx_idr = msa_dir / f"{idx}"
-        msa_idx_idr.mkdir(exist_ok=True, parents=True)
-        logger.info(f"Writing MSA for target {target_id} sequence {idx} to {msa_idx_idr.resolve()}")
-        msa_idx_idr.joinpath("non_pairing.a3m").write_text(unpaired_msa[idx])
-        if paired:
-            msa_idx_idr.joinpath("pairing.a3m").write_text(paired_msas[idx])
 
     return outputs
 
@@ -308,14 +277,14 @@ class MSAManager:
         self._cache_hits = 0
 
     @staticmethod
-    def _hash_arguments(data: dict[str | int, str], msa_pairing_strategy: str) -> str:
+    def _hash_arguments(data: MSAData, msa_pairing_strategy: str) -> str:
         encoded_sequence_tuple = str.encode(str(tuple(data.values())) + msa_pairing_strategy)
         hexdigest = sha3_256(encoded_sequence_tuple).hexdigest()
         return hexdigest
 
     def get_msa(
         self,
-        data: dict[str | int, str],
+        data: MSAData,
         msa_pairing_strategy: str,
         structure_predictor: str | StructurePredictor = StructurePredictor.BOLTZ_2,
     ) -> dict[str | int, Path]:
@@ -323,7 +292,7 @@ class MSAManager:
 
         Parameters
         ----------
-        data : dict[str | int, str]
+        data : MSAData
             A dictionary mapping target (usu. chain or index) names to protein sequences.
         msa_pairing_strategy : str
             The MSA pairing strategy to use (usually "greedy").
@@ -382,8 +351,9 @@ class MSAManager:
             protenix_dir.mkdir(parents=True, exist_ok=True)
             # Protenix adds extra information, easiest just to use their pipeline.
             # make sure sort order stays the same:
-            data_keys = sorted(data.keys())
-            sequences = [data[key] for key in data_keys]
+            data_items = sorted(data.items(), key=lambda item: _msa_data_key_sort_key(item[0]))
+            data_keys = [key for key, _ in data_items]
+            sequences = [sequence for _, sequence in data_items]
             out_dir = self.msa_dir / "protenix" / hash_key
 
             msa_directories = [out_dir / str(idx) for idx in data_keys]
@@ -392,7 +362,7 @@ class MSAManager:
                 (out_dir / str(idx) / fn).exists() for idx in data_keys for fn in reqd_files
             )
             if need_msas:
-                msa_directories = protenix_msa_search(sequences, out_dir, mode="protenix")
+                msa_directories = protenix_msa_search(sequences, str(out_dir), mode="protenix")
                 self._api_calls += 1
             else:
                 self._cache_hits += 1

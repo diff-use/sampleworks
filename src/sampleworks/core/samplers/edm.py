@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 
 import einx
 import torch
@@ -395,7 +395,8 @@ class AF3EDMSampler:
 
         t_hat = context.t_effective
         dt = context.dt
-        eps_scale = context.noise_scale
+        # check_context() guarantees noise_scale is present for sampling steps.
+        eps_scale = cast(float, context.noise_scale)
         allow_gradients = True if scaler and getattr(scaler, "requires_gradients", False) else False
 
         centroid = einx.mean("... [n] c", state)
@@ -415,7 +416,7 @@ class AF3EDMSampler:
 
         # Store eps separately for proper frame transformation
         # eps_scale will be float if check_context didn't raise
-        eps = torch.randn_like(maybe_augmented_state) * eps_scale  # ty: ignore[unsupported-operator]
+        eps = torch.randn_like(maybe_augmented_state) * eps_scale
         noisy_state = maybe_augmented_state + eps
         noisy_state = torch.as_tensor(noisy_state).detach().requires_grad_(allow_gradients)
 
@@ -507,7 +508,7 @@ class AF3EDMSampler:
             # multiple particles.
             # Only compute when noise_var > 0 to avoid division by near-zero
             # (matching Boltz behavior)
-            noise_var = eps_scale**2  # ty: ignore[unsupported-operator]
+            noise_var = eps_scale**2
             if noise_var > 0:
                 log_proposal_correction = einx.sum(
                     "... [b n c]", eps_working_frame**2 - (eps_working_frame + proposal_shift) ** 2
