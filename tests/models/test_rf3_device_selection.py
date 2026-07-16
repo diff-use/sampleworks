@@ -115,6 +115,24 @@ class TestRF3ModelReuse:
                 model=original.model,
             )
 
+    def test_rejects_model_spoofing_engine_context(self, tmp_path, stub_engine):
+        """The supplied model must be the model owned by the attached trainer."""
+        checkpoint = tmp_path / "rf3.ckpt"
+        original = RF3Wrapper(checkpoint_path=checkpoint, device="cuda:0")
+        other_model = torch.nn.Linear(1, 1)
+        object.__setattr__(
+            other_model,
+            rf3_wrapper_module._INFERENCE_ENGINE_ATTR,
+            original.inference_engine,
+        )
+
+        with pytest.raises(ValueError, match="does not belong"):
+            RF3Wrapper(
+                checkpoint_path=checkpoint,
+                device="cuda:0",
+                model=other_model,
+            )
+
 
 @pytest.mark.gpu
 @pytest.mark.slow

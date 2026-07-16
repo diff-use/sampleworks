@@ -281,11 +281,13 @@ class RF3Wrapper:
         self.inference_engine.trainer = cast(
             RF3TrainerWithConfidence, self.inference_engine.trainer
         )
+        if model is not None and self.inference_engine.trainer.state["model"] is not model:
+            raise ValueError(
+                "Pre-loaded RF3 model does not belong to its attached inference engine"
+            )
         self._device = self.inference_engine.trainer.fabric.device
         if device is not None and _cuda_index(device) != _cuda_index(self._device):
-            raise ValueError(
-                f"Pre-loaded RF3 model is on {self._device}, not requested device {device}"
-            )
+            raise ValueError(f"RF3 runtime is on {self._device}, not requested device {device}")
 
         if model is None:
             self.model = self.inference_engine.trainer.state["model"]
