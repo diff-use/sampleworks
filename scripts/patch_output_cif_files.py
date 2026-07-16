@@ -23,6 +23,7 @@ SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 # (e.g. `pdb_00004hhb`) or the legacy 4-char form, whose first character is always a digit (0-9).
 # The leading-digit rule is what distinguishes a real legacy ID from a stray folder name like
 # `TEST`/`logs`.
+_VALID_RCSB_ID = re.compile(r"pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3}")
 
 # Default --rcsb-pattern: locate the id (one capturing group) right after the
 # grid_search_results/ folder. Its group IS _VALID_RCSB_ID, so the default pattern and the
