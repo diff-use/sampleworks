@@ -201,10 +201,13 @@ def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
     m = rcsb_re.search(path_str)
     if not m:
         return None
-    # The id must be a whole folder component: reject a capture that is only the prefix of a
-    # longer name (e.g. "4hhb" out of "4hhb_final"), which would silently resolve to the
-    # wrong entry. A whole-component id is followed by a path separator (or ends the path).
-    if m.end(1) < len(path_str) and path_str[m.end(1)] != "/":
+    # The id must be a whole folder component: reject a capture that is only a prefix/suffix of
+    # a longer name (e.g. "4hhb" out of "4hhb_final" or "4hhb" out of "foo4hhb"), which would
+    # silently resolve to the wrong entry. A whole-component id is bounded by path separators (or
+    # the start/end of the path).
+    start_ok = m.start(1) == 0 or path_str[m.start(1) - 1] == "/"
+    end_ok = m.end(1) == len(path_str) or path_str[m.end(1)] == "/"
+    if not (start_ok and end_ok):
         return None
     token = m.group(1)
     if not _VALID_RCSB_ID.fullmatch(token):
