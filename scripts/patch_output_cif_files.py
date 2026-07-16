@@ -19,10 +19,10 @@ from sampleworks.utils.cif_utils import add_category_to_cif
 SAMPLEWORKS_CACHE = Path("~/.sampleworks/rcsb").expanduser()
 
 
-# A real RCSB id is either the extended 12-char form `pdb_########` or the legacy 4-char
-# form, whose first character is always a digit (0-9). The leading-digit rule is what
-# distinguishes a real legacy id from a stray folder name like `TEST`/`logs`.
-_VALID_RCSB_ID = re.compile(r"pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3}")
+# A valid PDB ID is either the extended 12-char form `pdb_` + 8 alphanumerics
+# (e.g. `pdb_00004hhb`) or the legacy 4-char form, whose first character is always a digit (0-9).
+# The leading-digit rule is what distinguishes a real legacy ID from a stray folder name like
+# `TEST`/`logs`.
 
 # Default --rcsb-pattern: locate the id (one capturing group) right after the
 # grid_search_results/ folder. Its group IS _VALID_RCSB_ID, so the default pattern and the
