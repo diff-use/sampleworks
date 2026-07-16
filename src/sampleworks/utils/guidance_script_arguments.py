@@ -286,8 +286,8 @@ class GuidanceConfig:
             model_name = model_name or pre_args.model_name
             guidance_type = guidance_type or pre_args.guidance_type
 
-        assert model_name is not None
-        assert guidance_type is not None
+        if model_name is None or guidance_type is None:
+            raise RuntimeError("CLI parsing did not resolve a model name and guidance type")
 
         # -- full parser -----------------------------------------------------
         parser = argparse.ArgumentParser(
@@ -414,13 +414,6 @@ class GuidanceConfig:
         output["output_dir"] = _remap_container_path(str(self.output_dir))
         output["log_path"] = _remap_container_path(str(self.log_path))
         return output
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore state while migrating legacy pickles from ``model``."""
-        migrated = state.copy()
-        if "model" in migrated:
-            migrated.setdefault("model_name", migrated.pop("model"))
-        self.__dict__.update(migrated)
 
 
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
@@ -706,10 +699,3 @@ class JobResult:
         output["output_dir"] = _remap_container_path(str(self.output_dir))
         output["log_path"] = _remap_container_path(str(self.log_path))
         return output
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore state while migrating legacy pickles from ``model``."""
-        migrated = state.copy()
-        if "model" in migrated:
-            migrated.setdefault("model_name", migrated.pop("model"))
-        self.__dict__.update(migrated)

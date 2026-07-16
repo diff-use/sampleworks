@@ -585,20 +585,17 @@ def save_results(
 
     merged_runs = [asdict(r) for r in results]
     for existing_run in existing_runs:
-        normalized_run = existing_run.copy()
-        if "model" in normalized_run:
-            normalized_run.setdefault("model_name", normalized_run.pop("model"))
         key = (
-            normalized_run.get("protein"),
-            normalized_run.get("model_name"),
-            normalized_run.get("method"),
-            normalized_run.get("scaler"),
-            normalized_run.get("ensemble_size"),
-            normalized_run.get("gradient_weight"),
-            normalized_run.get("gd_steps"),
+            existing_run.get("protein"),
+            existing_run.get("model_name"),
+            existing_run.get("method"),
+            existing_run.get("scaler"),
+            existing_run.get("ensemble_size"),
+            existing_run.get("gradient_weight"),
+            existing_run.get("gd_steps"),
         )
         if key not in new_run_keys:
-            merged_runs.append(normalized_run)
+            merged_runs.append(existing_run)
 
     output = {
         "config": asdict(config),

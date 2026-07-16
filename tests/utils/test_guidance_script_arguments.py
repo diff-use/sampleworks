@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +13,6 @@ from sampleworks.utils.guidance_script_arguments import (
     get_checkpoint,
     GuidanceConfig,
     JobConfig,
-    JobResult,
     validate_model_checkpoint,
 )
 
@@ -330,49 +328,3 @@ def test_as_dict_remaps_with_catchall_host_dir(monkeypatch):
     assert d["output_dir"] == "/mnt/storage/results/1abc"
     assert d["log_path"] == "/mnt/storage/results/1abc/run.log"
     assert d["protein"] == "1abc"
-
-
-def test_guidance_config_migrates_legacy_model_pickle() -> None:
-    """Old job queues restore ``model`` state as ``model_name``."""
-    config = GuidanceConfig(
-        protein="1abc",
-        structure="structure.cif",
-        density="density.ccp4",
-        model_name=StructurePredictor.BOLTZ_2,
-        guidance_type=GuidanceType.PURE_GUIDANCE,
-        log_path="run.log",
-    )
-    config.__dict__["model"] = config.__dict__.pop("model_name")
-
-    restored = pickle.loads(pickle.dumps(config))
-
-    assert restored.model_name == StructurePredictor.BOLTZ_2
-    assert "model" not in restored.__dict__
-    assert "model" not in restored.as_dict()
-
-
-def test_job_result_migrates_legacy_model_pickle() -> None:
-    """Old result pickles restore ``model`` state as ``model_name``."""
-    result = JobResult(
-        protein="1abc",
-        model_name="boltz2",
-        method=None,
-        scaler="pure_guidance",
-        ensemble_size=1,
-        gradient_weight=0.1,
-        gd_steps=1,
-        status="success",
-        exit_code=0,
-        runtime_seconds=1.0,
-        started_at="2026-07-13T00:00:00",
-        finished_at="2026-07-13T00:00:01",
-        log_path="run.log",
-        output_dir="output",
-    )
-    result.__dict__["model"] = result.__dict__.pop("model_name")
-
-    restored = pickle.loads(pickle.dumps(result))
-
-    assert restored.model_name == "boltz2"
-    assert "model" not in restored.__dict__
-    assert "model" not in restored.as_dict()
