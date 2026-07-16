@@ -197,7 +197,7 @@ def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
             f"--rcsb-pattern must have exactly one capturing group, "
             f"got {rcsb_re.groups}: {rcsb_regex!r}"
         )
-    path_str = str(cif_path)
+    path_str = cif_path.as_posix()
     m = rcsb_re.search(path_str)
     if not m:
         return None
