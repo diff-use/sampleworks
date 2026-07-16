@@ -25,6 +25,8 @@ from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 
 
+# Attached to the trainer-owned model after RF3InferenceEngine initialization in
+# RF3Wrapper.__init__; reused wrappers retrieve the complete runtime through it.
 _INFERENCE_ENGINE_ATTR = "_sampleworks_rf3_inference_engine"
 
 
