@@ -162,6 +162,26 @@ def test_write_job_metadata_creates_missing_output_dir(
     assert (nested / "job_metadata.json").exists()
 
 
+def test_write_job_metadata_records_altloc_occupancies(
+    tmp_path: Path, guidance_job_result: JobResult
+):
+    """Metadata stores occupancies explicitly instead of relying on directory names."""
+    args = GuidanceConfig(
+        protein="1l63_0.25occA_0.75occB",
+        structure=Path("dummy"),
+        density=Path("dummy"),
+        model="boltz2",
+        guidance_type="pure_guidance",
+        log_path="dummy",
+        output_dir=str(tmp_path),
+    )
+
+    _write_job_metadata(tmp_path, args, guidance_job_result)
+
+    metadata = json.loads((tmp_path / "job_metadata.json").read_text())
+    assert metadata["altloc_occupancies"] == {"A": 0.25, "B": 0.75}
+
+
 def test_write_job_metadata_remaps_job_result_paths_to_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

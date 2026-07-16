@@ -18,6 +18,89 @@ from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.guidance_constants import StructurePredictor
 
 
+def _metadata_value(
+    metadata: dict[str, object],
+    key: str,
+    fallback: object,
+    aliases: tuple[str, ...] = (),
+) -> object:
+    """Return the first non-empty metadata value, otherwise a fallback.
+
+    Parameters
+    ----------
+    metadata
+        Parsed job metadata.
+    key
+        Preferred field name.
+    fallback
+        Value used when the preferred field and aliases are absent or empty.
+    aliases
+        Older or alternate field names checked after ``key``.
+
+    Returns
+    -------
+    object
+        Resolved metadata value or ``fallback``.
+    """
+    for field_name in (key, *aliases):
+        value = metadata.get(field_name)
+        if value is not None and value != "":
+            return value
+    return fallback
+
+
+def _metadata_float(
+    metadata: dict[str, object],
+    key: str,
+    fallback: int | float | None,
+    aliases: tuple[str, ...] = (),
+) -> float | None:
+    """Resolve a metadata field as a float, falling back when invalid."""
+    value = _metadata_value(metadata, key, fallback, aliases)
+    if value is None:
+        return None
+    try:
+        return float(str(value))
+    except ValueError:
+        logger.warning(f"Invalid numeric metadata {key}={value!r}; using {fallback!r}")
+        return float(fallback) if fallback is not None else None
+
+
+def _metadata_int(
+    metadata: dict[str, object],
+    key: str,
+    fallback: int | None,
+    aliases: tuple[str, ...] = (),
+) -> int | None:
+    """Resolve a metadata field as an integer, falling back when invalid."""
+    value = _metadata_value(metadata, key, fallback, aliases)
+    if value is None:
+        return None
+    try:
+        return int(float(str(value)))
+    except ValueError:
+        logger.warning(f"Invalid integer metadata {key}={value!r}; using {fallback!r}")
+        return fallback
+
+
+def _metadata_occupancies(
+    metadata: dict[str, object],
+    fallback: dict[str, float],
+) -> dict[str, float]:
+    """Resolve explicit altloc occupancies, falling back to path metadata."""
+    value = _metadata_value(metadata, "altloc_occupancies", fallback)
+    if not isinstance(value, dict):
+        logger.warning("altloc_occupancies metadata must be a JSON object; using path fallback")
+        return fallback
+    try:
+        return {str(label).upper(): float(str(occupancy)) for label, occupancy in value.items()}
+    except ValueError:
+        logger.warning(
+            "altloc_occupancies metadata contains a non-numeric value; using path fallback"
+        )
+        return fallback
+
+
 def load_job_metadata(trial_dir: Path) -> dict[str, object] | None:
     """Load a trial's ``job_metadata.json`` when it is present and valid.
 
@@ -188,33 +271,44 @@ def scan_grid_search_results(
         model_dir = scaler_dir.parent
         protein_dir = model_dir.parent
 
-        path_protein, altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
+        path_protein, path_altloc_occupancies = extract_protein_and_occupancy(protein_dir.name)
         method, path_model = get_method_and_model_name(model_dir.name)
-        protein_value = metadata.get("protein", path_protein)
+        protein_value = _metadata_value(metadata, "protein", path_protein)
         protein = str(protein_value) if protein_value is not None else None
-        model_value = metadata.get("model_name", metadata.get("model", path_model))
+        altloc_occupancies = _metadata_occupancies(metadata, path_altloc_occupancies)
+        model_value = _metadata_value(metadata, "model_name", path_model, aliases=("model",))
         model = str(model_value)
-        method_value = metadata.get("method", method)
+        method_value = _metadata_value(metadata, "method", method)
         method = str(method_value) if method_value is not None else None
-        scaler = str(metadata.get("guidance_type", scaler_dir.name))
+        scaler = str(_metadata_value(metadata, "guidance_type", scaler_dir.name))
 
         params = parse_trial_dir(trial_dir)
-        guidance_weight_value = metadata.get(
-            "guidance_weight", metadata.get("step_size", params["guidance_weight"])
+        guidance_weight = _metadata_float(
+            metadata,
+            "guidance_weight",
+            params["guidance_weight"],
+            aliases=("step_size",),
         )
-        guidance_weight = (
-            float(str(guidance_weight_value)) if guidance_weight_value is not None else None
+        gd_steps = _metadata_int(
+            metadata,
+            "num_gd_steps",
+            int(params["gd_steps"]) if params["gd_steps"] is not None else None,
         )
-        gd_steps_value = metadata.get("num_gd_steps", params["gd_steps"])
-        gd_steps = int(str(gd_steps_value)) if gd_steps_value is not None else None
-        ensemble_size_value = metadata.get("ensemble_size", params["ensemble_size"])
+        ensemble_size = _metadata_int(
+            metadata,
+            "ensemble_size",
+            int(params["ensemble_size"]) if params["ensemble_size"] is not None else None,
+        )
+        input_structure_value = _metadata_value(metadata, "structure", "")
+        density_value = _metadata_value(metadata, "density", "")
+        resolution = _metadata_float(metadata, "resolution", None)
 
         # Validate parameters to satisfy ty
         if (
             protein is None
             or not altloc_occupancies
             or (model == StructurePredictor.BOLTZ_2 and method is None)
-            or ensemble_size_value is None
+            or ensemble_size is None
             or (guidance_weight is None and gd_steps is None)
         ):
             logger.warning(f"Skipping trial in {trial_dir} due to missing metadata")
@@ -227,21 +321,17 @@ def scan_grid_search_results(
                 model=model,
                 method=method,
                 scaler=scaler,
-                ensemble_size=int(str(ensemble_size_value)),
+                ensemble_size=ensemble_size,
                 guidance_weight=guidance_weight,
                 gd_steps=gd_steps,
                 trial_dir=trial_dir,
                 refined_cif_path=refined_cif,
                 protein_dir_name=protein_dir.name,
                 input_structure_path=(
-                    Path(str(metadata["structure"])) if metadata.get("structure") else None
+                    Path(str(input_structure_value)) if input_structure_value else None
                 ),
-                density_path=(Path(str(metadata["density"])) if metadata.get("density") else None),
-                resolution=(
-                    float(str(metadata["resolution"]))
-                    if metadata.get("resolution") is not None
-                    else None
-                ),
+                density_path=Path(str(density_value)) if density_value else None,
+                resolution=resolution,
             )
         )
 
