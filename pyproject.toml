@@ -200,7 +200,7 @@ testpaths = ["tests"]
 extend-include = ["*.ipynb"]
 line-length = 100
 src = []
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 fixable = ["I001", "F401", "UP"]
