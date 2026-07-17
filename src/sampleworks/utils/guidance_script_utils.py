@@ -213,6 +213,7 @@ def get_model_and_device(
             checkpoint_path=validated_checkpoint_path,
             msa_manager=MSAManager(),
             device=device,
+            model=model,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
