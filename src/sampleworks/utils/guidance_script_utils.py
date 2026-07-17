@@ -6,7 +6,7 @@ import pickle
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -29,7 +29,14 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
-from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.atom_reconciler import AtomReconciler
+from sampleworks.utils.cif_utils import (
+    add_category_to_cif,
+    add_completeness_categories,
+    carry_entity_categories,
+    fetch_rcsb_cif,
+    resolve_mixed_hetatm_atom_altlocs,
+)
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
     StructurePredictor,
@@ -41,6 +48,10 @@ from sampleworks.utils.guidance_script_arguments import (
     validate_model_checkpoint,
 )
 from sampleworks.utils.msa import MSAManager
+
+
+if TYPE_CHECKING:
+    from biotite.structure.io.pdbx import CIFFile
 
 
 # The following imports aren't compatible with each other and are supported in separate
@@ -279,6 +290,7 @@ def save_everything(
     scaler_type: str,
     final_state: torch.Tensor | None = None,
     model_atom_array: AtomArray | None = None,
+    reconciler: AtomReconciler | None = None,
 ) -> None:
     """Save everything: refined structure/ensemble CIF, trajectories, and losses.
 
@@ -309,8 +321,14 @@ def save_everything(
         Final coordinates with shape ``(ensemble, atoms, 3)``.  If ``None``,
         the `refined_structure`'s existing coordinates are saved as-is.
     model_atom_array : AtomArray | None
-        Optional model-space atom template. When provided (mismatch runs),
-        this template is used for final structure and trajectory saving.
+        Optional model-space atom template. When provided (mismatch runs), it is
+        used for trajectory saving (which stays in model space).
+    reconciler : AtomReconciler | None
+        Optional model<->structure reconciler. When it reports a mismatch, the
+        predicted ``final_state`` coordinates are mapped back onto the input
+        structure array so the output ``refined.cif`` carries the input's
+        definitive numbering/chains (issue #68, R2b). Non-common input atoms keep
+        their input coordinates.
     """
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -322,11 +340,37 @@ def save_everything(
 
     # Use model's internal atom accounting template for mismatch runs when available
     # Wrappers must guarantee model atom arrays have valid coords and occupancy.
+    # (Trajectories are saved in model space using this template.)
     atom_array_for_saving: AtomArray = (
         model_atom_array if model_atom_array is not None else base_atom_array
     )
 
-    if final_state is not None:
+    # when the model ran in a different atom space than the input
+    # (renumbered / relabeled -- e.g. Protenix resets the chain to A and renumbers from 1),
+    # map the predicted coordinates back onto the input structure array so the output CIF
+    # carries the input's definitive res_id/chain_id. base_atom_array is the cleaned input
+    # array (process_structure_to_trajectory_input writes it back into "asym_unit"), and
+    # model_to_struct scatters the common model atoms onto it; non-common input atoms keep
+    # their input coordinates.
+    renumber_to_input = (
+        reconciler is not None and reconciler.has_mismatch and final_state is not None
+    )
+
+    if renumber_to_input:
+        reconciler = reconciler.to("cpu")
+        model_coords = final_state.detach().cpu()
+        ensemble_size = model_coords.shape[0]
+        struct_template = (
+            torch.as_tensor(base_atom_array.coord)
+            .to(model_coords.dtype)
+            .unsqueeze(0)
+            .expand(ensemble_size, -1, -1)
+        )
+        struct_coords = reconciler.model_to_struct(model_coords, struct_template)
+        ensemble_array = stack([base_atom_array.copy() for _ in range(ensemble_size)])
+        _write_coords_into_array(ensemble_array, struct_coords.numpy())
+        atom_array = ensemble_array
+    elif final_state is not None:
         ensemble_size = final_state.shape[0]
 
         ensemble_array = stack([atom_array_for_saving.copy() for _ in range(ensemble_size)])
@@ -336,10 +380,28 @@ def save_everything(
         atom_array = base_atom_array
 
     metadata = args.as_dict()
+    # Canonical, scaler-agnostic eval keys. `args.as_dict()` carries the swept weight under
+    # different names per scaler (fk_steering -> guidance_weight, pure_guidance -> step_size),
+    # and JobResult records sentinels for pure runs -- so neither is a reliable eval source.
+    # These mirror the directory-name tokens (ens{N}_gw{W}_gd{D}) the path-regex eval parses
+    # today, resolving the aliasing once here at the write site (issue #121).
+    metadata["sampleworks_scaler"] = args.guidance_type
+    metadata["sampleworks_gradient_weight"] = metadata.get(
+        "guidance_weight", metadata.get("step_size")
+    )
+    metadata["sampleworks_gd_steps"] = metadata.get("num_gd_steps")
 
     final_structure = CIFFile()
     set_structure(final_structure, atom_array)
     add_category_to_cif(final_structure, metadata, category_name="sampleworks")
+    # Add the minimal parent categories (atom_type/chem_comp/entity) so the output passes
+    # the PDBe mmcif-validator's dictionary parent-child checks (issue #68, R2 completeness).
+    add_completeness_categories(final_structure)
+    # Upgrade the stub _entity to the depositor's REAL _entity/_entity_poly/_entity_poly_seq,
+    # re-fetched from RCSB by pdb id. A typeless stub _entity is fatal to
+    # tortoize; carrying the real typed categories is the only thing that passes both
+    # mmcif-validator  and tortoize. Best-effort -- see the helper.
+    _carry_real_entity_categories(final_structure, args.protein)
     final_structure.write(str(output_dir / "refined.cif"))
 
     # job_metadata.json (config + JobResult) is written by run_guidance after this returns;
@@ -371,6 +433,33 @@ def save_everything(
         logger.info(f"Loss reduction: {valid_losses[0] - valid_losses[-1]:.6f}")
 
     logger.info(f"\nResults saved to {output_dir}/")
+
+
+def _carry_real_entity_categories(ciffile: CIFFile, pdb_id: str) -> None:
+    """Replace the stub ``_entity`` with the depositor's real polymer-entity categories from RCSB.
+
+    Re-fetches the original deposit (cached at ``~/.sampleworks/rcsb``) and grafts its typed
+    ``_entity`` / ``_entity_poly`` / ``_entity_poly_seq`` onto ``ciffile``, reconciling the
+    sequence numbering onto the output's ``label_seq_id`` (``reconcile=True``; a no-op when the
+    deposit already aligns). The output entity id is taken from the written ``_atom_site`` so the
+    parent matches the child.
+
+    Each output polymer entity is carried under its own id (a complex carries all its entities;
+    an entity that cannot be matched degrades to a typeless stub
+    -- see ``carry_entity_categories``).
+    Best-effort: any failure (offline, no entity matched, irreconcilable numbering) is logged and
+    swallowed, leaving the minimal ``add_completeness_categories`` synthesis in place so a fetch
+    hiccup never fails a run.
+    """
+    try:
+        reference = fetch_rcsb_cif(pdb_id)
+        written = carry_entity_categories(ciffile, reference, reconcile=True)
+        logger.info(f"Carried real entity categories from {pdb_id}: {written}")
+    except Exception as e:  # noqa: BLE001 - provenance upgrade must never fail the run
+        logger.warning(
+            f"Could not carry real entity categories for {pdb_id} ({e}); "
+            "keeping minimal _entity synthesis."
+        )
 
 
 #####################
@@ -421,7 +510,36 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
         logger.remove(handle)
 
     _write_job_metadata(args.output_dir, args, job_result)
+    _append_job_result_to_cif(args.output_dir, job_result)
     return job_result
+
+
+def _append_job_result_to_cif(output_dir: str | Path, job_result: JobResult) -> None:
+    """Append the JobResult to ``refined.cif`` as a separate ``_sampleworks_result`` category.
+
+    JobResult (status / exit_code / runtime / timestamps) is only known after the run finishes,
+    so it cannot be written inside ``save_everything``. This re-opens the already-written
+    ``refined.cif`` and adds the category via a pure-biotite ``read -> write`` (no
+    ``set_structure``, so nothing on disk is stripped). It is kept separate from ``_sampleworks``
+    so the config category eval reads stays free of outcome data (including the pure-run
+    guidance_weight / gd_steps sentinels).
+
+    Best-effort: a failed provenance append must never fail the run, so all errors are logged and
+    swallowed, and a missing ``refined.cif`` (e.g. a job that died before saving) is a no-op.
+    """
+    from biotite.structure.io.pdbx import CIFFile
+
+    refined_cif = Path(output_dir) / "refined.cif"
+    if not refined_cif.exists():
+        return
+    try:
+        ciffile = CIFFile.read(str(refined_cif))
+        add_category_to_cif(
+            ciffile, job_result.as_dict(), category_name="sampleworks_result", overwrite=True
+        )
+        ciffile.write(str(refined_cif))
+    except Exception as e:
+        logger.warning(f"Could not append _sampleworks_result to {refined_cif}: {e}")
 
 
 def _three_state_resolver(value: str | bool | None, default: bool) -> bool:
@@ -590,6 +708,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         raise TypeError("Unknown guidance type!")
 
     model_atom_array = result.metadata.get("model_atom_array") if result.metadata else None
+    reconciler = result.metadata.get("reconciler") if result.metadata else None
 
     save_everything(
         args,
@@ -600,6 +719,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         guidance_type,
         final_state=torch.as_tensor(result.final_state),
         model_atom_array=model_atom_array,
+        reconciler=reconciler,
     )
 
     if hasattr(model_wrapper, "_chiral_grad_stats") and model_wrapper._chiral_grad_stats:

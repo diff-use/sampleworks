@@ -60,6 +60,8 @@ def save_structure_to_cif(
     output_path: str | Path,
     handle_nan: bool = True,
     frame_indices: int | list[int] | None = None,
+    preserve_metadata_from: "str | Path | CIFFile | None" = None,
+    complete_categories: bool = False,
 ) -> Path:
     """
     Save an AtomArray or AtomArrayStack to CIF file using biotite.
@@ -82,6 +84,16 @@ def save_structure_to_cif(
         - None: Save all frames (if AtomArrayStack) or single frame (if AtomArray)
         - int: Extract single frame at this index (saves single-model CIF)
         - list[int]: Extract multiple frames (saves multimodel CIF)
+    preserve_metadata_from: str | Path | CIFFile | None, default=None
+        If given, custom (non-structural) categories from this source CIF -- e.g. the
+        ``_sampleworks`` metadata -- are copied onto the freshly written file. Without this,
+        ``set_structure`` rebuilds a bare block and any custom category is silently lost on a
+        ``load_any -> set_structure -> write`` round-trip. See
+        :func:`sampleworks.utils.cif_utils.copy_custom_categories`.
+    complete_categories: bool, default=False
+        When ``preserve_metadata_from`` is set, also regenerate the minimal parent categories
+        (``atom_type`` / ``chem_comp`` / ``entity`` ...) against the new ``_atom_site`` so the
+        round-tripped file stays valid against the PDBe mmcif-validator.
 
     Returns
     -------
@@ -182,6 +194,24 @@ def save_structure_to_cif(
 
     cif_file = CIFFile()
     set_structure(cif_file, structure_to_save)
+
+    if preserve_metadata_from is not None:
+        # Function-local import: cif_utils imports this module at top level, so referencing it
+        # here (rather than at module scope) avoids an import cycle.
+        from sampleworks.utils.cif_utils import (
+            add_completeness_categories,
+            copy_custom_categories,
+        )
+
+        source = (
+            preserve_metadata_from
+            if isinstance(preserve_metadata_from, CIFFile)
+            else CIFFile.read(str(preserve_metadata_from))
+        )
+        copy_custom_categories(source, cif_file)
+        if complete_categories:
+            add_completeness_categories(cif_file)
+
     cif_file.write(str(output_path))
 
     return output_path

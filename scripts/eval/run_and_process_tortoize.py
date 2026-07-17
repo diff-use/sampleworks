@@ -1,14 +1,17 @@
 import argparse
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
+from biotite.structure.io.pdbx.cif import CIFFile
 from loguru import logger
 from pandas import DataFrame
 from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
+from sampleworks.utils.cif_utils import extract_model, model_numbers
 
 
 # TODO make more general: https://github.com/diff-use/sampleworks/issues/93
@@ -133,12 +136,17 @@ def get_protein_level_z_scores(tortoize_json: dict[str, Any]) -> pd.DataFrame:
 
 def get_stats_for_single_path(path: Path) -> tuple[DataFrame, DataFrame]:
     """
-    Run tortoize on a single CIF file and extract residue/protein-level stats.
+    Run tortoize per model on a single CIF file and extract residue/protein-level stats.
+
+    tortoize is single-model: it loads zero atoms from a stacked ensemble. Each model is extracted
+    via a pure ``_atom_site`` filter (``extract_model``, which preserves the carried
+    ``_entity``/``_entity_poly``/``_entity_poly_seq`` categories), scored on its own, and the
+    per-model frames are merged -- each tagged with the source model number.
 
     Parameters
     ----------
     path : Path
-        Path to a CIF file to process.
+        Path to a CIF file (single-model or stacked ensemble) to process.
 
     Returns
     -------
@@ -147,20 +155,45 @@ def get_stats_for_single_path(path: Path) -> tuple[DataFrame, DataFrame]:
     """
     logger.info(f"Processing {path}")
     try:
-        output = subprocess.check_output(["tortoize", str(path)])
-        result = json.loads(output)
-    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
-        logger.error(f"Failed to process {path}: {e}")
+        cif = CIFFile.read(str(path))
+    except Exception as e:  # noqa: BLE001 - a bad file must not abort the whole grid-search eval
+        logger.error(f"Failed to read {path}: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
-    residues = flatten_residues(result)
-    if residues.empty:
+    residue_frames: list[DataFrame] = []
+    protein_frames: list[DataFrame] = []
+    for model_num in model_numbers(cif):
+        single = CIFFile.read(str(path))
+        extract_model(single, model_num)
+        with tempfile.NamedTemporaryFile(suffix=".cif", delete=False) as handle:
+            model_cif = Path(handle.name)
+        try:
+            single.write(str(model_cif))
+            output = subprocess.check_output(["tortoize", str(model_cif)])
+            result = json.loads(output)
+        except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to process model {model_num} of {path}: {e}")
+            continue
+        finally:
+            model_cif.unlink(missing_ok=True)
+
+        residues = flatten_residues(result)
+        protein = get_protein_level_z_scores(result)
+        # tortoize labels a lone model "1"; tag rows with the real source model number.
+        if not residues.empty:
+            residues["model"] = str(model_num)
+            residue_frames.append(residues)
+        if not protein.empty:
+            protein["model"] = str(model_num)
+            protein_frames.append(protein)
+
+    if not residue_frames:
         logger.warning(f"No residues found in {path}")
         return pd.DataFrame(), pd.DataFrame()
 
+    residues = pd.concat(residue_frames, ignore_index=True)
     residues["path"] = path
-
-    protein_level_stats = get_protein_level_z_scores(result)
+    protein_level_stats = pd.concat(protein_frames, ignore_index=True)
     protein_level_stats["path"] = path
     return residues, protein_level_stats
 

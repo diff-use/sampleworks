@@ -98,6 +98,52 @@ class TestCoordinateTranslation:
         with pytest.raises(ValueError, match="Expected model_template"):
             rec.struct_to_model(torch.randn(1, 3, 3), torch.randn(1, 4, 3))
 
+    def test_model_to_struct_copies_common_atoms(self, mismatch_rec):
+        rec = mismatch_rec
+        model_coords = torch.arange(15, dtype=torch.float32).reshape(1, 5, 3)
+        template = torch.full((1, 3, 3), -1.0)
+        result = rec.model_to_struct(model_coords, template)
+        assert result.shape == (1, 3, 3)
+        for i in range(rec.n_common):
+            m_i = int(rec.model_indices[i])
+            s_i = int(rec.struct_indices[i])
+            torch.testing.assert_close(result[0, s_i], model_coords[0, m_i])
+        # Non-common struct atoms should retain template value
+        common_struct_set = set(rec.struct_indices.tolist())
+        for j in range(rec.n_struct):
+            if j not in common_struct_set:
+                torch.testing.assert_close(result[0, j], torch.tensor([-1.0, -1.0, -1.0]))
+
+    def test_model_to_struct_rejects_wrong_shapes(self, mismatch_rec):
+        rec = mismatch_rec
+        with pytest.raises(ValueError, match="Expected model_coords"):
+            rec.model_to_struct(torch.randn(1, 4, 3), torch.randn(1, 3, 3))
+        with pytest.raises(ValueError, match="Expected struct_template"):
+            rec.model_to_struct(torch.randn(1, 5, 3), torch.randn(1, 4, 3))
+
+    def test_model_common_coords_gathers_common(self, mismatch_rec):
+        rec = mismatch_rec
+        model_coords = torch.arange(15, dtype=torch.float32).reshape(1, 5, 3)
+        common = rec.model_common_coords(model_coords)
+        assert common.shape == (1, rec.n_common, 3)
+        for i in range(rec.n_common):
+            m_i = int(rec.model_indices[i])
+            torch.testing.assert_close(common[0, i], model_coords[0, m_i])
+        with pytest.raises(ValueError, match="Expected model_coords"):
+            rec.model_common_coords(torch.randn(1, 4, 3))
+
+    def test_model_to_struct_round_trips_with_struct_to_model(self, mismatch_rec):
+        """model_to_struct then struct_to_model returns the common atoms unchanged."""
+        rec = mismatch_rec
+        model_coords = torch.randn(1, 5, 3)
+        struct_template = torch.zeros(1, 3, 3)
+        model_template = torch.zeros(1, 5, 3)
+        struct = rec.model_to_struct(model_coords, struct_template)
+        back = rec.struct_to_model(struct, model_template)
+        for i in range(rec.n_common):
+            m_i = int(rec.model_indices[i])
+            torch.testing.assert_close(back[0, m_i], model_coords[0, m_i])
+
     def test_align_shape(self, mismatch_rec):
         rec = mismatch_rec
         model = torch.randn(2, 5, 3)

@@ -142,6 +142,9 @@ class PureGuidance:
         # function can get the right number of atoms.
         if reconciler.has_mismatch and processed_structure.model_atom_array is not None:
             metadata["model_atom_array"] = processed_structure.model_atom_array
+            # Forward the reconciler so save_everything can map predicted coordinates back
+            # onto the input structure's definitive numbering
+            metadata["reconciler"] = reconciler
 
         return GuidanceOutput(
             structure=structure,

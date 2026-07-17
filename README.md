@@ -256,9 +256,10 @@ rebuilt `pixi-with-checkpoints:sampleworks` image instead.
 
 `run_analysis` uses the same TOML runner as `run_experiments`, but loads presets
 from `analyses/*.toml` and runs the scripts under `scripts/eval/`.
-The `analyze_grid_search`, `all`, and `external_tools` presets first run a sequential
-`patch_outputs` pre-job, which creates `refined-patched.cif` files from each
-`refined.cif` before the evaluation jobs start.
+The `analyze_grid_search`, `all`, and `external_tools` presets run their evaluation jobs
+directly on the generated `refined.cif` — the generation pipeline now writes eval-ready
+output (real entity categories and input numbering carried in place), so no CIF-patching
+pre-step is needed.
 
 ```bash
 export GRID_SEARCH_RESULTS_DIR=/mnt/diffuse-shared/results/sampleworks/<pod>/full_8gpu
@@ -274,12 +275,7 @@ run_analysis all  # includes tortoize and phenix.clashscore jobs
 ```
 
 Use `--set` for one-off changes, for example
-`run_analysis analyze_grid_search --jobs rscc --set jobs.rscc.gpus=0`. If your
-input layout differs from the default
-`processed/{pdb_id}/{pdb_id}_single_001_density_input.cif`, override the patch
-pre-job with `--set defaults.PATCH_INPUT_PDB_PATTERN='{pdb_id}/{pdb_id}_original.cif'`.
-When patched CIFs already exist, add `--skip-pre-jobs` to rerun analyses without
-repeating the patching step.
+`run_analysis analyze_grid_search --jobs rscc --set jobs.rscc.gpus=0`.
 The `altloc_find` and `altloc_classify` presets are independent of grid-search
 outputs; override `ALTLOC_ANALYSIS_DIR` and `ALTLOC_INPUTS_DIR` when their input
 or output roots differ from the defaults.

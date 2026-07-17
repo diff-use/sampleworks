@@ -224,6 +224,7 @@ checkpoints/
 # Large results from runs
 grid_search_results*/
 output*/
+scratch/
 initial_dataset_40*/
 *.tar.gz
 *.tgz

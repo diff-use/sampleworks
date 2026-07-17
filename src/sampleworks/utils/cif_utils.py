@@ -247,6 +247,27 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
     return tmp_path
 
 
+def _resolve_block(ciffile: CIFFile, block_name: str | None):
+    """Return the target CIFBlock, defaulting to the sole block when block_name is None.
+
+    Raises ValueError if the file is empty, or is multi-block and no block_name was given,
+    or the named block does not exist.
+    """
+    if block_name is None:
+        # CIFFile is a Mapping, so inherits .keys(), which ultimately iterates over blocks
+        blocks = list(ciffile.keys())
+        if len(blocks) == 0:
+            raise ValueError("CIFFile has no blocks. Cannot add category.")
+        if len(blocks) > 1:
+            raise ValueError(
+                f"CIFFile has multiple blocks: {blocks}. Please specify block_name parameter."
+            )
+        return ciffile[blocks[0]]
+    if block_name not in ciffile:
+        raise ValueError(f"Block '{block_name}' not found in CIFFile.")
+    return ciffile[block_name]
+
+
 def add_category_to_cif(
     ciffile: CIFFile,
     data: dict[str, Any],
@@ -297,21 +318,7 @@ def add_category_to_cif(
     _sampleworks_metadata.sampleworks_version 0.4.0
     _sampleworks_metadata.pdb_id              1L63
     """
-    # Determine which block to use
-    if block_name is None:
-        # CIFFile is a Mapping, so inherits .keys(), which ultimately iterates over blocks
-        blocks = list(ciffile.keys())
-        if len(blocks) == 0:
-            raise ValueError("CIFFile has no blocks. Cannot add category.")
-        elif len(blocks) > 1:
-            raise ValueError(
-                f"CIFFile has multiple blocks: {blocks}. Please specify block_name parameter."
-            )
-        block = ciffile[blocks[0]]
-    else:
-        if block_name not in ciffile:
-            raise ValueError(f"Block '{block_name}' not found in CIFFile.")
-        block = ciffile[block_name]
+    block = _resolve_block(ciffile, block_name)
 
     # Check if a category with name category_name already exists
     if category_name in block and not overwrite:
@@ -330,3 +337,684 @@ def _normalize_nulls(value: Any) -> Any:
     if isinstance(value, Iterable) and not isinstance(value, str | bytes):
         return ["?" if item is None else item for item in value]
     return "?" if value is None else value
+
+
+# Categories that biotite's ``set_structure`` plus ``add_completeness_categories`` regenerate
+# from the AtomArray / box. These are deliberately NOT copied on a metadata-preserving round-trip:
+# the structural ones are rewritten from the fresh ``_atom_site``, and the completeness parents are
+# regenerated against it (copying them stale would reference the old atom_site).
+_STRUCTURAL_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "atom_site",
+        "struct_conn",
+        "chem_comp_bond",
+        "cell",
+        "atom_type",
+        "chem_comp",
+        "entity",
+        "struct_conn_type",
+        "entry",
+    }
+)
+
+
+def read_category_from_cif(
+    source: str | Path | CIFFile,
+    category_name: str,
+    block_name: str | None = None,
+    strict: bool = False,
+) -> dict[str, str | list[str]] | None:
+    """Read a custom category from a CIF file into a plain dict.
+
+    The inverse of ``add_category_to_cif``. A single-row category (such as our ``_sampleworks``
+    metadata) yields scalar string values; a multi-row category yields lists. Everything comes
+    back as **strings** -- numeric / null coercion is the caller's job. A CIF null is the literal
+    ``"?"`` and is returned verbatim.
+
+    Parameters
+    ----------
+    source : str | Path | CIFFile
+        Path to a CIF file, or an already-open ``CIFFile``.
+    category_name : str
+        Category to read, without the leading underscore (e.g. ``"sampleworks"``).
+    block_name : str | None, optional
+        Block to read from. If None, the sole block is used (error if multi-block).
+    strict : bool, optional
+        If False (default), any failure (missing file, multi-block ambiguity, resolve error)
+        returns None so callers can fall back cleanly. If True, the underlying error is raised.
+
+    Returns
+    -------
+    dict[str, str | list[str]] | None
+        The category's columns, or None if the category (or file/block) is absent.
+    """
+    try:
+        ciffile = source if isinstance(source, CIFFile) else CIFFile.read(str(source))
+        block = _resolve_block(ciffile, block_name)
+        if category_name not in block:
+            return None
+        category = block[category_name]
+        result: dict[str, str | list[str]] = {}
+        for key in category:
+            values = category[key].as_array(str)
+            result[key] = str(values[0]) if len(values) == 1 else [str(v) for v in values]
+        return result
+    except Exception:
+        if strict:
+            raise
+        return None
+
+
+def copy_custom_categories(
+    src: CIFFile,
+    dst: CIFFile,
+    block_name: str | None = None,
+    exclude: Iterable[str] = _STRUCTURAL_CATEGORIES,
+    overwrite: bool = True,
+) -> list[str]:
+    """Copy non-structural (custom) categories from one CIF block into another, in place.
+
+    Used to carry custom metadata (e.g. ``_sampleworks``) across a
+    ``load_any -> set_structure -> write`` round-trip, which otherwise drops everything but the
+    structural categories biotite regenerates from the AtomArray. Categories in ``exclude`` are
+    skipped (see ``_STRUCTURAL_CATEGORIES``).
+
+    Parameters
+    ----------
+    src, dst : CIFFile
+        Source and destination CIF files. The matching block in each is used.
+    block_name : str | None, optional
+        Block to operate on. If None, the sole block of each file is used.
+    exclude : Iterable[str], optional
+        Category names to skip. Defaults to the structural / completeness set.
+    overwrite : bool, optional
+        If True (default), replace categories already present in dst; if False, skip them.
+
+    Returns
+    -------
+    list[str]
+        Names of the categories copied.
+    """
+    src_block = _resolve_block(src, block_name)
+    dst_block = _resolve_block(dst, block_name)
+    exclude_set = set(exclude)
+    copied: list[str] = []
+    for name in src_block:
+        if name in exclude_set:
+            continue
+        if name in dst_block and not overwrite:
+            continue
+        dst_block[name] = src_block[name]
+        copied.append(name)
+    return copied
+
+
+def _unique_preserve(values: Iterable[Any]) -> list[str]:
+    """Unique string values, preserving first-seen order (handles numpy str scalars)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        s = str(v)
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def add_completeness_categories(
+    ciffile: CIFFile,
+    block_name: str | None = None,
+    overwrite: bool = False,
+) -> None:
+    """Add the minimal parent categories required to pass the PDBe mmcif-validator.
+
+    The validator errors when an ``_atom_site`` item references a parent category that
+    is absent. For a sampleworks output CIF (which carries only ``_atom_site`` and the
+    custom ``_sampleworks`` category) the three blocking parents are:
+
+    ===========================  ==================  ====================
+    child item                   parent category     parent item written
+    ===========================  ==================  ====================
+    ``_atom_site.type_symbol``   ``atom_type``       ``_atom_type.symbol``
+    ``_atom_site.label_comp_id`` ``chem_comp``       ``_chem_comp.id``
+    ``_atom_site.label_entity_id`` ``entity``        ``_entity.id``
+    ===========================  ==================  ====================
+
+    Values are read from the ``_atom_site`` loop *as written* so the parent ids match the
+    child references exactly. This deliberately sidesteps the writer's ``chain_entity`` vs
+    ``label_entity_id`` discrepancy: whatever entity id ``set_structure`` actually emitted
+    into ``_atom_site`` is what ``_entity.id`` will list.
+
+    Additionally, when the structure was built from the input array, the
+    writer also emits ``_struct_conn`` (from bonds) and ``_cell`` (from the box). Those are
+    completed too: ``struct_conn_type`` is synthesized as the parent of
+    ``_struct_conn.conn_type_id``, and ``_cell.entry_id`` (plus its ``_entry`` parent) is
+    added. Both are skipped when the categories are absent, so the bare-predictor path is
+    unaffected.
+
+    Must be called AFTER ``set_structure`` has populated ``_atom_site``.
+
+    Parameters
+    ----------
+    ciffile : CIFFile
+        The CIF file object to modify in place.
+    block_name : str | None, optional
+        Block to operate on. If None, the sole block is used (error if multi-block).
+    overwrite : bool, optional
+        If False and any of the categories already exist, raise (via add_category_to_cif).
+    """
+    block = _resolve_block(ciffile, block_name)
+    if "atom_site" not in block:
+        raise ValueError(
+            "CIFFile block has no 'atom_site' category; call set_structure before "
+            "add_completeness_categories."
+        )
+    atom_site = block["atom_site"]
+
+    symbols = _unique_preserve(atom_site["type_symbol"].as_array(str))
+    comp_ids = _unique_preserve(atom_site["label_comp_id"].as_array(str))
+    entity_ids = _unique_preserve(atom_site["label_entity_id"].as_array(str))
+
+    add_category_to_cif(
+        ciffile, {"symbol": symbols}, "atom_type", overwrite=overwrite, block_name=block_name
+    )
+    add_category_to_cif(
+        ciffile, {"id": comp_ids}, "chem_comp", overwrite=overwrite, block_name=block_name
+    )
+    add_category_to_cif(
+        ciffile, {"id": entity_ids}, "entity", overwrite=overwrite, block_name=block_name
+    )
+
+    # atomworks/biotite writer serializes the input's connectivity (_struct_conn, from
+    # the BondList) and unit cell (_cell, from the array box). Both are incomplete as written
+    # and fail the validator. Complete them here. These blocks are no-ops when the categories
+    # are absent (e.g. bare predictor output), so the non-renumber path is unchanged.
+    if (
+        "struct_conn" in block
+        and "conn_type_id" in block["struct_conn"]
+        and "struct_conn_type" not in block
+    ):
+        conn_types = _unique_preserve(block["struct_conn"]["conn_type_id"].as_array(str))
+        add_category_to_cif(
+            ciffile,
+            {"id": conn_types},
+            "struct_conn_type",
+            overwrite=overwrite,
+            block_name=block_name,
+        )
+
+    if "cell" in block:
+        # _cell.entry_id is mandatory and is a child of _entry.id, so provide both with a
+        # consistent value (the data block name).
+        resolved_block_name = block_name if block_name is not None else list(ciffile.keys())[0]
+        entry_id = resolved_block_name or "sampleworks"
+        if "entry" not in block:
+            add_category_to_cif(
+                ciffile, {"id": [entry_id]}, "entry", overwrite=overwrite, block_name=block_name
+            )
+        if "entry_id" not in block["cell"]:
+            cell = block["cell"]
+            # Preserve the existing cell parameters (length/angle) and add entry_id.
+            cell_data = {"entry_id": [entry_id]}
+            cell_data.update({key: list(cell[key].as_array(str)) for key in cell.keys()})
+            add_category_to_cif(ciffile, cell_data, "cell", overwrite=True, block_name=block_name)
+
+
+# The depositor's polymer-entity categories that tortoize (libcifpp) needs to score a chain:
+# ``_entity`` (typed), ``_entity_poly`` (sequence), ``_entity_poly_seq`` (numbered residues).
+# These are the categories the carve strips and ``add_completeness_categories`` only stubs.
+_POLYMER_ENTITY_CATEGORIES: tuple[str, ...] = ("entity", "entity_poly", "entity_poly_seq")
+
+_RCSB_CACHE = Path("~/.sampleworks/rcsb")
+
+
+def fetch_rcsb_cif(pdb_id: str, cache: str | Path = _RCSB_CACHE) -> Path:
+    """Download (and cache) the original mmCIF deposit for ``pdb_id`` from RCSB.
+
+    Reuses the on-disk cache the retired ``patch_output_cif_files.py`` used. biotite's ``fetch``
+    only hits the network when the file is not already present, so once the cache is warm this is
+    offline-friendly and cheap to call per generation.
+
+    Parameters
+    ----------
+    pdb_id : str
+        The 4-character PDB id (case-insensitive), e.g. ``"1vme"``.
+    cache : str | Path, optional
+        Directory to download into. Defaults to ``~/.sampleworks/rcsb``.
+
+    Returns
+    -------
+    Path
+        Path to the cached ``.cif`` file.
+    """
+    from biotite.database.rcsb import fetch
+
+    cache_dir = Path(cache).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return Path(fetch(pdb_id, format="cif", target_path=str(cache_dir)))
+
+
+def _contiguous_block_offsets(
+    ref_nums: Iterable[str],
+    ref_mons: Iterable[str],
+    present_nums: list[int],
+    present_mons: list[str],
+) -> list[int]:
+    """Offsets aligning the modeled residues onto one entity's canonical sequence.
+
+    The modeled residues should appear as a contiguous block of the entity's ``_entity_poly_seq``
+    residue-name sequence. Returns the integer shift (``label_seq_id - num``) for every position
+    where the block matches; an empty list means the entity's sequence does not contain the block
+    (so it is not a match for these residues). A gapped modeled region matches nothing -- the
+    caller degrades, as production carves are contiguous.
+    """
+    ref_pairs = sorted(zip((int(n) for n in ref_nums), [str(m) for m in ref_mons], strict=True))
+    ref_num_seq = [n for n, _ in ref_pairs]
+    ref_mon_seq = [m for _, m in ref_pairs]
+    span = len(present_mons)
+    if span == 0:
+        return []
+    return [
+        present_nums[0] - ref_num_seq[i]
+        for i in range(len(ref_mon_seq) - span + 1)
+        if ref_mon_seq[i : i + span] == present_mons
+    ]
+
+
+def _entity_sort_key(entity_id: str) -> tuple[int, Any]:
+    """Sort entity ids numerically when possible, else lexicographically."""
+    return (0, int(entity_id)) if entity_id.lstrip("-").isdigit() else (1, entity_id)
+
+
+def _break_entity_tie(
+    candidates: list[tuple[str, list[int]]],
+    strand_by_id: dict[str, str] | None,
+    kept_chains: set[str],
+) -> tuple[str, list[int]]:
+    """Disambiguate several reference entities that all contain the modeled residues.
+
+    Strand id (``pdbx_strand_id`` overlap with the kept chains) is tried first; it is a weak signal
+    under predictor chain-relabeling, so when it does not resolve and every candidate aligns
+    identically (a homodimer's repeated entity, sequence- and offset-equal) the lowest entity id is
+    chosen. Otherwise the tie is genuine and we raise so the caller degrades.
+    """
+    if strand_by_id is not None:
+        stranded = [
+            (eid, offs)
+            for eid, offs in candidates
+            if {s.strip() for s in strand_by_id.get(eid, "").split(",")} & kept_chains
+        ]
+        if len(stranded) == 1:
+            return stranded[0]
+    if len({tuple(offs) for _, offs in candidates}) == 1:
+        return min(candidates, key=lambda c: _entity_sort_key(c[0]))
+    raise ValueError(
+        f"multiple reference polymer entities match chains {sorted(kept_chains)}; "
+        "cannot disambiguate by sequence or strand"
+    )
+
+
+def _match_polymer_entity(
+    ref_block,
+    present_nums: list[int],
+    present_mons: list[str],
+    kept_chains: set[str],
+    *,
+    require_offset: bool,
+) -> tuple[str, int]:
+    """Pick the reference polymer entity whose sequence contains the modeled residues.
+
+    Matches by residue-name sequence (robust to chain relabeling -- e.g. a predictor that resets
+    chains to "A"), not by strand id. Returns ``(reference entity_id, renumber offset)``. The unique
+    entity whose canonical sequence contains the modeled block is chosen; ties are broken by
+    :func:`_break_entity_tie`. With ``require_offset`` (i.e. ``reconcile``) the chosen entity's
+    block must align at exactly one position, else the offset is undefined and we raise.
+
+    Raises ValueError when there are no modeled residues, no entity contains the block, the tie
+    cannot be broken, or (with ``require_offset``) the alignment is not unique. Callers degrade.
+    """
+    if not present_mons:
+        raise ValueError("no kept-chain residues with a label_seq_id in the output")
+
+    entity_poly = ref_block["entity_poly"]
+    poly_ids = [str(e) for e in entity_poly["entity_id"].as_array(str)]
+    strand_by_id = (
+        dict(
+            zip(
+                poly_ids,
+                [str(s) for s in entity_poly["pdbx_strand_id"].as_array(str)],
+                strict=True,
+            )
+        )
+        if "pdbx_strand_id" in entity_poly
+        else None
+    )
+
+    eps = ref_block["entity_poly_seq"]
+    eps_eid = np.asarray(eps["entity_id"].as_array(str))
+    eps_num = np.asarray(eps["num"].as_array(str))
+    eps_mon = np.asarray(eps["mon_id"].as_array(str))
+
+    candidates: list[tuple[str, list[int]]] = []
+    for eid in poly_ids:
+        mask = eps_eid == eid
+        offsets = _contiguous_block_offsets(
+            list(eps_num[mask]), list(eps_mon[mask]), present_nums, present_mons
+        )
+        if offsets:
+            candidates.append((eid, offsets))
+
+    if not candidates:
+        raise ValueError(
+            f"no reference polymer entity contains the {len(present_mons)} modeled residues "
+            f"for chains {sorted(kept_chains)}"
+        )
+
+    eid, offsets = (
+        candidates[0]
+        if len(candidates) == 1
+        else _break_entity_tie(candidates, strand_by_id, kept_chains)
+    )
+
+    if len(offsets) == 1:
+        return eid, offsets[0]
+    if require_offset:
+        raise ValueError(
+            f"cannot uniquely align {len(present_mons)} output residues to the reference "
+            f"sequence ({len(offsets)} candidate alignments)"
+        )
+    return eid, offsets[0]
+
+
+def _present_residues(dst_block, kept_chains: set[str]) -> tuple[list[int], list[str]]:
+    """Return the kept-chain residues actually present in the dst ``_atom_site``.
+
+    Yields ``(sorted label_seq_id ints, comp_id per residue)`` -- the residues tortoize will try
+    to map onto ``_entity_poly_seq``.
+    """
+    atom_site = dst_block["atom_site"]
+    chain_col = "auth_asym_id" if "auth_asym_id" in atom_site else "label_asym_id"
+    chains = atom_site[chain_col].as_array(str)
+    seq_ids = atom_site["label_seq_id"].as_array(str)
+    comps = atom_site["label_comp_id"].as_array(str)
+    present: dict[int, str] = {}
+    for chain, sid, comp in zip(chains, seq_ids, comps, strict=True):
+        if chain in kept_chains and str(sid) not in (".", "?", ""):
+            present[int(sid)] = str(comp)
+    nums = sorted(present)
+    return nums, [present[n] for n in nums]
+
+
+def _build_carried_rows(
+    ref_block,
+    ref_entity_id: str,
+    output_entity_id: str,
+    kept_chains: set[str],
+    offset: int,
+) -> tuple[dict, dict, dict]:
+    """Relabel one reference polymer entity onto an output entity id and chain set.
+
+    Returns ``(entity_row, entity_poly_row, entity_poly_seq_dict)`` as plain column dicts: the
+    reference rows for ``ref_entity_id`` with ``entity_id`` / ``id`` rewritten to
+    ``output_entity_id``, the strand list reset to the kept chains, and ``num`` shifted by
+    ``offset`` (0 = verbatim). Relabel happens here, before any cross-entity concatenation, so a
+    reference id can never leak into the output even when output ids differ.
+    """
+    entity = ref_block["entity"]
+    ent_mask = np.asarray(entity["id"].as_array(str)) == ref_entity_id
+    entity_row = {k: list(np.asarray(entity[k].as_array(str))[ent_mask]) for k in entity}
+    entity_row["id"] = [output_entity_id]
+
+    entity_poly = ref_block["entity_poly"]
+    poly_ids = np.asarray(entity_poly["entity_id"].as_array(str))
+    poly_idx = int(np.flatnonzero(poly_ids == ref_entity_id)[0])
+    poly_row = {k: [str(entity_poly[k].as_array(str)[poly_idx])] for k in entity_poly}
+    poly_row["entity_id"] = [output_entity_id]
+    if "pdbx_strand_id" in poly_row:
+        poly_row["pdbx_strand_id"] = [",".join(sorted(kept_chains))]
+
+    eps = ref_block["entity_poly_seq"]
+    eps_mask = np.asarray(eps["entity_id"].as_array(str)) == ref_entity_id
+    eps_dict = {k: list(np.asarray(eps[k].as_array(str))[eps_mask]) for k in eps}
+    eps_dict["entity_id"] = [output_entity_id] * int(eps_mask.sum())
+    if offset:
+        eps_dict["num"] = [str(int(n) + offset) for n in eps_dict["num"]]
+    return entity_row, poly_row, eps_dict
+
+
+def _concat_row_dicts(rows: list[dict]) -> dict:
+    """Flatten per-entity column dicts (sharing one key set) into a single column dict."""
+    if not rows:
+        return {}
+    keys = list(rows[0].keys())
+    cols: dict[str, list[str]] = {k: [] for k in keys}
+    for row in rows:
+        for k in keys:
+            cols[k].extend(row[k])
+    return cols
+
+
+def _merge_entity_rows(matched_rows: list[dict], stub_ids: list[str]) -> dict:
+    """Concatenate matched ``_entity`` rows and append typeless ``?`` stubs for unmatched ids.
+
+    ``add_category_to_cif`` overwrites the whole ``_entity`` category, so every output
+    ``label_entity_id`` -- including those that could not be matched (a degraded polymer entity, or
+    a ligand/water) -- must reappear here or mmcif-validator flags an ``_atom_site`` reference with
+    no parent. Stub rows carry the same columns as the matched rows (filled with the CIF null
+    ``"?"``) so the category stays rectangular and survives a write/read round-trip.
+    """
+    keys = list(matched_rows[0].keys()) if matched_rows else ["id"]
+    cols: dict[str, list[str]] = {k: [] for k in keys}
+    for row in matched_rows:
+        for k in keys:
+            cols[k].extend(row[k])
+    for sid in stub_ids:
+        for k in keys:
+            cols[k].append(sid if k == "id" else "?")
+    return cols
+
+
+def carry_entity_categories(
+    dst: CIFFile,
+    reference: str | Path | CIFFile,
+    *,
+    output_entity_id: str | None = None,
+    kept_chains: Iterable[str] | None = None,
+    reconcile: bool = False,
+    block_name: str | None = None,
+) -> list[str]:
+    """Graft the depositor's real polymer-entity categories onto an output CIF.
+
+    Replaces the minimal ``_entity`` stub from :func:`add_completeness_categories` with the real
+    ``_entity`` (typed) / ``_entity_poly`` (sequence) / ``_entity_poly_seq`` (numbered residues)
+    read from ``reference`` (a full RCSB deposit), so tortoize can produce real z-scores while the
+    mmcif-validator stays satisfied. Also writes ``_struct_asym`` mapping each output chain to its
+    entity.
+
+    Each output **polymer** entity is matched to the reference entity whose canonical sequence
+    contains its modeled residues (by residue-name sequence, robust to predictor chain-relabeling),
+    subset to that entity's chains, and relabelled to the output id. With ``reconcile``,
+    ``_entity_poly_seq.num`` is shifted per entity into the output's ``label_seq_id`` numbering.
+
+    Two modes:
+
+    - **Auto** (``output_entity_id is None`` and ``kept_chains is None``): every distinct
+      ``_atom_site.label_entity_id`` is carried under its own id; non-polymer entities
+      (ligand/water, no numeric ``label_seq_id``) and any entity that cannot be matched are
+      left as a typeless ``_entity`` stub so the file stays mmcif-validator-clean. Raises only
+      if *nothing* matched, so the caller degrades to the pure stub.
+    - **Forced** (explicit ``output_entity_id`` and/or ``kept_chains``): a single entity is carried
+      and relabelled onto ``output_entity_id`` (default "0") over ``kept_chains`` (default: all
+      output chains). Any match failure raises (callers wrap this to degrade).
+
+    Parameters
+    ----------
+    dst : CIFFile
+        The output CIF to modify in place. Must already carry ``_atom_site``.
+    reference : str | Path | CIFFile
+        The full deposit (e.g. from :func:`fetch_rcsb_cif`) carrying the real entity categories.
+    output_entity_id : str | None, optional
+        If given, force single-entity mode and relabel onto this id. Default None (auto).
+    kept_chains : Iterable[str] | None, optional
+        If given, force single-entity mode over these chains. Default None (auto).
+    reconcile : bool, optional
+        If True, renumber ``_entity_poly_seq.num`` per entity to the output's
+        ``label_seq_id`` scheme.
+    block_name : str | None, optional
+        Block of ``dst`` to operate on. If None, its sole block is used.
+
+    Returns
+    -------
+    list[str]
+        Names of the categories written (``entity``, ``entity_poly``, ``entity_poly_seq``,
+        ``struct_asym``, ``chem_comp``).
+
+    Raises
+    ------
+    ValueError
+        If the reference lacks the polymer-entity categories, or no output polymer entity could be
+        matched (in forced mode, the single entity; in auto mode, every entity). Callers wrap this
+        to degrade to the minimal synthesis.
+    """
+    ref_file = reference if isinstance(reference, CIFFile) else CIFFile.read(str(reference))
+    dst_block = _resolve_block(dst, block_name)
+    ref_block = _resolve_block(ref_file, None)
+
+    missing = [c for c in _POLYMER_ENTITY_CATEGORIES if c not in ref_block]
+    if missing:
+        raise ValueError(f"reference CIF lacks {missing}; cannot carry entity categories")
+
+    atom_site = dst_block["atom_site"]
+    chain_col = "auth_asym_id" if "auth_asym_id" in atom_site else "label_asym_id"
+    out_chains = [str(c) for c in atom_site[chain_col].as_array(str)]
+    out_entities = [str(e) for e in atom_site["label_entity_id"].as_array(str)]
+
+    forced = output_entity_id is not None or kept_chains is not None
+    if forced:
+        forced_chains = (
+            {str(c) for c in kept_chains}
+            if kept_chains is not None
+            else set(_unique_preserve(out_chains))
+        )
+        pairs = [(output_entity_id if output_entity_id is not None else "0", forced_chains)]
+    else:
+        pairs = [
+            (eid, {c for c, e in zip(out_chains, out_entities, strict=True) if e == eid})
+            for eid in _unique_preserve(out_entities)
+        ]
+
+    entity_rows: list[dict] = []
+    entity_poly_rows: list[dict] = []
+    eps_dicts: list[dict] = []
+    carried_mons: list[str] = []
+    outcomes: list[tuple[str, set[str], bool]] = []  # (output id, chains, matched)
+
+    for out_id, chains_e in pairs:
+        nums_e, mons_e = _present_residues(dst_block, chains_e)
+        if not nums_e and not forced:
+            outcomes.append((out_id, chains_e, False))  # non-polymer (ligand/water) -> stub
+            continue
+        try:
+            ref_id, offset = _match_polymer_entity(
+                ref_block, nums_e, mons_e, chains_e, require_offset=reconcile
+            )
+        except ValueError:
+            if forced:
+                raise
+            outcomes.append((out_id, chains_e, False))  # degrade this entity to a stub
+            continue
+        entity_row, poly_row, eps_dict = _build_carried_rows(
+            ref_block, ref_id, out_id, chains_e, offset if reconcile else 0
+        )
+        entity_rows.append(entity_row)
+        entity_poly_rows.append(poly_row)
+        eps_dicts.append(eps_dict)
+        carried_mons.extend(eps_dict["mon_id"])
+        outcomes.append((out_id, chains_e, True))
+
+    if not any(matched for _, _, matched in outcomes):
+        raise ValueError(
+            "no output polymer entity could be matched to a reference entity "
+            f"(output entities {[out_id for out_id, _, _ in outcomes]})"
+        )
+
+    stub_ids = [out_id for out_id, _, matched in outcomes if not matched]
+    entity_data = _merge_entity_rows(entity_rows, stub_ids)
+    entity_poly_data = _concat_row_dicts(entity_poly_rows)
+    eps_data = _concat_row_dicts(eps_dicts)
+
+    # _struct_asym: one row per output chain -> its entity id (matched and degraded), so every
+    # _atom_site.label_asym_id resolves to a parent and each entity_id resolves to an _entity row.
+    struct_ids: list[str] = []
+    struct_eids: list[str] = []
+    for out_id, chains_e, _ in outcomes:
+        for chain in sorted(chains_e):
+            struct_ids.append(chain)
+            struct_eids.append(out_id)
+    struct_asym_data = {"id": struct_ids, "entity_id": struct_eids}
+
+    # _chem_comp must list every residue the carried _entity_poly_seq references (mon_id is a
+    # foreign key into _chem_comp.id), not just the modeled residues add_completeness_categories
+    # saw in _atom_site. The canonical sequence can include residues absent from the modeled subset
+    # (e.g. an N-terminal MET), so extend _chem_comp to the union or mmcif-validator errors.
+    comp_ids = _unique_preserve(list(atom_site["label_comp_id"].as_array(str)) + carried_mons)
+
+    add_category_to_cif(dst, entity_data, "entity", overwrite=True, block_name=block_name)
+    add_category_to_cif(dst, entity_poly_data, "entity_poly", overwrite=True, block_name=block_name)
+    add_category_to_cif(dst, eps_data, "entity_poly_seq", overwrite=True, block_name=block_name)
+    add_category_to_cif(dst, struct_asym_data, "struct_asym", overwrite=True, block_name=block_name)
+    add_category_to_cif(dst, {"id": comp_ids}, "chem_comp", overwrite=True, block_name=block_name)
+
+    if stub_ids:
+        matched_ids = [out_id for out_id, _, matched in outcomes if matched]
+        logger.info(
+            f"carry_entity_categories: carried {len(matched_ids)} entity(ies) {matched_ids}; "
+            f"degraded {len(stub_ids)} to stub {stub_ids}"
+        )
+    return ["entity", "entity_poly", "entity_poly_seq", "struct_asym", "chem_comp"]
+
+
+def model_numbers(ciffile: CIFFile, block_name: str | None = None) -> list[str]:
+    """Distinct ``_atom_site.pdbx_PDB_model_num`` values, first-seen order.
+
+    Returns ``["1"]`` when the column is absent (a single-model file).
+    """
+    block = _resolve_block(ciffile, block_name)
+    atom_site = block["atom_site"]
+    if "pdbx_PDB_model_num" not in atom_site:
+        return ["1"]
+    return _unique_preserve(atom_site["pdbx_PDB_model_num"].as_array(str))
+
+
+def extract_model(ciffile: CIFFile, model_num: str | int, block_name: str | None = None) -> None:
+    """Filter ``_atom_site`` to a single model in place, preserving all other categories.
+
+    Single-model tools (tortoize) load zero atoms from a stacked ensemble. Extracting via
+    ``set_structure`` (i.e. ``save_structure_to_cif``) would rebuild the block and drop the carried
+    ``_entity``/``_entity_poly``/``_entity_poly_seq``; this keeps them by filtering the
+    ``_atom_site`` loop directly. A no-op when ``pdbx_PDB_model_num`` is absent.
+
+    Parameters
+    ----------
+    ciffile : CIFFile
+        File to filter in place.
+    model_num : str | int
+        The ``pdbx_PDB_model_num`` value to keep.
+    block_name : str | None, optional
+        Block to operate on. If None, the sole block is used.
+
+    Raises
+    ------
+    ValueError
+        If ``model_num`` is not present in ``_atom_site``.
+    """
+    block = _resolve_block(ciffile, block_name)
+    atom_site = block["atom_site"]
+    if "pdbx_PDB_model_num" not in atom_site:
+        return
+    model_col = np.asarray(atom_site["pdbx_PDB_model_num"].as_array(str))
+    mask = model_col == str(model_num)
+    if not mask.any():
+        raise ValueError(f"model {model_num} not in atom_site (have {_unique_preserve(model_col)})")
+    cols = {k: list(np.asarray(atom_site[k].as_array(str))[mask]) for k in atom_site}
+    block["atom_site"] = CIFCategory(columns=cols, name="atom_site")
