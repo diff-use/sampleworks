@@ -21,6 +21,9 @@ class Trial:
     trial_dir: Path
     refined_cif_path: Path
     protein_dir_name: str
+    input_structure_path: Path | None = None
+    density_path: Path | None = None
+    resolution: float | None = None
     rscc: float = np.nan  # these last three are placeholders for RSCC calculations.
     base_map_path: Path | None = None
     error: Exception | None = None
@@ -88,9 +91,15 @@ class ProteinConfig:
         return None
 
     def load_map(
-        self, map_path: Path, canonical_unit_cell=True, selection_coords=None, padding=0.0
+        self,
+        map_path: Path,
+        canonical_unit_cell=True,
+        selection_coords=None,
+        padding=0.0,
+        resolution: float | None = None,
     ) -> XMap | None:
-        xmap = XMap.fromfile(str(map_path), resolution=self.resolution)
+        """Load a map using recorded trial resolution when available."""
+        xmap = XMap.fromfile(str(map_path), resolution=resolution or self.resolution)
         if canonical_unit_cell:
             xmap = xmap.canonical_unit_cell()
         if selection_coords is not None:

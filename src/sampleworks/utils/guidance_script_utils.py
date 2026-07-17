@@ -29,6 +29,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
+from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
@@ -633,6 +634,9 @@ def _write_job_metadata(
     """
     metadata = args.as_dict()
     metadata.update(job_result.as_dict())
+    _, altloc_occupancies = extract_protein_and_occupancy(str(args.protein))
+    if altloc_occupancies:
+        metadata["altloc_occupancies"] = altloc_occupancies
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / "job_metadata.json", "w") as fp:
