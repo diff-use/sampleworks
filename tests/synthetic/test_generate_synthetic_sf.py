@@ -300,9 +300,7 @@ class TestResolveMtzColumn:
         ds = _dataset_with_columns(
             {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
         )
-        assert (
-            resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype(), column="FC") == "FC"
-        )
+        assert resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype(), column="FC") == "FC"
 
     def test_explicit_column_of_wrong_dtype_raises(self):
         """An explicit column that is not of the requested dtype is rejected."""

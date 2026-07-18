@@ -419,9 +419,7 @@ def atomarray_to_gemmi(
             if current_chain is not None:
                 model.add_chain(current_chain)
             current_chain = gemmi.Chain(chain_id)
-        current_chain.add_residue(
-            _build_gemmi_residue(atom_array, start_idx, stop_idx, altlocs)
-        )
+        current_chain.add_residue(_build_gemmi_residue(atom_array, start_idx, stop_idx, altlocs))
     if current_chain is not None:  # flush the trailing chain
         model.add_chain(current_chain)
 

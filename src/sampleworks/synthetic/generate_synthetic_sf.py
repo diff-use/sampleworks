@@ -196,10 +196,10 @@ def process_amplitudes_to_dataset(
         SFcalculator instance
     structure_factor_columns: dict[str, str]
         Mapping of ``label -> SFcalculator attribute``. Label must match the pattern of
-        SFcalculator attribute ``F{label}_asu`` (e.g. ``protein`` ->  ``Fprotein_asu``). 
-        One structure-factor set (``F{label}``/``SIGF{label}``/``PHIF{label}``) is 
+        SFcalculator attribute ``F{label}_asu`` (e.g. ``protein`` ->  ``Fprotein_asu``).
+        One structure-factor set (``F{label}``/``SIGF{label}``/``PHIF{label}``) is
         emitted per label, and multiple labels are merged into one MTZ sharing the same
-        HKL list (``miller_index_column``). For example, ``{"protein": "Fprotein_asu", 
+        HKL list (``miller_index_column``). For example, ``{"protein": "Fprotein_asu",
         "total": "Ftotal_asu"}`` produces ``Fprotein``/``SIGFprotein``/``PHIFprotein``/
         ``Ftotal``/``SIGFtotal``/``PHIFtotal`` and optionallyan R-free flag column.
     test_fraction: float
