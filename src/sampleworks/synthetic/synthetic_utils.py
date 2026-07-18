@@ -6,11 +6,12 @@ from pathlib import Path
 
 import gemmi
 import numpy as np
+import reciprocalspaceship as rs
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
-
+from reciprocalspaceship.dtypes.base import MTZDtype
 from sampleworks.utils.atom_array_utils import (
     AltlocInfo,
     apply_selection,
@@ -52,6 +53,61 @@ def resolve_parallel_jobs(device: torch.device | str, n_jobs: int) -> int:
         )
         return 1
     return n_jobs
+
+
+def resolve_mtz_column(
+    dataset: rs.DataSet,
+    dtype: MTZDtype,
+    *,
+    column: str | None = None,
+) -> str:
+    """Resolve the single column of the given MTZ dtype to use from ``dataset``.
+
+    Selects the dataset's columns of ``dtype`` and either validates a caller-supplied
+    ``column`` against them or returns the sole candidate, so callers need not extract the
+    candidate set themselves. Error messages label the dtype via ``dtype.name`` (e.g.
+    ``"SFAmplitude"``, ``"Stddev"``, ``"Phase"``).
+
+    Parameters
+    ----------
+    dataset
+        The reflection dataset (e.g. a parsed MTZ) whose columns are searched.
+    dtype
+        MTZ dtype selecting the candidate columns (e.g.
+        ``rs.StructureFactorAmplitudeDtype()``, ``rs.PhaseDtype()``).
+    column
+        Caller-chosen column. When given, it must be a ``dtype`` column of ``dataset`` and
+        is returned verbatim. When ``None``, the sole ``dtype`` column is returned.
+
+    Returns
+    -------
+    str
+        The resolved column name.
+
+    Raises
+    ------
+    ValueError
+        If ``column`` is given but is not a ``dtype`` column of ``dataset``, or ``column``
+        is ``None`` and the dataset holds zero or more than one ``dtype`` column (ambiguous
+        — the caller must disambiguate by passing ``column``).
+    """
+    dtype_name = dtype.name
+    candidates = list(dataset.select_mtzdtype(dtype).columns)
+    if not candidates:
+        raise ValueError(f"No {dtype_name} column found in the dataset.")
+    if column is not None:
+        if column not in candidates:
+            raise ValueError(
+                f"Requested {dtype_name} column {column!r} is not among the dataset's "
+                f"{dtype_name} columns: {candidates!r}."
+            )
+        return column
+    if len(candidates) > 1:
+        raise ValueError(
+            f"Multiple {dtype_name} columns {candidates} found; "
+            "pass an explicit column to disambiguate."
+        )
+    return candidates[0]
 
 
 def validate_occupancy_values(occupancy_values: list[float]) -> None:

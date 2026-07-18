@@ -1,4 +1,5 @@
-"""Tests for atomarray_to_gemmi in synthetic_utils, using real 6b8x structure."""
+"""Tests for synthetic_utils: atomarray_to_gemmi (real 6b8x structure) and
+resolve_mtz_column (in-memory datasets)."""
 
 import logging
 from pathlib import Path
@@ -6,10 +7,16 @@ from pathlib import Path
 import gemmi
 import numpy as np
 import pytest
+import reciprocalspaceship as rs
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
-from sampleworks.synthetic.synthetic_utils import assign_occupancies, atomarray_to_gemmi
+from reciprocalspaceship.dtypes.base import MTZDtype
+from sampleworks.synthetic.synthetic_utils import (
+    assign_occupancies,
+    atomarray_to_gemmi,
+    resolve_mtz_column,
+)
 from sampleworks.utils.atom_array_utils import (
     detect_altlocs,
     find_all_altloc_ids,
@@ -242,3 +249,65 @@ class TestAtomArrayToGemmi:
         )
 
         assert not np.allclose(np.abs(f_uniform), np.abs(f_custom), atol=1e-3)
+
+
+def _dataset_with_columns(columns: dict[str, MTZDtype]) -> rs.DataSet:
+    """Build a minimal rs.DataSet whose named columns carry the given MTZ dtypes.
+
+    Parameters
+    ----------
+    columns : dict of str to MTZDtype
+        Mapping from column name to the MTZ dtype that column should hold.
+
+    Returns
+    -------
+    rs.DataSet
+        Dataset with one dummy row per column, each column cast to its dtype. The
+        reflection index is irrelevant to column resolution, so it is left default.
+    """
+    ds = rs.DataSet({name: [1.0, 2.0, 3.0] for name in columns})
+    for name, dtype in columns.items():
+        ds[name] = ds[name].astype(dtype)
+    return ds
+
+
+class TestResolveMtzColumn:
+    """Tests for resolve_mtz_column column-selection logic."""
+
+    def test_returns_sole_candidate(self):
+        """With exactly one column of the dtype and no explicit choice, it is returned."""
+        ds = _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "PHI": rs.PhaseDtype()}
+        )
+        assert resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype()) == "FP"
+
+    def test_no_candidate_raises(self):
+        """A dtype absent from the dataset fails fast."""
+        ds = _dataset_with_columns({"FP": rs.StructureFactorAmplitudeDtype()})
+        with pytest.raises(ValueError, match="column found"):
+            resolve_mtz_column(ds, rs.PhaseDtype())
+
+    def test_ambiguous_candidates_raise(self):
+        """Two columns of the dtype with no explicit choice is ambiguous."""
+        ds = _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
+        )
+        with pytest.raises(ValueError, match="Multiple"):
+            resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype())
+
+    def test_explicit_column_disambiguates(self):
+        """An explicit column among the candidates is returned verbatim."""
+        ds = _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
+        )
+        assert (
+            resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype(), column="FC") == "FC"
+        )
+
+    def test_explicit_column_of_wrong_dtype_raises(self):
+        """An explicit column that is not of the requested dtype is rejected."""
+        ds = _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "PHI": rs.PhaseDtype()}
+        )
+        with pytest.raises(ValueError, match="not among"):
+            resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype(), column="PHI")
