@@ -4,7 +4,7 @@ These tests exercise behavior that any `RewardFunctionProtocol` implementation m
 satisfy (see `sampleworks.core.rewards.protocol`). They were extracted from
 `test_real_space_density_reward.py` (whose header asked for exactly this generalization)
 so that new reward functions inherit the shared contract by adding a single bundle entry
-to `_REWARD_BUNDLES`. 
+to `_REWARD_BUNDLES`.
 
 Only *reward-agnostic* checks live here:
 - Absolute loss thresholds ARE shared, but the value is per-reward (see `_LOSS_THRESHOLDS`):
