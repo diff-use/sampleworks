@@ -119,11 +119,18 @@ class TestStructureToRewardInput:
         reward_function = RealSpaceRewardFunction.__new__(RealSpaceRewardFunction)
         reward_function.device = device
         inputs = reward_function.structure_to_reward_input({"asym_unit": atom_array})
-        expected = extract_density_inputs_from_atomarray(atom_array, device)
+        expected_coordinates, expected_elements, expected_b_factors, expected_occupancies = (
+            extract_density_inputs_from_atomarray(atom_array, device)
+        )
 
-        for actual, expected_tensor in zip(inputs.values(), expected, strict=True):
-            torch.testing.assert_close(actual, expected_tensor)
-            assert actual.device == device
+        torch.testing.assert_close(inputs["coordinates"], expected_coordinates)
+        torch.testing.assert_close(inputs["elements"], expected_elements)
+        torch.testing.assert_close(inputs["b_factors"], expected_b_factors)
+        torch.testing.assert_close(inputs["occupancies"], expected_occupancies)
+        assert inputs["coordinates"].device == device
+        assert inputs["elements"].device == device
+        assert inputs["b_factors"].device == device
+        assert inputs["occupancies"].device == device
 
         assert inputs["coordinates"].shape == (1, 2, 3)
         assert inputs["coordinates"].dtype == torch.float32
@@ -143,10 +150,14 @@ class TestStructureToRewardInput:
         reward_function = RealSpaceRewardFunction.__new__(RealSpaceRewardFunction)
         reward_function.device = device
         inputs = reward_function.structure_to_reward_input({"asym_unit": atom_array_stack})
-        expected = extract_density_inputs_from_atomarray(atom_array_stack, device)
+        expected_coordinates, expected_elements, expected_b_factors, expected_occupancies = (
+            extract_density_inputs_from_atomarray(atom_array_stack, device)
+        )
 
-        for actual, expected_tensor in zip(inputs.values(), expected, strict=True):
-            torch.testing.assert_close(actual, expected_tensor)
+        torch.testing.assert_close(inputs["coordinates"], expected_coordinates)
+        torch.testing.assert_close(inputs["elements"], expected_elements)
+        torch.testing.assert_close(inputs["b_factors"], expected_b_factors)
+        torch.testing.assert_close(inputs["occupancies"], expected_occupancies)
 
         assert inputs["coordinates"].shape == (2, 1, 3)
         torch.testing.assert_close(inputs["b_factors"], torch.full((2, 1), 20.0, device=device))

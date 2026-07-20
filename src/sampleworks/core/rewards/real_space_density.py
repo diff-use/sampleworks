@@ -254,7 +254,9 @@ class RealSpaceRewardFunction:
         unique_combinations, inverse_indices = torch.unique(combined, dim=0, return_inverse=True)
         return unique_combinations.to(device), inverse_indices.to(device)
 
-    def structure_to_reward_input(self, structure: dict) -> dict[str, Float[torch.Tensor, "..."]]:
+    def structure_to_reward_input(
+        self, structure: dict
+    ) -> dict[str, Float[torch.Tensor, "..."] | Int[torch.Tensor, "..."]]:
         coordinates, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
             structure["asym_unit"], self.device
         )
