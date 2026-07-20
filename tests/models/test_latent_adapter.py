@@ -16,6 +16,7 @@ from torch import Tensor
 from sampleworks.models.latent_adapter import (
     AffineInjector,
     AttrLatentIO,
+    DeltaInjector,
     LatentAdaptedWrapper,
     LatentInjector,
     LatentIO,
@@ -144,8 +145,8 @@ def test_training_mode_keeps_graph(s_tensor: Tensor):
     assert out.conditioning.s.requires_grad is True
     # gradient flows back to the injector's k and b
     out.conditioning.s.sum().backward()
-    assert wrapped.injector.k.grad is not None
-    assert wrapped.injector.b.grad is not None
+    assert wrapped.single_injector.k.grad is not None
+    assert wrapped.single_injector.b.grad is not None
 
 
 def test_step_and_prior_delegate(s_tensor: Tensor):
@@ -154,3 +155,121 @@ def test_step_and_prior_delegate(s_tensor: Tensor):
     x = torch.randn(2, 8, 3)
     torch.testing.assert_close(wrapped.step(x, torch.tensor(0.5), features=None), torch.zeros_like(x))
     assert wrapped.initialize_from_prior(2, shape=(8, 3)).shape == (2, 8, 3)
+
+
+# --- DeltaInjector: the general-purpose latent perturbation -------------------
+
+
+def test_delta_injector_identity_at_init(s_tensor: Tensor):
+    """Zero-initialized delta must reconstruct the latent exactly on first call."""
+    out = DeltaInjector()(s_tensor)
+    torch.testing.assert_close(out, s_tensor)
+
+
+def test_delta_injector_lazily_allocates_matching_shape(s_tensor: Tensor):
+    inj = DeltaInjector()
+    assert inj.delta is None
+    inj(s_tensor)
+    assert inj.delta is not None
+    assert inj.delta.shape == s_tensor.shape
+
+
+def test_delta_injector_gradient_reaches_delta(s_tensor: Tensor):
+    inj = DeltaInjector()
+    inj(s_tensor).sum().backward()
+    assert inj.delta.grad is not None
+    assert inj.delta.grad.shape == s_tensor.shape
+
+
+def test_delta_injector_satisfies_injector_protocol():
+    assert isinstance(DeltaInjector(), LatentInjector)
+
+
+# --- Pair (z) representation support -----------------------------------------
+
+
+@dataclass(frozen=True)
+class _PairConditioning:
+    """Conditioning carrying both single ``s`` and pair ``z`` representations."""
+
+    s: Tensor
+    z: Tensor
+    sidecar: str = "untouched"
+
+
+class _PairWrapper:
+    """Mock FlowModelWrapper returning both a single and a pair representation."""
+
+    def __init__(self, s: Tensor, z: Tensor):
+        self._s = s
+        self._z = z
+
+    def featurize(self, structure: dict, **kwargs: Any) -> GenerativeModelInput[_PairConditioning]:
+        return GenerativeModelInput(
+            x_init=torch.zeros(1, self._s.shape[-2], 3),
+            conditioning=_PairConditioning(s=self._s.clone(), z=self._z.clone()),
+        )
+
+    def step(self, x_t, t, *, features=None):
+        return torch.zeros_like(x_t)
+
+    def initialize_from_prior(self, batch_size, features=None, *, shape=None):
+        return torch.randn(batch_size, self._s.shape[-2], 3)
+
+
+@pytest.fixture
+def z_tensor() -> Tensor:
+    torch.manual_seed(1)
+    return torch.randn(1, 8, 8, 2)  # [batch, tokens, tokens, d_z]
+
+
+def test_pair_io_none_by_default_is_noop(s_tensor: Tensor, z_tensor: Tensor):
+    """Single-arg AttrLatentIO leaves the pair rep unreachable (backward compatible)."""
+    io = AttrLatentIO("s")
+    cond = _PairConditioning(s=s_tensor, z=z_tensor)
+    assert io.read_pair(cond) is None
+    assert io.write_pair(cond, z_tensor * 9) is cond  # unchanged
+
+
+def test_pair_io_roundtrip(s_tensor: Tensor, z_tensor: Tensor):
+    io = AttrLatentIO(single_attr="s", pair_attr="z")
+    cond = _PairConditioning(s=s_tensor, z=z_tensor)
+    assert io.read_pair(cond) is z_tensor
+    new = io.write_pair(cond, z_tensor * 3)
+    torch.testing.assert_close(new.z, z_tensor * 3)
+    torch.testing.assert_close(new.s, s_tensor)  # single untouched
+    assert new.sidecar == "untouched"
+
+
+def test_wrapper_injects_both_single_and_pair(s_tensor: Tensor, z_tensor: Tensor):
+    inner = _PairWrapper(s_tensor, z_tensor)
+    wrapped = LatentAdaptedWrapper(
+        inner,
+        AttrLatentIO(single_attr="s", pair_attr="z"),
+        single_injector=AffineInjector(2.0, 0.0),
+        pair_injector=AffineInjector(3.0, 0.0),
+    )
+    out = wrapped.featurize({})
+    torch.testing.assert_close(out.conditioning.s, 2.0 * s_tensor)
+    torch.testing.assert_close(out.conditioning.z, 3.0 * z_tensor)
+
+
+def test_wrapper_leaves_pair_untouched_without_pair_injector(s_tensor: Tensor, z_tensor: Tensor):
+    """No pair_injector => z passes through even when the IO can address it."""
+    inner = _PairWrapper(s_tensor, z_tensor)
+    wrapped = LatentAdaptedWrapper(inner, AttrLatentIO("s", "z"), single_injector=AffineInjector(2.0, 0.0))
+    out = wrapped.featurize({})
+    torch.testing.assert_close(out.conditioning.z, z_tensor)  # unchanged
+
+
+def test_wrapper_training_mode_keeps_pair_delta_graph(s_tensor: Tensor, z_tensor: Tensor):
+    """training_adapter=True keeps the pair delta on the graph for optimization."""
+    inner = _PairWrapper(s_tensor, z_tensor)
+    pair_inj = DeltaInjector()
+    wrapped = LatentAdaptedWrapper(
+        inner, AttrLatentIO("s", "z"), pair_injector=pair_inj, training_adapter=True
+    )
+    out = wrapped.featurize({})
+    assert out.conditioning.z.requires_grad is True
+    out.conditioning.z.sum().backward()
+    assert pair_inj.delta.grad is not None
