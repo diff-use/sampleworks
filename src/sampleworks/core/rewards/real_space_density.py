@@ -18,7 +18,6 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
     XMap,
 )
 from sampleworks.utils.elements import elements_to_scattering_indices
-from sampleworks.utils.framework_utils import match_batch
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -256,30 +255,9 @@ class RealSpaceRewardFunction:
         return unique_combinations.to(device), inverse_indices.to(device)
 
     def structure_to_reward_input(self, structure: dict) -> dict[str, Float[torch.Tensor, "..."]]:
-        atom_array = structure["asym_unit"]
-        mask = atom_array.occupancy > 0
-        if isinstance(atom_array, AtomArrayStack):
-            atom_array = atom_array[:, mask]
-        else:
-            atom_array = atom_array[mask]
-
-        element_indices = elements_to_scattering_indices(atom_array.element)
-
-        elements = torch.tensor(element_indices, device=self.device, dtype=torch.long).unsqueeze(0)
-        b_factors = torch.from_numpy(atom_array.b_factor).to(self.device).unsqueeze(0)
-        occupancies = torch.from_numpy(atom_array.occupancy).to(self.device).unsqueeze(0)
-
-        coordinates = torch.from_numpy(atom_array.coord).to(self.device)
-        if coordinates.ndim == 2:
-            coordinates = coordinates.unsqueeze(0)
-
-        # AtomArrayStack: coord is (n_models, n_atoms, 3) but annotations are
-        # (n_atoms), so elements/b_factors/occupancies are (1, n_atoms) after
-        # unsqueeze while coordinates is (n_models, n_atoms, 3). Broadcast to match.
-        n_models = coordinates.shape[0]
-        elements = match_batch(elements, target_batch_size=n_models)
-        b_factors = match_batch(b_factors, target_batch_size=n_models)
-        occupancies = match_batch(occupancies, target_batch_size=n_models)
+        coordinates, elements, b_factors, occupancies = extract_density_inputs_from_atomarray(
+            structure["asym_unit"], self.device
+        )
 
         return {
             "coordinates": coordinates,
