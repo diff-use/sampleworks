@@ -51,18 +51,16 @@ import pandas as pd
 from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
-from sampleworks.eval.structure_utils import (
-    ATOMWORKS_COMPARISON_OPS,
-    get_mask_from_old_selection_string,
-    parse_selection_string,
-)
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import (
+    ATOMWORKS_COMPARISON_OPS,
     BACKBONE_ATOM_TYPES,
     BLANK_ALTLOC_IDS,
     build_pairwise_altloc_arrays,
     detect_altlocs,
+    get_mask_from_old_selection_string,
     load_structure_with_altlocs,
+    parse_selection_string,
 )
 
 

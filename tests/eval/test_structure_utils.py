@@ -8,11 +8,13 @@ import pytest
 from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.structure_utils import (
-    apply_selection,
     extract_selection_coordinates,
     get_asym_unit_from_structure,
     get_reference_atomarraystack,
     get_reference_structure_coords,
+)
+from sampleworks.utils.atom_array_utils import (
+    apply_selection,
     parse_selection_string,
 )
 
