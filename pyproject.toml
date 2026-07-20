@@ -32,6 +32,30 @@ platforms = ["osx-arm64"]
 pypi-dependencies = {"protenix" = "*", "einx" = "*", "triton" = "*"}
 platforms = ["linux-64"]
 
+# tmol (Rosetta energy fn) as a reward for guided sampling — any strategy, all
+# model envs, linux-64. No wheel matches torch 2.7.1, so it builds from source:
+# scikit-build-core/pybind11/packaging are PEP517 build deps; build isolation is
+# off (see [tool.pixi.pypi-options]) so nvcc sees the env's torch.
+[tool.pixi.feature.tmol]
+pypi-dependencies = {"tmol" = "*", "scikit-build-core" = ">=0.10", "pybind11" = ">=2.12", "packaging" = "*"}
+platforms = ["linux-64"]
+
+# tmol builds torch C++/CUDA extensions from source against the conda CUDA toolkit.
+# The cmake needs: the CUDA root at $CONDA_PREFIX/targets/<arch> (torch's legacy
+# FindCUDA looks there, not $CONDA_PREFIX); USE_SYSTEM_NVTX + the nvidia-nvtx include
+# dir (CUDA 12 replaced nvToolsExt with header-only NVTX3, shipped only by torch's
+# bundled nvidia-nvtx); and TMOL_DISABLE_WHEEL_FETCH to skip the sdist backend's
+# prebuilt-wheel probe. CMAKE_CUDA_ARCHITECTURES is passed via CMAKE_ARGS because
+# SKBUILD_CMAKE_DEFINE splits values on ';' and cannot carry an arch list.
+# CMAKE_BUILD_PARALLEL_LEVEL bounds concurrent nvcc to avoid OOM on limited builders.
+[tool.pixi.feature.tmol.activation.env]
+CUDACXX = "$CONDA_PREFIX/bin/nvcc"
+CUDA_PATH = "$CONDA_PREFIX/targets/x86_64-linux"
+TMOL_DISABLE_WHEEL_FETCH = "1"
+CMAKE_BUILD_PARALLEL_LEVEL = "6"
+CMAKE_ARGS = "-DCMAKE_CUDA_ARCHITECTURES=80;86"
+SKBUILD_CMAKE_DEFINE = "CUDA_TOOLKIT_ROOT_DIR=$CONDA_PREFIX/targets/x86_64-linux;CUDAToolkit_ROOT=$CONDA_PREFIX/targets/x86_64-linux;USE_SYSTEM_NVTX=ON;CMAKE_INCLUDE_PATH=$CONDA_PREFIX/lib/python3.12/site-packages/nvidia/nvtx/include"
+
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
 classifiers = [
@@ -128,14 +152,14 @@ gxx_linux-64 = ">=9,<13"
 [tool.pixi.environments]
 analysis = {features = ["analysis"]}
 analysis-dev = {features = ["analysis", "dev"]}
-boltz = {features = ["boltz"]}
-boltz-analysis = {features = ["boltz", "analysis"]}
-boltz-dev = {features = ["boltz", "dev"]}
+boltz = {features = ["boltz", "tmol"]}
+boltz-analysis = {features = ["boltz", "analysis", "tmol"]}
+boltz-dev = {features = ["boltz", "dev", "tmol"]}
 boltz-osx = {features = ["boltz-osx", "dev", "analysis"]}
-protenix = {features = ["protenix"]}
-protenix-dev = {features = ["protenix", "dev"]}
-rf3 = {features = ["rf3"]}
-rf3-dev = {features = ["rf3", "dev"]}
+protenix = {features = ["protenix", "tmol"]}
+protenix-dev = {features = ["protenix", "dev", "tmol"]}
+rf3 = {features = ["rf3", "tmol"]}
+rf3-dev = {features = ["rf3", "dev", "tmol"]}
 
 [tool.pixi.feature.protenix.pypi-options.dependency-overrides]
 rdkit = ">=2024.3.5,<2025.9"
@@ -145,6 +169,11 @@ rc-foundry = {editable = true, extras = ["rf3"], git = "https://github.com/k-chr
 
 [tool.pixi.pypi-dependencies]
 sampleworks = {editable = true, path = "."}
+
+# tmol has no PEP517 build backend on PyPI beyond a shim that expects torch at
+# build time; disable build isolation so it compiles against the env's torch.
+[tool.pixi.pypi-options]
+no-build-isolation = ["tmol"]
 
 # Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
 # caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins

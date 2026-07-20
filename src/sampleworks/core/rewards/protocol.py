@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable, TYPE_CHECKING
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 import einx
 import numpy as np
@@ -12,6 +12,18 @@ from sampleworks.utils.elements import elements_to_scattering_indices
 
 if TYPE_CHECKING:
     from biotite.structure import AtomArray, AtomArrayStack
+
+
+@runtime_checkable
+class PreparableRewardProtocol(Protocol):
+    """A reward with an optional one-time ``prepare`` hook.
+
+    Rewards that need the concrete model atom ordering (e.g. tmol builds a scatter
+    map from it) implement ``prepare``; the sampler calls it once before sampling.
+    Rewards without it (e.g. density fit) simply don't match this protocol.
+    """
+
+    def prepare(self, atom_array: Any) -> Any: ...
 
 
 @dataclass

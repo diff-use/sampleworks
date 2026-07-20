@@ -231,6 +231,11 @@ class GuidanceConfig:
     alignment_reverse_diffusion: bool | None = None
     recycling_steps: int | None = None
     num_diffusion_steps: int = 200
+    # Reward selection: "density" (experimental map fit) or "plausibility" (tmol beta2016
+    # energy prior). tmol_weight scales the plausibility energy; both are ignored in
+    # density mode. density/resolution are only required in density mode (see add_generic_args).
+    reward_type: str = "density"
+    tmol_weight: float = 1.0
 
     # DO NOT remove the **kwargs, it is for compatibility with argparse.
     def add_argument(self, name: str, default: Any = None, **kwargs):
@@ -329,6 +334,8 @@ class GuidanceConfig:
             protein=args.protein,
             structure=args.structure,
             density=args.density,
+            reward_type=getattr(args, "reward_type", "density"),
+            tmol_weight=getattr(args, "tmol_weight", 1.0),
             model=model,
             guidance_type=guidance_type,
             log_path=getattr(args, "log_path", None) or "",
@@ -413,7 +420,26 @@ class GuidanceConfig:
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     """Add CLI arguments shared by all models and guidance methods."""
     parser.add_argument("--structure", type=str, required=True, help="Input structure")
-    parser.add_argument("--density", type=str, required=True, help="Input density map")
+    parser.add_argument(
+        "--density",
+        type=str,
+        default=None,
+        help="Input density map (required for --reward-type density)",
+    )
+    parser.add_argument(
+        "--reward-type",
+        type=str,
+        default="density",
+        choices=["density", "plausibility", "composite"],
+        help="Reward: experimental density fit, tmol beta2016 plausibility energy, "
+        "or a weighted combination",
+    )
+    parser.add_argument(
+        "--tmol-weight",
+        type=float,
+        default=1.0,
+        help="Multiplier on the tmol plausibility energy (--reward-type plausibility)",
+    )
     parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
     parser.add_argument(
         "--log-path", type=str, default=None, help="Log file path (default: output-dir/run.log)"
@@ -428,8 +454,8 @@ def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--resolution",
         type=float,
-        required=True,
-        help="Map resolution in Angstroms (required for CCP4/MRC/MAP)",
+        default=None,
+        help="Map resolution in Angstroms (required for --reward-type density with CCP4/MRC/MAP)",
     )
     parser.add_argument("--device", type=str, default=None, help="Device (cuda/cpu, auto-detect)")
     parser.add_argument(
@@ -495,7 +521,11 @@ def add_pure_guidance_args(parser: argparse.ArgumentParser | GuidanceConfig):
         "--step-scaler-type",
         type=str,
         default="noisespace",
-        choices=["dataspace", "noisespace", "none"],
+        choices=[
+            "dataspace",
+            "noisespace",
+            "none",
+        ],
         help="Type of step scaler to use: dataspace (DataSpaceDPSScaler), noisespace "
         "(NoiseSpaceDPSScaler), or none (NoScalingScaler)",
     )

@@ -271,6 +271,90 @@ def get_reward_function_and_structure(
     return reward_function, structure
 
 
+def get_tmol_reward_and_structure(
+    structure_path: str | Path,
+    device: torch.device,
+    weight: float = 1.0,
+) -> tuple[Any, dict[str, Any]]:
+    """Load a structure and build the tmol physical-plausibility reward.
+
+    Mirrors :func:`get_reward_function_and_structure` but needs no experimental map:
+    the plausibility reward is a prior over chemistry, not a data likelihood. The
+    atom-order scatter map is built lazily in ``reward.prepare()`` (called by the
+    scaler once the model-order atom array is known), so it is not needed here.
+
+    Parameters
+    ----------
+    structure_path : str | Path
+        Path to the structure file (``.cif`` / ``.pdb``) to sample around.
+    device : torch.device
+        Device the tmol pose and score function run on.
+    weight : float, optional
+        Multiplier on the returned energy (default 1.0).
+
+    Returns
+    -------
+    tuple[TmolPlausibilityReward, dict]
+        The reward function and the parsed atomworks structure dict.
+    """
+    import tmol
+    from tmol.io.canonical_ordering import (
+        default_canonical_ordering,
+        default_packed_block_types,
+    )
+
+    from sampleworks.core.rewards.tmol_plausibility import TmolPlausibilityReward
+
+    logger.debug(f"Loading structure from {structure_path}")
+    safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
+    structure = parse(
+        safe_structure_path,
+        hydrogen_policy="remove",
+        add_missing_atoms=False,
+        ccd_mirror_path=None,
+    )
+    if str(safe_structure_path) != str(structure_path):
+        safe_structure_path.unlink()  # delete the temporary file if one was created
+
+    logger.info("Creating tmol plausibility reward function")
+    co = default_canonical_ordering()
+    pbt = default_packed_block_types(device)
+    sfxn = tmol.beta2016_score_function(device)
+    reward_function = TmolPlausibilityReward(co, pbt, sfxn, device, weight=weight)
+    return reward_function, structure
+
+
+def get_composite_reward_and_structure(
+    args,
+    device: torch.device,
+) -> tuple[Any, dict[str, Any]]:
+    """Build a CompositeReward = density fit + tmol plausibility, weighted.
+
+    Reuses the two single-reward constructors so we don't reimplement reward
+    setup; the density term needs a map(--density/--resolution)"""
+
+    from sampleworks.core.rewards.composite import CompositeReward
+
+    if args.density is None or args.resolution is None:
+        raise ValueError(
+            "--reward-type composite needs --density and --resolution for the density term."
+        )
+
+    density_reward, structure = get_reward_function_and_structure(
+        args.density,
+        device,
+        args.em,
+        args.loss_order,
+        args.resolution,
+        args.structure,
+    )
+    tmol_reward, _ = get_tmol_reward_and_structure(args.structure, device, weight=1.0)
+
+    weights = [1.0, getattr(args, "tmol_weight", 1.0)]
+    composite = CompositeReward([density_reward, tmol_reward], weights)
+    return composite, structure
+
+
 def save_everything(
     args: GuidanceConfig,
     losses: list[Any],
@@ -434,14 +518,30 @@ def _three_state_resolver(value: str | bool | None, default: bool) -> bool:
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     """Run one configured guidance trajectory and save its outputs."""
-    reward_function, structure = get_reward_function_and_structure(
-        args.density,  # str/path to a map file.
-        device,  # this needs to come from the global context, not the args object.
-        args.em,
-        args.loss_order,
-        args.resolution,
-        args.structure,  # path/string to a structure file.
-    )
+    # v1 reward selection (becomes a proper --reward flag later): "plausibility" uses the
+    # tmol beta2016 energy prior (no map needed); anything else falls back to density fit.
+    if getattr(args, "reward_type", "density") == "plausibility":
+        reward_function, structure = get_tmol_reward_and_structure(
+            args.structure,
+            device,
+            weight=getattr(args, "tmol_weight", 1.0),
+        )
+    elif getattr(args, "reward_type", "density") == "composite":
+        reward_function, structure = get_composite_reward_and_structure(args, device)
+    else:
+        if args.density is None or args.resolution is None:
+            raise ValueError(
+                "--reward-type density requires --density and --resolution "
+                "(they are optional only for --reward-type plausibility)."
+            )
+        reward_function, structure = get_reward_function_and_structure(
+            args.density,  # str/path to a map file.
+            device,  # this needs to come from the global context, not the args object.
+            args.em,
+            args.loss_order,
+            args.resolution,
+            args.structure,  # path/string to a structure file.
+        )
 
     # Determine model type from wrapper class name
     wrapper_class_name = model_wrapper.__class__.__name__
