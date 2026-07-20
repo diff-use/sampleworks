@@ -155,6 +155,7 @@ src/sampleworks/
 ├── models/                # Generative model wrappers (Boltz, Protenix, RF3)
 ├── metrics/               # Quality metrics (LDDT, sidechain)
 ├── eval/                  # Evaluation utilities
+├── synthetic/             # Synthetic data generation
 ├── data/                  # Reference data (protein configs)
 ├── runs/                  # `sampleworks-runs` CLI + TOML preset orchestrator
 └── utils/                 # Shared utilities

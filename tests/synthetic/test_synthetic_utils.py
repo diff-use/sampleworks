@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from sampleworks.eval.synthetic_utils import resolve_parallel_jobs
+from sampleworks.synthetic.synthetic_utils import resolve_parallel_jobs
 
 
 @pytest.mark.parametrize("n_jobs", [-2, -1, 2, 8])
