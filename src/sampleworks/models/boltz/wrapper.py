@@ -314,8 +314,6 @@ class BoltzConfig:
         Output directory for processed Boltz files.
     num_workers : int
         Number of parallel workers for preprocessing.
-    ensemble_size : int
-        Number of samples to generate (batch dimension of x_init).
     recycling_steps : int
         Number of recycling steps to perform during featurization Pairformer pass.
 
@@ -323,7 +321,6 @@ class BoltzConfig:
 
     out_dir: str | Path | None = None
     num_workers: int = 0
-    ensemble_size: int = 1
     recycling_steps: int = 3
 
 
@@ -332,7 +329,6 @@ def process_structure_for_boltz(
     *,
     out_dir: str | Path | None = None,
     num_workers: int = 0,
-    ensemble_size: int = 1,
     recycling_steps: int | None = 3,
 ) -> dict:
     """Annotate an Atomworks structure with Boltz-specific configuration.
@@ -346,8 +342,6 @@ def process_structure_for_boltz(
         Defaults to structure metadata ID or "boltz_output".
     num_workers : int
         Number of parallel workers for preprocessing.
-    ensemble_size : int
-        Number of samples to generate (batch dimension of x_init).
     recycling_steps : int | None
         Number of recycling steps to perform during featurization Pairformer pass.
         Will set to 3 if None.
@@ -372,7 +366,6 @@ def process_structure_for_boltz(
     config = BoltzConfig(
         out_dir=out_dir or structure.get("metadata", {}).get("id", "boltz_output"),
         num_workers=num_workers,
-        ensemble_size=ensemble_size,
         recycling_steps=recycling_steps,
     )
     return {**structure, "_boltz_config": config}
@@ -649,7 +642,7 @@ class Boltz2Wrapper:
     def featurize(self, structure: dict) -> GenerativeModelInput[BoltzConditioning]:
         """From an Atomworks structure, calculate Boltz-2 input features.
 
-        Runs Pairformer pass and initializes x_init from prior distribution.
+        Runs the Pairformer pass to produce conditioning features.
 
         NOTE: Has side effect of creating Boltz input YAML and initial processed files with
         create_boltz_input_from_structure() and the data module setup.
@@ -665,7 +658,7 @@ class Boltz2Wrapper:
         Returns
         -------
         GenerativeModelInput[BoltzConditioning]
-            Model input with x_init and Pairformer conditioning.
+            Model input with Pairformer conditioning.
         """
         self.cached_representations.clear()
 
@@ -681,8 +674,6 @@ class Boltz2Wrapper:
             else base_dir
         )
         num_workers = config.num_workers
-        ensemble_size = config.ensemble_size
-
         input_path = create_boltz_input_from_structure(  # side effect of creating Boltz input YAML
             structure,
             out_dir,
@@ -721,32 +712,7 @@ class Boltz2Wrapper:
             model_atom_array=model_atom_array,
         )
 
-        # Use atom count from Boltz featurization in atom_pad_mask (via conditioning) to ensure
-        # consistency between x_init shape and atom_pad_mask used in step(). Note: x_init=None is
-        # a temporary placeholder; initialize_from_prior derives shape from conditioning.
-        feats = pairformer_out["feats"]
-        atom_mask = cast(Tensor, feats.get("atom_pad_mask"))
-        num_atoms = int(atom_mask.sum())
-
-        # x_init should be the reference coordinates for alignment purposes.
-        if true_atom_array is not None and len(true_atom_array) == num_atoms:
-            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
-        else:
-            # TODO: The temp features situation is not ideal and I think we can do better probably
-            # not sure exactly what the best way to handle x_init is, should define it a bit better
-            # most likely
-            logger.warning(
-                "True structure not available or atom count mismatch; initializing "
-                "x_init from prior. This means align_to_input will not work properly,"
-                " and reward functions dependent on this won't be accurate."
-            )
-            temp_features = GenerativeModelInput[BoltzConditioning](
-                x_init=cast(Any, None), conditioning=conditioning
-            )
-            x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
-
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def _pairformer_pass(
         self, features: dict[str, Any], recycling_steps: int = 3
@@ -951,8 +917,7 @@ class Boltz2Wrapper:
         if shape is not None:
             if len(shape) != 2 or shape[1] != 3:
                 raise ValueError("shape must be of the form (num_atoms, 3)")
-            x_init = torch.randn((batch_size, *shape), device=self.device)
-            return x_init
+            return torch.randn((batch_size, *shape), device=self.device)
         if features is None or features.conditioning is None:
             raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
@@ -963,9 +928,7 @@ class Boltz2Wrapper:
 
         num_atoms = int(atom_mask.sum())
 
-        x_init = torch.randn((batch_size, num_atoms, 3), device=self.device)
-
-        return x_init
+        return torch.randn((batch_size, num_atoms, 3), device=self.device)
 
 
 class Boltz1Wrapper:
@@ -1109,7 +1072,7 @@ class Boltz1Wrapper:
     def featurize(self, structure: dict) -> GenerativeModelInput[BoltzConditioning]:
         """From an Atomworks structure, calculate Boltz-1 input features.
 
-        Runs Pairformer pass and initializes x_init from prior distribution.
+        Runs the Pairformer pass to produce conditioning features.
 
         NOTE: Has side effect of creating Boltz input YAML and initial processed files with
         create_boltz_input_from_structure() and the data module setup.
@@ -1125,7 +1088,7 @@ class Boltz1Wrapper:
         Returns
         -------
         GenerativeModelInput[BoltzConditioning]
-            Model input with x_init and Pairformer conditioning.
+            Model input with Pairformer conditioning.
         """
         self.cached_representations.clear()
 
@@ -1141,8 +1104,6 @@ class Boltz1Wrapper:
             else base_dir
         )
         num_workers = config.num_workers
-        ensemble_size = config.ensemble_size
-
         input_path = create_boltz_input_from_structure(
             structure,
             out_dir,
@@ -1180,31 +1141,7 @@ class Boltz1Wrapper:
             model_atom_array=model_atom_array,
         )
 
-        # x_init should be the reference coordinates for alignment purposes.
-        # The guidance scalers call initialize_from_prior() separately for starting noise.
-        # Use atom count from Boltz featurization to ensure shape consistency with model.
-        feats = pairformer_out["feats"]
-        atom_mask = cast(Tensor, feats.get("atom_pad_mask"))
-        num_atoms = int(atom_mask.sum())
-
-        if true_atom_array is not None and len(true_atom_array) == num_atoms:
-            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
-        else:
-            # TODO: The temp features situation is not ideal and I think we can do better probably
-            # not sure exactly what the best way to handle x_init is, should define it a bit better
-            # most likely
-            logger.warning(
-                "True structure not available or atom count mismatch; initializing "
-                "x_init from prior. This means align_to_input will not work properly,"
-                " and reward functions dependent on this won't be accurate."
-            )
-            temp_features = GenerativeModelInput[BoltzConditioning](
-                x_init=cast(Any, None), conditioning=conditioning
-            )
-            x_init = self.initialize_from_prior(batch_size=ensemble_size, features=temp_features)
-
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def step(
         self,
@@ -1312,8 +1249,7 @@ class Boltz1Wrapper:
         if shape is not None:
             if len(shape) != 2 or shape[1] != 3:
                 raise ValueError("shape must be of the form (num_atoms, 3)")
-            x_init = torch.randn((batch_size, *shape), device=self.device)
-            return x_init
+            return torch.randn((batch_size, *shape), device=self.device)
         if features is None or features.conditioning is None:
             raise ValueError("Either features or shape must be provided to initialize_from_prior()")
 
@@ -1324,9 +1260,7 @@ class Boltz1Wrapper:
 
         num_atoms = int(atom_mask.sum())
 
-        x_init = torch.randn((batch_size, num_atoms, 3), device=self.device)
-
-        return x_init
+        return torch.randn((batch_size, num_atoms, 3), device=self.device)
 
     def _pairformer_pass(
         self, features: dict[str, Any], recycling_steps: int = 3

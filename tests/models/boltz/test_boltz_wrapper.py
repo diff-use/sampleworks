@@ -24,7 +24,6 @@ from sampleworks.models.boltz.wrapper import (
 )
 from sampleworks.utils.guidance_constants import StructurePredictor
 from tests.conftest import get_fixture_name_for_wrapper_type, STRUCTURES
-from torch import Tensor
 
 
 BOLTZ_WRAPPER_TYPES = [StructurePredictor.BOLTZ_1, StructurePredictor.BOLTZ_2]
@@ -113,7 +112,6 @@ class TestAnnotateStructureForBoltz:
         result = process_structure_for_boltz(structure_6b8x, out_dir=temp_output_dir)
         config = result["_boltz_config"]
         assert config.num_workers == 0
-        assert config.ensemble_size == 1
         assert config.recycling_steps == 3
 
     def test_annotate_custom_values(self, structure_6b8x: dict, temp_output_dir: Path):
@@ -121,12 +119,10 @@ class TestAnnotateStructureForBoltz:
             structure_6b8x,
             out_dir=temp_output_dir,
             num_workers=4,
-            ensemble_size=2,
             recycling_steps=5,
         )
         config = result["_boltz_config"]
         assert config.num_workers == 4
-        assert config.ensemble_size == 2
         assert config.recycling_steps == 5
 
     def test_annotate_out_dir_from_metadata(self, structure_6b8x: dict):
@@ -143,19 +139,16 @@ class TestBoltzConfig:
         config = BoltzConfig()
         assert config.out_dir is None
         assert config.num_workers == 0
-        assert config.ensemble_size == 1
         assert config.recycling_steps == 3
 
     def test_boltz_config_custom_values(self, temp_output_dir: Path):
         config = BoltzConfig(
             out_dir=temp_output_dir,
             num_workers=4,
-            ensemble_size=5,
             recycling_steps=2,
         )
         assert config.out_dir == temp_output_dir
         assert config.num_workers == 4
-        assert config.ensemble_size == 5
         assert config.recycling_steps == 2
 
 
@@ -256,9 +249,8 @@ class TestBoltzWrapperFeaturize:
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
         assert isinstance(features, GenerativeModelInput)
-        assert features.x_init is not None
         assert isinstance(features.conditioning, BoltzConditioning)
-        assert torch.isfinite(torch.as_tensor(features.x_init)).all()
+        assert not hasattr(features, "x_init")
 
     def test_featurize_creates_data_module(
         self,
@@ -273,22 +265,6 @@ class TestBoltzWrapperFeaturize:
         wrapper.featurize(annotated)
         assert hasattr(wrapper, "data_module")
         assert wrapper.data_module is not None
-
-    def test_featurize_with_ensemble_size(
-        self,
-        wrapper_type: StructurePredictor,
-        structure_fixture: str,
-        temp_output_dir: Path,
-        request,
-    ):
-        wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
-        structure = request.getfixturevalue(structure_fixture)
-        ensemble_size = 3
-        annotated = process_structure_for_boltz(
-            structure, out_dir=temp_output_dir, ensemble_size=ensemble_size
-        )
-        features = wrapper.featurize(annotated)
-        assert features.x_init.shape[0] == ensemble_size
 
 
 @pytest.mark.gpu
@@ -309,10 +285,10 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
         t = torch.tensor([1.0])
-        result = wrapper.step(x_init, t, features=features)
+        result = wrapper.step(state, t, features=features)
 
         assert torch.is_tensor(result)
 
@@ -327,12 +303,12 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
         t = torch.tensor([1.0])
-        result = wrapper.step(x_init, t, features=features)
+        result = wrapper.step(state, t, features=features)
 
-        assert result.shape == x_init.shape
+        assert result.shape == state.shape
         assert result.shape[-1] == 3
 
     def test_step_with_high_t(
@@ -346,13 +322,13 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
         t = torch.tensor([160.0])
-        result = wrapper.step(x_init, t, features=features)
+        result = wrapper.step(state, t, features=features)
 
         assert torch.is_tensor(result)
-        assert result.shape == x_init.shape
+        assert result.shape == state.shape
 
     def test_step_with_low_t(
         self,
@@ -365,13 +341,13 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
         t = torch.tensor([0.01])
-        result = wrapper.step(x_init, t, features=features)
+        result = wrapper.step(state, t, features=features)
 
         assert torch.is_tensor(result)
-        assert result.shape == x_init.shape
+        assert result.shape == state.shape
 
     def test_step_with_float_t(
         self,
@@ -384,9 +360,9 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
-        result = wrapper.step(x_init, 1.0, features=features)
+        result = wrapper.step(state, 1.0, features=features)
 
         assert torch.is_tensor(result)
 
@@ -401,11 +377,11 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
         t = torch.tensor([1.0])
         with pytest.raises(ValueError, match="features"):
-            wrapper.step(x_init, t, features=None)
+            wrapper.step(state, t, features=None)
 
     def test_step_denoises_input(
         self,
@@ -418,12 +394,12 @@ class TestBoltzWrapperStep:
         structure = request.getfixturevalue(structure_fixture)
         annotated = process_structure_for_boltz(structure, out_dir=temp_output_dir)
         features = wrapper.featurize(annotated)
-        x_init = cast(Tensor, features.x_init)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
 
         t = torch.tensor([1.0])
-        result = wrapper.step(x_init, t, features=features)
+        result = wrapper.step(state, t, features=features)
 
-        assert not torch.allclose(result, x_init)
+        assert not torch.allclose(result, state)
 
 
 @pytest.mark.gpu
@@ -545,14 +521,14 @@ class TestBoltzWrappersEndToEnd:
         assert isinstance(features, GenerativeModelInput)
         assert isinstance(features.conditioning, BoltzConditioning)
 
-        x_init = wrapper.initialize_from_prior(batch_size=2, features=features)
-        assert torch.is_tensor(x_init)
-        assert x_init.shape[0] == 2
+        state = wrapper.initialize_from_prior(batch_size=2, features=features)
+        assert torch.is_tensor(state)
+        assert state.shape[0] == 2
 
         t = torch.tensor([1.0])
-        output = wrapper.step(x_init, t, features=features)
+        output = wrapper.step(state, t, features=features)
         assert torch.is_tensor(output)
-        assert output.shape == x_init.shape
+        assert output.shape == state.shape
         assert torch.isfinite(output).all()
 
     def test_multiple_step_calls(

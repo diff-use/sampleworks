@@ -510,7 +510,7 @@ class TestTrajectoryScalerMatrixMock:
         "trajectory_scaler_type", get_all_trajectory_scalers(), ids=lambda s: s.value
     )
     @pytest.mark.parametrize("sampler_type", get_all_trajectory_samplers(), ids=lambda s: s.value)
-    def test_trajectory_scaler_returns_guidance_output(
+    def test_trajectory_scaler_initializes_from_prior_and_returns_guidance_output(
         self,
         trajectory_scaler_type: TrajectoryScalers,
         sampler_type: TrajectorySamplers,
@@ -520,7 +520,7 @@ class TestTrajectoryScalerMatrixMock:
         mock_step_scaler: MockStepScaler,
         mock_gradient_reward: MockGradientRewardFunction,
     ):
-        """TrajectoryScaler.sample() returns valid GuidanceOutput."""
+        """TrajectoryScaler.sample() initializes from the prior and returns valid output."""
         sampler = create_sampler_from_type(sampler_type, device=device)
         num_steps = 5
         ensemble_size = 2
@@ -546,6 +546,9 @@ class TestTrajectoryScalerMatrixMock:
         assert result.trajectory is not None
         assert len(result.trajectory) == num_steps
         assert torch.isfinite(torch.as_tensor(result.final_state)).all()
+        assert len(mock_wrapper.prior_initialization_features) == 1
+        assert mock_wrapper.prior_initialization_features[0] is not None
+        assert not hasattr(mock_wrapper.prior_initialization_features[0], "x_init")
 
     @pytest.mark.parametrize(
         "trajectory_scaler_type", get_all_trajectory_scalers(), ids=lambda s: s.value
@@ -929,7 +932,7 @@ class TestRealWrapperSamplerMatrix:
         temp_output_dir,
         request,
     ):
-        """featurize() should produce valid GenerativeModelInput."""
+        """featurize() should produce valid conditioning for prior initialization."""
         wrapper = request.getfixturevalue(get_fixture_name_for_wrapper_type(wrapper_type))
         structure = request.getfixturevalue(structure_fixture)
 
@@ -937,8 +940,8 @@ class TestRealWrapperSamplerMatrix:
         features = wrapper.featurize(annotated)
 
         assert features is not None
-        assert features.x_init is not None
-        assert features.x_init.ndim >= 2
+        assert features.conditioning is not None
+        assert not hasattr(features, "x_init")
 
     def test_single_step_runs(
         self,
