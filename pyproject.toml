@@ -16,7 +16,7 @@ analysis = [
   "scikit-learn",
   "seaborn"
 ]
-dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru", "python-semantic-release"]
+dev = ["pytest", "pytest-cov", "mypy", "prek", "ty==0.0.39", "ruff", "pytest-loguru", "python-semantic-release"]
 test = ["pytest", "pytest-cov", "pytest-loguru"]
 
 [tool.pixi.feature.boltz]
