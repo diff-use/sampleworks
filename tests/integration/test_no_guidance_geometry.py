@@ -52,9 +52,7 @@ class TestNoGuidanceGeometry:
         structure = request.getfixturevalue(structure_fixture)
         device = wrapper.device if hasattr(wrapper, "device") else torch.device("cpu")
 
-        annotated = annotate_structure_for_wrapper_type(
-            wrapper_type, structure, temp_output_dir, ensemble_size=1
-        )
+        annotated = annotate_structure_for_wrapper_type(wrapper_type, structure, temp_output_dir)
         features = wrapper.featurize(annotated)
 
         sampler = AF3EDMSampler(

@@ -86,7 +86,7 @@ class MockFlowModelWrapper:
     """Mock FlowModelWrapper that satisfies the protocol without a real model.
 
     This mock provides deterministic behavior for testing:
-    - featurize() returns a GenerativeModelInput with random but reproducible data
+    - featurize() returns a GenerativeModelInput with conditioning data
     - step() returns a slightly denoised version of the input
     - initialize_from_prior() returns random noise
 
@@ -110,12 +110,12 @@ class MockFlowModelWrapper:
         self.num_atoms = num_atoms
         self.device = device or torch.device("cpu")
         self.target = target
+        self.prior_initialization_features: list[GenerativeModelInput[MockConditioning] | None] = []
 
     def featurize(self, structure: dict, **kwargs: Any) -> GenerativeModelInput[MockConditioning]:
         """Featurize a structure dict into model inputs."""
-        x_init = torch.randn(1, self.num_atoms, 3, device=self.device)
         conditioning = MockConditioning(sequence_length=10, num_atoms=self.num_atoms)
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def step(
         self,
@@ -147,13 +147,14 @@ class MockFlowModelWrapper:
         shape: tuple[int, ...] | None = None,
     ) -> Float[Tensor, "batch atoms 3"]:
         """Initialize coordinates from prior distribution (random noise)."""
+        self.prior_initialization_features.append(features)
         if features is None and shape is None:
             raise ValueError("Either features or shape must be provided")
         if shape is not None:
             return torch.randn(batch_size, *shape, device=self.device)
-        assert features is not None
-        num_atoms = features.x_init.shape[-2]
-        return torch.randn(batch_size, num_atoms, 3, device=self.device)
+        if features is None or features.conditioning is None:
+            raise ValueError("features with conditioning required")
+        return torch.randn(batch_size, features.conditioning.num_atoms, 3, device=self.device)
 
 
 class MismatchCaseWrapper:
@@ -178,13 +179,12 @@ class MismatchCaseWrapper:
 
     def featurize(self, structure: dict, **kwargs: Any) -> GenerativeModelInput[MockConditioning]:
         """Return conditioning with case model atom array for reconciliation."""
-        x_init = torch.randn(1, self.n_model, 3, device=self.device)
         conditioning = MockConditioning(
             sequence_length=10,
             num_atoms=self.n_model,
             model_atom_array=self.case.model_atom_array,
         )
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def step(
         self,

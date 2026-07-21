@@ -458,15 +458,12 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     if "Protenix" in wrapper_class_name:
         from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
 
-        structure = annotate_structure_for_protenix(
-            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
-        )
+        structure = annotate_structure_for_protenix(structure, recycling_steps=recycling_steps)
     elif "RF3" in wrapper_class_name:
         from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
 
         structure = annotate_structure_for_rf3(
             structure,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
             msa_path=getattr(args, "msa_path", None),
             disable_chiral_features=getattr(args, "disable_chiral_features", False),
@@ -481,7 +478,6 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = process_structure_for_boltz(
             structure,
             out_dir=args.output_dir,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
         )
     else:
