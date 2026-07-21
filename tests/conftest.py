@@ -5,6 +5,7 @@ import inspect
 import sys
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from site import getsitepackages
 from typing import Any, TYPE_CHECKING
@@ -12,7 +13,6 @@ from typing import Any, TYPE_CHECKING
 import numpy as np
 import pytest
 import torch
-
 
 _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
@@ -35,7 +35,7 @@ from sampleworks.utils.guidance_constants import (
 from sampleworks.utils.imports import (
     BOLTZ_AVAILABLE,
     PROTENIX_AVAILABLE,
-    RF3_AVAILABLE,
+    RF3_AVAILABLE, PROTPARDELLE_AVAILABLE,
 )
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     )
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
     from sampleworks.models.rf3.wrapper import RF3Wrapper
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
 
 if BOLTZ_AVAILABLE:
     from sampleworks.models.boltz.wrapper import (
@@ -59,6 +60,9 @@ if BOLTZ_AVAILABLE:
 
 if PROTENIX_AVAILABLE:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
+
+if PROTPARDELLE_AVAILABLE:
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
 
 if RF3_AVAILABLE:
     from sampleworks.models.rf3.wrapper import RF3Wrapper
@@ -663,6 +667,33 @@ def rf3_wrapper(rf3_checkpoint_path: Path):  # will run on Fabric device
         pytest.skip("RF3 dependencies not installed in this environment")
     return RF3Wrapper(
         checkpoint_path=rf3_checkpoint_path,
+    )
+
+
+@pytest.fixture(scope="session")
+def protpardelle_checkpoint_path() -> Path:
+    if not PROTPARDELLE_AVAILABLE:
+        pytest.skip("Protpardelle dependencies not installed in this environment")
+    import os
+    # where we will eventually install the checkpoint on our containers.
+    builtin_path = Path(getsitepackages()[0]) / "release_data"/ "protpardelle" / "model_params"
+
+    # if the user specifies a path to the model_params directory, use that instead.
+    path = Path(os.environ.get("PROTPARDELLE_MODEL_PARAMS", builtin_path))
+    path = path / "weights/cc89_epoch415.pth"
+    return path
+
+
+@pytest.fixture(scope="session")
+def protpardelle_wrapper(protpardelle_checkpoint_path: Path, device: torch.device):
+    if not PROTPARDELLE_AVAILABLE:
+        pytest.skip("Protpardelle dependencies not installed in this environment")
+
+    config_path = files("sampleworks.data").joinpath("cc89_epoch415.yaml")
+    return ProtpardelleWrapper(
+        config_path=str(Path(config_path).expanduser().resolve()),
+        checkpoint_path=protpardelle_checkpoint_path,
+        device=device,
     )
 
 
