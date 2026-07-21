@@ -32,6 +32,35 @@ platforms = ["osx-arm64"]
 pypi-dependencies = {"protenix" = "*", "einx" = "*", "triton" = "*"}
 platforms = ["linux-64"]
 
+[tool.pixi.feature.protpardelle]
+platforms = ["linux-64", "osx-arm64"]
+
+[tool.pixi.feature.protpardelle.dependencies]
+biopython = "*"
+einops = "*"
+huggingface_hub = "*"
+hydra-core = "*"
+jupyter = "*"
+numpy = ">=1.25.0,<2.0"
+omegaconf = "*"
+pandas = "==2.3.1"
+prody = "*"
+pyyaml = "*"
+scipy = "*"
+tqdm = "*"
+typer = "*"
+
+[tool.pixi.feature.protpardelle.pypi-dependencies]
+protpardelle = {git = "https://github.com/ProteinDesignLab/protpardelle-1c.git", rev = "ee378400f25b801fa481028000f9060183d7fb4c"}
+torch = ">=2.6.0,<2.8"
+biotite = "*"
+dm-tree = "*"
+jaxtyping = "*"
+ml_collections = "*"
+modelcif = "*"
+transformers = "*"
+wandb = "*"
+
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
 classifiers = [
@@ -134,6 +163,8 @@ boltz-dev = {features = ["boltz", "dev"]}
 boltz-osx = {features = ["boltz-osx", "dev", "analysis"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
+protpardelle = {features = ["protpardelle"]}
+protpardelle-dev = {features = ["protpardelle", "dev"]}
 rf3 = {features = ["rf3"]}
 rf3-dev = {features = ["rf3", "dev"]}
 
@@ -170,10 +201,10 @@ cmd = "pytest -m gpu"
 # depends-on/alias mechanism only works within a single environment.
 # This continues past failures, exits 1 if any env failed.
 [tool.pixi.tasks.test-all]
-cmd = "f=0; pixi run -e boltz-dev all-tests || f=1; pixi run -e protenix-dev all-tests || f=1; pixi run -e rf3-dev all-tests || f=1; exit $f"
+cmd = "f=0; pixi run -e boltz-dev all-tests || f=1; pixi run -e protenix-dev all-tests || f=1; pixi run -e rf3-dev all-tests || f=1; pixi run -e protpardelle-dev all-tests || f=1; exit $f"
 
 [tool.pixi.tasks.test-fast]
-cmd = "f=0; pixi run -e boltz-dev tests || f=1; pixi run -e protenix-dev tests || f=1; pixi run -e rf3-dev tests || f=1; exit $f"
+cmd = "f=0; pixi run -e boltz-dev tests || f=1; pixi run -e protenix-dev tests || f=1; pixi run -e rf3-dev tests || f=1; pixi run -e protpardelle-dev tests || f=1; exit $f"
 
 # NOTE: if new model environment is added, we need new entries here
 # Per-env: pixi run -e rf3-dev tests "-k integration"

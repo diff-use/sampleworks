@@ -104,6 +104,7 @@ RUN --mount=type=cache,target=/root/.cache/pixi \
     pixi install -e boltz --frozen && \
     pixi install -e protenix --frozen && \
     pixi install -e rf3 --frozen && \
+    pixi install -e protpardelle --frozen && \
     pixi install -e analysis --frozen
 
 # A GPU is not required to build the image. Pre-compile CUDA extensions only when
