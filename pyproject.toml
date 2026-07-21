@@ -47,12 +47,12 @@ pandas = "==2.3.1"
 prody = "*"
 pyyaml = "*"
 scipy = "*"
-pytorch = ">=2.6.0,<2.8"
 tqdm = "*"
 typer = "*"
 
 [tool.pixi.feature.protpardelle.pypi-dependencies]
 protpardelle = {git = "https://github.com/ProteinDesignLab/protpardelle-1c.git", rev = "ee378400f25b801fa481028000f9060183d7fb4c"}
+torch = ">=2.6.0,<2.8"
 biotite = "*"
 dm-tree = "*"
 jaxtyping = "*"
@@ -60,9 +60,6 @@ ml_collections = "*"
 modelcif = "*"
 transformers = "*"
 wandb = "*"
-
-[tool.pixi.feature.protpardelle.pypi-options.dependency-overrides]
-pandas = "==2.3.1"
 
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
@@ -204,10 +201,10 @@ cmd = "pytest -m gpu"
 # depends-on/alias mechanism only works within a single environment.
 # This continues past failures, exits 1 if any env failed.
 [tool.pixi.tasks.test-all]
-cmd = "f=0; pixi run -e boltz-dev all-tests || f=1; pixi run -e protenix-dev all-tests || f=1; pixi run -e rf3-dev all-tests || f=1; exit $f"
+cmd = "f=0; pixi run -e boltz-dev all-tests || f=1; pixi run -e protenix-dev all-tests || f=1; pixi run -e rf3-dev all-tests || f=1; pixi run -e protpardelle-dev all-tests || f=1; exit $f"
 
 [tool.pixi.tasks.test-fast]
-cmd = "f=0; pixi run -e boltz-dev tests || f=1; pixi run -e protenix-dev tests || f=1; pixi run -e rf3-dev tests || f=1; exit $f"
+cmd = "f=0; pixi run -e boltz-dev tests || f=1; pixi run -e protenix-dev tests || f=1; pixi run -e rf3-dev tests || f=1; pixi run -e protpardelle-dev tests || f=1; exit $f"
 
 # NOTE: if new model environment is added, we need new entries here
 # Per-env: pixi run -e rf3-dev tests "-k integration"
