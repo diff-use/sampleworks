@@ -87,8 +87,14 @@ class TestFlowModelWrapperProtocol:
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
+    @pytest.mark.parametrize("batch_size", [1, 2])
     def test_step_returns_tensor(
-        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
+        self,
+        wrapper_info: ComponentInfo,
+        structure_fixture: str,
+        batch_size: int,
+        temp_output_dir,
+        request,
     ):
         """Test step(x_t, t, features) returns coordinates tensor."""
         fixture_name = get_fixture_name_for_wrapper(wrapper_info)
@@ -98,8 +104,8 @@ class TestFlowModelWrapperProtocol:
         annotated = annotate_structure_for_wrapper(wrapper_info, structure, temp_output_dir)
         features = wrapper.featurize(annotated)
 
-        t = torch.tensor([1.0])
-        state = wrapper.initialize_from_prior(batch_size=1, features=features)
+        t = torch.ones(batch_size)
+        state = wrapper.initialize_from_prior(batch_size=batch_size, features=features)
         result = wrapper.step(state, t, features=features)
 
         assert torch.is_tensor(result), (
@@ -111,6 +117,10 @@ class TestFlowModelWrapperProtocol:
         assert result.shape == state.shape, (
             f"{wrapper_info.name}.step output shape {result.shape} != input shape {state.shape}"
         )
+        assert result.shape[0] == batch_size, (
+            f"{wrapper_info.name}.step output batch should be {batch_size}, got {result.shape[0]}"
+        )
+        assert torch.isfinite(result).all(), f"{wrapper_info.name}.step returned non-finite values"
 
     @pytest.mark.gpu
     @pytest.mark.slow
