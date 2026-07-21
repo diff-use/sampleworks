@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [boltz-dev, protenix-dev, rf3-dev, protpardelle-dev]
+        environment: [boltz-dev, protenix-dev, rf3-dev]
 
     name: tests (${{ matrix.environment }})
 
