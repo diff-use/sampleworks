@@ -525,10 +525,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     elif "Protpardelle" in wrapper_class_name:
         from sampleworks.models.protpardelle.wrapper import annotate_structure_for_protpardelle
 
-        structure = annotate_structure_for_protpardelle(
-            structure,
-            ensemble_size=args.ensemble_size,
-        )
+        structure = annotate_structure_for_protpardelle(structure)
         edm_sampler_kwargs = {
             "s_max": 80,
             "s_min": 0.001,

@@ -75,7 +75,7 @@ class ProtpardelleConditioning:
         ``batch x N x 3``), the residue position ``0..L-1`` that atom belongs to.
         Together with :attr:`atom37_atom_index` this maps the flat coordinate
         tensor into the model's ``batch x L x 37 x 3`` atom37 layout (see
-        :meth:`ProtpardelleWrapper._convert_to_atom37`). Shared across the batch
+        :func:`_convert_to_atom37`). Shared across the batch
         (a single input structure), so it carries no batch dimension.
     atom37_atom_index : Int[Tensor, "atoms"]
         For each of the ``N`` flat atoms, the atom37 slot ``0..36`` it occupies,
@@ -128,40 +128,33 @@ class ProtpardelleConditioning:
 class ProtpardelleConfig:
     """Configuration for Protpardelle featurization.
 
-    The denoising loop is driven by the sampleworks sampler (``AF3EDMSampler``),
-    which owns the schedule, stochasticity, and step scaling. The only setting
-    this wrapper reads is therefore the ensemble size.
-
-    Attributes
-    ----------
-    ensemble_size : int
-        Number of structures to sample for the input sequence (batch dim). Default 8.
+    Currently empty. The sampleworks trajectory scaler owns all sampling
+    controls (ensemble size, schedule, stochasticity, step scaling), and
+    featurization is fully determined by the input structure, so this config
+    carries no fields. It is retained as this model's config type — mirroring
+    the other wrappers — so it can gain fields in the future without changing
+    the featurization interface.
     """
 
-    ensemble_size: int = 8
 
-
-def annotate_structure_for_protpardelle(
-    structure: dict,
-    *,
-    ensemble_size: int = 8,
-) -> dict:
+def annotate_structure_for_protpardelle(structure: dict) -> dict:
     """Annotate an Atomworks structure with Protpardelle-specific configuration.
+
+    Retained for parity with the other model wrappers (and for future config
+    fields); the current :class:`ProtpardelleConfig` carries no settings, so this
+    is presently a structural no-op.
 
     Parameters
     ----------
     structure : dict
         Atomworks structure dictionary.
-    ensemble_size : int
-        See :class:`ProtpardelleConfig`.
 
     Returns
     -------
     dict
         Structure dict with a ``"_protpardelle_config"`` key added.
     """
-    config = ProtpardelleConfig(ensemble_size=ensemble_size)
-    return {**structure, "_protpardelle_config": config}
+    return {**structure, "_protpardelle_config": ProtpardelleConfig()}
 
 
 def extract_protein_sequences(structure: dict) -> list[str]:
@@ -240,6 +233,185 @@ def _protein_chain_ids(structure: dict) -> list[str]:
     ]
 
 
+def _atom37_indices_from_atom_array(
+    atom_array,
+    *,
+    device: torch.device | str | None = None,
+) -> tuple[Int[Tensor, " atoms"], Int[Tensor, " atoms"]]:
+    """Derive per-atom atom37 destination indices from an Atomworks atom array.
+
+    For each atom in ``atom_array`` (the order the sampler's flat ``x_t``
+    follows), computes the residue position ``0..L-1`` and the atom37 slot
+    ``0..36`` (``residue_constants.atom_order[atom_name]``). This mirrors how
+    :func:`protpardelle.data.pdb_io.read_pdb` scatters atoms into the per-residue
+    ``pos`` array of shape ``(37, 3)``.
+
+    The returned maps define the canonical *input* atom order; feeding them to
+    :func:`_convert_to_atom37` then :func:`_convert_atom37_to_flat` is an
+    order-preserving round trip.
+
+    Parameters
+    ----------
+    atom_array : biotite.structure.AtomArray
+        Single-model atom array with ``atom_name`` / ``res_id`` / ``chain_id``
+        annotations (a single frame; stacks are reduced to frame 0 upstream).
+    device : torch.device | str | None
+        Device for the returned tensors. Defaults to CPU.
+
+    Returns
+    -------
+    tuple[Int[Tensor, "atoms"], Int[Tensor, "atoms"]]
+        ``(atom37_residue_index, atom37_atom_index)``, both ``long`` tensors of
+        length ``N``.
+
+    Raises
+    ------
+    ValueError
+        If any atom name is not a recognized atom37 atom type, which would
+        break the one-to-one correspondence with ``x_t``.
+    """
+    atom_names = np.asarray(atom_array.atom_name)
+    atom37_names = np.asarray(
+        [ATOM37_ATOM_NAME_ALIASES.get(str(name), str(name)) for name in atom_names]
+    )
+
+    unknown = sorted(set(atom37_names) - set(residue_constants.atom_order))
+    if unknown:
+        raise ValueError(
+            "asym_unit contains atom names not present in the atom37 "
+            f"representation: {unknown}. Protpardelle's atom37 conversion "
+            "requires every atom to map to a canonical atom type."
+        )
+
+    atom_slots = np.array(
+        [residue_constants.atom_order[name] for name in atom37_names], dtype=np.int64
+    )
+
+    # Contiguous residue ordinal (0..L-1) per atom, in atom order across chains.
+    # Note that this _is not_ a residue index. This is just to find indices that convert
+    # to atom37 representation. Any reconciliation of missing residues happens elsewhere.
+    residue_starts = struc.get_residue_starts(atom_array)
+    is_start = np.zeros(len(atom_names), dtype=np.int64)
+    is_start[residue_starts] = 1
+    residue_ordinals = np.cumsum(is_start) - 1
+
+    atom37_residue_index = torch.as_tensor(residue_ordinals, dtype=torch.long, device=device)
+    atom37_atom_index = torch.as_tensor(atom_slots, dtype=torch.long, device=device)
+    return atom37_residue_index, atom37_atom_index
+
+
+def _convert_to_atom37(
+    x_flat: Float[Tensor, "batch atoms 3"],
+    atom37_residue_index: Int[Tensor, " atoms"],
+    atom37_atom_index: Int[Tensor, " atoms"],
+    num_residues: int,
+) -> Float[Tensor, "batch L 37 3"]:
+    """Scatter flat per-atom coordinates into Protpardelle's atom37 layout.
+
+    Our sampler represents structures as ``x_flat`` of shape ``batch x N x 3``
+    (``N`` = number of atoms), whereas Protpardelle expects
+    ``batch x L x 37 x 3`` (``L`` = residues, 37 = atom37 slots). Using the
+    per-atom residue/slot maps from :func:`_atom37_indices_from_atom_array`, this
+    places each atom's coordinate at ``[batch, residue, slot]`` exactly like the
+    ``pos`` tensor built in :func:`protpardelle.data.pdb_io.read_pdb`. Slots with
+    no corresponding atom stay zero.
+
+    The conversion is a differentiable scatter (``index_put``), so gradients flow
+    from the returned tensor back to ``x_flat``. It is the exact inverse of
+    :func:`_convert_atom37_to_flat`.
+
+    Parameters
+    ----------
+    x_flat : Float[Tensor, "batch atoms 3"]
+        Flat per-atom coordinates.
+    atom37_residue_index : Int[Tensor, "atoms"]
+        Per-atom residue position ``0..L-1`` (see
+        :func:`_atom37_indices_from_atom_array`).
+    atom37_atom_index : Int[Tensor, "atoms"]
+        Per-atom atom37 slot ``0..36``.
+    num_residues : int
+        Padded residue count ``L`` of the destination layout.
+
+    Returns
+    -------
+    Float[Tensor, "batch L 37 3"]
+        Coordinates in atom37 layout, on the same device/dtype as ``x_flat``.
+
+    Raises
+    ------
+    ValueError
+        If ``x_flat``'s atom count disagrees with the atom37 index maps.
+    """
+    batch_size, num_atoms, _ = x_flat.shape
+
+    residue_index = atom37_residue_index.to(x_flat.device)
+    atom_index = atom37_atom_index.to(x_flat.device)
+
+    if residue_index.shape[0] != num_atoms:
+        raise ValueError(
+            f"x has {num_atoms} atoms but the atom37 index maps describe "
+            f"{residue_index.shape[0]} atoms; these must match."
+        )
+
+    x_atom37 = torch.zeros(
+        (batch_size, num_residues, ATOM37_NUM_ATOMS, 3),
+        dtype=x_flat.dtype,
+        device=x_flat.device,
+    )
+
+    # Flatten (batch, atom) so a single index_put scatters every coordinate.
+    batch_index = torch.arange(batch_size, device=x_flat.device).repeat_interleave(num_atoms)
+    flat_residue_index = residue_index.repeat(batch_size)
+    flat_atom_index = atom_index.repeat(batch_size)
+    values = x_flat.reshape(batch_size * num_atoms, 3)
+
+    # Out-of-place index_put keeps the op differentiable w.r.t. ``values``
+    # (hence ``x_flat``); the freshly-zeroed destination needs no gradient.
+    x_atom37 = x_atom37.index_put((batch_index, flat_residue_index, flat_atom_index), values)
+    return x_atom37
+
+
+def _convert_atom37_to_flat(
+    x_atom37: Float[Tensor, "batch L 37 3"],
+    atom37_residue_index: Int[Tensor, " atoms"],
+    atom37_atom_index: Int[Tensor, " atoms"],
+) -> Float[Tensor, "batch atoms 3"]:
+    """Gather Protpardelle's atom37 coordinates back into flat per-atom order.
+
+    Exact inverse of :func:`_convert_to_atom37`: for each atom ``i`` in the
+    original input order, reads the coordinate stored at
+    ``[atom37_residue_index[i], atom37_atom_index[i]]``. Because it indexes with
+    the same per-atom maps used to scatter, the returned atoms appear in the
+    *same order* as the source atom array.
+
+    This is deliberately not a boolean-mask gather (``x_atom37[:, mask]``): a
+    mask emits atoms in ascending ``(residue, slot)`` order, which reorders atoms
+    within a residue whenever the input order differs from the atom37 slot order
+    (e.g. PDB/CIF store ``O`` before ``CB``, but slot ``CB=3`` precedes ``O=4``).
+
+    Differentiable (advanced-indexing gather), so gradients flow from the flat
+    output back to ``x_atom37``.
+
+    Parameters
+    ----------
+    x_atom37 : Float[Tensor, "batch L 37 3"]
+        Coordinates in Protpardelle's atom37 layout.
+    atom37_residue_index : Int[Tensor, "atoms"]
+        Per-atom residue position ``0..L-1``.
+    atom37_atom_index : Int[Tensor, "atoms"]
+        Per-atom atom37 slot ``0..36``.
+
+    Returns
+    -------
+    Float[Tensor, "batch atoms 3"]
+        Flat per-atom coordinates in the original input atom order, on the same
+        device/dtype as ``x_atom37``.
+    """
+    residue_index = atom37_residue_index.to(x_atom37.device)
+    atom_index = atom37_atom_index.to(x_atom37.device)
+    return x_atom37[:, residue_index, atom_index]
+
+
 class ProtpardelleWrapper:
     """Wrapper for sequence-conditioned Protpardelle-1c all-atom models."""
 
@@ -298,23 +470,21 @@ class ProtpardelleWrapper:
         the sequence mask, residue/chain indices, aatype, and atom37 mask
         required to condition sampling. No diffusion is run here.
 
+        The conditioning is built with a single (batch=1) ensemble dimension;
+        the trajectory scaler sets the ensemble size on the sampled coordinates,
+        and :meth:`step` broadcasts the conditioning to match.
+
         Parameters
         ----------
         structure : dict
             Atomworks structure dictionary, optionally annotated via
-            :func:`annotate_structure_for_protpardelle`. Config is read from
-            ``structure["_protpardelle_config"]`` if present, else defaults.
+            :func:`annotate_structure_for_protpardelle`.
 
         Returns
         -------
         GenerativeModelInput[ProtpardelleConditioning]
-            Reference ``x_init`` (sampled from the prior) and sequence
-            conditioning for :meth:`step`.
+            Sequence conditioning for :meth:`step`.
         """
-        config = structure.get("_protpardelle_config", ProtpardelleConfig())
-        if isinstance(config, dict):
-            config = ProtpardelleConfig(**config)
-
         if "asym_unit" not in structure:
             raise ValueError(
                 "Protpardelle featurization requires an 'asym_unit' atom array to "
@@ -342,12 +512,10 @@ class ProtpardelleWrapper:
         aatype = torch.zeros((1, padded_len), dtype=torch.long, device=self.device)
         aatype[0, : flat_aatype.shape[0]] = flat_aatype
 
-        # Expand to the requested ensemble size.
-        ensemble_size = config.ensemble_size
-        aatype = match_batch(aatype, target_batch_size=ensemble_size)
-        seq_mask = match_batch(seq_mask, target_batch_size=ensemble_size)
-        residue_index = match_batch(residue_index, target_batch_size=ensemble_size)
-        chain_index = match_batch(chain_index, target_batch_size=ensemble_size)
+        # Conditioning stays at batch=1 here (``make_seq_mask_for_sampling``
+        # returns ``[1, L]``); the trajectory scaler owns the ensemble size and
+        # sizes the sampled coordinates accordingly, and ``step`` broadcasts the
+        # conditioning to match that batch.
 
         # Map the flat per-atom coordinates the sampler works with (``x_t``,
         # shape ``batch x N x 3``) onto the model's ``batch x L x 37 x 3`` atom37
@@ -358,7 +526,9 @@ class ProtpardelleWrapper:
         # layout aligned with the sequence-derived ``seq_mask`` / ``aatype``.
         protein_chain_ids = _protein_chain_ids(structure)
         atom_array = atom_array[np.isin(atom_array.chain_id, protein_chain_ids)]
-        atom37_residue_index, atom37_atom_index = self._atom37_indices_from_atom_array(atom_array)
+        atom37_residue_index, atom37_atom_index = _atom37_indices_from_atom_array(
+            atom_array, device=self.device
+        )
 
         # the atom_mask created here is used in two ways. First it is used to generate
         # the initial noisy coordinates (see initialize_from_prior() below) simply for the
@@ -374,7 +544,7 @@ class ProtpardelleWrapper:
             (padded_len, ATOM37_NUM_ATOMS), dtype=torch.float, device=self.device
         )
         atom_mask[atom37_residue_index, atom37_atom_index] = 1
-        atom_mask = match_batch(atom_mask[None, :, :], target_batch_size=ensemble_size)
+        atom_mask = atom_mask[None, :, :]  # [1, L, 37]
 
         conditioning = ProtpardelleConditioning(
             aatype=aatype,
@@ -388,144 +558,12 @@ class ProtpardelleWrapper:
             x_self_conditioning=None,
         )
 
-        # x_init is a shape-compatible reference drawn from a Gaussian prior.
-        # TODO: Claude put this in. I don't think we really need it. Our sampler
-        #   will call the initalize_from_prior() method, see, e.g.,
-        #   sampleworks.core.scalers.pure_guidance.PureGuidance.sample
-        num_atoms = int(atom_mask[0].sum().item())
-        x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
-
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
-
-    def _atom37_indices_from_atom_array(
-        self, atom_array
-    ) -> tuple[Int[Tensor, " atoms"], Int[Tensor, " atoms"]]:
-        """Derive per-atom atom37 destination indices from an Atomworks atom array.
-
-        For each atom in ``atom_array`` (the order the sampler's flat ``x_t``
-        follows), computes the residue position ``0..L-1`` and the atom37 slot
-        ``0..36`` (``residue_constants.atom_order[atom_name]``). This mirrors how
-        :func:`protpardelle.data.pdb_io.read_pdb` scatters atoms into the per-residue
-        ``pos`` array of shape ``(37, 3)``.
-
-        Parameters
-        ----------
-        atom_array : biotite.structure.AtomArray
-            Single-model atom array with ``atom_name`` / ``res_id`` / ``chain_id``
-            annotations (a single frame; stacks are reduced to frame 0 upstream).
-
-        Returns
-        -------
-        tuple[Int[Tensor, "atoms"], Int[Tensor, "atoms"]]
-            ``(atom37_residue_index, atom37_atom_index)``, both ``long`` tensors of
-            length ``N`` on :attr:`device`.
-
-        Raises
-        ------
-        ValueError
-            If any atom name is not a recognized atom37 atom type, which would
-            break the one-to-one correspondence with ``x_t``.
-        """
-        atom_names = np.asarray(atom_array.atom_name)
-        atom37_names = np.asarray(
-            [ATOM37_ATOM_NAME_ALIASES.get(str(name), str(name)) for name in atom_names]
-        )
-
-        unknown = sorted(set(atom37_names) - set(residue_constants.atom_order))
-        if unknown:
-            raise ValueError(
-                "asym_unit contains atom names not present in the atom37 "
-                f"representation: {unknown}. Protpardelle's atom37 conversion "
-                "requires every atom to map to a canonical atom type."
-            )
-
-        atom_slots = np.array(
-            [residue_constants.atom_order[name] for name in atom37_names], dtype=np.int64
-        )
-
-        # Contiguous residue ordinal (0..L-1) per atom, in atom order across chains.
-        residue_starts = struc.get_residue_starts(atom_array)
-        is_start = np.zeros(len(atom_names), dtype=np.int64)
-        is_start[residue_starts] = 1
-        residue_ordinals = np.cumsum(is_start) - 1
-
-        atom37_residue_index = torch.as_tensor(
-            residue_ordinals, dtype=torch.long, device=self.device
-        )
-        atom37_atom_index = torch.as_tensor(atom_slots, dtype=torch.long, device=self.device)
-        return atom37_residue_index, atom37_atom_index
-
-    def _convert_to_atom37(
-        self,
-        conditioning: ProtpardelleConditioning,
-        x_t: Float[Tensor, "batch atoms 3"],
-    ) -> Float[Tensor, "batch L 37 3"]:
-        """Scatter flat coordinates ``x_t`` into Protpardelle's atom37 layout.
-
-        Our sampler represents structures as ``x_t`` of shape ``batch x N x 3``
-        (``N`` = number of atoms), whereas Protpardelle expects
-        ``batch x L x 37 x 3`` (``L`` = residues, 37 = atom37 slots). Using the
-        per-atom residue/slot maps computed in :meth:`featurize`, this places each
-        atom's coordinate at ``[batch, residue, slot]`` exactly like the ``pos``
-        tensor built in :func:`protpardelle.data.pdb_io.read_pdb`. Slots with no
-        corresponding atom stay zero.
-
-        The conversion is a differentiable scatter (``index_put``), so gradients
-        flow from the returned tensor back to ``x_t``.
-
-        Parameters
-        ----------
-        conditioning : ProtpardelleConditioning
-            Conditioning from :meth:`featurize`; supplies ``L`` (via ``seq_mask``)
-            and the ``atom37_residue_index`` / ``atom37_atom_index`` maps.
-        x_t : Float[Tensor, "batch atoms 3"]
-            Flat per-atom coordinates.
-
-        Returns
-        -------
-        Float[Tensor, "batch L 37 3"]
-            Coordinates in atom37 layout, on the same device/dtype as ``x_t``.
-
-        Raises
-        ------
-        ValueError
-            If ``x_t``'s atom count disagrees with the atom37 index maps.
-        """
-        batch_size, num_atoms, _ = x_t.shape
-        num_residues = conditioning.seq_mask.shape[1]
-
-        residue_index = conditioning.atom37_residue_index.to(x_t.device)
-        atom_index = conditioning.atom37_atom_index.to(x_t.device)
-
-        if residue_index.shape[0] != num_atoms:
-            raise ValueError(
-                f"x_t has {num_atoms} atoms but the atom37 index maps describe "
-                f"{residue_index.shape[0]} atoms; these must match."
-            )
-
-        x_t_atom37 = torch.zeros(
-            (batch_size, num_residues, ATOM37_NUM_ATOMS, 3),
-            dtype=x_t.dtype,
-            device=x_t.device,
-        )
-
-        # Flatten (batch, atom) so a single index_put scatters every coordinate.
-        batch_index = torch.arange(batch_size, device=x_t.device).repeat_interleave(num_atoms)
-        flat_residue_index = residue_index.repeat(batch_size)
-        flat_atom_index = atom_index.repeat(batch_size)
-        values = x_t.reshape(batch_size * num_atoms, 3)
-
-        # Out-of-place index_put keeps the op differentiable w.r.t. ``values``
-        # (hence ``x_t``); the freshly-zeroed destination needs no gradient.
-        x_t_atom37 = x_t_atom37.index_put(
-            (batch_index, flat_residue_index, flat_atom_index), values
-        )
-        return x_t_atom37
+        return GenerativeModelInput(conditioning=conditioning)
 
     def _expand_noise_level(
         self,
         t: Float[Tensor, "*batch"] | float,
-        conditioning: ProtpardelleConditioning,
+        seq_mask: Float[Tensor, "batch L"],
         dtype: torch.dtype,
     ) -> Float[Tensor, "batch L"]:
         """Convert a sampler timestep/noise scalar to Protpardelle's ``B x L`` tensor.
@@ -535,8 +573,9 @@ class ProtpardelleWrapper:
         t : Float[Tensor, "*batch"] | float
             Sampler noise level for the current EDM step. May be a scalar or one
             value per ensemble member.
-        conditioning : ProtpardelleConditioning
-            Conditioning whose sequence mask defines the batch and padded length.
+        seq_mask : Float[Tensor, "batch L"]
+            Sequence mask (already broadcast to the sampler's ensemble batch)
+            defining the target batch and padded length.
         dtype : torch.dtype
             Floating dtype to use for the model call.
 
@@ -546,7 +585,7 @@ class ProtpardelleWrapper:
             Noise level broadcast across valid/padded sequence positions on the
             wrapper device.
         """
-        seq_mask = conditioning.seq_mask.to(device=self.device, dtype=dtype)
+        seq_mask = seq_mask.to(device=self.device, dtype=dtype)
         noise_level = torch.as_tensor(t, device=self.device, dtype=dtype)
 
         if noise_level.ndim == 0:
@@ -605,16 +644,28 @@ class ProtpardelleWrapper:
 
         cond = features.conditioning
         x_t = x_t.to(device=self.device)
+        # The trajectory scaler sets the ensemble batch on ``x_t``; the stored
+        # conditioning is batch=1, so broadcast it to match (mirrors how the
+        # other wrappers derive the batch from ``x_t`` rather than featurization).
+        batch_size = x_t.shape[0]
 
         # Our x_t is B x N x 3 (N = number of atoms); Protpardelle expects
         # B x L x 37 x 3. Scatter into the atom37 layout (gradient-preserving).
-        x_t_atom37 = self._convert_to_atom37(cond, x_t)
+        x_t_atom37 = _convert_to_atom37(
+            x_t, cond.atom37_residue_index, cond.atom37_atom_index, cond.seq_mask.shape[1]
+        )
 
-        noise_level = self._expand_noise_level(t, cond, x_t_atom37.dtype)
-
-        seq_mask = cond.seq_mask.to(device=self.device, dtype=x_t_atom37.dtype)
-        residue_index = cond.residue_index.to(device=self.device)
-        chain_index = cond.chain_index.to(device=self.device)
+        seq_mask = match_batch(
+            cond.seq_mask.to(device=self.device, dtype=x_t_atom37.dtype),
+            target_batch_size=batch_size,
+        )
+        residue_index = match_batch(
+            cond.residue_index.to(device=self.device), target_batch_size=batch_size
+        )
+        chain_index = match_batch(
+            cond.chain_index.to(device=self.device), target_batch_size=batch_size
+        )
+        noise_level = self._expand_noise_level(t, seq_mask, x_t_atom37.dtype)
         struct_self_cond = cond.x_self_conditioning
         if struct_self_cond is not None:
             struct_self_cond = struct_self_cond.to(device=self.device, dtype=x_t_atom37.dtype)
@@ -648,12 +699,14 @@ class ProtpardelleWrapper:
         # TODO: I wonder if we need to adjust this since we will apply additional guidance.
         features.conditioning.x_self_conditioning = x_self_cond.detach()
 
-        # x0: [batch, L, 37, 3]. Masked-out atom slots are zeroed during
-        # ai-allatom sampling, so select the correct atoms via the atom37 mask.
-        # The mask is identical across the batch (single input sequence), so a
-        # single 2-D mask flattens every ensemble member consistently.
-        atom_mask_2d = cond.atom_mask[0].to(device=x0.device).bool()  # [L, 37]
-        flat_coords = x0[:, atom_mask_2d]  # [batch, atoms, 3]
+        # x0: [batch, L, 37, 3] -> flat [batch, atoms, 3]. Gather with the same
+        # per-atom (residue, slot) maps used to scatter in, so the returned atoms
+        # keep the original input order. A boolean-mask gather would instead emit
+        # atoms in atom37-slot order and silently reorder them within a residue
+        # (e.g. CB before O), breaking correspondence with the input structure.
+        flat_coords = _convert_atom37_to_flat(
+            x0, cond.atom37_residue_index, cond.atom37_atom_index
+        )
 
         return flat_coords
 

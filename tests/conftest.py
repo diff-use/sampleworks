@@ -152,6 +152,14 @@ MODEL_WRAPPER_REGISTRY: dict[StructurePredictor, ComponentInfo] = {
         conditioning_type_path="sampleworks.models.rf3.wrapper.RF3Conditioning",
         requires_out_dir=False,
     ),
+    StructurePredictor.PROTPARDELLE: ComponentInfo(
+        name="protpardelle",
+        module_path="sampleworks.models.protpardelle.wrapper.ProtpardelleWrapper",
+        requires_checkpoint=True,
+        annotate_fn_path="sampleworks.models.protpardelle.wrapper.annotate_structure_for_protpardelle",
+        conditioning_type_path="sampleworks.models.protpardelle.wrapper.ProtpardelleConditioning",
+        requires_out_dir=False,
+    ),
 }
 
 
