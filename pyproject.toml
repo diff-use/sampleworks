@@ -32,6 +32,38 @@ platforms = ["osx-arm64"]
 pypi-dependencies = {"protenix" = "*", "einx" = "*", "triton" = "*"}
 platforms = ["linux-64"]
 
+[tool.pixi.feature.protpardelle]
+platforms = ["linux-64", "osx-arm64"]
+
+[tool.pixi.feature.protpardelle.dependencies]
+biopython = "*"
+einops = "*"
+huggingface_hub = "*"
+hydra-core = "*"
+jupyter = "*"
+numpy = ">=1.25.0,<2.0"
+omegaconf = "*"
+pandas = "==2.3.1"
+prody = "*"
+pyyaml = "*"
+scipy = "*"
+pytorch = ">=2.6.0,<2.8"
+tqdm = "*"
+typer = "*"
+
+[tool.pixi.feature.protpardelle.pypi-dependencies]
+protpardelle = {git = "https://github.com/ProteinDesignLab/protpardelle-1c.git", rev = "ee378400f25b801fa481028000f9060183d7fb4c"}
+biotite = "*"
+dm-tree = "*"
+jaxtyping = "*"
+ml_collections = "*"
+modelcif = "*"
+transformers = "*"
+wandb = "*"
+
+[tool.pixi.feature.protpardelle.pypi-options.dependency-overrides]
+pandas = "==2.3.1"
+
 [project]
 authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
 classifiers = [
@@ -134,6 +166,8 @@ boltz-dev = {features = ["boltz", "dev"]}
 boltz-osx = {features = ["boltz-osx", "dev", "analysis"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
+protpardelle = {features = ["protpardelle"]}
+protpardelle-dev = {features = ["protpardelle", "dev"]}
 rf3 = {features = ["rf3"]}
 rf3-dev = {features = ["rf3", "dev"]}
 
