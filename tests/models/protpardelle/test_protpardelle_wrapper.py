@@ -257,6 +257,36 @@ class TestFeaturize:
         boundary_gap = residue_index[len(SEQ_A)] - residue_index[len(SEQ_A) - 1]
         assert boundary_gap > 1
 
+    def test_featurize_filters_non_protein_atoms(self, protpardelle_wrapper):
+        """Ligand / non-protein atoms in the asym_unit must not enter the atom37 mapping."""
+        structure = _protein_structure(SEQ_A)
+
+        # Append a ligand chain whose atom names are absent from the atom37
+        # alphabet; if they reached the atom37 mapping they would raise, and
+        # counting their residues would misalign the layout with the sequence.
+        ligand = struc.AtomArray(2)
+        ligand.atom_name = np.array(["ZN", "MG"])
+        ligand.res_id = np.array([1, 2])
+        ligand.chain_id = np.array(["L", "L"])
+        ligand.coord = np.zeros((2, 3), dtype=np.float32)
+        structure["asym_unit"] = structure["asym_unit"] + ligand
+        structure["chain_info"]["L"] = {
+            "chain_type": ChainType.NON_POLYMER,
+            "processed_entity_canonical_sequence": "",
+        }
+
+        features = protpardelle_wrapper.featurize(structure)
+
+        # The resulting layout matches the protein-only structure: the ligand
+        # atoms were filtered out before the atom37 mapping.
+        protein_only = protpardelle_wrapper.featurize(_protein_structure(SEQ_A))
+        assert features.x_init.shape[1] == protein_only.x_init.shape[1]
+        assert (
+            features.conditioning.atom37_residue_index.shape
+            == protein_only.conditioning.atom37_residue_index.shape
+        )
+        assert int(features.conditioning.atom37_residue_index.max()) == len(SEQ_A) - 1
+
 
 class TestInitializeFromPrior:
     def test_with_shape(self, protpardelle_wrapper):

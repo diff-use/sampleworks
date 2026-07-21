@@ -92,7 +92,7 @@ dependencies = [
   "loguru",
   "omegaconf",
   "python-dotenv",
-  "sfcalculator-torch>=0.3.2"
+  "sfcalculator-torch>=0.3.3"
 ]
 description = "Experimentally guided biomolecular ensemble generation."
 keywords = ["biomolecular-structure", "crystallography", "diffusion", "ensemble-generation", "protein-structure"]

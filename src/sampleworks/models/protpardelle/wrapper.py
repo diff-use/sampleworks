@@ -114,6 +114,9 @@ class ProtpardelleConditioning:
         object.__setattr__(self, "_initialized", True)
 
     def __setattr__(self, key, value):
+        """
+        Prevent setting of frozen attributes after initialization.
+        """
         if key in self._FROZEN and getattr(self, "_initialized", False):
             raise AttributeError(
                 f"Cannot set attribute {key!r} on {self.__class__.__name__}, it is frozen!"
@@ -207,6 +210,34 @@ def extract_protein_sequences(structure: dict) -> list[str]:
         raise ValueError("No L-polypeptide (protein) chains found for Protpardelle.")
 
     return sequences
+
+
+def _protein_chain_ids(structure: dict) -> list[str]:
+    """Return the chain IDs of the protein chains, in chain order.
+
+    Applies the same L-polypeptide / non-empty-sequence filter as
+    :func:`extract_protein_sequences`, so the asym_unit can be restricted to
+    exactly the chains that contribute sequence conditioning. This keeps the
+    flat per-atom layout aligned with ``seq_mask`` / ``aatype`` and prevents
+    ligand or other non-protein atoms from entering the atom37 mapping.
+
+    Parameters
+    ----------
+    structure : dict
+        Atomworks structure dictionary with a ``"chain_info"`` mapping.
+
+    Returns
+    -------
+    list[str]
+        Protein chain IDs, in ``chain_info`` order.
+    """
+    chain_info = structure.get("chain_info", {})
+    return [
+        chain_id
+        for chain_id, info in chain_info.items()
+        if info["chain_type"] == ChainType.POLYPEPTIDE_L
+        and info["processed_entity_canonical_sequence"]
+    ]
 
 
 class ProtpardelleWrapper:
@@ -322,6 +353,11 @@ class ProtpardelleWrapper:
         # shape ``batch x N x 3``) onto the model's ``batch x L x 37 x 3`` atom37
         # layout. The mapping is derived from the input structure's atom names.
         atom_array = get_asym_unit_from_structure(structure, atom_array_index=0)
+        # Restrict to protein chains so ligand / non-polymer atoms from mixed
+        # inputs never enter the atom37 mapping, which assumes a protein-only
+        # layout aligned with the sequence-derived ``seq_mask`` / ``aatype``.
+        protein_chain_ids = _protein_chain_ids(structure)
+        atom_array = atom_array[np.isin(atom_array.chain_id, protein_chain_ids)]
         atom37_residue_index, atom37_atom_index = self._atom37_indices_from_atom_array(atom_array)
 
         # the atom_mask created here is used in two ways. First it is used to generate
