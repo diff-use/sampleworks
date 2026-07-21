@@ -415,9 +415,13 @@ def resources_dir() -> Path:
     return Path(__file__).parent / "resources"
 
 
+def parse_and_remove_hydrogens(path: Path) -> dict:
+    return parse(path, ccd_mirror_path=None, hydrogen_policy="remove")
+
+
 @pytest.fixture(scope="session")
 def structure_1vme(resources_dir: Path) -> dict:
-    return parse(resources_dir / "1vme" / "1vme_final.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "1vme" / "1vme_final.cif")
 
 
 @pytest.fixture(scope="session")
@@ -439,52 +443,52 @@ def atom_array_1vme_with_missing_atoms(structure_1vme) -> AtomArray:
 
 @pytest.fixture(scope="session")
 def structure_6b8x(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6b8x" / "6b8x_final.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "6b8x" / "6b8x_final.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_2yl0(resources_dir: Path) -> dict:
-    return parse(resources_dir / "2YL0" / "2YL0_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "2YL0" / "2YL0_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_2yl0_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "2YL0" / "2YL0_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "2YL0" / "2YL0_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_5sop(resources_dir: Path) -> dict:
-    return parse(resources_dir / "5SOP" / "5SOP_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "5SOP" / "5SOP_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_5sop_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "5SOP" / "5SOP_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "5SOP" / "5SOP_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_6ni6(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6NI6" / "6NI6_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "6NI6" / "6NI6_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_6ni6_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6NI6" / "6NI6_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "6NI6" / "6NI6_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_9bn8(resources_dir: Path) -> dict:
-    return parse(resources_dir / "9BN8" / "9BN8_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "9BN8" / "9BN8_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_9bn8_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "9BN8" / "9BN8_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "9BN8" / "9BN8_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_5i09_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "5I09" / "5I09_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "5I09" / "5I09_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
@@ -498,7 +502,7 @@ def structure_6b8x_with_altlocs(resources_dir: Path) -> AtomArray | AtomArraySta
 def test_structure(request, resources_dir: Path) -> dict:
     # this requires the 1st 4 characters of the filename to match the folder name,
     # so PDB IDs need to be matching case
-    return parse(resources_dir / request.param[:4] / request.param, ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / request.param[:4] / request.param)
 
 
 @pytest.fixture(scope="session")
@@ -682,7 +686,7 @@ def structure_1vme_density(resources_dir: Path):
     cif_path = resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB.cif"
     if not cif_path.exists():
         pytest.skip(f"Structure not found at {cif_path}")
-    return parse(cif_path, ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(cif_path)
 
 
 @pytest.fixture(scope="session")
