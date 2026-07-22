@@ -1,4 +1,4 @@
-"""Shared utilities for synthetic structure factor and density generation."""
+"""Shared utilities for synthetic structure-factor and density generation."""
 
 import math
 import traceback
@@ -8,9 +8,10 @@ import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
-from sampleworks.eval.structure_utils import apply_selection
+
 from sampleworks.utils.atom_array_utils import (
     AltlocInfo,
+    apply_selection,
     detect_altlocs,
     keep_amino_acids,
     keep_polymer,

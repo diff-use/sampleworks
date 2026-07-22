@@ -21,15 +21,16 @@ import reciprocalspaceship.utils
 import torch
 from biotite.structure import AtomArray
 from loguru import logger
-from sampleworks.eval.synthetic_utils import (
+from SFC_Torch import SFcalculator
+from SFC_Torch.io import array2hier, PDBParser
+
+from sampleworks.synthetic.synthetic_utils import (
     load_structure_for_synthetic_reward,
     resolve_parallel_jobs,
     validate_occupancy_values,
 )
 from sampleworks.utils.atom_array_utils import BLANK_ALTLOC_IDS
 from sampleworks.utils.torch_utils import try_gpu
-from SFC_Torch import SFcalculator
-from SFC_Torch.io import array2hier, PDBParser
 
 
 @dataclass
