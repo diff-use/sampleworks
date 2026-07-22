@@ -151,8 +151,9 @@ def _build_rs_dataset_for_one_label(
     sfc : SFcalculator
         Structure-factor calculator holding the requested ASU amplitudes and phases.
     label : str
-        Output column-label suffix, currenly only ``"protein"`` or ``"total"``, but
-        can also be solvent (mask) for debugging purposes.
+        Mtz column suffix. The resulted column names are ``F{label}``/``SIGF{label}``/
+        ``PHIF{label}``. The mtz column names should match what the structure-factor reward
+        later reads. In this script, we use ``"protein"`` and ``"total"`` as the labels.
     structure_factor_column : str
         SFcalculator attribute name passed to ``prepare_dataset`` (the amplitudes to emit).
     miller_index_column : str
@@ -224,9 +225,11 @@ def process_amplitudes_to_dataset(
         Dataset with structure factor amplitudes, dummy sigma column(s), phases,
         and optionally R-free flags.
     """
-    # One dataset per label: for now just "protein" and "total", but it can generalizes
-    # to Fmask(solvent) which could be helpful for future debugging.
-    # All sets share the same HKL index, so this can be just a column-wise concat.
+    # One dataset per label. Labels are free-form column suffixes (F{label}/SIGF{label}/
+    # PHIF{label}). User should supply the resulted column names when using the mtz for
+    # structure-factor reward. In this script, we use "protein" and "total" (for protein
+    # and bulk solvent) as the labels.
+    # All sets share the same HKL index, so this is just a column-wise concat.
     dataset: rs.DataSet | None = None
     for label, attribute in structure_factor_columns.items():
         ds = _build_rs_dataset_for_one_label(
@@ -235,6 +238,13 @@ def process_amplitudes_to_dataset(
         if dataset is None:
             dataset = ds
         else:
+            collisions = dataset.columns.intersection(ds.columns).tolist()
+            if collisions:
+                raise ValueError(
+                    f"Structure-factor label {label!r} would overwrite already-populated "
+                    f"column(s) {collisions} in the merged dataset. Ensure each label maps "
+                    "to a distinct set of column names."
+                )
             dataset[ds.columns] = ds  # graft the remaining columns on (index-aligned)
     if dataset is None:  # loop never ran -> the mapping was empty
         raise ValueError(
