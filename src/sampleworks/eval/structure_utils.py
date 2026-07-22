@@ -539,13 +539,9 @@ def canonicalize_mixed_altloc_residues(
     # 1. Only canonicalize positions whose altlocs all resolve to the same canonical parent. A
     #    partial rename that still leaves mismatched res_names at the position wouldn't be
     #    stackable anyway, so it's better to leave those untouched and warn.
-    parent_cache: dict[str, str | None] = {}
     canonical_parent_by_position: dict[tuple, str] = {}
     for position in mixed_positions:
-        parents = {
-            parent_cache.setdefault(name, _closest_canonical_amino_acid(name))
-            for name in res_names_by_position[position]
-        }
+        parents = {_closest_canonical_amino_acid(name) for name in res_names_by_position[position]}
         if len(parents) == 1 and (parent := parents.pop()) is not None:
             canonical_parent_by_position[position] = parent
         else:
