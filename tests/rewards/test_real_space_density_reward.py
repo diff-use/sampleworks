@@ -109,6 +109,60 @@ class TestSetupScatteringParams:
         assert params[0].sum().item() == 0
 
 
+class TestStructureToRewardInput:
+    def test_reuses_density_input_preprocessing(self, atom_array_with_nan_coords, device):
+        """Filter invalid/zero-occupancy atoms and replace valid NaN B-factors."""
+        atom_array = atom_array_with_nan_coords.copy()
+        atom_array.b_factor = np.array([10.0, 15.0, np.nan, 15.0, 40.0])
+        atom_array.occupancy = np.array([1.0, 1.0, 1.0, 1.0, 0.0])
+
+        reward_function = RealSpaceRewardFunction.__new__(RealSpaceRewardFunction)
+        reward_function.device = device
+        inputs = reward_function.structure_to_reward_input({"asym_unit": atom_array})
+        expected_coordinates, expected_elements, expected_b_factors, expected_occupancies = (
+            extract_density_inputs_from_atomarray(atom_array, device)
+        )
+
+        torch.testing.assert_close(inputs["coordinates"], expected_coordinates)
+        torch.testing.assert_close(inputs["elements"], expected_elements)
+        torch.testing.assert_close(inputs["b_factors"], expected_b_factors)
+        torch.testing.assert_close(inputs["occupancies"], expected_occupancies)
+        assert inputs["coordinates"].device == device
+        assert inputs["elements"].device == device
+        assert inputs["b_factors"].device == device
+        assert inputs["occupancies"].device == device
+
+        assert inputs["coordinates"].shape == (1, 2, 3)
+        assert inputs["coordinates"].dtype == torch.float32
+        assert inputs["elements"].dtype == torch.long
+        assert inputs["b_factors"].dtype == torch.float32
+        assert inputs["occupancies"].dtype == torch.float32
+        torch.testing.assert_close(inputs["b_factors"], torch.tensor([[10.0, 20.0]], device=device))
+
+    def test_matches_extractor_batching_for_atom_array_stacks(
+        self, atom_array_stack_with_nan_coords, device
+    ):
+        """Keep extractor batching semantics for multi-model inputs."""
+        atom_array_stack = atom_array_stack_with_nan_coords.copy()
+        atom_array_stack.b_factor = np.array([np.nan, 20.0, 20.0])
+        atom_array_stack.occupancy = np.array([0.5, 0.5, 0.0])
+
+        reward_function = RealSpaceRewardFunction.__new__(RealSpaceRewardFunction)
+        reward_function.device = device
+        inputs = reward_function.structure_to_reward_input({"asym_unit": atom_array_stack})
+        expected_coordinates, expected_elements, expected_b_factors, expected_occupancies = (
+            extract_density_inputs_from_atomarray(atom_array_stack, device)
+        )
+
+        torch.testing.assert_close(inputs["coordinates"], expected_coordinates)
+        torch.testing.assert_close(inputs["elements"], expected_elements)
+        torch.testing.assert_close(inputs["b_factors"], expected_b_factors)
+        torch.testing.assert_close(inputs["occupancies"], expected_occupancies)
+
+        assert inputs["coordinates"].shape == (2, 1, 3)
+        torch.testing.assert_close(inputs["b_factors"], torch.full((2, 1), 20.0, device=device))
+
+
 @pytest.mark.gpu
 @pytest.mark.slow
 class TestRewardFunctionBasics:
