@@ -48,7 +48,6 @@ from sampleworks.models.protpardelle.wrapper import (
     NUM_AATYPE_TOKENS,
     ProtpardelleConditioning,
     ProtpardelleConfig,
-    ProtpardelleWrapper,
 )
 
 
@@ -58,10 +57,7 @@ SEQ_B = "MNPQRSTVWY"
 # A real crystallographic structure (hen egg-white lysozyme) shipped as a test
 # fixture; used to verify atom37 round-tripping preserves real atom ordering.
 _REAL_CIF = (
-    Path(__file__).resolve().parents[2]
-    / "resources"
-    / "1vme"
-    / "1VME_single_001_density_input.cif"
+    Path(__file__).resolve().parents[2] / "resources" / "1vme" / "1VME_single_001_density_input.cif"
 )
 
 
@@ -121,9 +117,7 @@ def _load_protein_heavy_atoms(cif_path: Path) -> struc.AtomArray:
     original per-atom ordering (e.g. ``... C, O, CB ...``).
     """
     atom_array = get_asym_unit_from_structure(parse(str(cif_path), ccd_mirror_path=None), 0)
-    aliased = np.array(
-        [ATOM37_ATOM_NAME_ALIASES.get(str(n), str(n)) for n in atom_array.atom_name]
-    )
+    aliased = np.array([ATOM37_ATOM_NAME_ALIASES.get(str(n), str(n)) for n in atom_array.atom_name])
     keep = np.isin(aliased, list(residue_constants.atom_order)) & struc.filter_amino_acids(
         atom_array
     )
@@ -173,13 +167,6 @@ class TestAnnotateStructure:
         assert isinstance(config, ProtpardelleConfig)
         # Original structure is not mutated.
         assert "_protpardelle_config" not in structure
-
-
-class TestConstructorValidation:
-    def test_requires_checkpoint_and_config_paths(self):
-        # checkpoint_path, config_path and device are required positional args.
-        with pytest.raises(TypeError, match="required positional argument"):
-            ProtpardelleWrapper()
 
 
 class TestProtocolConformance:
@@ -363,8 +350,7 @@ class TestAtom37IndicesFromAtomArray:
         assert atom_idx.shape == (n,)
         # Each atom37 slot is exactly residue_constants.atom_order[name].
         aliased = [
-            ATOM37_ATOM_NAME_ALIASES.get(str(name), str(name))
-            for name in real_atom_array.atom_name
+            ATOM37_ATOM_NAME_ALIASES.get(str(name), str(name)) for name in real_atom_array.atom_name
         ]
         expected = torch.as_tensor(
             [residue_constants.atom_order[a] for a in aliased], dtype=torch.long

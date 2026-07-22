@@ -13,7 +13,7 @@ from sampleworks.utils.imports import (
     require_boltz,
     require_protenix,
     require_rf3,
-    RF3_AVAILABLE, PROTPARDELLE_AVAILABLE,
+    RF3_AVAILABLE,
 )
 
 

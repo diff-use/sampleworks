@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import torch
 
+
 _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
@@ -35,7 +36,8 @@ from sampleworks.utils.guidance_constants import (
 from sampleworks.utils.imports import (
     BOLTZ_AVAILABLE,
     PROTENIX_AVAILABLE,
-    RF3_AVAILABLE, PROTPARDELLE_AVAILABLE,
+    PROTPARDELLE_AVAILABLE,
+    RF3_AVAILABLE,
 )
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -49,8 +51,8 @@ if TYPE_CHECKING:
         Boltz2Wrapper,
     )
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
-    from sampleworks.models.rf3.wrapper import RF3Wrapper
     from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
+    from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 if BOLTZ_AVAILABLE:
     from sampleworks.models.boltz.wrapper import (
@@ -690,8 +692,9 @@ def protpardelle_checkpoint_path() -> Path:
     if not PROTPARDELLE_AVAILABLE:
         pytest.skip("Protpardelle dependencies not installed in this environment")
     import os
+
     # where we will eventually install the checkpoint on our containers.
-    builtin_path = Path(getsitepackages()[0]) / "release_data"/ "protpardelle" / "model_params"
+    builtin_path = Path(getsitepackages()[0]) / "release_data" / "protpardelle" / "model_params"
 
     # if the user specifies a path to the model_params directory, use that instead.
     path = Path(os.environ.get("PROTPARDELLE_MODEL_PARAMS", builtin_path))

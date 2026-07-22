@@ -48,7 +48,6 @@ NUM_AATYPE_TOKENS = 21
 ATOM37_ATOM_NAME_ALIASES = {"SE": "SD"}
 
 
-
 @dataclass(slots=True)
 class ProtpardelleConditioning:
     """Sequence-derived conditioning for a Protpardelle sampling run.
@@ -92,8 +91,8 @@ class ProtpardelleConditioning:
     residue_index: Float[Tensor, "batch L"]
     chain_index: Float[Tensor, "batch L"]
     atom_mask: Float[Tensor, "batch L 37"]
-    atom37_residue_index: Int[Tensor, "atoms"]
-    atom37_atom_index: Int[Tensor, "atoms"]
+    atom37_residue_index: Int[Tensor, " atoms"]
+    atom37_atom_index: Int[Tensor, " atoms"]
     sequences: tuple[str, ...]
     x_self_conditioning: Float[Tensor, "batch L 37 3"] | None = None
     _initialized: bool = field(default=False, init=False, repr=False)
@@ -704,9 +703,7 @@ class ProtpardelleWrapper:
         # keep the original input order. A boolean-mask gather would instead emit
         # atoms in atom37-slot order and silently reorder them within a residue
         # (e.g. CB before O), breaking correspondence with the input structure.
-        flat_coords = _convert_atom37_to_flat(
-            x0, cond.atom37_residue_index, cond.atom37_atom_index
-        )
+        flat_coords = _convert_atom37_to_flat(x0, cond.atom37_residue_index, cond.atom37_atom_index)
 
         return flat_coords
 
