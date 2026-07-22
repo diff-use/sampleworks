@@ -47,7 +47,7 @@ don't transfer, since the main objective differs anyway).
 | `optimizer = Adam([optimized_s, optimized_z], lr)` **inside the diffusion-step loop** (`:337`). | Built **once per optimization round**, outside the step loop. |
 | `noisy = structures.clone().detach()`; `x0_hat = denoise_net_batched(noisy, t_hat, s_inputs, optimized_s, optimized_z)` (`:345–354`). | `sampler.step(coords, model, context, scaler=_GradEnablingScaler(), features=…)` runs the denoiser under autograd and returns the aligned `step_output.denoised` (= differentiable `x0_hat`). |
 | `total_loss.backward()` (`:357`). | `loss.backward()`. |
-| `clip_grad_norm_([optimized_s]); clip_grad_norm_([optimized_z])` — **separate** (`:360–361`). | `clip_grad_norm_(latents, max_grad_norm)` — **single joint** clip over `[s, z]`. |
+| `clip_grad_norm_([optimized_s]); clip_grad_norm_([optimized_z])` — **separate** (`:360–361`). | `clip_grad_norm_(latent)` per latent — **separate**, matching the reference (an earlier joint `[s,z]` clip starved `s`; reverted 2026-07-20). |
 | `optimizer.step()` (`:367`). | `optimizer.step()`. |
 | Advance under `no_grad` with a **second** forward `get_x_0_hat_from_x_noisy_batched(...)` then `get_x_t_from_x_0_hat` + `get_x_noisy` (`:373–395`). | Advance with `coords = step_output.state.detach()` from the **same** sampler step — one forward, not two. |
 
@@ -65,7 +65,7 @@ for outer in range(outer_diffusion_steps):       for outer in range(outer_steps)
     for step in range(diffusion_N):                  for i in range(num_steps):
         x0 = denoise(noisy, s, z)   # grad             x0 = sampler.step(grad_enabler).denoised
         loss = main + anchor_s + anchor_z              loss = reward(x0) + anchor(s,z)
-        backward; clip s; clip z; step                 backward; joint-clip[s,z]; step
+        backward; clip s; clip z; step                 backward; clip s; clip z; step
         advance (2nd forward, no_grad)                 coords = step_output.state.detach()
 return optimized_dict                             # then: final clean sampling pass
 (separately) run_diffusion_process_it_optimized   _sample_with_frozen_latents() -> ensemble
@@ -89,8 +89,11 @@ saved ensemble.
 **Fixed (the reference's bugs — from the migration notes):**
 - **BUG-02 / Tier-1 #1:** optimizer built once per round, not rebuilt every step
   (the reference's "not actually running Adam" headline).
-- **Tier-1 #3:** a single joint gradient clip over `[s, z]` (reference clipped them
-  separately, distorting their relative scale).
+- **Tier-1 #3 (tried, then REVERTED 2026-07-20):** a single joint `[s, z]` clip was
+  tried as a "harmonization," but since `z`'s gradient is ~1e4× `s`'s, the shared
+  coefficient is set by `z` and scales `s`'s step down — starving `s`. Reverted to the
+  reference's **separate** per-latent clips, which decouple `s`'s step from `z`'s scale.
+  (Adam's per-parameter normalization is what actually commensurates the two.)
 - **Tier-2 #4:** the trajectory advances using the same differentiable forward — no
   redundant second denoiser pass per step.
 - **BUG-16:** no hardcoded `== 160` save step.

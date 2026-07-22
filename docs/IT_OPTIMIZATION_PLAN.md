@@ -62,10 +62,11 @@ Design decisions locked for v1:
 - **Coordinate DPS guidance is disabled** (`scaler=None` into the sampler). The only steering in
   v1 comes from the latent update. (This is the "comment out the guidance section" request,
   realized as a clean disable so it stays reversible.)
-- **Optimize `s` and `z` together** with a **single joint gradient clip over `[s, z]`** — the
-  "harmonization." `z` has ~30× more elements than `s`; clipping them independently to the same
-  norm distorts their relative gradient scale (notes §2, Tier 1 #3). A shared clip (plus balanced
-  anchor weights `λ_s`, `λ_z`) keeps the two updates commensurate.
+- **Optimize `s` and `z` together**, but **clip each latent's gradient separately** (matching the
+  reference). A single joint `[s, z]` clip was originally tried as a "harmonization," but since
+  `z`'s gradient is ~1e4× `s`'s, the shared coefficient is set by `z` and scales `s`'s step down to
+  near-nothing — starving `s`. Per-latent clips cap each step without coupling them; Adam's
+  per-parameter normalization is what actually commensurates `s` and `z`. (Corrected 2026-07-20.)
 - **One persistent Adam optimizer** built once for the whole diffusion pass — *not* rebuilt each
   step. Rebuilding per step is the notes' headline bug (BUG-02 / Tier 1 #1): it degenerates Adam
   to `lr·sign(g)` because the moments reset every step. We start correct.
@@ -94,7 +95,7 @@ for i in range(num_steps):
         x̂₀   = reconciler.align(x̂₀, ref)                      # experimental frame — reward is frame-dependent
         loss = reward(x̂₀) + λ_s·‖latent_s − s0‖² + λ_z·‖latent_z − z0‖²
         loss.backward()
-        clip_grad_norm_([latent_s, latent_z], max_grad_norm)  # JOINT clip = harmonization
+        clip_grad_norm_(latent_s, max_grad_norm); clip_grad_norm_(latent_z, max_grad_norm)  # separate
         optimizer.step()
     feats_adv = inject(features, latent_s.detach(), latent_z.detach())
     coords = sampler.step(coords, model, context, scaler=None, features=feats_adv).state   # advance, NO coord guidance
@@ -175,7 +176,7 @@ for i in range(num_steps):
 
 ## 5. Correctness lessons baked in from the notes' bug review
 - Persistent optimizer, real Adam (BUG-02 / Tier 1 #1) — done in v1.
-- Joint `[s,z]` clip (Tier 1 #3) — the harmonization, done in v1.
+- Per-latent `s`/`z` clip (Tier 1 #3) — separate clips; a joint clip starved `s` (corrected 2026-07-20).
 - Objective is config-selectable via `RewardFunctionProtocol`, never hardcoded (BUG-P2/BUG-14).
 - If a backbone-RMSD reward is added later: use the backbone mask for *both* alignment and loss,
   and divide by `√N` for a true RMSD (BUG-04).

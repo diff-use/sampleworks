@@ -16,7 +16,7 @@ The algorithm (kept faithful to the reference), with the reference's bugs fixed:
         for each diffusion step:
             x0_hat  = differentiable denoise(noisy_t, s, z)   # one forward
             loss    = reward(x0_hat) + anchor(s, z)
-            loss.backward();  joint grad-clip([s, z]);  adam.step()   # reference clipped s, z separately
+            loss.backward();  per-latent grad-clip (s, then z);  adam.step()
             advance the trajectory one step (latents frozen)
     final clean sampling pass with the optimized latents -> saved ensemble
 
@@ -144,9 +144,11 @@ class LatentOptimization:
             unlike the reference, which rebuilt it every diffusion step and thereby
             degenerated to signed gradient descent (its headline bug).
         max_grad_norm
-            Threshold for a single **joint** gradient clip over ``[s, z]`` -- the
-            harmonization that keeps the differently sized single/pair gradients on
-            a common scale (the reference clipped them separately).
+            Per-latent gradient-clip threshold: each optimized latent (``s``, ``z``)
+            is clipped to this norm **independently** (matching the reference), so
+            ``s``'s update is not scaled down by ``z``'s much larger gradient. A single
+            joint clip over ``[s, z]`` does the opposite -- ``z`` dominates the shared
+            coefficient and starves ``s``.
         optimize_single, optimize_pair
             Which representations to optimize. Both by default.
         anchor_weight_single, anchor_weight_pair
@@ -219,6 +221,7 @@ class LatentOptimization:
 
         # --- optimize the latents (outer resample × inner diffusion steps) ------
         optimization_losses: list[list[float]] = []
+        latent_drift: list[list[float]] = []
         for outer in range(self.outer_steps):
             optimizer = torch.optim.Adam(latents, lr=self.learning_rate)  # once per round
             round_losses = self._optimize_one_round(
@@ -238,6 +241,14 @@ class LatentOptimization:
                 round_index=outer,
             )
             optimization_losses.append(round_losses)
+            # relative drift of each latent from its trunk baseline -- shows which latent
+            # actually moved (s vs z), which the loss trend alone cannot reveal.
+            latent_drift.append(
+                [
+                    float((lat.detach() - base).norm() / (base.norm() + 1e-12))
+                    for lat, base in zip(latents, baselines)
+                ]
+            )
 
         # --- final clean sampling pass with the optimized latents ---------------
         final_coords, trajectory, losses = self._sample_with_frozen_latents(
@@ -253,7 +264,10 @@ class LatentOptimization:
             reward_inputs=reward_inputs,
         )
 
-        metadata: dict = {"optimization_losses": optimization_losses}
+        metadata: dict = {
+            "optimization_losses": optimization_losses,
+            "latent_drift": latent_drift,
+        }
         if reconciler.has_mismatch and processed.model_atom_array is not None:
             metadata["model_atom_array"] = processed.model_atom_array
 
@@ -342,8 +356,9 @@ class LatentOptimization:
         """Score the denoised structure, backprop to the latents, take one Adam step.
 
         ``denoised`` is the sampler's aligned prediction and carries a graph back to
-        the latent leaves. The single joint gradient clip over all latents is the
-        harmonization step. Returns the data-only reward for logging.
+        the latent leaves. Each latent is gradient-clipped **separately** so ``s``'s
+        step is not scaled down by ``z``'s much larger gradient. Returns the data-only
+        reward for logging.
         """
         if denoised is None:
             raise RuntimeError(
@@ -360,7 +375,13 @@ class LatentOptimization:
 
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(latents, self.max_grad_norm)  # joint clip = harmonization
+        # Clip each latent SEPARATELY (matches reference it_optimization_manager.py:394-395), never
+        # as one joint [s, z] group. NB: with the density reward the gradients are tiny (grad-norm
+        # ~1e-4, far below a max_grad_norm of 1.0), so this clip is effectively inert here -- it
+        # bites only for rewards whose gradients exceed the threshold, where separate (not joint)
+        # clips keep s's step decoupled from z's much larger gradient scale.
+        for latent in latents:
+            torch.nn.utils.clip_grad_norm_(latent, self.max_grad_norm)
         optimizer.step()
         return float(data_loss.detach())
 
