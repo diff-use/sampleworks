@@ -427,8 +427,19 @@ def resources_dir() -> Path:
     return Path(__file__).parent / "resources"
 
 
-def parse_and_remove_hydrogens(path: Path) -> dict:
-    return parse(path, ccd_mirror_path=None, hydrogen_policy="remove")
+def parse_and_remove_hydrogens(path: Path | str) -> dict:
+    """
+    Parse an mmCIF structure file with atomworks.io.parser.parse with settings to remove hydrogens.
+    Parameters
+    ----------
+    path : Path | str
+        path to the mmCIF structure file.
+
+    Returns
+    _______
+        The parsed structure as a dictionary. See atomworks.io.parser.parse for details.
+    """
+    return parse(Path(path), ccd_mirror_path=None, hydrogen_policy="remove")
 
 
 @pytest.fixture(scope="session")
