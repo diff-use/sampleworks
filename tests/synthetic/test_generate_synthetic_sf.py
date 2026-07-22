@@ -80,6 +80,18 @@ def _compute_fprotein(gemmi_structure: gemmi.Structure, device: torch.device) ->
     return assert_numpy(sfc.Fprotein_asu)
 
 
+def _dataset_with_columns(columns: dict[str, MTZDtype]) -> rs.DataSet:
+    """Build a minimal rs.DataSet with each column cast to its MTZ dtype.
+
+    Each column name maps to a dummy column cast to its MTZ dtype. The reflection index
+    is irrelevant to column resolution, so it is left default.
+    """
+    ds = rs.DataSet({name: [1.0, 2.0, 3.0] for name in columns})
+    for name, dtype in columns.items():
+        ds[name] = ds[name].astype(dtype)
+    return ds
+
+
 class TestAtomArrayToGemmi:
     """Tests for atomarray_to_gemmi using the 6b8x structure."""
 
@@ -251,61 +263,57 @@ class TestAtomArrayToGemmi:
         assert not np.allclose(np.abs(f_uniform), np.abs(f_custom), atol=1e-3)
 
 
-def _dataset_with_columns(columns: dict[str, MTZDtype]) -> rs.DataSet:
-    """Build a minimal rs.DataSet whose named columns carry the given MTZ dtypes.
-
-    Parameters
-    ----------
-    columns : dict of str to MTZDtype
-        Mapping from column name to the MTZ dtype that column should hold.
-
-    Returns
-    -------
-    rs.DataSet
-        Dataset with one dummy row per column, each column cast to its dtype. The
-        reflection index is irrelevant to column resolution, so it is left default.
-    """
-    ds = rs.DataSet({name: [1.0, 2.0, 3.0] for name in columns})
-    for name, dtype in columns.items():
-        ds[name] = ds[name].astype(dtype)
-    return ds
-
-
 class TestResolveMtzColumn:
     """Tests for resolve_mtz_column column-selection logic."""
 
-    def test_returns_sole_candidate(self):
+    @pytest.fixture
+    def dataset_with_amplitude_and_phase(self) -> rs.DataSet:
+        """One amplitude column (FP) and one phase column (PHI)."""
+        return _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "PHI": rs.PhaseDtype()}
+        )
+
+    @pytest.fixture
+    def dataset_with_single_amplitude(self) -> rs.DataSet:
+        """A sole amplitude column (FP), with no phase column present."""
+        return _dataset_with_columns({"FP": rs.StructureFactorAmplitudeDtype()})
+
+    @pytest.fixture
+    def dataset_with_two_amplitudes(self) -> rs.DataSet:
+        """Two amplitude columns (FP, FC) of the same dtype."""
+        return _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
+        )
+
+    def test_returns_sole_candidate(self, dataset_with_amplitude_and_phase):
         """With exactly one column of the dtype and no explicit choice, it is returned."""
-        ds = _dataset_with_columns(
-            {"FP": rs.StructureFactorAmplitudeDtype(), "PHI": rs.PhaseDtype()}
+        assert (
+            resolve_mtz_column(dataset_with_amplitude_and_phase, rs.StructureFactorAmplitudeDtype())
+            == "FP"
         )
-        assert resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype()) == "FP"
 
-    def test_no_candidate_raises(self):
+    def test_no_candidate_raises(self, dataset_with_single_amplitude):
         """A dtype absent from the dataset fails fast."""
-        ds = _dataset_with_columns({"FP": rs.StructureFactorAmplitudeDtype()})
         with pytest.raises(ValueError, match="column found"):
-            resolve_mtz_column(ds, rs.PhaseDtype())
+            resolve_mtz_column(dataset_with_single_amplitude, rs.PhaseDtype())
 
-    def test_ambiguous_candidates_raise(self):
+    def test_ambiguous_candidates_raise(self, dataset_with_two_amplitudes):
         """Two columns of the dtype with no explicit choice is ambiguous."""
-        ds = _dataset_with_columns(
-            {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
-        )
         with pytest.raises(ValueError, match="Multiple"):
-            resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype())
+            resolve_mtz_column(dataset_with_two_amplitudes, rs.StructureFactorAmplitudeDtype())
 
-    def test_explicit_column_disambiguates(self):
+    def test_explicit_column_disambiguates(self, dataset_with_two_amplitudes):
         """An explicit column among the candidates is returned verbatim."""
-        ds = _dataset_with_columns(
-            {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
+        assert (
+            resolve_mtz_column(
+                dataset_with_two_amplitudes, rs.StructureFactorAmplitudeDtype(), column="FC"
+            )
+            == "FC"
         )
-        assert resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype(), column="FC") == "FC"
 
-    def test_explicit_column_of_wrong_dtype_raises(self):
+    def test_explicit_column_of_wrong_dtype_raises(self, dataset_with_amplitude_and_phase):
         """An explicit column that is not of the requested dtype is rejected."""
-        ds = _dataset_with_columns(
-            {"FP": rs.StructureFactorAmplitudeDtype(), "PHI": rs.PhaseDtype()}
-        )
         with pytest.raises(ValueError, match="not among"):
-            resolve_mtz_column(ds, rs.StructureFactorAmplitudeDtype(), column="PHI")
+            resolve_mtz_column(
+                dataset_with_amplitude_and_phase, rs.StructureFactorAmplitudeDtype(), column="PHI"
+            )
