@@ -15,7 +15,7 @@ def guidance_job_result(tmp_path: Path) -> JobResult:
     """Successful JobResult populated with paths under ``tmp_path``."""
     return JobResult(
         protein="1l63",
-        model="boltz2",
+        model_name="boltz2",
         method=None,
         scaler="pure_guidance",
         ensemble_size=8,
