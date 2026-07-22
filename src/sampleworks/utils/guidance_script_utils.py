@@ -23,6 +23,7 @@ from sampleworks.core.rewards.real_space_density import (
 )
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.scalers.fk_steering import FKSteering
+from sampleworks.core.scalers.latent_optimization import LatentOptimization  # IT-opt wiring (added)
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import (
     DataSpaceDPSScaler,
@@ -72,7 +73,11 @@ def save_trajectory(
     save_every=10,
 ):
     """Dispatch trajectory serialization to the handler for the selected scaler."""
-    if scaler_type == GuidanceType.PURE_GUIDANCE:
+    # IT-opt wiring (changed): this condition was `== GuidanceType.PURE_GUIDANCE`; we widened it to
+    # also accept LATENT_OPT. Latent optimization reuses the pure-guidance trajectory writer because
+    # its final sampling pass emits a trajectory with the same [ensemble, atoms, 3] layout that
+    # _save_trajectory already expects, so no separate writer is needed for it.
+    if scaler_type in (GuidanceType.PURE_GUIDANCE, GuidanceType.LATENT_OPT):
         _save_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every)
     elif scaler_type == GuidanceType.FK_STEERING:
         _save_fk_steering_trajectory(trajectory, atom_array, output_dir, subdir_name, save_every)
@@ -457,7 +462,17 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
 
         structure = annotate_structure_for_protenix(
-            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
+            structure,
+            ensemble_size=args.ensemble_size,
+            recycling_steps=recycling_steps,
+            # IT-opt wiring (added): this enable_diffusion_shared_vars_cache argument is new — the
+            # call previously used the default (cache on). We decide it here, in _run_guidance()'s
+            # Protenix setup, because latent optimization of the pair representation z requires the
+            # cache to be off: with it on, the denoiser reads stale cached tensors and the gradient
+            # never reaches z_trunk (see docs/IT_OPT_TESTING_PROTENIX.md). We disable it only for the
+            # LATENT_OPT type, since for the other guidance types those tensors are simply recomputed
+            # from the same frozen latents and the result is unchanged.
+            enable_diffusion_shared_vars_cache=(guidance_type != GuidanceType.LATENT_OPT),
         )
     elif "RF3" in wrapper_class_name:
         from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
@@ -578,6 +593,64 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             step_scaler=step_scaler,
             reward=reward_function,
             num_particles=args.num_particles,
+        )
+
+        refined_structure = result.structure
+        losses = result.losses if result.losses else []
+        traj_denoised = result.metadata.get("trajectory_denoised", []) if result.metadata else []
+        traj_next_step = list(result.trajectory) if result.trajectory else []
+
+    # ----- IT-opt wiring (added): the inference-time latent optimization branch (LATENT_OPT) -----
+    # This branch belongs to _run_guidance() and is the entry point for latent optimization. Whereas
+    # pure guidance and FK steering steer the atomic coordinates, latent optimization instead
+    # optimizes the frozen model's cached trunk latents (the single representation s and/or the pair
+    # representation z) against the reward, then samples with those latents held fixed. We read the
+    # knobs off the config exactly as the other branches do and hand the optimize-then-sample loop to
+    # LatentOptimization.
+    elif guidance_type == GuidanceType.LATENT_OPT:
+        logger.info("Initializing inference-time latent optimization (IT-opt)")
+
+        # We import the representation-name maps inside this branch so the model-adapter dependency
+        # stays local to the only code that needs it. The attribute that stores each representation
+        # differs per model (for example "s_trunk"/"z_trunk" on Protenix and RF3 versus "s"/"z" on
+        # Boltz), so we look the names up by model instead of hard-coding them.
+        from sampleworks.models.latent_adapter import (
+            DEFAULT_PAIR_REP_ATTR,
+            DEFAULT_SINGLE_REP_ATTR,
+        )
+
+        # LatentOptimization expects the guidance start as a fraction of the schedule, but the config
+        # carries it as an integer step count, so we convert it here and default to optimizing from
+        # the first step.
+        guidance_t_start = args.guidance_start / num_steps if args.guidance_start > 0 else 0.0
+        which_latent = getattr(args, "which_latent", "pair")  # This is "single", "pair", or "both".
+        anchor_weight = getattr(args, "anchor_weight", 0.0)
+        model_key = str(args.model)
+
+        guidance = LatentOptimization(
+            ensemble_size=args.ensemble_size,
+            num_steps=num_steps,
+            guidance_t_start=guidance_t_start,
+            outer_steps=getattr(args, "outer_steps", 2),
+            learning_rate=getattr(args, "learning_rate", 0.05),
+            max_grad_norm=getattr(args, "max_grad_norm", 1.0),
+            optimize_single=which_latent in ("single", "both"),
+            optimize_pair=which_latent in ("pair", "both"),
+            single_attr=DEFAULT_SINGLE_REP_ATTR[model_key],
+            pair_attr=DEFAULT_PAIR_REP_ATTR[model_key],
+            anchor_weight_single=anchor_weight if which_latent in ("single", "both") else 0.0,
+            anchor_weight_pair=anchor_weight if which_latent in ("pair", "both") else 0.0,
+        )
+
+        logger.info(f"Running latent optimization ({which_latent}) on model {model_key}")
+        # We still pass step_scaler so this call matches the signature the other guidance scalers
+        # use, but LatentOptimization ignores it because the v1 method steers only through the latents.
+        result = guidance.sample(
+            structure=structure,
+            model=model_wrapper,
+            sampler=sampler,
+            step_scaler=step_scaler,
+            reward=reward_function,
         )
 
         refined_structure = result.structure

@@ -613,9 +613,29 @@ _MODEL_ARG_ADDERS: dict[str, Any] = {
     "rf3": add_rf3_specific_args,
 }
 
+def add_latent_opt_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to inference-time latent optimization (IT-opt)."""
+    parser.add_argument(
+        "--which-latent", type=str, default="pair", choices=["single", "pair", "both"],
+        help="Which trunk latent(s) to optimize: single (s), pair (z), or both",
+    )
+    parser.add_argument("--learning-rate", type=float, default=0.05, help="Adam learning rate")
+    parser.add_argument(
+        "--outer-steps", type=int, default=2,
+        help="Number of optimization rounds (fresh diffusion noise per round)",
+    )
+    parser.add_argument(
+        "--anchor-weight", type=float, default=0.0,
+        help="On-manifold L2-to-baseline anchor weight for the optimized latent(s)",
+    )
+    parser.add_argument("--max-grad-norm", type=float, default=1.0,
+                        help="Per-latent gradient-clip threshold")
+
+
 _GUIDANCE_ARG_ADDERS: dict[str, Any] = {
     "pure_guidance": add_pure_guidance_args,
     "fk_steering": add_fk_steering_args,
+    "latent_opt": add_latent_opt_args,
 }
 
 
