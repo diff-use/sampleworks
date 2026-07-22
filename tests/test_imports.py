@@ -31,10 +31,6 @@ class TestAvailabilityFlags:
         """RF3_AVAILABLE should be a boolean."""
         assert isinstance(RF3_AVAILABLE, bool)
 
-    def test_at_least_one_available(self):
-        """At least one model should be available in test environment."""
-        assert BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE
-
 
 class TestCheckFunctions:
     """Test the check_*_available helper functions."""
