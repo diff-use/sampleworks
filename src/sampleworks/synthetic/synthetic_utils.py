@@ -2,6 +2,7 @@
 
 import math
 import traceback
+from collections.abc import Iterator
 from pathlib import Path
 
 import gemmi
@@ -308,8 +309,8 @@ def _resolve_altlocs_for_gemmi(atom_array: AtomArray) -> list[str]:
     return ["\x00" if a in BLANK_ALTLOC_IDS else a for a in atom_array.altloc_id]
 
 
-def _residue_group_bounds(atom_array: AtomArray) -> list[tuple[int, int]]:
-    """Return the atom-index spans, one per residue.
+def _residue_group_bounds(atom_array: AtomArray) -> Iterator[tuple[int, int]]:
+    """Yield the atom-index spans, one per residue.
 
     Parameters
     ----------
@@ -317,19 +318,19 @@ def _residue_group_bounds(atom_array: AtomArray) -> list[tuple[int, int]]:
         Structure whose atoms are grouped into residues. Atoms of a residue are
         assumed contiguous (true for arrays loaded in file order).
 
-    Returns
-    -------
-    list of tuple of int
+    Yields
+    ------
+    tuple of int
         One ``(start_idx, stop_idx)`` per residue, covering the atoms
         ``atom_array[start_idx:stop_idx]`` that share the same ``(chain_id, res_id)``.
     """
     if len(atom_array) == 0:
-        return []
+        return
     chain_id, res_id = atom_array.chain_id, atom_array.res_id
     # boundary shows where a new residue begins (i.e., chain or res_id changed).
     boundary = (chain_id[1:] != chain_id[:-1]) | (res_id[1:] != res_id[:-1])
     start_indices = [0, *(np.flatnonzero(boundary) + 1).tolist(), len(atom_array)]
-    return list(zip(start_indices[:-1], start_indices[1:]))
+    yield from zip(start_indices[:-1], start_indices[1:])
 
 
 def _build_gemmi_residue(
@@ -363,6 +364,8 @@ def _build_gemmi_residue(
     # if the subchain id is not set, gemmi's setup_entities() will set it to multi-char,
     # which is rejected by SFcalculator's PDB-header step.
     residue.subchain = atom_array.chain_id[start_idx]
+    # biotite's bool `hetero` -> gemmi's single-char het_flag ('H' HETATM / 'A' ATOM)
+    residue.het_flag = "H" if bool(atom_array.hetero[start_idx]) else "A"
     for atom_idx in range(start_idx, stop_idx):
         atom = gemmi.Atom()
         atom.name = atom_array.atom_name[atom_idx]
