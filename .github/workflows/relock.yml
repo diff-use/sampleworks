@@ -7,6 +7,12 @@ name: Relock
 # branch) whenever pyproject.toml changes and the lock needs refreshing.
 on:
   workflow_dispatch:
+  # Temporary: lets this branch regenerate its own lock on linux while the
+  # workflow_dispatch version (needs to live on the default branch) lands via
+  # PR. Reverted to dispatch-only once the lock is refreshed.
+  push:
+    branches: [mdc/protpardelle]
+    paths: ['.github/workflows/relock.yml']
 
 permissions:
   contents: write
