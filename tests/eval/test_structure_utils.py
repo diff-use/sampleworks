@@ -17,9 +17,9 @@ from sampleworks.eval.structure_utils import (
 )
 from sampleworks.utils.atom_array_utils import (
     apply_selection,
+    map_altlocs_to_stack,
     parse_selection_string,
 )
-from sampleworks.utils.atom_array_utils import map_altlocs_to_stack
 
 
 @pytest.fixture
