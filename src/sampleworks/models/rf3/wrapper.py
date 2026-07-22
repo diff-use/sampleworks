@@ -74,8 +74,6 @@ class RF3Config:
         - str/Path to .json: JSON file with chain_id -> MSA path mapping
         - str/Path to .a3m: Single MSA file applied to all protein chains
         - None (default): No MSA information is used
-    ensemble_size : int
-        Number of samples to generate (batch dimension of x_init). Default is 1.
     recycling_steps : int | None
         Number of recycling steps to perform. Default is None, uses model default.
     disable_chiral_features : bool
@@ -93,7 +91,6 @@ class RF3Config:
     """
 
     msa_path: str | Path | dict | None = None
-    ensemble_size: int = 1
     recycling_steps: int | None = None
     disable_chiral_features: bool = False
     track_chiral_features: bool = False
@@ -103,7 +100,6 @@ def annotate_structure_for_rf3(
     structure: dict,
     *,
     msa_path: str | Path | dict | None = None,
-    ensemble_size: int = 1,
     recycling_steps: int | None = None,
     disable_chiral_features: bool = False,
     track_chiral_features: bool = False,
@@ -120,8 +116,6 @@ def annotate_structure_for_rf3(
         - str/Path to .json: JSON file with chain_id -> MSA path mapping
         - str/Path to .a3m: Single MSA file applied to all protein chains
         - None (default): No MSA information is used
-    ensemble_size : int
-        Number of samples to generate (batch dimension of x_init). Default is 1.
     recycling_steps : int | None
         Number of recycling steps to perform. Default is None, uses model default.
     disable_chiral_features : bool
@@ -136,7 +130,6 @@ def annotate_structure_for_rf3(
     """
     config = RF3Config(
         msa_path=msa_path,
-        ensemble_size=ensemble_size,
         recycling_steps=recycling_steps,
         disable_chiral_features=disable_chiral_features,
         track_chiral_features=track_chiral_features,
@@ -322,7 +315,7 @@ class RF3Wrapper:
     def featurize(self, structure: dict) -> GenerativeModelInput[RF3Conditioning]:
         """From an Atomworks structure, calculate RF3 input features.
 
-        Runs trunk forward pass and initializes x_init from prior distribution.
+        Runs the trunk forward pass to produce conditioning features.
 
         Parameters
         ----------
@@ -335,7 +328,7 @@ class RF3Wrapper:
         Returns
         -------
         GenerativeModelInput[RF3Conditioning]
-            Model input with ``x_init`` and trunk conditioning.
+            Model input with trunk conditioning.
         """
         config = structure.get("_rf3_config", RF3Config())
         if isinstance(config, dict):
@@ -346,7 +339,6 @@ class RF3Wrapper:
         self._chiral_grad_stats = []
 
         msa_path = config.msa_path
-        ensemble_size = config.ensemble_size
         recycling_steps = config.recycling_steps
 
         if "asym_unit" not in structure:
@@ -520,23 +512,7 @@ class RF3Wrapper:
             )
             logger.info("Chiral features disabled: zeroed out chiral_centers in features dict")
 
-        # x_init here is a shape-compatible reference carried with the featurized
-        # model input. During guided sampling, alignment/reference coordinates are
-        # built later via process_structure_to_trajectory_input() and AtomReconciler.
-        # TODO: figure out if this is necessary or if we should just remove x_init completely.
-        if len(true_atom_array) == num_atoms:
-            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size)
-        else:
-            logger.info(
-                f"Input structure has {len(true_atom_array)} atoms, but RF3 operates on "
-                f"{num_atoms} atoms after model-specific preprocessing. Initializing "
-                "x_init from prior to match model shape; guided sampling will "
-                "reconcile alignment and reward inputs later on the common atom subset."
-            )
-            x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
-
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def _pairformer_pass(
         self, features: dict[str, Any], grad_needed: bool = False, recycling_steps: int = 10

@@ -1016,7 +1016,7 @@ class TestSave:
             protein="1l63",
             structure=Path("dummy"),
             density=Path("dummy"),
-            model="boltz2",
+            model_name="boltz2",
             guidance_type="pure_guidance",
             log_path="dummy",
             output_dir=str(tmp_path),

@@ -458,15 +458,12 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     if "Protenix" in wrapper_class_name:
         from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
 
-        structure = annotate_structure_for_protenix(
-            structure, ensemble_size=args.ensemble_size, recycling_steps=recycling_steps
-        )
+        structure = annotate_structure_for_protenix(structure, recycling_steps=recycling_steps)
     elif "RF3" in wrapper_class_name:
         from sampleworks.models.rf3.wrapper import annotate_structure_for_rf3
 
         structure = annotate_structure_for_rf3(
             structure,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
             msa_path=getattr(args, "msa_path", None),
             disable_chiral_features=getattr(args, "disable_chiral_features", False),
@@ -481,7 +478,6 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = process_structure_for_boltz(
             structure,
             out_dir=args.output_dir,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
         )
     else:
@@ -661,7 +657,7 @@ def get_job_result(
     end_time = epoch_seconds(ended_at)
     result = JobResult(
         protein=args.protein,
-        model=args.model,
+        model_name=args.model_name,
         method=getattr(args, "method", None),
         scaler=args.guidance_type,
         ensemble_size=args.ensemble_size,
@@ -686,7 +682,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     template_job = job_queue[0]
     if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
         # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
-        model_key = str(template_job.model).lower().replace("structurepredictor.", "")
+        model_key = str(template_job.model_name).lower().replace("structurepredictor.", "")
         resolved = _resolve_checkpoint(model_key)  # will raise if not found
         template_job.model_checkpoint = resolved
         # Propagate to all jobs in the queue
@@ -697,7 +693,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     device, model_wrapper = get_model_and_device(
         str(template_job.device),
         template_job.model_checkpoint,
-        template_job.model,
+        template_job.model_name,
         method=template_job.method if hasattr(template_job, "method") else None,
     )
     job_results = []

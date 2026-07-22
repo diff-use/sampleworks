@@ -58,7 +58,7 @@ class ProtenixConditioning:
         Raw feature dict for diffusion module.
     num_atoms : int
         Number of atoms in the Protenix model's representation. This is the authoritative
-        atom count for the diffusion module and should be used for x_init shape.
+        atom count for the diffusion module and prior initialization.
     pair_z : Tensor | None
         Cached pair representation for diffusion conditioning.
     p_lm : Tensor | None
@@ -93,8 +93,6 @@ class ProtenixConfig:
     ----------
     out_dir : str | Path | None
         Output directory for intermediate JSON file.
-    ensemble_size : int
-        Number of ensemble members to generate.
     recycling_steps : int | None
         Number of recycling steps to perform. If None, uses model default.
     use_msa : bool
@@ -104,7 +102,6 @@ class ProtenixConfig:
     """
 
     out_dir: str | Path | None = None
-    ensemble_size: int = 1
     recycling_steps: int | None = None
     use_msa: bool = True
     enable_diffusion_shared_vars_cache: bool = True
@@ -114,7 +111,6 @@ def annotate_structure_for_protenix(
     structure: dict,
     *,
     out_dir: str | Path | None = None,
-    ensemble_size: int = 1,
     recycling_steps: int | None = None,
     use_msa: bool = True,
     enable_diffusion_shared_vars_cache: bool = True,
@@ -128,8 +124,6 @@ def annotate_structure_for_protenix(
     out_dir : str | Path | None
         Output directory for intermediate files.
         Defaults to structure metadata ID or "protenix_output".
-    ensemble_size : int
-        Number of ensemble members to generate.
     recycling_steps : int | None
         Number of recycling steps to perform. If None, uses model default.
     use_msa : bool
@@ -144,7 +138,6 @@ def annotate_structure_for_protenix(
     """
     config = ProtenixConfig(
         out_dir=out_dir or structure.get("metadata", {}).get("id", "protenix_output"),
-        ensemble_size=ensemble_size,
         recycling_steps=recycling_steps,
         use_msa=use_msa,
         enable_diffusion_shared_vars_cache=enable_diffusion_shared_vars_cache,
@@ -327,7 +320,7 @@ class ProtenixWrapper:
     def featurize(self, structure: dict) -> GenerativeModelInput[ProtenixConditioning]:
         """From an Atomworks structure, calculate Protenix input features.
 
-        Runs Pairformer pass and initializes x_init from prior distribution.
+        Runs the Pairformer pass to produce conditioning features.
 
         Parameters
         ----------
@@ -340,14 +333,13 @@ class ProtenixWrapper:
         Returns
         -------
         GenerativeModelInput[ProtenixConditioning]
-            Model input with x_init and Pairformer conditioning.
+            Model input with Pairformer conditioning.
         """
         config = structure.get("_protenix_config", ProtenixConfig())
         if isinstance(config, dict):
             config = ProtenixConfig(**config)
 
         out_dir = config.out_dir or structure.get("metadata", {}).get("id", "protenix_output")
-        ensemble_size = config.ensemble_size
         use_msa = config.use_msa
         recycling_steps = config.recycling_steps
         enable_diffusion_shared_vars_cache = config.enable_diffusion_shared_vars_cache
@@ -505,35 +497,7 @@ class ProtenixWrapper:
             model_atom_array=model_aa,
         )
 
-        # x_init should be the reference coordinates for alignment purposes.
-        # Must match num_atoms_protenix so downstream samplers/scalers see
-        # consistent shapes with the model representation.
-        if "asym_unit" in structure:
-            n_input = len(atom_array)
-            if n_input != num_atoms_protenix:
-                logger.warning(
-                    f"Atom-count mismatch: atom_array has {n_input} atoms, "
-                    f"atom_array_protenix has {num_atoms_protenix} atoms. "
-                    "Using atom_array_protenix coords for x_init to match model "
-                    "atom count.",
-                )
-                x_init = torch.as_tensor(
-                    atom_array_protenix.coord, device=self.device, dtype=torch.float32
-                )
-            else:
-                x_init = torch.as_tensor(atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size).clone()
-        else:
-            logger.warning(
-                "True structure not available, so initializing "
-                "x_init from prior. This means align_to_input will not work properly,"
-                " and reward functions dependent on this won't be accurate."
-            )
-            x_init = self.initialize_from_prior(
-                batch_size=ensemble_size, shape=(num_atoms_protenix, 3)
-            )
-
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def _pairformer_pass(
         self, features: dict[str, Any], grad_needed: bool = False, **kwargs
