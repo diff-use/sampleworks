@@ -13,6 +13,7 @@ from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
 from reciprocalspaceship.dtypes.base import MTZDtype
+
 from sampleworks.utils.atom_array_utils import (
     AltlocInfo,
     apply_selection,

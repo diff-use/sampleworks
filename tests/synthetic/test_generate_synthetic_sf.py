@@ -169,7 +169,7 @@ class TestAtomArrayToGemmi:
         self, stripped_atom_array, stripped_gemmi, tmp_path
     ):
         """Test that reloading Gemmi's CIF output returns the original atom array used to construct
-        the Gemmi Structure object. This ensures we don't corrupt or lose information in building 
+        the Gemmi Structure object. This ensures we don't corrupt or lose information in building
         the Gemmi Structure that would affect our structure factor calculations.
 
         Fields (coords, element, b_factor, occupancy) drive the structure factors; fields
@@ -180,9 +180,7 @@ class TestAtomArrayToGemmi:
         """
         ref = stripped_atom_array
         save_cif_path = tmp_path / "saved.cif"
-        gemmi_structure = atomarray_to_gemmi(
-            ref, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm
-        )
+        gemmi_structure = atomarray_to_gemmi(ref, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm)
         gemmi_structure.make_mmcif_document().write_file(str(save_cif_path))
         loaded = load_structure_with_altlocs(save_cif_path)
 
@@ -191,8 +189,15 @@ class TestAtomArrayToGemmi:
         # Extra fields can exist depending on the structure file. For example, cif vs pdb would
         # have an extra annotation is_polymer. Here, we specify the key fields we care about.
         important_annotations = {
-            "chain_id", "res_id", "res_name", "atom_name", "element", "hetero",
-            "b_factor", "occupancy", "altloc_id",
+            "chain_id",
+            "res_id",
+            "res_name",
+            "atom_name",
+            "element",
+            "hetero",
+            "b_factor",
+            "occupancy",
+            "altloc_id",
         }
         assert important_annotations <= set(ref.get_annotation_categories())
         assert important_annotations <= set(loaded.get_annotation_categories())
@@ -206,9 +211,9 @@ class TestAtomArrayToGemmi:
 
         # Check the non-float annotation columns are identical
         for category in sorted(important_annotations - {"b_factor", "occupancy", "altloc_id"}):
-            assert np.array_equal(
-                loaded.get_annotation(category), ref.get_annotation(category)
-            ), f"annotation {category!r} did not round-trip"
+            assert np.array_equal(loaded.get_annotation(category), ref.get_annotation(category)), (
+                f"annotation {category!r} did not round-trip"
+            )
 
         assert set(np.unique(loaded.res_id)) != {-1}  # not collapsed to the degenerate -1
         assert len(np.unique(loaded.element)) > 1  # not collapsed to a single/blank symbol
@@ -218,9 +223,7 @@ class TestAtomArrayToGemmi:
         np.testing.assert_allclose(loaded.b_factor, ref.b_factor, atol=1e-2)
         np.testing.assert_allclose(loaded.occupancy, ref.occupancy, atol=1e-2)
 
-    def test_multichain_shared_res_ids_not_merged_in_gemmi(
-        self, multichain_shared_resid_array
-    ):
+    def test_multichain_shared_res_ids_not_merged_in_gemmi(self, multichain_shared_resid_array):
         """Test that atomarray_to_gemmi splits shared res_ids into separate residues per chain
         in the Gemmi Structure object.
         """
@@ -239,9 +242,7 @@ class TestAtomArrayToGemmi:
             # residue, changing chain A's atom count and dropping chain B's atom -- breaking these.
             assert [res.seqid.num for res in residues] == arr.res_id[mask].tolist()
             assert [res.name for res in residues] == arr.res_name[mask].tolist()
-            assert [
-                atom.name for res in residues for atom in res
-            ] == arr.atom_name[mask].tolist()
+            assert [atom.name for res in residues for atom in res] == arr.atom_name[mask].tolist()
 
     def test_empty_atom_array_raises(self):
         """An empty AtomArray fails fast rather than yielding a chain-less structure."""
