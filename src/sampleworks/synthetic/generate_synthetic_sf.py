@@ -14,7 +14,7 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, cast, ClassVar
 
 import gemmi
 import reciprocalspaceship as rs
@@ -174,7 +174,11 @@ def _build_rs_dataset_for_one_label(
         f"phase column: {phase_column} for {label}"
     )
     f_col, phi_col, sig_col = f"F{label}", f"PHIF{label}", f"SIGF{label}"
-    dataset = dataset.rename(columns={amplitude_column: f_col, phase_column: phi_col})
+    # rs.DataSet.rename returns a DataSet at runtime, but the stub types it as DataFrame.
+    dataset = cast(
+        rs.DataSet,
+        dataset.rename(columns={amplitude_column: f_col, phase_column: phi_col}),
+    )
     dataset[sig_col] = (dataset[f_col] * sigma_f_scale).astype(rs.StandardDeviationDtype())
     return dataset[[f_col, sig_col, phi_col]]
 
