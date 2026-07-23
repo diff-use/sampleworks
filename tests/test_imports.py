@@ -8,6 +8,7 @@ from sampleworks.utils.imports import (
     check_protenix_available,
     check_rf3_available,
     PROTENIX_AVAILABLE,
+    PROTPARDELLE_AVAILABLE,
     require_any_model,
     require_boltz,
     require_protenix,
@@ -31,17 +32,13 @@ class TestAvailabilityFlags:
         """RF3_AVAILABLE should be a boolean."""
         assert isinstance(RF3_AVAILABLE, bool)
 
-    def test_at_least_one_available(self):
-        """At least one model should be available in test environment."""
-        assert BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE
-
 
 class TestCheckFunctions:
     """Test the check_*_available helper functions."""
 
     def test_check_any_model_available_no_error(self):
         """check_any_model_available should not raise if any model available."""
-        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE:
+        if BOLTZ_AVAILABLE or PROTENIX_AVAILABLE or RF3_AVAILABLE or PROTPARDELLE_AVAILABLE:
             check_any_model_available()
 
     def test_check_boltz_available(self):

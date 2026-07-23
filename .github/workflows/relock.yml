@@ -28,6 +28,12 @@ jobs:
           run-install: false
 
       - name: Regenerate lockfile
+        # The runner has no GPU, so fake the __cuda virtual package that the
+        # cuda=12 system-requirement needs; otherwise solving the CUDA envs
+        # (e.g. boltz-analysis on linux-64-cuda-12) fails with 'missing virtual
+        # packages: __cuda >= 12'.
+        env:
+          CONDA_OVERRIDE_CUDA: "12"
         run: pixi lock
 
       - name: Commit lockfile if changed

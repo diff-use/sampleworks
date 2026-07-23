@@ -66,7 +66,25 @@ class TestFromCliUnified:
             "/data/msa.a3m",
         ] + COMMON_ARGS
         config = GuidanceConfig.from_cli(argv)
-        assert config.msa_path == "/data/msa.a3m"  # ty: ignore[unresolved-attribute]
+        assert getattr(config, "msa_path") == "/data/msa.a3m"
+
+    def test_model_specific_args_protpardelle_sampling(self):
+        argv = [
+            "--model",
+            "protpardelle",
+            "--guidance-type",
+            "pure_guidance",
+            "--model-checkpoint",
+            "/data/cc89.pth",
+            "--protpardelle-config-path",
+            "/data/cc89.yaml",
+            "--num-diffusion-steps",
+            "64",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert getattr(config, "model_checkpoint") == "/data/cc89.pth"
+        assert getattr(config, "protpardelle_config_path") == "/data/cc89.yaml"
+        assert config.num_diffusion_steps == 64
 
     def test_guidance_specific_args_fk(self):
         argv = [
