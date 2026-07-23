@@ -40,6 +40,7 @@ from loguru import logger
 from torch import Tensor
 from tqdm import tqdm
 
+from sampleworks.core.rewards.geometry import BondGeometryReward
 from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import StepParams, TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
@@ -120,6 +121,7 @@ class LatentOptimization:
         optimize_pair: bool = True,
         anchor_weight_single: float = 0.0,
         anchor_weight_pair: float = 0.0,
+        bond_length_weight: float = 0.0,
         single_attr: str = "s",
         pair_attr: str = "z",
     ):
@@ -153,6 +155,10 @@ class LatentOptimization:
             Which representations to optimize. Both by default.
         anchor_weight_single, anchor_weight_pair
             Weights of the on-manifold L2-to-baseline anchor per latent.
+        bond_length_weight
+            Weight of the coordinate-space bond-geometry penalty (bond-length + steric-clash
+            hinges; see ``BondGeometryReward``). 0 disables it (the default), leaving the objective
+            as density + anchor only.
         single_attr, pair_attr
             Conditioning attribute names for the single / pair representation
             (``"s"``/``"z"`` for Boltz, ``"s_trunk"``/``"z_trunk"`` for
@@ -161,7 +167,8 @@ class LatentOptimization:
         logger.info(
             f"Initialized LatentOptimization (IT-opt): outer_steps={outer_steps}, "
             f"num_steps={num_steps}, lr={learning_rate}, "
-            f"optimize_single={optimize_single}, optimize_pair={optimize_pair}."
+            f"optimize_single={optimize_single}, optimize_pair={optimize_pair}, "
+            f"bond_length_weight={bond_length_weight}."
         )
         self.ensemble_size = ensemble_size
         self.num_steps = num_steps
@@ -173,6 +180,7 @@ class LatentOptimization:
         self.optimize_pair = optimize_pair
         self.anchor_weight_single = anchor_weight_single
         self.anchor_weight_pair = anchor_weight_pair
+        self.bond_length_weight = bond_length_weight
         self.single_attr = single_attr
         self.pair_attr = pair_attr
 
@@ -219,6 +227,19 @@ class LatentOptimization:
         schedule = sampler.compute_schedule(num_steps=self.num_steps)
         grad_enabler = _GradEnablingScaler()
 
+        # --- optional coordinate-space geometry penalty -------------------------
+        # BondGeometryReward penalizes stretched bonds and steric clashes in the denoised structure,
+        # curbing the overshoot where an aggressive latent update trades valid geometry for density
+        # fit. Its topology is read from the model atom array -- the atom set whose ordering matches
+        # the denoised coordinates and the reward inputs -- so the bond indices line up. It stays None
+        # (disabled) unless a positive bond_length_weight was configured.
+        bond_geometry = None
+        if self.bond_length_weight > 0:
+            geometry_atom_array = processed.model_atom_array or processed.atom_array
+            bond_geometry = BondGeometryReward(
+                geometry_atom_array, self.bond_length_weight, coords.device
+            )
+
         # --- optimize the latents (outer resample × inner diffusion steps) ------
         optimization_losses: list[list[float]] = []
         latent_drift: list[list[float]] = []
@@ -239,6 +260,7 @@ class LatentOptimization:
                 reward_inputs=reward_inputs,
                 grad_enabler=grad_enabler,
                 round_index=outer,
+                bond_geometry=bond_geometry,
             )
             optimization_losses.append(round_losses)
             # relative drift of each latent from its trunk baseline -- shows which latent
@@ -296,6 +318,7 @@ class LatentOptimization:
         reward_inputs,
         grad_enabler,
         round_index,
+        bond_geometry,
     ) -> list[float]:
         """One optimization round: a full diffusion pass that updates the latents.
 
@@ -335,6 +358,7 @@ class LatentOptimization:
                     anchor=anchor,
                     latents=latents,
                     baselines=baselines,
+                    bond_geometry=bond_geometry,
                 )
                 losses.append(data_loss)
                 steps.set_postfix(loss=data_loss)
@@ -352,13 +376,15 @@ class LatentOptimization:
         anchor: LatentAnchor,
         latents: Sequence[Tensor],
         baselines: Sequence[Tensor],
+        bond_geometry: BondGeometryReward | None = None,
     ) -> float:
         """Score the denoised structure, backprop to the latents, take one Adam step.
 
         ``denoised`` is the sampler's aligned prediction and carries a graph back to
-        the latent leaves. Each latent is gradient-clipped **separately** so ``s``'s
-        step is not scaled down by ``z``'s much larger gradient. Returns the data-only
-        reward for logging.
+        the latent leaves. When ``bond_geometry`` is supplied, its bond-length/clash
+        penalty is added to the loss alongside the anchor. Each latent is
+        gradient-clipped **separately** so ``s``'s step is not scaled down by ``z``'s
+        much larger gradient. Returns the data-only reward for logging.
         """
         if denoised is None:
             raise RuntimeError(
@@ -372,6 +398,11 @@ class LatentOptimization:
             occupancies=reward_inputs.occupancies,
         )
         loss = data_loss + anchor(latents, baselines)
+        # Add the coordinate-space geometry penalty (bond-length + clash) when it is enabled, so the
+        # latent update is pushed toward density fits that keep valid geometry; it backpropagates
+        # through the same denoised prediction to the latents.
+        if bond_geometry is not None:
+            loss = loss + bond_geometry(denoised)
 
         optimizer.zero_grad()
         loss.backward()

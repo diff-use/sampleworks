@@ -625,6 +625,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         guidance_t_start = args.guidance_start / num_steps if args.guidance_start > 0 else 0.0
         which_latent = getattr(args, "which_latent", "pair")  # This is "single", "pair", or "both".
         anchor_weight = getattr(args, "anchor_weight", 0.0)
+        bond_length_weight = getattr(args, "bond_length_weight", 0.0)
         model_key = str(args.model)
 
         guidance = LatentOptimization(
@@ -640,6 +641,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             pair_attr=DEFAULT_PAIR_REP_ATTR[model_key],
             anchor_weight_single=anchor_weight if which_latent in ("single", "both") else 0.0,
             anchor_weight_pair=anchor_weight if which_latent in ("pair", "both") else 0.0,
+            bond_length_weight=bond_length_weight,
         )
 
         logger.info(f"Running latent optimization ({which_latent}) on model {model_key}")

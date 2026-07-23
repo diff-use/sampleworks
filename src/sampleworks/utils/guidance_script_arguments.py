@@ -630,6 +630,11 @@ def add_latent_opt_args(parser: argparse.ArgumentParser | GuidanceConfig):
     )
     parser.add_argument("--max-grad-norm", type=float, default=1.0,
                         help="Per-latent gradient-clip threshold")
+    parser.add_argument(
+        "--bond-length-weight", type=float, default=0.0,
+        help="Weight of the coordinate-space bond-geometry penalty (bond-length + steric-clash "
+             "hinges) added to the IT-opt loss; 0 disables it",
+    )
 
 
 _GUIDANCE_ARG_ADDERS: dict[str, Any] = {
