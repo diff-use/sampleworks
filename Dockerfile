@@ -93,7 +93,21 @@ FROM source AS pixi-envs
 
 # Checkpoints (~10 GB) rarely change, so this layer stays cacheable across most
 # source edits and dependency-only rebuilds.
-COPY --from=checkpoints /checkpoints/ /checkpoints/
+#
+# Split per-file so a cold pull fetches them as concurrent S3 flows instead of
+# one serial ~10 GB stream. Harbor redirects each blob GET to presigned S3, and
+# containerd downloads each layer on its own connection (up to
+# max_concurrent_downloads), so N layers pull in parallel where one COPY could
+# not. The files are near-incompressible weights, so extra layer boundaries add
+# essentially no image size. The trailing catch-all ships any checkpoint added
+# or renamed later that is not enumerated above (unsplit, but never dropped).
+COPY --from=checkpoints /checkpoints/boltz1_conf.ckpt               /checkpoints/
+COPY --from=checkpoints /checkpoints/rf3_foundry_01_24_latest.ckpt  /checkpoints/
+COPY --from=checkpoints /checkpoints/boltz2_conf.ckpt              /checkpoints/
+COPY --from=checkpoints /checkpoints/protenix_base_default_v0.5.0.pt /checkpoints/
+COPY --from=checkpoints /checkpoints/ccd.pkl                       /checkpoints/
+COPY --from=checkpoints /checkpoints/mols/                         /checkpoints/mols/
+COPY --from=checkpoints /checkpoints/                              /checkpoints/
 
 # IMPORTANT: keep these installs in a single RUN. Splitting them into separate
 # Docker layers duplicates shared conda packages (numpy, CUDA libs, etc.) and can
