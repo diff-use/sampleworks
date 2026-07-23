@@ -25,8 +25,8 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.sf import
     ELEMENT_TO_ATOMIC_NUM,
 )
 from sampleworks.core.rewards.real_space_density import (
-    RealSpaceRewardFunction,
     extract_density_inputs_from_atomarray,
+    RealSpaceRewardFunction,
     setup_scattering_params,
 )
 
