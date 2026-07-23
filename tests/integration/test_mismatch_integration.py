@@ -424,23 +424,10 @@ class TestRealStructurePreprocessing:
         mask = (raw.occupancy > 0) & ~np.any(np.isnan(raw.coord), axis=-1)
         filtered_atom_array = cast(AtomArray, raw[mask])
 
-        assert len(filtered_atom_array) == structure_preprocess_case.expected_filtered_atoms
+        expected = structure_preprocess_case.expected_filtered_atoms
+        expected -= structure_preprocess_case.expected_hydrogen_atoms
 
-    def test_hydrogen_handling(
-        self,
-        request: pytest.FixtureRequest,
-        structure_preprocess_case: StructurePreprocessExpectation,
-    ):
-        """Hydrogen counts after filtering remain stable for real structures."""
-        structure = request.getfixturevalue(structure_preprocess_case.fixture_name)
-        raw = cast(AtomArray, ensure_atom_array_stack(structure["asym_unit"])[0])
-        mask = (raw.occupancy > 0) & ~np.any(np.isnan(raw.coord), axis=-1)
-        filtered_atom_array = cast(AtomArray, raw[mask])
-
-        element = cast(np.ndarray, filtered_atom_array.element)
-        hydrogen_count = int((element == "H").sum())
-
-        assert hydrogen_count == structure_preprocess_case.expected_hydrogen_atoms
+        assert len(filtered_atom_array) == expected
 
 
 class TestReconcilerConstruction:
@@ -1016,7 +1003,7 @@ class TestSave:
             protein="1l63",
             structure=Path("dummy"),
             density=Path("dummy"),
-            model="boltz2",
+            model_name="boltz2",
             guidance_type="pure_guidance",
             log_path="dummy",
             output_dir=str(tmp_path),

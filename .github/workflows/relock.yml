@@ -1,0 +1,49 @@
+name: Relock
+
+# Regenerate pixi.lock on Linux and commit it back to the dispatched branch.
+# The workspace pins system-requirements.cuda and uses git/editable deps, so a
+# from-scratch solve must build them for linux-64 — which cannot be done on
+# macOS. Run this workflow (Actions tab -> Relock -> Run workflow, pick the
+# branch) whenever pyproject.toml changes and the lock needs refreshing.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  relock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Install pixi
+        uses: prefix-dev/setup-pixi@v0.8.8
+        with:
+          pixi-version: v0.73.0
+          run-install: false
+
+      - name: Regenerate lockfile
+        # The runner has no GPU, so fake the __cuda virtual package that the
+        # cuda=12 system-requirement needs; otherwise solving the CUDA envs
+        # (e.g. boltz-analysis on linux-64-cuda-12) fails with 'missing virtual
+        # packages: __cuda >= 12'.
+        env:
+          CONDA_OVERRIDE_CUDA: "12"
+        run: pixi lock
+
+      - name: Commit lockfile if changed
+        run: |
+          if git diff --quiet -- pixi.lock; then
+            echo "pixi.lock already up to date; nothing to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pixi.lock
+            git commit -m "chore: relock pixi.lock on linux (pixi v0.73.0)"
+            git push origin HEAD:${{ github.ref_name }}
+          fi

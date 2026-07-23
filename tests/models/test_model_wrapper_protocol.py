@@ -21,6 +21,17 @@ def get_slow_wrapper_infos() -> list[ComponentInfo]:
     return [info for info in MODEL_WRAPPER_REGISTRY.values() if info.requires_checkpoint]
 
 
+def test_generative_model_input_carries_only_conditioning():
+    """GenerativeModelInput leaves state initialization to the model wrapper."""
+    from sampleworks.models.protocol import GenerativeModelInput
+
+    conditioning = {"num_atoms": 3}
+    features = GenerativeModelInput(conditioning=conditioning)
+
+    assert features.conditioning is conditioning
+    assert not hasattr(features, "x_init")
+
+
 @pytest.mark.parametrize("wrapper_info", get_slow_wrapper_infos(), ids=lambda w: w.name)
 class TestFlowModelWrapperProtocol:
     """Test that wrappers implement FlowModelWrapper protocol correctly.
@@ -49,7 +60,7 @@ class TestFlowModelWrapperProtocol:
     def test_featurize_returns_generative_model_input(
         self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
     ):
-        """Test featurize returns GenerativeModelInput with x_init and conditioning."""
+        """Test featurize returns GenerativeModelInput with conditioning."""
         from sampleworks.models.protocol import GenerativeModelInput
 
         fixture_name = get_fixture_name_for_wrapper(wrapper_info)
@@ -62,9 +73,6 @@ class TestFlowModelWrapperProtocol:
 
         assert isinstance(features, GenerativeModelInput), (
             f"{wrapper_info.name}.featurize must return GenerativeModelInput, got {type(features)}"
-        )
-        assert features.x_init is not None, (
-            f"{wrapper_info.name}.featurize returned None for x_init"
         )
         assert features.conditioning is not None, (
             f"{wrapper_info.name}.featurize returned None for conditioning"
@@ -79,39 +87,14 @@ class TestFlowModelWrapperProtocol:
     @pytest.mark.parametrize(
         "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
     )
-    def test_featurize_x_init_shape(
-        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
-    ):
-        """Test featurize x_init has correct shape (batch, atoms, 3)."""
-        fixture_name = get_fixture_name_for_wrapper(wrapper_info)
-        wrapper = request.getfixturevalue(fixture_name)
-        structure = request.getfixturevalue(structure_fixture)
-
-        ensemble_size = 2
-        annotated = annotate_structure_for_wrapper(
-            wrapper_info, structure, temp_output_dir, ensemble_size=ensemble_size
-        )
-        features = wrapper.featurize(annotated)
-
-        assert features.x_init.ndim == 3, (
-            f"{wrapper_info.name}.featurize x_init should be 3D, got {features.x_init.ndim}D"
-        )
-        assert features.x_init.shape[0] == ensemble_size, (
-            f"{wrapper_info.name}.featurize x_init batch should be {ensemble_size}, "
-            f"got {features.x_init.shape[0]}"
-        )
-        assert features.x_init.shape[2] == 3, (
-            f"{wrapper_info.name}.featurize x_init last dim should be 3, "
-            f"got {features.x_init.shape[2]}"
-        )
-
-    @pytest.mark.gpu
-    @pytest.mark.slow
-    @pytest.mark.parametrize(
-        "structure_fixture", STRUCTURES, ids=lambda s: s.replace("structure_", "")
-    )
+    @pytest.mark.parametrize("batch_size", [1, 2])
     def test_step_returns_tensor(
-        self, wrapper_info: ComponentInfo, structure_fixture: str, temp_output_dir, request
+        self,
+        wrapper_info: ComponentInfo,
+        structure_fixture: str,
+        batch_size: int,
+        temp_output_dir,
+        request,
     ):
         """Test step(x_t, t, features) returns coordinates tensor."""
         fixture_name = get_fixture_name_for_wrapper(wrapper_info)
@@ -121,8 +104,9 @@ class TestFlowModelWrapperProtocol:
         annotated = annotate_structure_for_wrapper(wrapper_info, structure, temp_output_dir)
         features = wrapper.featurize(annotated)
 
-        t = torch.tensor([1.0])
-        result = wrapper.step(features.x_init, t, features=features)
+        t = torch.ones(batch_size)
+        state = wrapper.initialize_from_prior(batch_size=batch_size, features=features)
+        result = wrapper.step(state, t, features=features)
 
         assert torch.is_tensor(result), (
             f"{wrapper_info.name}.step must return Tensor, got {type(result)}"
@@ -130,10 +114,13 @@ class TestFlowModelWrapperProtocol:
         assert result.shape[-1] == 3, (
             f"{wrapper_info.name}.step result last dim should be 3, got {result.shape[-1]}"
         )
-        assert result.shape == features.x_init.shape, (
-            f"{wrapper_info.name}.step output shape {result.shape} != input shape "
-            f"{features.x_init.shape}"
+        assert result.shape == state.shape, (
+            f"{wrapper_info.name}.step output shape {result.shape} != input shape {state.shape}"
         )
+        assert result.shape[0] == batch_size, (
+            f"{wrapper_info.name}.step output batch should be {batch_size}, got {result.shape[0]}"
+        )
+        assert torch.isfinite(result).all(), f"{wrapper_info.name}.step returned non-finite values"
 
     @pytest.mark.gpu
     @pytest.mark.slow
@@ -152,7 +139,8 @@ class TestFlowModelWrapperProtocol:
         features = wrapper.featurize(annotated)
 
         t = 1.0
-        result = wrapper.step(features.x_init, t, features=features)
+        state = wrapper.initialize_from_prior(batch_size=1, features=features)
+        result = wrapper.step(state, t, features=features)
 
         assert torch.is_tensor(result), f"{wrapper_info.name}.step must return Tensor with float t"
 
@@ -172,6 +160,7 @@ class TestFlowModelWrapperProtocol:
         annotated = annotate_structure_for_wrapper(wrapper_info, structure, temp_output_dir)
         features = wrapper.featurize(annotated)
 
+        assert not hasattr(features, "x_init")
         batch_size = 3
         result = wrapper.initialize_from_prior(batch_size, features=features)
 

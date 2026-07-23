@@ -113,7 +113,10 @@ def process_group(
     try:
         # Load base map for canonical unit cell,
         # don't overwrite the base map with selection map--we'll use the full map later too.
-        base_xmap = protein_config.load_map(base_map_path)
+        base_xmap = protein_config.load_map(
+            base_map_path,
+            resolution=trials[0].resolution,
+        )
         if base_xmap is None:
             raise ValueError(f"Failed to load base map from {base_map_path}")
 
@@ -123,7 +126,9 @@ def process_group(
 
         # Load the reference structure (used to align refined structures so the calculated
         # maps line up with the base map, for a correct RSCC calculation).
-        ref_path = protein_config.get_reference_structure_path(trials[0].altloc_occupancies)
+        ref_path = trials[0].input_structure_path or protein_config.get_reference_structure_path(
+            trials[0].altloc_occupancies
+        )
         if ref_path is None:
             raise ValueError(
                 f"Could not find reference structure for occupancy {trials[0].altloc_occupancies}"
@@ -294,7 +299,7 @@ def main(args: argparse.Namespace):
     # Sort so all trials sharing a (protein, occ_key) are contiguous, then build groups.
     # Resolve protein name once per group and slice ref_coords for each protein.
     groups: list[tuple[str, list[Trial], Path, dict[str, np.ndarray]]] = []
-    group_index: dict[tuple[str, OccKey], int] = {}
+    group_index: dict[tuple[str, OccKey, Path | None], int] = {}
     for trial in sorted(all_trials, key=lambda t: (t.protein, t.occ_key)):
         if trial.protein in protein_configs:
             protein = trial.protein
@@ -303,11 +308,13 @@ def main(args: argparse.Namespace):
         else:
             logger.warning(f"Skipping protein with no configuration: {trial.protein}")
             continue
-        key = (protein, trial.occ_key)
+        key = (protein, trial.occ_key, trial.density_path)
         idx = group_index.get(key)
         if idx is None:
             protein_config = protein_configs[protein]
-            base_map_path = protein_config.get_base_map_path_for_occupancy(trial.altloc_occupancies)
+            base_map_path = trial.density_path or protein_config.get_base_map_path_for_occupancy(
+                trial.altloc_occupancies
+            )
             if base_map_path is None:
                 logger.warning(
                     f"Skipping group {protein}/{trial.altloc_occupancies}: base map not found"

@@ -25,6 +25,11 @@ from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.msa import MSAManager
 
 
+# Attached to the trainer-owned model after RF3InferenceEngine initialization in
+# RF3Wrapper.__init__; reused wrappers retrieve the complete runtime through it.
+_INFERENCE_ENGINE_ATTR = "_sampleworks_rf3_inference_engine"
+
+
 @dataclass(frozen=True, slots=True)
 class RF3Conditioning:
     """Conditioning tensors from RF3 trunk forward pass.
@@ -69,8 +74,6 @@ class RF3Config:
         - str/Path to .json: JSON file with chain_id -> MSA path mapping
         - str/Path to .a3m: Single MSA file applied to all protein chains
         - None (default): No MSA information is used
-    ensemble_size : int
-        Number of samples to generate (batch dimension of x_init). Default is 1.
     recycling_steps : int | None
         Number of recycling steps to perform. Default is None, uses model default.
     disable_chiral_features : bool
@@ -88,7 +91,6 @@ class RF3Config:
     """
 
     msa_path: str | Path | dict | None = None
-    ensemble_size: int = 1
     recycling_steps: int | None = None
     disable_chiral_features: bool = False
     track_chiral_features: bool = False
@@ -98,7 +100,6 @@ def annotate_structure_for_rf3(
     structure: dict,
     *,
     msa_path: str | Path | dict | None = None,
-    ensemble_size: int = 1,
     recycling_steps: int | None = None,
     disable_chiral_features: bool = False,
     track_chiral_features: bool = False,
@@ -115,8 +116,6 @@ def annotate_structure_for_rf3(
         - str/Path to .json: JSON file with chain_id -> MSA path mapping
         - str/Path to .a3m: Single MSA file applied to all protein chains
         - None (default): No MSA information is used
-    ensemble_size : int
-        Number of samples to generate (batch dimension of x_init). Default is 1.
     recycling_steps : int | None
         Number of recycling steps to perform. Default is None, uses model default.
     disable_chiral_features : bool
@@ -131,7 +130,6 @@ def annotate_structure_for_rf3(
     """
     config = RF3Config(
         msa_path=msa_path,
-        ensemble_size=ensemble_size,
         recycling_steps=recycling_steps,
         disable_chiral_features=disable_chiral_features,
         track_chiral_features=track_chiral_features,
@@ -218,6 +216,7 @@ class RF3Wrapper:
         checkpoint_path: str | Path,
         msa_manager: MSAManager | None = None,
         device: torch.device | str | None = None,
+        model: Any | None = None,
     ):
         """
         Parameters
@@ -232,6 +231,11 @@ class RF3Wrapper:
             parallel jobs that must target distinct GPUs — passing an ``int``
             to Fabric (the default) always resolves to GPU 0, which serialises
             otherwise-parallel workers onto a single device.
+        model: Any | None
+            Model previously obtained from another ``RF3Wrapper``. RF3 model
+            reuse also reuses the originating inference engine because its
+            trainer, preprocessing pipeline, Fabric strategy, and model are a
+            single initialized runtime context.
 
             References: https://lightning.ai/docs/fabric/stable/fundamentals/launch.html
               devices argument to fabric run
@@ -242,22 +246,49 @@ class RF3Wrapper:
         self.checkpoint_path = Path(checkpoint_path).expanduser().resolve()
         self.msa_manager = msa_manager
         self.msa_pairing_strategy = "greedy"
+        self.inference_engine: RF3InferenceEngine
 
-        engine_kwargs: dict[str, Any] = {
-            "ckpt_path": str(self.checkpoint_path),
-            "diffusion_batch_size": 1,
-        }
-        if device is not None:
-            engine_kwargs["devices_per_node"] = [_cuda_index(device)]
+        if model is None:
+            engine_kwargs: dict[str, Any] = {
+                "ckpt_path": str(self.checkpoint_path),
+                "diffusion_batch_size": 1,
+            }
+            if device is not None:
+                engine_kwargs["devices_per_node"] = [_cuda_index(device)]
 
-        self.inference_engine = RF3InferenceEngine(**engine_kwargs)
-        self.inference_engine.initialize()
+            self.inference_engine = RF3InferenceEngine(**engine_kwargs)
+            self.inference_engine.initialize()
+        else:
+            inference_engine = getattr(model, _INFERENCE_ENGINE_ATTR, None)
+            if inference_engine is None:
+                raise ValueError(
+                    "RF3 model reuse requires a model created by RF3Wrapper so its "
+                    "initialized inference engine and Fabric context can also be reused"
+                )
+            self.inference_engine = cast(RF3InferenceEngine, inference_engine)
+            engine_checkpoint = Path(self.inference_engine.ckpt_path).expanduser().resolve()
+            if engine_checkpoint != self.checkpoint_path:
+                raise ValueError(
+                    f"Pre-loaded RF3 model uses checkpoint {engine_checkpoint}, "
+                    f"not requested checkpoint {self.checkpoint_path}"
+                )
 
         self.inference_engine.trainer = cast(
             RF3TrainerWithConfidence, self.inference_engine.trainer
         )
-        self.model = self.inference_engine.trainer.state["model"]
+        if model is not None and self.inference_engine.trainer.state["model"] is not model:
+            raise ValueError(
+                "Pre-loaded RF3 model does not belong to its attached inference engine"
+            )
         self._device = self.inference_engine.trainer.fabric.device
+        if device is not None and _cuda_index(device) != _cuda_index(self._device):
+            raise ValueError(f"RF3 runtime is on {self._device}, not requested device {device}")
+
+        if model is None:
+            self.model = self.inference_engine.trainer.state["model"]
+            object.__setattr__(self.model, _INFERENCE_ENGINE_ATTR, self.inference_engine)
+        else:
+            self.model = model
 
         # Chiral feature state, set in featurize()
         self._track_chiral_features: bool = False
@@ -284,7 +315,7 @@ class RF3Wrapper:
     def featurize(self, structure: dict) -> GenerativeModelInput[RF3Conditioning]:
         """From an Atomworks structure, calculate RF3 input features.
 
-        Runs trunk forward pass and initializes x_init from prior distribution.
+        Runs the trunk forward pass to produce conditioning features.
 
         Parameters
         ----------
@@ -297,7 +328,7 @@ class RF3Wrapper:
         Returns
         -------
         GenerativeModelInput[RF3Conditioning]
-            Model input with ``x_init`` and trunk conditioning.
+            Model input with trunk conditioning.
         """
         config = structure.get("_rf3_config", RF3Config())
         if isinstance(config, dict):
@@ -308,7 +339,6 @@ class RF3Wrapper:
         self._chiral_grad_stats = []
 
         msa_path = config.msa_path
-        ensemble_size = config.ensemble_size
         recycling_steps = config.recycling_steps
 
         if "asym_unit" not in structure:
@@ -482,23 +512,7 @@ class RF3Wrapper:
             )
             logger.info("Chiral features disabled: zeroed out chiral_centers in features dict")
 
-        # x_init here is a shape-compatible reference carried with the featurized
-        # model input. During guided sampling, alignment/reference coordinates are
-        # built later via process_structure_to_trajectory_input() and AtomReconciler.
-        # TODO: figure out if this is necessary or if we should just remove x_init completely.
-        if len(true_atom_array) == num_atoms:
-            x_init = torch.tensor(true_atom_array.coord, device=self.device, dtype=torch.float32)
-            x_init = match_batch(x_init.unsqueeze(0), target_batch_size=ensemble_size)
-        else:
-            logger.info(
-                f"Input structure has {len(true_atom_array)} atoms, but RF3 operates on "
-                f"{num_atoms} atoms after model-specific preprocessing. Initializing "
-                "x_init from prior to match model shape; guided sampling will "
-                "reconcile alignment and reward inputs later on the common atom subset."
-            )
-            x_init = self.initialize_from_prior(batch_size=ensemble_size, shape=(num_atoms, 3))
-
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def _pairformer_pass(
         self, features: dict[str, Any], grad_needed: bool = False, recycling_steps: int = 10

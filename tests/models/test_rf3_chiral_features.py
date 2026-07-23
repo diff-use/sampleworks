@@ -42,7 +42,6 @@ class TestRF3ChiralFeatures:
         entry per denoising step, each containing 't' and 'l2_norm' keys."""
         annotated = annotate_structure_for_rf3(
             structure_1vme,
-            ensemble_size=1,
             track_chiral_features=True,
             disable_chiral_features=False,
         )
@@ -73,7 +72,6 @@ class TestRF3ChiralFeatures:
         conditioning features dict."""
         annotated = annotate_structure_for_rf3(
             structure_1vme,
-            ensemble_size=1,
             disable_chiral_features=True,
             track_chiral_features=False,
         )
@@ -104,7 +102,6 @@ class TestRF3ChiralFeatures:
         def featurize_and_run(*, disable_chiral: bool):
             annotated = annotate_structure_for_rf3(
                 structure_1vme,
-                ensemble_size=1,
                 disable_chiral_features=disable_chiral,
                 track_chiral_features=True,
             )
@@ -149,7 +146,6 @@ class TestRF3ChiralFeatures:
         """With track_chiral_features=False, _chiral_grad_stats stays empty."""
         annotated = annotate_structure_for_rf3(
             structure_1vme,
-            ensemble_size=1,
             track_chiral_features=False,
             disable_chiral_features=False,
         )
@@ -166,7 +162,6 @@ class TestRF3ChiralFeatures:
         disable_chiral_features=False."""
         annotated = annotate_structure_for_rf3(
             structure_1vme,
-            ensemble_size=1,
             disable_chiral_features=False,
             track_chiral_features=False,
         )
@@ -186,7 +181,6 @@ class TestRF3ChiralFeatures:
 
         annotated = annotate_structure_for_rf3(
             structure_1vme,
-            ensemble_size=1,
             track_chiral_features=True,
         )
         features = rf3_wrapper.featurize(annotated)

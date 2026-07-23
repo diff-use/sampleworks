@@ -9,8 +9,8 @@ import pytest
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
-from sampleworks.eval.generate_synthetic_sf import atomarray_to_gemmi
-from sampleworks.eval.synthetic_utils import assign_occupancies
+from sampleworks.synthetic.generate_synthetic_sf import atomarray_to_gemmi
+from sampleworks.synthetic.synthetic_utils import assign_occupancies
 from sampleworks.utils.atom_array_utils import (
     detect_altlocs,
     keep_amino_acids,

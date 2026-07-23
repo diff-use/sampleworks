@@ -155,6 +155,7 @@ src/sampleworks/
 ├── models/                # Generative model wrappers (Boltz, Protenix, RF3)
 ├── metrics/               # Quality metrics (LDDT, sidechain)
 ├── eval/                  # Evaluation utilities
+├── synthetic/             # Synthetic data generation
 ├── data/                  # Reference data (protein configs)
 ├── runs/                  # `sampleworks-runs` CLI + TOML preset orchestrator
 └── utils/                 # Shared utilities
@@ -397,8 +398,7 @@ class MyModelWrapper:
         atom_array = structure["asym_unit"]
         # ... model-specific featurization ...
         conditioning = my_model_features(atom_array)
-        x_init = torch.zeros(n_atoms, 3, device=self.device)
-        return GenerativeModelInput(x_init=x_init, conditioning=conditioning)
+        return GenerativeModelInput(conditioning=conditioning)
 
     def step(
         self,
@@ -418,7 +418,7 @@ class MyModelWrapper:
         shape: tuple[int, ...] | None = None,
     ) -> Tensor:
         """Sample from the prior (typically Gaussian noise)."""
-        n_atoms = features.x_init.shape[-2] if features else shape[-2]
+        n_atoms = features.conditioning.num_atoms if features else shape[-2]
         return torch.randn(batch_size, n_atoms, 3, device=self.device)
 ```
 

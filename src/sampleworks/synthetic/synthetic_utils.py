@@ -1,21 +1,54 @@
-"""Shared utilities for synthetic structure factor and density generation."""
+"""Shared utilities for synthetic structure-factor and density generation."""
 
 import math
 import traceback
 from pathlib import Path
 
+import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from loguru import logger
-from sampleworks.eval.structure_utils import apply_selection
+
 from sampleworks.utils.atom_array_utils import (
     AltlocInfo,
+    apply_selection,
     detect_altlocs,
     keep_amino_acids,
     keep_polymer,
     load_structure_with_altlocs,
     remove_hydrogens,
 )
+
+
+def resolve_parallel_jobs(device: torch.device | str, n_jobs: int) -> int:
+    """Choose a safe job count for synthetic calculations on a device.
+
+    Process-based joblib workers each create an independent CUDA context. To
+    avoid GPU-memory contention and out-of-memory failures, CUDA work is kept
+    in the current process while CPU work retains the caller's requested
+    parallelism.
+
+    Parameters
+    ----------
+    device
+        Device used for the synthetic calculation.
+    n_jobs
+        Requested joblib worker count. Negative values request multiple workers.
+
+    Returns
+    -------
+    int
+        ``1`` for CUDA requests that would use multiple workers; otherwise the
+        requested value.
+    """
+    resolved_device = torch.device(device)
+    if resolved_device.type == "cuda" and (n_jobs < 0 or n_jobs > 1):
+        logger.warning(
+            f"CUDA device {resolved_device} with n_jobs={n_jobs} would create "
+            "multiple CUDA contexts and risk GPU memory exhaustion; using n_jobs=1"
+        )
+        return 1
+    return n_jobs
 
 
 def validate_occupancy_values(occupancy_values: list[float]) -> None:

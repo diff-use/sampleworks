@@ -26,7 +26,8 @@ def test_argv_for_rf3_partial_matches_bash(monkeypatch: pytest.MonkeyPatch) -> N
     assert inv.log_path == Path("/results/rf3_run.log")
 
     argv = inv.argv
-    assert argv[:6] == ["pixi", "run", "-e", "rf3", "python", "/app/run_grid_search.py"]
+    assert argv[:5] == ["pixi", "run", "-e", "rf3", "python"]
+    assert "run_grid_search.py" in argv[5]  # the exact path varies by invocation
     pairs = _argv_to_dict(argv[6:])
     assert pairs["--proteins"] == "/data/inputs/proteins.csv"
     assert pairs["--model"] == "rf3"
@@ -46,7 +47,7 @@ def test_argv_omits_false_bool_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     """False boolean args are omitted rather than emitted as bare CLI flags."""
     monkeypatch.setenv("HOME", "/home/test")
     preset = loader.load_preset(
-        "rf3_partial", overrides=["shared_args.gradient-normalization=false"]
+        "rf3_partial", overrides=["shared_args.gradient-normalization=false", "jobs.0.gpu_count=1"]
     )
     inv = runner.build_invocations(preset, results_dir=Path("/results"))[0]
     assert "--gradient-normalization" not in inv.argv
@@ -147,7 +148,9 @@ def test_gpu_count_rejects_insufficient_visible_gpus(
 def test_protenix_dual_uses_different_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     """The Protenix dual preset uses separate tiny and mini checkpoints."""
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("protenix_dual")
+    preset = loader.load_preset(
+        "protenix_dual", overrides=["jobs.0.gpu_count=1", "jobs.1.gpu_count=1"]
+    )
     invocations = runner.build_invocations(preset, results_dir=Path("/r"))
     pairs = [_argv_to_dict(i.argv[6:]) for i in invocations]
     assert pairs[0]["--model-checkpoint"] == "/extra_checkpoints/protenix_tiny_default_v0.5.0.pt"
@@ -157,7 +160,7 @@ def test_protenix_dual_uses_different_checkpoints(monkeypatch: pytest.MonkeyPatc
 def test_rf3_partial_chiral_off_flag_present(monkeypatch: pytest.MonkeyPatch) -> None:
     """The RF3 chiral-off preset passes the disable and force rerun flags."""
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("rf3_partial_chiral_off")
+    preset = loader.load_preset("rf3_partial_chiral_off", overrides=["jobs.0.gpu_count=1"])
     inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
     assert "--disable-chiral-features" in inv.argv
     assert "--force-all" in inv.argv
@@ -166,7 +169,7 @@ def test_rf3_partial_chiral_off_flag_present(monkeypatch: pytest.MonkeyPatch) ->
 def test_build_invocations_records_output_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     """`run_grid_search.py` assumes its --output-dir exists; the runner must mkdir it."""
     monkeypatch.setenv("HOME", "/home/test")
-    preset = loader.load_preset("rf3_partial")
+    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])
     inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
     assert inv.output_dir == Path("/r/rf3")
 
@@ -175,7 +178,7 @@ def test_grid_search_script_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -
     """ACTL wrappers can run the synced checkout instead of the baked /app copy."""
     monkeypatch.setenv("HOME", "/home/test")
     monkeypatch.setenv("SAMPLEWORKS_GRID_SEARCH_SCRIPT", "/home/dev/workspace/run_grid_search.py")
-    preset = loader.load_preset("rf3_partial")
+    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])
     inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
     assert inv.argv[:6] == [
         "pixi",
@@ -237,7 +240,7 @@ def test_uses_baked_env_python_when_available(
     python_bin.chmod(0o755)
     monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(pixi_project))
 
-    preset = loader.load_preset("rf3_partial")
+    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])
     inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
     assert inv.argv[:2] == [str(python_bin), "/app/run_grid_search.py"]
 
@@ -251,7 +254,7 @@ def test_prebuilt_env_required_rejects_runtime_pixi(
     monkeypatch.delenv("SAMPLEWORKS_ALLOW_RUNTIME_PIXI", raising=False)
     monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(tmp_path / "app"))
 
-    preset = loader.load_preset("rf3_partial")
+    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])
     with pytest.raises(RuntimeError, match="Refusing to fall back to 'pixi run'"):
         runner.build_invocations(preset, results_dir=Path("/r"))
 
@@ -262,7 +265,8 @@ def test_dry_run_does_not_create_directories(
     """--dry-run prints commands but never touches the filesystem."""
     monkeypatch.setenv("HOME", str(tmp_path))
     results_dir = tmp_path / "results"
-    preset = loader.load_preset("rf3_partial")
+    # use 1 gpu so we don't need big nodes to test
+    preset = loader.load_preset("rf3_partial", overrides=["jobs.0.gpu_count=1"])
     runner.run(preset, results_dir=results_dir, dry_run=True)
     # results_dir gets created by run() (for log file location) but per-job
     # output subdirs must NOT exist after dry-run.

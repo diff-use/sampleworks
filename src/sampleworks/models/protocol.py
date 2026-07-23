@@ -26,25 +26,12 @@ FlowOrEnergyBasedModelOutputT = TypeVar("FlowOrEnergyBasedModelOutputT")
 class GenerativeModelInput(Generic[C]):  # noqa: UP046 (for Python 3.11 compatibility)
     """Container for inputs to generative models.
 
-    The x_init tensor is typically sampled from a prior distribution,
-    with shape determined by the input data (e.g., sequence length
-    determines atom count).
-
     Attributes
     ----------
-    x_init : Float[Array, "*batch atoms 3"]
-        Initial structure coordinates.
-        This can be a reference structure (e.g. for alignment during sampling)
-        or a noisy sample from a prior distribution. This should have the proper
-        shape expected for the given ensemble being sampled, e.g. (4, atoms, 3) for
-        ensemble size 4.
     conditioning : C | None
         Model-specific conditioning features, or None.
     """
 
-    # TODO: make x_init more general (not just Float),
-    # relate this to StateT in Sampler protocol?
-    x_init: Float[Array, "*batch atoms 3"]
     conditioning: C | None
 
 

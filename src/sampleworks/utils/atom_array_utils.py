@@ -1,3 +1,4 @@
+import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from loguru import logger
 
 BACKBONE_ATOM_TYPES = ["C", "CA", "N", "O"]
 BLANK_ALTLOC_IDS = {"", ".", " ", "?"}
+ATOMWORKS_COMPARISON_OPS = ("==", ">", "<", "<=", ">=", " in ")
 
 
 @dataclass
@@ -31,6 +33,103 @@ class AltlocInfo:
 
     altloc_ids: list[str]
     atom_masks: dict[str, np.ndarray[Any, np.dtype[np.bool_]]]
+
+
+# TODO: migrate this to atomworks's selection algebra that is added to AtomArray/Stack
+#   https://github.com/diff-use/sampleworks/issues/56
+def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
+    """Parse a selection string like 'chain A and resi 326-339'.
+
+    Supports both residue ranges ('resi 10-50') and single residues ('resi 10').
+    For single residues, resi_start and resi_end will be equal.
+
+    Parameters
+    ----------
+    selection : str
+        Selection string (e.g., 'chain A', 'resi 10', 'chain A and resi 10-50')
+
+    Returns
+    -------
+    tuple
+        (chain_id, resi_start, resi_end) - any component may be None if not specified
+    """
+    # Parse "chain X and resi N-M" format and generalizations of that.
+    chain = re.search(r"chain\s+(\w+)", selection, re.IGNORECASE)
+    if chain is not None:
+        chain = chain.group(1).upper()
+
+    residues = re.search(r"resi\s+(\d+)(?:-(\d+))?", selection, re.IGNORECASE)
+    if residues is not None:
+        resi_start = int(residues.group(1))
+        resi_end = int(residues.group(2)) if residues.group(2) else resi_start
+    else:
+        resi_start = resi_end = None
+
+    if chain is None and resi_start is None and resi_end is None:
+        logger.warning(
+            "Selection string did not match any known patterns (e.g. 'chain A', 'resi 10-50')"
+        )
+
+    return chain, resi_start, resi_end
+
+
+def apply_selection(atom_array: AtomArray, selection: str | None) -> AtomArray:
+    """Apply an atom selection string to filter a structure.
+
+    Parameters
+    ----------
+    atom_array
+        Structure to filter
+    selection
+        Selection string (e.g., 'chain A and resi 10-50'). If None, returns
+        the entire structure unchanged.
+
+    Returns
+    -------
+    AtomArray
+        Filtered structure containing only atoms matching the selection
+
+    Raises
+    ------
+    ValueError
+        If the selection string matches no atoms
+    """
+    if selection is None:
+        return atom_array
+
+    if not any(x in selection for x in ATOMWORKS_COMPARISON_OPS):
+        mask = get_mask_from_old_selection_string(atom_array, selection)
+    else:
+        mask = atom_array.mask(selection)
+
+    return cast(AtomArray, atom_array[mask])
+
+
+def get_mask_from_old_selection_string(
+    atom_array: AtomArray | AtomArrayStack, selection: str
+) -> np.ndarray[tuple[int], np.dtype[Any]]:
+    """Build an atom mask from a legacy chain and residue selection string."""
+    DeprecationWarning(
+        f"Using old-style selection strings like {selection} is deprecated."
+        f" Use atomworks/pandas style selection strings instead."
+    )
+    chain_id, resi_start, resi_end = parse_selection_string(selection)
+    # use the length of any of the required non-coord attributes to get the mask shape
+    mask = np.ones(len(atom_array.res_id), dtype=bool)
+
+    if chain_id is not None:
+        mask &= atom_array.chain_id == chain_id
+
+    if resi_start is not None:
+        res_ids = cast(np.ndarray, atom_array.res_id)
+        if resi_end is not None:
+            mask &= (res_ids >= resi_start) & (res_ids <= resi_end)
+        else:
+            mask &= res_ids == resi_start
+
+    if mask.sum() == 0:
+        raise ValueError(f"Selection '{selection}' matched no atoms")
+    return mask
 
 
 def load_structure_with_altlocs(path: Path) -> AtomArray:

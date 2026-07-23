@@ -8,11 +8,16 @@ import pytest
 from biotite.structure import AtomArray, AtomArrayStack
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.eval.structure_utils import (
-    apply_selection,
+    _closest_canonical_amino_acid,
+    canonicalize_mixed_altloc_residues,
     extract_selection_coordinates,
     get_asym_unit_from_structure,
     get_reference_atomarraystack,
     get_reference_structure_coords,
+)
+from sampleworks.utils.atom_array_utils import (
+    apply_selection,
+    map_altlocs_to_stack,
     parse_selection_string,
 )
 
@@ -289,6 +294,43 @@ class TestGetReferenceAtomArrayStack:
         assert struct is not None
         assert isinstance(struct, AtomArrayStack)
 
+    def test_6ni6_mixed_altloc_residue_stacks_cleanly(self, resources_dir):
+        """End-to-end regression for the 6NI6 CYS/CSO/CSO compositional heterogeneity.
+
+        Chain A residue 101 carries a canonical CYS (altloc A) alongside two CSO altlocs
+        (B, C) with an extra ``OD`` atom. This tests failure via
+        ``get_reference_atomarraystack`` -> ``map_altlocs_to_stack``.
+        """
+        config = ProteinConfig(
+            protein="6ni6",
+            base_map_dir=resources_dir / "6NI6",
+            selection=[
+                "chain A and resi 101",
+            ],
+            resolution=1.8,
+            map_pattern="{occ_str}.ccp4",
+            structure_pattern="6NI6_single_001_density_input.cif",
+        )
+
+        _, ref_struct = get_reference_atomarraystack(config, {"A": 0.5, "B": 0.25, "C": 0.25})
+        assert ref_struct is not None
+
+        stacked, _ = map_altlocs_to_stack(
+            ref_struct, selection="(chain_id == 'A') & (res_id == 101)", return_full_array=False
+        )
+        assert stacked.stack_depth() == 3  # altlocs A, B, C
+
+        res_names = cast(np.ndarray, stacked.res_name)
+        hetero = cast(np.ndarray, stacked.hetero)
+        atom_names = cast(np.ndarray, stacked.atom_name)
+        assert set(np.unique(res_names)) == {"CYS"}
+        assert not hetero.any()
+        assert "OD" not in atom_names  # CSO's incompatible extra atom is gone
+
+        for i in range(stacked.stack_depth()):
+            frame_atom_names = list(cast(np.ndarray, stacked[i].atom_name))
+            assert len(frame_atom_names) == len(set(frame_atom_names))  # unique atom identities
+
 
 class TestGetReferenceStructureCoords:
     """Tests for get_reference_structure_coords function."""
@@ -343,3 +385,112 @@ class TestGetReferenceStructureCoords:
         assert coords.ndim == 2
         assert coords.shape[1] == 3
         assert np.isfinite(coords).all()
+
+
+class TestCanonicalizeMixedAltlocResidues:
+    """Tests for canonicalize_mixed_altloc_residues / _closest_canonical_amino_acid."""
+
+    @staticmethod
+    def _mixed_array() -> AtomArray:
+        """Build a minimal array with one mixed and one untouched position.
+
+        Returns
+        -------
+        AtomArray
+            ``(A, 10)`` holds a canonical CYS plus a modified CSO (compositional
+            heterogeneity); ``(A, 11)`` holds a lone MSE that must be left untouched.
+        """
+        aa = AtomArray(3)
+        aa.coord = np.zeros((3, 3), dtype=np.float32)
+        aa.set_annotation("chain_id", np.array(["A", "A", "A"]))
+        aa.set_annotation("res_id", np.array([10, 10, 11]))
+        aa.set_annotation("res_name", np.array(["CYS", "CSO", "MSE"]))
+        aa.set_annotation("hetero", np.array([False, True, True]))
+        aa.set_annotation("atom_name", np.array(["CA", "CA", "CA"]))
+        return aa
+
+    @staticmethod
+    def _mixed_array_with_altlocs() -> AtomArray:
+        """Build a mixed CYS/CSO position with per-altloc atoms and an extra CSO atom.
+
+        Returns
+        -------
+        AtomArray
+            ``(A, 10)`` as canonical CYS (altloc ``A``: ``CA``, ``SG``) alternating with a
+            modified CSO (altloc ``B``: ``CA``, ``SG`` and the incompatible extra ``OD``).
+        """
+        aa = AtomArray(5)
+        aa.coord = np.zeros((5, 3), dtype=np.float32)
+        aa.set_annotation("chain_id", np.array(["A", "A", "A", "A", "A"]))
+        aa.set_annotation("res_id", np.array([10, 10, 10, 10, 10]))
+        aa.set_annotation("res_name", np.array(["CYS", "CYS", "CSO", "CSO", "CSO"]))
+        aa.set_annotation("hetero", np.array([False, False, True, True, True]))
+        aa.set_annotation("atom_name", np.array(["CA", "SG", "CA", "SG", "OD"]))
+        aa.set_annotation("altloc_id", np.array(["A", "A", "B", "B", "B"]))
+        return aa
+
+    @pytest.mark.parametrize(
+        "res_name,expected",
+        [("CSO", "CYS"), ("MSE", "MET"), ("ALA", "ALA"), ("HOH", None)],
+    )
+    def test_closest_canonical_amino_acid(self, res_name, expected):
+        """The modified-to-canonical mapping resolves PTMs and rejects non-amino-acids."""
+        assert _closest_canonical_amino_acid(res_name) == expected
+
+    def test_renames_modified_at_mixed_position(self):
+        """Modified records at a mixed position are renamed and de-heteroed; lone MSE is kept."""
+        result = canonicalize_mixed_altloc_residues(self._mixed_array())
+        res_name = cast(np.ndarray, result.res_name)
+        hetero = cast(np.ndarray, result.hetero)
+        assert list(res_name[:2]) == ["CYS", "CYS"]  # CSO -> CYS
+        assert not hetero[0] and not hetero[1]  # hetero cleared
+        assert res_name[2] == "MSE" and hetero[2]  # MSE untouched
+
+    def test_drops_incompatible_modified_atoms(self):
+        """The modified form's extra atom is dropped so both altlocs share one atom set."""
+        result = canonicalize_mixed_altloc_residues(self._mixed_array_with_altlocs())
+        atom_name = cast(np.ndarray, result.atom_name)
+        altloc_id = cast(np.ndarray, result.altloc_id)
+        assert "OD" not in set(atom_name)  # incompatible extra removed
+        assert set(atom_name[altloc_id == "A"]) == set(atom_name[altloc_id == "B"])
+        assert set(cast(np.ndarray, result.res_name)) == {"CYS"}
+        assert not cast(np.ndarray, result.hetero).any()
+
+    def test_two_noncanonicals_no_canonical_warns(self, caplog):
+        """Two non-canonicals with no shared canonical parent are left untouched and logged."""
+        aa = AtomArray(2)
+        aa.coord = np.zeros((2, 3), dtype=np.float32)
+        aa.set_annotation("chain_id", np.array(["A", "A"]))
+        aa.set_annotation("res_id", np.array([20, 20]))
+        aa.set_annotation("res_name", np.array(["CSO", "SEP"]))
+        aa.set_annotation("hetero", np.array([True, True]))
+        aa.set_annotation("atom_name", np.array(["CA", "CA"]))
+        aa.set_annotation("altloc_id", np.array(["A", "B"]))
+        with caplog.at_level("WARNING"):
+            result = canonicalize_mixed_altloc_residues(aa)
+        # CSO -> CYS and SEP -> SER don't converge, so neither is renamed (a partial rename
+        # would still leave the position stacking-incompatible).
+        assert set(cast(np.ndarray, result.res_name)) == {"CSO", "SEP"}
+        assert cast(np.ndarray, result.hetero).all()
+        assert "canonical parent" in caplog.text
+
+    def test_partial_convergence_leaves_position_untouched(self, caplog):
+        """A canonical plus two non-convergent modified forms is left fully untouched."""
+        aa = AtomArray(3)
+        aa.coord = np.zeros((3, 3), dtype=np.float32)
+        aa.set_annotation("chain_id", np.array(["A", "A", "A"]))
+        aa.set_annotation("res_id", np.array([30, 30, 30]))
+        aa.set_annotation("res_name", np.array(["CYS", "CSO", "SEP"]))
+        aa.set_annotation("hetero", np.array([False, True, True]))
+        aa.set_annotation("atom_name", np.array(["CA", "CA", "CA"]))
+        aa.set_annotation("altloc_id", np.array(["A", "B", "C"]))
+        with caplog.at_level("WARNING"):
+            result = canonicalize_mixed_altloc_residues(aa)
+        assert list(cast(np.ndarray, result.res_name)) == ["CYS", "CSO", "SEP"]
+        assert "canonical parent" in caplog.text
+
+    def test_does_not_mutate_input(self):
+        """Canonicalization operates on a copy and leaves the caller's array intact."""
+        arr = self._mixed_array()
+        canonicalize_mixed_altloc_residues(arr)
+        assert cast(np.ndarray, arr.res_name)[1] == "CSO"

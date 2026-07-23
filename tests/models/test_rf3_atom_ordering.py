@@ -37,7 +37,7 @@ class TestRF3AtomOrdering:
         internal atom accounting, causing coordinate misalignment.
         """
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_rf3(structure, ensemble_size=1)
+        annotated = annotate_structure_for_rf3(structure)
         features = rf3_wrapper.featurize(annotated)
         cond = features.conditioning
 
@@ -66,7 +66,7 @@ class TestRF3AtomOrdering:
         The pipeline's ``RemoveTerminalOxygen`` transform removes these atoms.
         """
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_rf3(structure, ensemble_size=1)
+        annotated = annotate_structure_for_rf3(structure)
         features = rf3_wrapper.featurize(annotated)
         cond = features.conditioning
 
@@ -93,7 +93,7 @@ class TestRF3AtomOrdering:
         The pipeline's ``RemoveHydrogens`` transform removes these.
         """
         structure = request.getfixturevalue(structure_fixture)
-        annotated = annotate_structure_for_rf3(structure, ensemble_size=1)
+        annotated = annotate_structure_for_rf3(structure)
         features = rf3_wrapper.featurize(annotated)
         cond = features.conditioning
 
