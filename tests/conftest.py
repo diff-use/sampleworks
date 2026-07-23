@@ -734,41 +734,6 @@ def density_map_1vme(resources_dir: Path):
     return XMap.fromfile(str(map_path), resolution=1.8)
 
 
-@pytest.fixture(scope="session")
-def structure_1vme_density(resources_dir: Path):
-    cif_path = resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB.cif"
-    if not cif_path.exists():
-        pytest.skip(f"Structure not found at {cif_path}")
-    return parse_and_remove_hydrogens(cif_path)
-
-
-@pytest.fixture(scope="session")
-def reward_function_1vme(density_map_1vme, structure_1vme_density, device: torch.device):
-    from sampleworks.core.rewards.real_space_density import (
-        RealSpaceRewardFunction,
-        setup_scattering_params,
-    )
-
-    params = setup_scattering_params(em_mode=False, device=device)
-    rf = RealSpaceRewardFunction(density_map_1vme, params, torch.tensor([1], device=device))
-    return rf
-
-
-@pytest.fixture(scope="session")
-def test_coordinates_1vme(structure_1vme_density, device: torch.device):
-    atom_array = structure_1vme_density["asym_unit"]
-
-    # Handle both AtomArray and AtomArrayStack
-    if hasattr(atom_array, "stack_depth"):
-        # AtomArrayStack - take first model
-        atom_array = atom_array[0]
-
-    mask = atom_array.occupancy > 0
-    atom_array = atom_array[mask]
-    coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
-    return coords, atom_array
-
-
 @pytest.fixture(scope="module")
 def atom_array_with_nan_coords():
     """AtomArray with some NaN coordinates."""
