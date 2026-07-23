@@ -10,21 +10,27 @@ assignment or an automatically allocated ``gpu_count``.
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
-VALID_PIXI_ENVS = (
-    "analysis",
-    "analysis-dev",
-    "boltz",
-    "boltz-analysis",
-    "boltz-dev",
-    "protenix",
-    "protenix-dev",
-    "rf3",
-    "rf3-dev",
-)
+def _load_valid_pixi_envs() -> tuple[str, ...]:
+    """Load valid pixi environment names from pyproject.toml."""
+    current = Path(__file__).parent
+    while current != current.parent:
+        pyproject_path = current / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+            envs = data.get("tool", {}).get("pixi", {}).get("environments", {})
+            return tuple(sorted(envs.keys()))
+        current = current.parent
+    raise FileNotFoundError("Could not find pyproject.toml while searching from schema.py")
+
+
+VALID_PIXI_ENVS = _load_valid_pixi_envs()
 
 
 @dataclass(frozen=True)
