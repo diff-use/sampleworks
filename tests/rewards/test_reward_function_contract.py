@@ -68,10 +68,12 @@ _REWARD_BUNDLES = {
 }
 
 # Absolute loss bar for the TRUE structure, per reward. RealSpace's loss is MSE on
-# normalized density (sigma units), so a wrong/random model scores ~O(1) while the true
-# model scores ~0.
+# normalized density (sigma units): for our 1VME case the true structure scores ~0.0018,
+# a 0.5 A perturbation ~0.034, and random coordinates ~O(1). The 0.01 bar sits ~5x above
+# the true loss (robust to device/precision variance) yet ~3x below the 0.5 A-perturbed
+# loss, so it comfortably passes the truth while meaningfully failing a wrong structure.
 _LOSS_THRESHOLDS = {
-    "real_space": 1.0,
+    "real_space": 0.01,
 }
 
 
