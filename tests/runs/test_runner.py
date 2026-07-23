@@ -315,7 +315,7 @@ def test_analysis_preset_builds_eval_script_invocations(monkeypatch: pytest.Monk
     assert patch_args["--input-dir"] == "/grid/results"
     assert patch_args["--grid-search-input-dir"] == "/grid/inputs"
     assert patch_args["--cif-pattern"] == "refined.cif"
-    assert patch_args["--rcsb-pattern"] == "/grid/results/([A-Za-z0-9]{4})"
+    assert patch_args["--rcsb-pattern"] == "/grid/results/(pdb_[A-Za-z0-9]{8}|[0-9][A-Za-z0-9]{3})"
     assert patch_args["--input-pdb-pattern"] == (
         "processed/{pdb_id}/{pdb_id}_single_001_density_input.cif"
     )
