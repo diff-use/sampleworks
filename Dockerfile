@@ -91,7 +91,7 @@ FROM ${CHECKPOINTS_IMAGE} AS checkpoints
 # ============================================================================
 FROM source AS pixi-envs
 
-# Checkpoints (~10 GB) rarely change, so this layer stays cacheable across most
+# Checkpoints (~10 GB) rarely change, so these layers stay cacheable across most
 # source edits and dependency-only rebuilds.
 #
 # Split per-file so a cold pull fetches them as concurrent S3 flows instead of
@@ -99,15 +99,30 @@ FROM source AS pixi-envs
 # containerd downloads each layer on its own connection (up to
 # max_concurrent_downloads), so N layers pull in parallel where one COPY could
 # not. The files are near-incompressible weights, so extra layer boundaries add
-# essentially no image size. The trailing catch-all ships any checkpoint added
-# or renamed later that is not enumerated above (unsplit, but never dropped).
-COPY --from=checkpoints /checkpoints/boltz1_conf.ckpt               /checkpoints/
-COPY --from=checkpoints /checkpoints/rf3_foundry_01_24_latest.ckpt  /checkpoints/
-COPY --from=checkpoints /checkpoints/boltz2_conf.ckpt              /checkpoints/
+# essentially no image size. Largest first: the pull finishes with the slowest
+# layer, so the biggest checkpoint should start downloading first.
+#
+# Do NOT add a trailing catch-all `COPY /checkpoints/ /checkpoints/`. Layers are
+# deduplicated per layer, not per file, so re-copying files already present
+# writes a second full ~10 GB copy of every checkpoint AND reinstates the single
+# serial flow this split exists to remove. The guard below covers new
+# checkpoints instead, by failing the build rather than shipping them silently.
+COPY --from=checkpoints /checkpoints/boltz1_conf.ckpt                /checkpoints/
+COPY --from=checkpoints /checkpoints/rf3_foundry_01_24_latest.ckpt   /checkpoints/
+COPY --from=checkpoints /checkpoints/boltz2_conf.ckpt                /checkpoints/
 COPY --from=checkpoints /checkpoints/protenix_base_default_v0.5.0.pt /checkpoints/
-COPY --from=checkpoints /checkpoints/ccd.pkl                       /checkpoints/
-COPY --from=checkpoints /checkpoints/mols/                         /checkpoints/mols/
-COPY --from=checkpoints /checkpoints/                              /checkpoints/
+COPY --from=checkpoints /checkpoints/ccd.pkl                         /checkpoints/
+COPY --from=checkpoints /checkpoints/mols/                           /checkpoints/mols/
+
+# Bind mount reads the checkpoint stage without copying any bytes into the
+# image. Keep this list in sync with the COPY lines above; bumping
+# CHECKPOINTS_SOURCE_IMAGE to a digest with new or renamed files fails here.
+RUN --mount=type=bind,from=checkpoints,target=/ck \
+    unexpected="$(ls -A /ck/checkpoints | grep -vxE 'boltz1_conf\.ckpt|boltz2_conf\.ckpt|ccd\.pkl|rf3_foundry_01_24_latest\.ckpt|protenix_base_default_v0\.5\.0\.pt|mols')"; \
+    [ -z "${unexpected}" ] || { \
+        echo "Unenumerated checkpoints, add a COPY line above for each: ${unexpected}"; \
+        exit 1; \
+    }
 
 # IMPORTANT: keep these installs in a single RUN. Splitting them into separate
 # Docker layers duplicates shared conda packages (numpy, CUDA libs, etc.) and can
