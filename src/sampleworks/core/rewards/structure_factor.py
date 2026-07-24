@@ -66,6 +66,13 @@ AmplitudeLoss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 # the mean of per-conformer masks (see the class docstring / _compute_ensemble_ftotal).
 _BULK_SOLVENT_MODES = ("off", "combined", "per_conformer")
 
+# SFcalculator init kwargs owned by this class (derived from other constructor
+# arguments or injected in prepare()). They must not be overridden via
+# sfcalculator_kwargs, which is an escape hatch for the remaining, unmanaged kwargs.
+_RESERVED_SFC_KWARGS = frozenset(
+    {"dmin", "mode", "anomalous", "mtzdata", "pdbmodel", "expcolumns", "device", "set_experiment"}
+)
+
 # Tolerances for warning when a caller-supplied unit cell disagrees with the MTZ's,
 # passed to gemmi.UnitCell.is_similar: relative tolerance on the cell edges (a, b, c)
 # and absolute degrees on the angles (alpha, beta, gamma).
@@ -202,9 +209,8 @@ class StructureFactorRewardFunction:
             Torch device. Auto-selects a GPU when omitted.
         sfcalculator_kwargs
             Extra keyword arguments forwarded verbatim to ``SFcalculator(...)`` in
-            :meth:`prepare`, overriding the defaults set here (e.g. ``n_bins``,
-            ``anomalous``, ``freeflag``). Minimal escape hatch until these are given
-            a typed config.
+            :meth:`prepare` (e.g. ``n_bins``, ``freeflag``). Reserved keys managed by
+            this class (listed in :data:`_RESERVED_SFC_KWARGS`) cannot be overridden.
         """
         if device is None:
             device = try_gpu()
@@ -239,6 +245,13 @@ class StructureFactorRewardFunction:
             device=self.device,
         )
         if sfcalculator_kwargs:
+            reserved = _RESERVED_SFC_KWARGS & sfcalculator_kwargs.keys()
+            if reserved:
+                raise ValueError(
+                    f"sfcalculator_kwargs may not override reserved keys {sorted(reserved)}; "
+                    "these are managed by this class (via other constructor arguments or "
+                    "injected in prepare())."
+                )
             self._sfc_kwargs.update(sfcalculator_kwargs)
 
         # Populated by prepare(); None until then.
