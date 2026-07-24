@@ -35,7 +35,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import torch
-from jaxtyping import Float
 from loguru import logger
 from torch import Tensor
 from tqdm import tqdm
@@ -47,6 +46,26 @@ from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.models.latent_adapter import AttrLatentIO
 from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
+
+
+# ---- Reading the type hints in this file --------------------------------------
+# A ": type" after a name (or "-> type" after a function) is only a HINT -- it CLAIMS what a
+# value should be, but nothing enforces it: pass the wrong type and Python still runs the code,
+# and deleting every hint changes nothing. Hints are for humans (and optional checkers like ty).
+# (In the table, "|" means "or".)
+#
+#   with the hint                  plain Python             what it claims (useless in runtime)
+#   num_steps: int = 200           num_steps = 200          should be an int
+#   learning_rate: float = 0.05    learning_rate = 0.05     should be a float
+#   optimize_single: bool = True   optimize_single = True   should be True or False
+#   structure: dict                structure                should be a dict
+#   model: FlowModelWrapper        model                    should be a FlowModelWrapper
+#   weights: Sequence[float]       weights                  should be a list/tuple of floats
+#   latents: Sequence[Tensor]      latents                  should be a list/tuple of Tensors
+#   losses: list[float]            losses                   should be a list of floats
+#   denoised: Tensor | None        denoised                 should be a Tensor, or None
+#   f(...) -> GuidanceOutput       f(...)                   f should return a GuidanceOutput
+# -------------------------------------------------------------------------------
 
 
 class _GradEnablingScaler:
@@ -65,16 +84,17 @@ class _GradEnablingScaler:
     requires_gradients = True
 
     def scale(
-        self,
-        state: Float[Tensor, "*batch atoms 3"],
-        context: StepParams,
-        *,
-        model: FlowModelWrapper | None = None,
-    ) -> tuple[Float[Tensor, "*batch atoms 3"], Float[Tensor, " batch"]]:
-        return torch.zeros_like(state), torch.zeros(state.shape[0], device=state.device)
+        self, state, context: StepParams, *, model: FlowModelWrapper | None = None
+    ) -> tuple[Tensor, Tensor]:
+        # state is the denoiser's coordinate prediction, shape [batch, atoms, 3]. Return a zero
+        # coordinate direction (no guidance move) and a zero loss, one value per batch member.
+        direction = torch.zeros_like(state)  # no coordinate move this step
+        loss = torch.zeros(state.shape[0], device=state.device)  # zero loss, one per batch member
+        return direction, loss
 
-    def guidance_strength(self, context: StepParams) -> Float[Tensor, " batch"]:
-        return torch.zeros_like(torch.as_tensor(context.t_effective))
+    def guidance_strength(self, context: StepParams) -> Tensor:
+        # t_effective is the per-member noise level, shape [batch]; we want a matching zero weight.
+        return torch.zeros_like(context.t_effective)
 
 
 class LatentAnchor:
@@ -191,7 +211,7 @@ class LatentOptimization:
         sampler: TrajectorySampler,
         step_scaler: StepScalerProtocol,
         reward: RewardFunctionProtocol,
-        num_particles: int = 1,
+        num_particles=1,
     ) -> GuidanceOutput:
         """Optimize the latents against ``reward``, then sample the final ensemble.
 
@@ -231,20 +251,23 @@ class LatentOptimization:
         # BondGeometryReward penalizes stretched bonds and steric clashes in the denoised structure,
         # curbing the overshoot where an aggressive latent update trades valid geometry for density
         # fit. Its topology is read from the model atom array -- the atom set whose ordering matches
-        # the denoised coordinates and the reward inputs -- so the bond indices line up. It stays None
+        # the denoised coords and reward inputs -- so the bond indices line up. It stays None
         # (disabled) unless a positive bond_length_weight was configured.
         bond_geometry = None
         if self.bond_length_weight > 0:
+            # Prefer the model atom array; fall back to the input atom array if it is absent.
             geometry_atom_array = processed.model_atom_array or processed.atom_array
             bond_geometry = BondGeometryReward(
                 geometry_atom_array, self.bond_length_weight, coords.device
             )
 
         # --- optimize the latents (outer resample × inner diffusion steps) ------
-        optimization_losses: list[list[float]] = []
-        latent_drift: list[list[float]] = []
+        # These two lists are diagnostics only -- reported in the returned metadata, never read by
+        # the loop. One entry is appended per round.
+        optimization_losses = []  # per round: the per-step data losses
+        latent_drift = []  # per round: how far each latent moved from its baseline (see below)
         for outer in range(self.outer_steps):
-            optimizer = torch.optim.Adam(latents, lr=self.learning_rate)  # once per round
+            optimizer = torch.optim.Adam(latents, lr=self.learning_rate)  # a fresh, persistent Adam
             round_losses = self._optimize_one_round(
                 model=model,
                 sampler=sampler,
@@ -286,7 +309,7 @@ class LatentOptimization:
             reward_inputs=reward_inputs,
         )
 
-        metadata: dict = {
+        metadata = {
             "optimization_losses": optimization_losses,
             "latent_drift": latent_drift,
         }
@@ -300,6 +323,49 @@ class LatentOptimization:
             losses=losses,
             metadata=metadata,
         )
+
+    def _leaf_latents(self, features: GenerativeModelInput, io: AttrLatentIO):
+        """Replace ``s``/``z`` on the conditioning with fresh optimizable leaves.
+
+        Returns the rewritten ``features`` plus parallel lists of leaves, their
+        detached baselines (anchor targets), and per-latent anchor weights. Each
+        leaf is a detached clone made ``requires_grad=True`` -- a true leaf severed
+        from any trunk graph, so Adam updates it directly (leaves persist and are
+        updated in place across rounds and steps). Shapes are preserved (whatever
+        the wrapper caches), so no assumption is made about a batch dimension.
+        """
+        conditioning = features.conditioning
+        latents: list[Tensor] = []
+        baselines: list[Tensor] = []
+        anchor_weights: list[float] = []
+
+        # One row per optimizable latent: (optimize it?, how to read it off the conditioning, how to
+        # write it back, its anchor weight). We handle the single representation, then the pair.
+        specs = (
+            (self.optimize_single, io.read_single, io.write_single, self.anchor_weight_single),
+            (self.optimize_pair, io.read_pair, io.write_pair, self.anchor_weight_pair),
+        )
+        for enabled, read, write, anchor_weight in specs:
+            if not enabled:
+                continue
+            baseline = read(conditioning)
+            if baseline is None:
+                continue
+            baseline = baseline.detach()
+            leaf = baseline.clone().requires_grad_(True)
+            conditioning = write(conditioning, leaf)
+            latents.append(leaf)
+            baselines.append(baseline)
+            anchor_weights.append(anchor_weight)
+
+        if not latents:
+            raise ValueError(
+                "LatentOptimization found no optimizable latent on the conditioning "
+                f"(single_attr={self.single_attr!r}, pair_attr={self.pair_attr!r}). "
+                "Check the attribute names for this model."
+            )
+        features = GenerativeModelInput(x_init=features.x_init, conditioning=conditioning)
+        return features, latents, baselines, anchor_weights
 
     def _optimize_one_round(
         self,
@@ -429,7 +495,7 @@ class LatentOptimization:
         reconciler,
         alignment_reference,
         reward_inputs,
-    ) -> tuple[Tensor, list[Tensor], list[float | None]]:
+    ):
         """Final clean diffusion pass with the optimized latents held fixed.
 
         No optimization and no coordinate guidance (``scaler=None``). This produces
@@ -478,46 +544,3 @@ class LatentOptimization:
             else:
                 losses.append(None)
         return coords, trajectory, losses
-
-    def _leaf_latents(
-        self, features: GenerativeModelInput, io: AttrLatentIO
-    ) -> tuple[GenerativeModelInput, list[Tensor], list[Tensor], list[float]]:
-        """Replace ``s``/``z`` on the conditioning with fresh optimizable leaves.
-
-        Returns the rewritten ``features`` plus parallel lists of leaves, their
-        detached baselines (anchor targets), and per-latent anchor weights. Each
-        leaf is a detached clone made ``requires_grad=True`` -- a true leaf severed
-        from any trunk graph, so Adam updates it directly (leaves persist and are
-        updated in place across rounds and steps). Shapes are preserved (whatever
-        the wrapper caches), so no assumption is made about a batch dimension.
-        """
-        conditioning = features.conditioning
-        latents: list[Tensor] = []
-        baselines: list[Tensor] = []
-        anchor_weights: list[float] = []
-
-        specs = (
-            (self.optimize_single, io.read_single, io.write_single, self.anchor_weight_single),
-            (self.optimize_pair, io.read_pair, io.write_pair, self.anchor_weight_pair),
-        )
-        for enabled, read, write, anchor_weight in specs:
-            if not enabled:
-                continue
-            baseline = read(conditioning)
-            if baseline is None:
-                continue
-            baseline = baseline.detach()
-            leaf = baseline.clone().requires_grad_(True)
-            conditioning = write(conditioning, leaf)
-            latents.append(leaf)
-            baselines.append(baseline)
-            anchor_weights.append(anchor_weight)
-
-        if not latents:
-            raise ValueError(
-                "LatentOptimization found no optimizable latent on the conditioning "
-                f"(single_attr={self.single_attr!r}, pair_attr={self.pair_attr!r}). "
-                "Check the attribute names for this model."
-            )
-        features = GenerativeModelInput(x_init=features.x_init, conditioning=conditioning)
-        return features, latents, baselines, anchor_weights
