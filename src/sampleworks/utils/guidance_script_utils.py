@@ -469,8 +469,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             # call previously used the default (cache on). We decide it here, in _run_guidance()'s
             # Protenix setup, because latent optimization of the pair representation z requires the
             # cache to be off: with it on, the denoiser reads stale cached tensors and the gradient
-            # never reaches z_trunk (see docs/IT_OPT_TESTING_PROTENIX.md). We disable it only for the
-            # LATENT_OPT type, since for the other guidance types those tensors are simply recomputed
+            # never reaches z_trunk (see docs/IT_OPT_TESTING_PROTENIX.md). We disable it for the
+            # LATENT_OPT type, since other guidance types simply recompute those tensors
             # from the same frozen latents and the result is unchanged.
             enable_diffusion_shared_vars_cache=(guidance_type != GuidanceType.LATENT_OPT),
         )
@@ -605,7 +605,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     # pure guidance and FK steering steer the atomic coordinates, latent optimization instead
     # optimizes the frozen model's cached trunk latents (the single representation s and/or the pair
     # representation z) against the reward, then samples with those latents held fixed. We read the
-    # knobs off the config exactly as the other branches do and hand the optimize-then-sample loop to
+    # knobs off the config as the other branches do and hand the optimize-then-sample loop to
     # LatentOptimization.
     elif guidance_type == GuidanceType.LATENT_OPT:
         logger.info("Initializing inference-time latent optimization (IT-opt)")
@@ -619,13 +619,13 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             DEFAULT_SINGLE_REP_ATTR,
         )
 
-        # LatentOptimization expects the guidance start as a fraction of the schedule, but the config
+        # LatentOptimization expects guidance start as a fraction of the schedule, but the config
         # carries it as an integer step count, so we convert it here and default to optimizing from
         # the first step.
         guidance_t_start = args.guidance_start / num_steps if args.guidance_start > 0 else 0.0
         which_latent = getattr(args, "which_latent", "pair")  # This is "single", "pair", or "both".
         anchor_weight = getattr(args, "anchor_weight", 0.0)
-        bond_length_weight = getattr(args, "bond_length_weight", 0.0)
+        bond_length_weight = getattr(args, "bond_length_weight", 5e-5)  # smallest good default
         model_key = str(args.model)
 
         guidance = LatentOptimization(
@@ -646,7 +646,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
 
         logger.info(f"Running latent optimization ({which_latent}) on model {model_key}")
         # We still pass step_scaler so this call matches the signature the other guidance scalers
-        # use, but LatentOptimization ignores it because the v1 method steers only through the latents.
+        # use, but LatentOptimization ignores it -- v1 steers only through the latents.
         result = guidance.sample(
             structure=structure,
             model=model_wrapper,

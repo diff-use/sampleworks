@@ -642,9 +642,10 @@ def add_latent_opt_args(parser: argparse.ArgumentParser | GuidanceConfig):
     parser.add_argument(
         "--bond-length-weight",
         type=float,
-        default=0.0,
+        default=5e-5,
         help="Weight of the coordinate-space bond-geometry penalty (bond-length + steric-clash "
-        "hinges) added to the IT-opt loss; 0 disables it",
+        "hinges) added to the IT-opt loss. Default 5e-5 = smallest weight that fixes mean clash "
+        "while keeping density fit and diversity; use 1e-3 for median clash 0; 0 disables it",
     )
 
 

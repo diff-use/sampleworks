@@ -141,7 +141,7 @@ class LatentOptimization:
         optimize_pair: bool = True,
         anchor_weight_single: float = 0.0,
         anchor_weight_pair: float = 0.0,
-        bond_length_weight: float = 0.0,
+        bond_length_weight: float = 5e-5,  # smallest weight that fixes mean clash; see docstring
         single_attr: str = "s",
         pair_attr: str = "z",
     ):
@@ -177,8 +177,15 @@ class LatentOptimization:
             Weights of the on-manifold L2-to-baseline anchor per latent.
         bond_length_weight
             Weight of the coordinate-space bond-geometry penalty (bond-length + steric-clash
-            hinges; see ``BondGeometryReward``). 0 disables it (the default), leaving the objective
-            as density + anchor only.
+            hinges; see ``BondGeometryReward``). Pure latent opt (0) improves density fit but
+            raises clashes; this penalty curbs that. Full-40 sweep -- mean/median clash, RSCC>=0.8
+            (unguided baseline = 0.38 / 0.00 / 42%):
+                0     -> 0.47 / 0.25 / 92%   (density gained, but clashes rose)
+                5e-5  -> 0.38 / 0.25 / 92%   (mean clash back to baseline)   [DEFAULT]
+                1e-4  -> 0.39 / 0.25 / 92%
+                1e-3  -> 0.35 / 0.00 / 98%   (median clash 0; over-constrains, split 18->11%)
+            Default 5e-5: smallest weight that fixes the mean clash while keeping the density gain
+            and altloc diversity; use 1e-3 if you need median clash at 0 (accepts less spread).
         single_attr, pair_attr
             Conditioning attribute names for the single / pair representation
             (``"s"``/``"z"`` for Boltz, ``"s_trunk"``/``"z_trunk"`` for
