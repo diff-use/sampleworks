@@ -50,3 +50,57 @@ def test_coordinates_1vme(structure_1vme_density, device: torch.device):
     atom_array = atom_array[mask]
     coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
     return coords, atom_array
+
+
+# Committed (cif, MTZ) pair for the SF reward — produced from generate_synthetic_sf.py
+# using chain-A 1vme model (altloc occ 0.5/0.5, H + waters stripped) at 1.8 A with
+# --simulate-solvent-and-scale --save-structure. The cif is kept in the P2_1 crystal
+# frame rather than recentered like the carved density cif. All three fixtures below are
+# consumed only within tests/rewards/, so (unlike density_map_1vme) they live here.
+_SF_1VME_STEM = "1vme_final_crystalframe_0.5occA_0.5occB_1.80A"
+
+
+@pytest.fixture(scope="session")
+def mtz_path_1vme(resources_dir: Path) -> Path:
+    # Synthetic target: Fprotein/SIGFprotein/PHIFprotein + Ftotal/SIGFtotal/PHIFtotal.
+    # The SFC reward (v1) fits |Fprotein|.
+    mtz_path = resources_dir / "1vme" / f"{_SF_1VME_STEM}.mtz"
+    if not mtz_path.exists():
+        pytest.skip(f"MTZ not found at {mtz_path}")
+    return mtz_path
+
+
+@pytest.fixture(scope="session")
+def structure_1vme_sf(resources_dir: Path):
+    from sampleworks.utils.atom_array_utils import load_structure_with_altlocs
+
+    cif_path = resources_dir / "1vme" / f"{_SF_1VME_STEM}.cif"
+    if not cif_path.exists():
+        pytest.skip(f"SF model structure not found at {cif_path}")
+    return load_structure_with_altlocs(cif_path)
+
+
+@pytest.fixture(scope="session")
+def test_coordinates_1vme_sf(structure_1vme_sf, device: torch.device):
+    # No occupancy>0 filter here (unlike the density fixture) as SFC topology is fixed.
+    atom_array = structure_1vme_sf
+    coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
+    return coords, atom_array
+
+
+@pytest.fixture(scope="session")
+def reward_function_1vme_sf(mtz_path_1vme, test_coordinates_1vme_sf, device: torch.device):
+    from sampleworks.core.rewards.structure_factor import StructureFactorRewardFunction
+
+    _, atom_array = test_coordinates_1vme_sf
+
+    # normalize_amplitude=True scores normalized E-values (|Ec| vs sfc.Eo), which are
+    # unit-variance per resolution shell, so the MSE can be tested on an absolute scale.
+    reward_function = StructureFactorRewardFunction(
+        mtz_path_1vme,
+        expcolumns=["Fprotein", "SIGFprotein"],
+        normalize_amplitude=True,
+        device=device,
+    )
+    reward_function.prepare(atom_array)
+    return reward_function
