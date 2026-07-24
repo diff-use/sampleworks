@@ -76,6 +76,10 @@ _CELL_ANGLE_DEG_TOL = 0.5
 def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> list[str]:
     """Resolve the ``[amplitude, sigma]`` columns to read from ``ds``, logging the choice.
 
+    Auto-detection requires the MTZ to hold exactly one amplitude column and one sigma
+    column. A multi-set MTZ (e.g. ``Fprotein`` + ``Ftotal``) is ambiguous and forces the
+    caller to pass ``expcolumns`` explicitly.
+
     Parameters
     ----------
     expcolumns
@@ -94,12 +98,6 @@ def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> list[st
         If a provided ``expcolumns`` is not a length-2 ``[amplitude, sigma]`` pair, or names
         a column absent from the MTZ's amplitude/sigma columns; or, when auto-detecting, if
         the MTZ has zero or more than one amplitude (or sigma) column.
-
-    Notes
-    -----
-    Auto-detection requires the MTZ to hold exactly one amplitude column and one sigma
-    column. A multi-set MTZ (e.g. ``Fprotein`` + ``Ftotal``) is ambiguous and forces the
-    caller to pass ``expcolumns`` explicitly.
     """
     amplitude_dtype, sigma_dtype = rs.StructureFactorAmplitudeDtype(), rs.StandardDeviationDtype()
     if expcolumns is not None:
@@ -264,6 +262,19 @@ class StructureFactorRewardFunction:
         the cell/space group from the gemmi structure built in :meth:`prepare`, not the
         MTZ, so we must supply real values.) ``expcolumns`` is instead validated against
         the MTZ's columns and raises on an unknown name; see :func:`_resolve_expcolumns`.
+
+        Parameters
+        ----------
+        unit_cell
+            Caller-supplied crystallographic unit cell, or ``None`` to read the cell
+            from the MTZ. When provided, it is used as-is but a warning is logged if it
+            disagrees with the MTZ's cell.
+        space_group
+            Caller-supplied space group as a Hermann-Mauguin string, or ``None`` to read
+            it from the MTZ. Same use-but-warn-on-mismatch behavior as ``unit_cell``.
+        expcolumns
+            Caller-supplied ``[amplitude, sigma]`` column names to use verbatim, or
+            ``None`` to auto-detect from the MTZ; forwarded to :func:`_resolve_expcolumns`.
         """
         self._mtz_dataset = rs.read_mtz(self.mtzfile)
         cell_mtz = self._mtz_dataset.cell
@@ -290,12 +301,13 @@ class StructureFactorRewardFunction:
         self.expcolumns = _resolve_expcolumns(expcolumns, self._mtz_dataset)
 
     def prepare(self, atom_array: AtomArray) -> None:
-        """Build the SFcalculator from the model atom array. Here, constructing the
-        ``SFcalculator`` consumes the MTZ dataset parsed at ``__init__`` (no second
-        file read) and populates the observed structure factor amplitudes ``sfc.Fo``,
-        the observed HKL set in the ASU, the resolution bins, the outlier mask
-        ``sfc.Outlier``, the R-free flags ``sfc.free_flag``, and the normalized
-        ``|Eo|`` in ``sfc.Eo``.
+        """Build the SFcalculator from the model atom array.
+
+        Constructing the ``SFcalculator`` consumes the MTZ dataset parsed at
+        ``__init__`` (no second file read) and populates the observed structure
+        factor amplitudes ``sfc.Fo``, the observed HKL set in the ASU, the resolution
+        bins, the outlier mask ``sfc.Outlier``, the R-free flags ``sfc.free_flag``,
+        and the normalized ``|Eo|`` in ``sfc.Eo``.
 
         Must be called once before the first ``__call__``, with the same atom
         array that the sampled coordinates correspond to (model atom space:
@@ -381,6 +393,10 @@ class StructureFactorRewardFunction:
         coordinates
             Atomic coordinates ``[batch, n_atoms, 3]`` in model atom space,
             matching the atom ordering passed to :meth:`prepare`.
+        elements
+            Per-atom element codes ``[batch, n_atoms]``. Ignored: the topology
+            (including elements) is fixed in the SFcalculator built by
+            :meth:`prepare`. Present only to satisfy the reward-function signature.
         b_factors
             Per-atom isotropic B-factors ``[batch, n_atoms]``, written to
             ``sfc.atom_b_iso`` (reconciled: real deposited where shared with the
@@ -389,6 +405,11 @@ class StructureFactorRewardFunction:
             Per-atom occupancies ``[batch, n_atoms]`` (uniform ``1/E`` from the
             pipeline), written to ``sfc.atom_occ``; the ``1/E`` weighting makes the
             complex ensemble sum the multi-conformer total.
+        unique_combinations
+            Pre-computed unique (element, b_factor) pairs for vmap compatibility.
+            Currently unused.
+        inverse_indices
+            Pre-computed inverse indices for vmap compatibility. Currently unused.
 
         Returns
         -------
