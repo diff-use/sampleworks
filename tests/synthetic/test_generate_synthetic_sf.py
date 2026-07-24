@@ -1,4 +1,5 @@
-"""Tests for atomarray_to_gemmi in generate_synthetic_sf, using real 6b8x structure."""
+"""Tests for synthetic_utils: atomarray_to_gemmi (real 6b8x structure) and
+resolve_mtz_column (in-memory datasets)."""
 
 import logging
 from pathlib import Path
@@ -6,13 +7,20 @@ from pathlib import Path
 import gemmi
 import numpy as np
 import pytest
+import reciprocalspaceship as rs
 import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
-from sampleworks.synthetic.generate_synthetic_sf import atomarray_to_gemmi
-from sampleworks.synthetic.synthetic_utils import assign_occupancies
+from reciprocalspaceship.dtypes.base import MTZDtype
+from sampleworks.synthetic.synthetic_utils import (
+    assign_occupancies,
+    atomarray_to_gemmi,
+    resolve_mtz_column,
+)
 from sampleworks.utils.atom_array_utils import (
+    BLANK_ALTLOC_IDS,
     detect_altlocs,
+    find_all_altloc_ids,
     keep_amino_acids,
     keep_polymer,
     load_structure_with_altlocs,
@@ -73,8 +81,43 @@ def _compute_fprotein(gemmi_structure: gemmi.Structure, device: torch.device) ->
     return assert_numpy(sfc.Fprotein_asu)
 
 
+def _dataset_with_columns(columns: dict[str, MTZDtype]) -> rs.DataSet:
+    """Build a minimal rs.DataSet with each column cast to its MTZ dtype.
+
+    Each column name maps to a dummy column cast to its MTZ dtype. The reflection index
+    is irrelevant to column resolution, so it is left default.
+    """
+    ds = rs.DataSet({name: [1.0, 2.0, 3.0] for name in columns})
+    for name, dtype in columns.items():
+        ds[name] = ds[name].astype(dtype)
+    return ds
+
+
 class TestAtomArrayToGemmi:
     """Tests for atomarray_to_gemmi using the 6b8x structure."""
+
+    @pytest.fixture
+    def multichain_shared_resid_array(self) -> AtomArray:
+        """Two chains A (residues 1, 2) and B (residues 2, 3) that collide at the boundary.
+
+        Chain A's last residue and chain B's first residue both have res_id 2 and are
+        adjacent in atom order, so residue grouping keyed on res_id alone would merge them
+        into a single residue across the chain boundary. This collision at the chain
+        boundary is exactly what exercises the chain_id term of the grouping predicate --
+        a fixture whose res_id merely changes at the boundary (e.g. 2 -> 1) would split
+        correctly with or without that term and so would not guard it.
+        """
+        n = 4
+        arr = AtomArray(n)
+        arr.coord = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
+        arr.chain_id = np.array(["A", "A", "B", "B"])
+        arr.res_id = np.array([1, 2, 2, 3])
+        arr.res_name = np.array(["ALA", "GLY", "GLY", "ALA"])
+        arr.atom_name = np.array(["CA", "CA", "CA", "CA"])
+        arr.element = np.array(["C", "C", "C", "C"])
+        arr.set_annotation("b_factor", np.full(n, 20.0))
+        arr.set_annotation("occupancy", np.ones(n))
+        return arr
 
     def test_cell_matches_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
         """Unit cell parameters are preserved through the biotite→gemmi conversion."""
@@ -93,7 +136,8 @@ class TestAtomArrayToGemmi:
 
     def test_atoms_match_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
         """Atom names and positions match the original PDB, in the same order."""
-        # atom order is preserved: biotite keeps PDB file order, array2hier reconstructs it
+        # atom order is preserved: biotite keeps PDB file order, and atomarray_to_gemmi
+        # emits atoms in that same order
         parser_from_atomarray = PDBParser(gemmi_structure_from_atomarray)
         parser_from_gemmi = PDBParser(stripped_gemmi)
         assert np.array_equal(parser_from_atomarray.atom_name, parser_from_gemmi.atom_name)
@@ -120,6 +164,90 @@ class TestAtomArrayToGemmi:
         f_atomarray = _compute_fprotein(gemmi_structure_from_atomarray, device)
         f_direct = _compute_fprotein(stripped_gemmi, device)
         np.testing.assert_allclose(np.abs(f_atomarray), np.abs(f_direct), atol=1e-3)
+
+    def test_saved_structure_round_trips_annotations(
+        self, stripped_atom_array, stripped_gemmi, tmp_path
+    ):
+        """Test that reloading Gemmi's CIF output returns the original atom array used to construct
+        the Gemmi Structure object. This ensures we don't corrupt or lose information in building
+        the Gemmi Structure that would affect our structure factor calculations.
+
+        Fields (coords, element, b_factor, occupancy) drive the structure factors; fields
+        (chain_id, res_id, res_name, atom_name, altloc_id) carry topology and alignment.
+        res_id round-trips only because atomarray_to_gemmi writes label_seq_id (not just the
+        author seqid), so atomworks' label scheme reads back the real residue numbers instead
+        of collapsing every residue to -1. ins_code is intentionally ignored (see Issue #306).
+        """
+        ref = stripped_atom_array
+        save_cif_path = tmp_path / "saved.cif"
+        gemmi_structure = atomarray_to_gemmi(ref, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm)
+        gemmi_structure.make_mmcif_document().write_file(str(save_cif_path))
+        loaded = load_structure_with_altlocs(save_cif_path)
+
+        assert len(loaded) == len(ref)
+
+        # Extra fields can exist depending on the structure file. For example, cif vs pdb would
+        # have an extra annotation is_polymer. Here, we specify the key fields we care about.
+        important_annotations = {
+            "chain_id",
+            "res_id",
+            "res_name",
+            "atom_name",
+            "element",
+            "hetero",
+            "b_factor",
+            "occupancy",
+            "altloc_id",
+        }
+        assert important_annotations <= set(ref.get_annotation_categories())
+        assert important_annotations <= set(loaded.get_annotation_categories())
+
+        # Check altloc ids survive the round-trip
+        assert find_all_altloc_ids(ref)  # sanity: the reference input actually has altlocs
+        blanks = list(BLANK_ALTLOC_IDS)
+        loaded_altloc = np.where(np.isin(loaded.altloc_id, blanks), "", loaded.altloc_id)
+        ref_altloc = np.where(np.isin(ref.altloc_id, blanks), "", ref.altloc_id)
+        assert np.array_equal(loaded_altloc, ref_altloc)
+
+        # Check the non-float annotation columns are identical
+        for category in sorted(important_annotations - {"b_factor", "occupancy", "altloc_id"}):
+            assert np.array_equal(loaded.get_annotation(category), ref.get_annotation(category)), (
+                f"annotation {category!r} did not round-trip"
+            )
+
+        assert set(np.unique(loaded.res_id)) != {-1}  # not collapsed to the degenerate -1
+        assert len(np.unique(loaded.element)) > 1  # not collapsed to a single/blank symbol
+
+        # Check the coordinates and float annotation are within write precision
+        np.testing.assert_allclose(loaded.coord, ref.coord, atol=1e-3)
+        np.testing.assert_allclose(loaded.b_factor, ref.b_factor, atol=1e-2)
+        np.testing.assert_allclose(loaded.occupancy, ref.occupancy, atol=1e-2)
+
+    def test_multichain_shared_res_ids_not_merged_in_gemmi(self, multichain_shared_resid_array):
+        """Test that atomarray_to_gemmi splits shared res_ids into separate residues per chain
+        in the Gemmi Structure object.
+        """
+        arr = multichain_shared_resid_array
+        model = atomarray_to_gemmi(arr)[0]
+
+        chains = list(model)
+        expected_chain_ids = list(dict.fromkeys(arr.chain_id.tolist()))  # unique, input order
+        assert [chain.name for chain in chains] == expected_chain_ids
+        for chain in chains:
+            mask = arr.chain_id == chain.name
+            residues = list(chain)
+            # this fixture is one atom per residue, so per chain the residue seqids and atom
+            # names must equal the chain's atoms one-to-one. A res_id-only merge would fuse
+            # chain A's residue 2 with chain B's residue 2 (shared res_id, adjacent) into one
+            # residue, changing chain A's atom count and dropping chain B's atom -- breaking these.
+            assert [res.seqid.num for res in residues] == arr.res_id[mask].tolist()
+            assert [res.name for res in residues] == arr.res_name[mask].tolist()
+            assert [atom.name for res in residues for atom in res] == arr.atom_name[mask].tolist()
+
+    def test_empty_atom_array_raises(self):
+        """An empty AtomArray fails fast rather than yielding a chain-less structure."""
+        with pytest.raises(ValueError, match="empty AtomArray"):
+            atomarray_to_gemmi(AtomArray(0))
 
     def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
         """A warning is logged when more occupancy values are provided than there are altlocs."""
@@ -164,3 +292,59 @@ class TestAtomArrayToGemmi:
         )
 
         assert not np.allclose(np.abs(f_uniform), np.abs(f_custom), atol=1e-3)
+
+
+class TestResolveMtzColumn:
+    """Tests for resolve_mtz_column column-selection logic."""
+
+    @pytest.fixture
+    def dataset_with_amplitude_and_phase(self) -> rs.DataSet:
+        """One amplitude column (FP) and one phase column (PHI)."""
+        return _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "PHI": rs.PhaseDtype()}
+        )
+
+    @pytest.fixture
+    def dataset_with_single_amplitude(self) -> rs.DataSet:
+        """A sole amplitude column (FP), with no phase column present."""
+        return _dataset_with_columns({"FP": rs.StructureFactorAmplitudeDtype()})
+
+    @pytest.fixture
+    def dataset_with_two_amplitudes(self) -> rs.DataSet:
+        """Two amplitude columns (FP, FC) of the same dtype."""
+        return _dataset_with_columns(
+            {"FP": rs.StructureFactorAmplitudeDtype(), "FC": rs.StructureFactorAmplitudeDtype()}
+        )
+
+    def test_returns_sole_candidate(self, dataset_with_amplitude_and_phase):
+        """With exactly one column of the dtype and no explicit choice, it is returned."""
+        assert (
+            resolve_mtz_column(dataset_with_amplitude_and_phase, rs.StructureFactorAmplitudeDtype())
+            == "FP"
+        )
+
+    def test_no_candidate_raises(self, dataset_with_single_amplitude):
+        """A dtype absent from the dataset fails fast."""
+        with pytest.raises(ValueError, match="column found"):
+            resolve_mtz_column(dataset_with_single_amplitude, rs.PhaseDtype())
+
+    def test_ambiguous_candidates_raise(self, dataset_with_two_amplitudes):
+        """Two columns of the dtype with no explicit choice is ambiguous."""
+        with pytest.raises(ValueError, match="Multiple"):
+            resolve_mtz_column(dataset_with_two_amplitudes, rs.StructureFactorAmplitudeDtype())
+
+    def test_explicit_column_disambiguates(self, dataset_with_two_amplitudes):
+        """An explicit column among the candidates is returned verbatim."""
+        assert (
+            resolve_mtz_column(
+                dataset_with_two_amplitudes, rs.StructureFactorAmplitudeDtype(), column="FC"
+            )
+            == "FC"
+        )
+
+    def test_explicit_column_of_wrong_dtype_raises(self, dataset_with_amplitude_and_phase):
+        """An explicit column that is not of the requested dtype is rejected."""
+        with pytest.raises(ValueError, match="not among"):
+            resolve_mtz_column(
+                dataset_with_amplitude_and_phase, rs.StructureFactorAmplitudeDtype(), column="PHI"
+            )
