@@ -44,9 +44,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import gemmi
+import numpy as np
 import reciprocalspaceship as rs
 import torch
-from jaxtyping import Complex, Float, Int
+from jaxtyping import Bool, Complex, Float, Int
 from loguru import logger
 from sampleworks.synthetic.synthetic_utils import atomarray_to_gemmi, resolve_mtz_column
 from sampleworks.utils.torch_utils import try_gpu
@@ -72,6 +73,17 @@ _BULK_SOLVENT_MODES = ("off", "combined", "per_conformer")
 _RESERVED_SFC_KWARGS = frozenset(
     {"dmin", "mode", "anomalous", "mtzdata", "pdbmodel", "expcolumns", "device", "set_experiment"}
 )
+
+# Two thresholds for warnings reflection set too small after dropping outliers and R-free test
+# set; see _build_reflection_mask.
+# The min fraction is intended to catch  an R-free convention mismatch (specify the wrong test
+# set value for example). R-free test sets are conventionally 5-10% and outlier should be under
+# 1%, so 75% is a safe threshold.
+# The min absolute number is intended to catch a reflection set too small to guide the structure
+# generation. We should have on the order of 1e4 reflections for 2A resolution macromolecular
+# data, so 1e3 is a safe threshold.
+_MIN_RETAINED_REFLECTION_FRACTION = 0.75
+_MIN_RETAINED_REFLECTIONS = 1_000
 
 # Tolerances for warning when a caller-supplied unit cell disagrees with the MTZ's,
 # passed to gemmi.UnitCell.is_similar: relative tolerance on the cell edges (a, b, c)
@@ -209,8 +221,8 @@ class StructureFactorRewardFunction:
             Torch device. Auto-selects a GPU when omitted.
         sfcalculator_kwargs
             Extra keyword arguments forwarded verbatim to ``SFcalculator(...)`` in
-            :meth:`prepare` (e.g. ``n_bins``, ``freeflag``). Reserved keys managed by
-            this class (listed in :data:`_RESERVED_SFC_KWARGS`) cannot be overridden.
+            :meth:`prepare` (e.g. ``n_bins``, ``freeflag``, ``testset_value``). Reserved
+            keys in this class (listed in :data:`_RESERVED_SFC_KWARGS`) cannot be overridden.
         """
         if device is None:
             device = try_gpu()
@@ -367,11 +379,9 @@ class StructureFactorRewardFunction:
                 "SFcalculator did not populate them from this MTZ."
             )
 
-        # Reflection mask: drop outliers, and optionally the free (test) set, when
-        # computing the loss. Outlier / free_flag are numpy bool arrays from SFC.
-        mask_np = ~self.sfc.Outlier
-        if self.exclude_free_reflections:
-            mask_np &= ~self.sfc.free_flag
+        mask_np = self._build_reflection_mask(
+            outlier=self.sfc.Outlier, free_flag=self.sfc.free_flag
+        )
         self._reflection_mask = torch.from_numpy(mask_np).to(self.device)
 
         logger.info(
@@ -380,6 +390,69 @@ class StructureFactorRewardFunction:
             f"cell={self.sfc.unit_cell}, space_group={self.sfc.space_group.hm}, "
             f"solventpct={self.sfc.solventpct}, gridsize={self.sfc.gridsize}"
         )
+
+    def _build_reflection_mask(
+        self,
+        *,
+        outlier: Bool[np.ndarray, "n_hkl"],  # noqa: F821, UP037
+        free_flag: Bool[np.ndarray, "n_hkl"],  # noqa: F821, UP037
+    ) -> Bool[np.ndarray, "n_hkl"]:  # noqa: F821, UP037
+        """Build a mask of valid training set reflections for reward computation and
+        sanity check the mask size.
+
+        Outliers are always dropped; the R-free test set is also dropped when user sets
+        ``exclude_free_reflections``. Raise error when the number of reflections remain
+        is 0, and log warning when it is too small (below ``_MIN_RETAINED_REFLECTION_FRACTION``
+        or ``_MIN_RETAINED_REFLECTIONS``).
+
+        Parameters
+        ----------
+        outlier
+            ``sfc.Outlier`` ``[n_hkl]``: True where SFcalculator flagged the observed
+            reflection as an outlier.
+        free_flag
+            ``sfc.free_flag`` ``[n_hkl]``: True where the reflection is in the R-free
+            test set.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean mask over the observed reflections ``[n_hkl]``, True where the
+            reflection contributes to the loss.
+
+        Raises
+        ------
+        ValueError
+            If no reflection survives the mask.
+        """
+        mask_np = ~outlier  # allocates, so the &= below never touches SFC's own arrays
+        if self.exclude_free_reflections:
+            mask_np &= ~free_flag
+
+        n_total, n_used = mask_np.size, int(mask_np.sum())
+        composition = (
+            f"{n_total} observed reflections, "
+            f"{int(outlier.sum())} outliers, "
+            f"{int(free_flag.sum())} flagged free "
+            f"(exclude_free_reflections={self.exclude_free_reflections})"
+        )
+        convention_hint = (
+            "SFcalculator treats mtz[freeflag] == testset_value as the test set; "
+            "pass a matching `freeflag` / `testset_value` via sfcalculator_kwargs "
+            "if the MTZ's R-free convention differs from its defaults ('FreeR_flag' / 0)."
+        )
+        if n_used == 0:
+            raise ValueError(f"No reflections remain: {composition}. {convention_hint}")
+        if n_used < _MIN_RETAINED_REFLECTIONS:
+            logger.warning(
+                f"Only {n_used} reflections remain: {composition}. "
+                f"Check `resolution` (dmin={self.resolution} A) and the MTZ reflection range."
+            )
+        if n_used < _MIN_RETAINED_REFLECTION_FRACTION * n_total:
+            logger.warning(
+                f"Only {n_used}/{n_total} reflections remain: {composition}. {convention_hint}"
+            )
+        return mask_np
 
     def __call__(
         self,

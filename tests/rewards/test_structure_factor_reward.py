@@ -14,11 +14,19 @@ occupancy/B vector. Rather than silently using row 0 and dropping the rest, the 
 invariant instead of a latent footgun. See ``test_per_conformer_occupancy_or_b_raises``.
 """
 
+import logging
+from pathlib import Path
+
 import pytest
 import reciprocalspaceship as rs
 import torch
 from biotite.structure import AtomArray
-from sampleworks.core.rewards.structure_factor import StructureFactorRewardFunction
+from reciprocalspaceship.utils import add_rfree
+from sampleworks.core.rewards.structure_factor import (
+    _MIN_RETAINED_REFLECTION_FRACTION,
+    _MIN_RETAINED_REFLECTIONS,
+    StructureFactorRewardFunction,
+)
 from sampleworks.utils.atom_array_utils import (
     build_pairwise_altloc_arrays,
     find_all_altloc_ids,
@@ -368,3 +376,82 @@ class TestStructureFactorConfig:
         )
         assert reward_all.sfc.free_flag.any()  # safety: the free set is actually recognized
         assert int(reward_work._reflection_mask.sum()) < int(reward_all._reflection_mask.sum())
+
+    @pytest.fixture
+    def mtz_all_free_1vme(self, mtz_path_1vme, tmp_path) -> Path:
+        """The test MTZ with *every* reflection flagged as the R-free test set.
+
+        Built with rs's own ``add_rfree`` (``fraction=1.0``) so the flag column name and
+        convention match the committed MTZ's (``R-free-flags``, test set = 1).
+        """
+        dataset = add_rfree(rs.read_mtz(str(mtz_path_1vme)), fraction=1.0, seed=0)
+        path = tmp_path / "1vme_all_free.mtz"
+        dataset.write_mtz(str(path))
+        return path
+
+    def test_empty_reflection_mask_raises(
+        self, mtz_all_free_1vme, test_coordinates_1vme_sf, device
+    ):
+        """A mask that scores no reflection fails in ``prepare()``."""
+        _, atom_array = test_coordinates_1vme_sf
+        with pytest.raises(ValueError, match="No reflections remain"):
+            make_prepared_reward(
+                mtz_all_free_1vme,
+                atom_array,
+                device,
+                expcolumns=["Fprotein", "SIGFprotein"],
+                exclude_free_reflections=True,
+                sfcalculator_kwargs={"freeflag": "R-free-flags", "testset_value": 1},
+            )
+
+    def test_inverted_testset_value_warns(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, device, caplog
+    ):
+        """An inverted ``testset_value`` keeps only the test set, and is warned about.
+
+        Inverting the flag keeps the fraction of valid reflections small although the
+        asbolute size can still be large.
+        """
+        _, atom_array = test_coordinates_1vme_sf
+        with caplog.at_level(logging.WARNING):
+            reward = make_prepared_reward(
+                mtz_path_1vme,
+                atom_array,
+                device,
+                expcolumns=["Fprotein", "SIGFprotein"],
+                exclude_free_reflections=True,
+                sfcalculator_kwargs={"freeflag": "R-free-flags", "testset_value": 0},
+            )
+        n_used, n_total = int(reward._reflection_mask.sum()), len(reward.sfc.Fo)
+        # check that the fraction precondition held and the floor's precondition did not hold
+        assert n_used < _MIN_RETAINED_REFLECTION_FRACTION * n_total
+        assert n_used >= _MIN_RETAINED_REFLECTIONS
+        assert f"Only {n_used}/{n_total} reflections remain" in caplog.text
+        # check that only the warning message from the fraction threshold is logged
+        assert "testset_value" in caplog.text
+        assert "the MTZ reflection range" not in caplog.text
+
+    def test_small_reflection_set_warns(
+        self, mtz_path_1vme, test_coordinates_1vme_sf, device, caplog
+    ):
+        """A reflection set too small of absolute size to guide coordinates should warn.
+
+        Truncating to 10 A leaves only a few hundred reflections but the fraction of valid
+        reflections can still be large.
+        """
+        _, atom_array = test_coordinates_1vme_sf
+        with caplog.at_level(logging.WARNING):
+            reward = make_prepared_reward(
+                mtz_path_1vme,
+                atom_array,
+                device,
+                expcolumns=["Fprotein", "SIGFprotein"],
+                resolution=10.0,
+            )
+        n_used, n_total = int(reward._reflection_mask.sum()), len(reward.sfc.Fo)
+        # check that the floor precondition held and the fraction's precondition did not hold
+        assert n_used < _MIN_RETAINED_REFLECTIONS
+        assert n_used >= _MIN_RETAINED_REFLECTION_FRACTION * n_total
+        # check that only the warning message from the absolute threshold is logged
+        assert "the MTZ reflection range" in caplog.text
+        assert f"{n_used}/{n_total}" not in caplog.text
