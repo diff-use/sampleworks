@@ -224,6 +224,25 @@ def build_args_for_process_pool(
     return guidance_config
 
 
+def worker_log_path_for(job_queue_path: str) -> str:
+    """Return the path a worker redirects its subprocess output to.
+
+    Derived in one place so the collector's error messages always name the
+    file ``run_guidance_queue_script`` actually wrote.
+
+    Parameters
+    ----------
+    job_queue_path : str
+        Path to the worker's pickled job queue.
+
+    Returns
+    -------
+    str
+        Sibling ``.log`` path for that worker's subprocess output.
+    """
+    return job_queue_path.replace(".pkl", ".log")
+
+
 def run_grid_search(
     jobs: list[JobConfig],
     gpus: list[str],
@@ -302,7 +321,9 @@ def run_grid_search(
 
         for completed in concurrent.futures.as_completed(futures):  # ty: ignore
             job_queue_path = futures[completed]
-            worker_log_path = job_queue_path.replace(".pkl", ".log")
+            # Same file the worker redirects its subprocess output to; these
+            # messages exist to point the reader at it.
+            worker_log_path = worker_log_path_for(job_queue_path)
             # The worker raises before it can write results, so surface its
             # traceback here rather than reporting the missing results file.
             worker_error = completed.exception()
@@ -400,7 +421,7 @@ def run_guidance_queue_script(
         f"(selected GPU {requested_gpu} via {gpu_source})"
     )
 
-    with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
+    with open(worker_log_path_for(job_queue_path), "w") as log_file:
         result = subprocess.run(
             cmd,
             stdout=log_file,
