@@ -1,5 +1,11 @@
 # Latent-space optimization across AF3-style wrappers
 
+> **Archived-design note (added).** This is the *original design* for the injector /
+> `LatentAdaptedWrapper` (`DeltaInjector`) approach. That code was never wired in and is now archived
+> to [archived_injector_family.md](archived_injector_family.md); the shipped method is the direct-leaf
+> `LatentOptimization` scaler (`core/scalers/latent_optimization.py`). Read this for the design
+> thinking, not the current code.
+
 > Consolidated analysis + final recommendation for doing **AF2/OpenFold2-style
 > latent-space optimization** (single representation and/or MSA representation)
 > on the RF3, Protenix, and Boltz wrappers in `sampleworks`.

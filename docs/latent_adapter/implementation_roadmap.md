@@ -1,5 +1,10 @@
 # Implementation Roadmap — Legibility Refactor → Latent-Opt Injection → Validation
 
+> **Archived-design note (added).** The `DeltaInjector` / `LatentAdaptedWrapper` injection design
+> this roadmap plans was never wired in and is archived to
+> [archived_injector_family.md](archived_injector_family.md); the shipped method is the direct-leaf
+> `LatentOptimization` scaler. This is the historical plan, not the current code.
+
 > Companion to **`latent_space_optimization.md`** (the verified *what/where* of the
 > latent pre-pass: targets, `DeltaInjector`, per-model cache handling) and
 > `latent_adapter.py`.

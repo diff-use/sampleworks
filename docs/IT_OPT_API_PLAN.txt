@@ -1,0 +1,478 @@
+====================================================================
+IT-OPT API PLAN — OVERALL ARCHITECTURE
+Inference-time latent-space optimization for the AF3-family wrappers
+====================================================================
+
+Status: as-built (v1) + sanctioned extension points.
+NOTE: the "Path 2" injector family (LatentInjector / DeltaInjector / AffineInjector /
+    LatentAdaptedWrapper) described below was never wired in and is now archived to
+    docs/latent_adapter/archived_injector_family.md. The shipped method is Path 1 --
+    the direct-leaf LatentOptimization scaler. Treat the Path-2 sections as design history.
+Companion technical reference (full signatures & contracts):
+    docs/IT_OPT_API_REFERENCE.md
+Sibling docs:
+    docs/IT_OPTIMIZATION_PLAN.md          -- the algorithm and phased rollout
+    docs/IT_OPT_REFERENCE_COMPARISON.md   -- port vs. the external reference
+    docs/latent_adapter/                  -- the original design authority
+Feature source:
+    src/sampleworks/core/scalers/latent_optimization.py   (LatentOptimization)
+    src/sampleworks/models/latent_adapter.py              (the s/z plumbing)
+    src/sampleworks/core/rewards/geometry.py              (BondGeometryReward)
+    src/sampleworks/utils/guidance_script_arguments.py    (CLI flags)
+
+
+--------------------------------------------------------------------
+0. WHAT THIS DOCUMENT IS
+--------------------------------------------------------------------
+
+This is the architecture-level API plan for latent-space optimization
+(IT-opt). It answers one question: given the design analysis (the
+"Latent Space Optimization Design" document), what is the shape of the
+API that the shipped code exposes, and how do its pieces fit together?
+
+It is deliberately architecture-first. It names the layers, the seams
+between them, and the contract each layer owes the others. Exact
+signatures, field lists, and per-method preconditions live in the
+companion reference (IT_OPT_API_REFERENCE.md) so this document can stay
+readable at a glance.
+
+The one framing to carry through the whole document: IT-opt is NOT a new
+model and NOT a new sampler. It is a *trajectory scaler* -- a peer of
+PureGuidance and FKSteering -- that treats the frozen structure model as
+a differentiable decoder and optimizes its cached trunk latents (s, z)
+against an experimental reward. No weights are trained.
+
+
+--------------------------------------------------------------------
+1. WHERE LATENT-OPT SITS (the 6-stage spine, recapped)
+--------------------------------------------------------------------
+
+The design document walks the AF3-family forward pass as six stages:
+
+    1  Input encoding      InputFeatureEmbedder -> s_inputs
+    2  Init projections    -> s_init, z_init
+    3  Trunk (recycling)   MSA + Pairformer -> (s, z)   <-- the latents
+    4  Diffusion sampling  EDM sampler + DiffusionModule -> coordinates
+    5  Confidence head     pLDDT / PAE / pTM
+    6  IT-opt overlay      re-expose (s, z) as free variables
+
+The trunk output (s, z) between stage 3 and stage 4 is the single
+object IT-opt touches. In Sampleworks that object is already captured
+and cached: the wrapper's featurize() runs stages 0-3 once and stores
+(s, z) as named attributes on a frozen "conditioning" dataclass, which
+the sampler then reuses across all ~200 diffusion steps.
+
+That cache is the entire seam. IT-opt does not re-implement stages 1-3
+(the design doc's stage-6 overlay for the external reference did; we do
+not have to, because the wrapper already exposes the cache). IT-opt
+reads (s, z) off the conditioning, promotes them to optimizable leaf
+tensors, and lets gradients from a coordinate-space reward flow back
+into them through the frozen stage-4 denoiser.
+
+    Vocabulary (fixed across all IT-opt docs -- do not rename):
+      s   single representation  (Boltz field "s";   Protenix/RF3 "s_trunk")
+      z   pair   representation  (Boltz field "z";   Protenix/RF3 "z_trunk")
+      m   transient mid-trunk MSA tensor -- the WRONG target; never in the API
+      anchor      L2 pull of a latent back toward its detached trunk baseline
+      outer loop  resample rounds, fresh prior noise each round (outer_steps)
+      inner loop  per-diffusion-step Adam updates on (s, z) (num_steps)
+      injector    a parameterized latent-write module (the alternative path)
+
+
+--------------------------------------------------------------------
+2. THE THREE DESIGN CHALLENGES -> THE API'S THREE ANSWERS
+--------------------------------------------------------------------
+
+The design document poses three integration challenges. The API is
+organized around answering exactly these three.
+
+CHALLENGE 1 -- "the minimal set of functions for cross-compatibility
+across three or more architectures."
+
+  Answer: a two-method read/write abstraction, LatentIO, whose ONLY
+  model-specific knowledge is which attribute of the conditioning holds
+  each representation. Adding a fourth or fifth model is one more pair
+  of strings in DEFAULT_SINGLE_REP_ATTR / DEFAULT_PAIR_REP_ATTR, not new
+  code. No model package is ever imported by the adapter. This is the
+  minimal cross-model surface the design asked for.
+
+CHALLENGE 2 -- "backpropagation paths and the implications of gradient
+descent within these encoded layers."
+
+  Answer: a single, explicit gradient gate. The sampler runs its
+  denoiser under autograd ONLY when the attached step scaler exposes
+  requires_gradients = True. IT-opt supplies a tiny internal scaler
+  (_GradEnablingScaler) that does nothing but flip that flag on and
+  return a zero coordinate move. The result is one differentiable
+  denoiser forward per step whose output x_hat_0 carries a graph back to
+  the (s, z) leaves -- the design doc's "option (b): a single model.step
+  call as a cheap differentiable decoder," not a 200-step unroll.
+
+CHALLENGE 3 -- "how alterations to the latents interact with or disrupt
+downstream steering and sampling."
+
+  Answer: three containment guarantees baked into the defaults.
+    (a) Zero-impact identity. Leaves start as exact clones of the trunk
+        baseline; the injector path starts at the identity. With nothing
+        optimized yet, the trajectory is bit-for-bit the frozen model.
+    (b) Gradient isolation. Outside the optimization pass, injected
+        latents are detached, so existing coordinate-space guidance is
+        unchanged. v1 also advances the trajectory with coordinate
+        guidance disabled (scaler=None), so the ONLY steering is the
+        latent update -- a clean, reversible separation.
+    (c) On-manifold discipline. An anchor term (and an optional
+        coordinate-space bond/clash penalty) keeps the optimized latents
+        from drifting off the learned manifold into broken geometry.
+
+
+--------------------------------------------------------------------
+3. ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------
+
+Four layers the feature owns, plus the four seams it plugs into.
+
+  OWNED BY THE FEATURE
+  ....................................................................
+   A. Entry point      LatentOptimization          a TrajectoryScaler
+                       (the sample() loop)          peer of PureGuidance
+                            |
+   B. Latent adapter   LatentIO / AttrLatentIO      model-agnostic s/z
+                       (read/write s,z on cond)     read+write plumbing
+                            |
+   C. Objective        reward + LatentAnchor        what the latents are
+                       (+ BondGeometryReward)       optimized against
+                            |
+   D. Gradient seam    _GradEnablingScaler          flips autograd on so
+                       (requires_gradients=True)    denoised carries a graph
+
+  SEAMS IT CONSUMES (contracts it must honor -- see the reference doc)
+  ....................................................................
+   1. Model      FlowModelWrapper.featurize/step/initialize_from_prior,
+                 GenerativeModelInput(x_init, conditioning)
+   2. Sampler    TrajectorySampler.compute_schedule/get_context_for_step/step,
+                 StepParams, SamplerStepOutput(state, denoised)
+   3. Reward     RewardFunctionProtocol(coordinates, elements, b_factors,
+                 occupancies) -> scalar loss
+   4. Structure  process_structure_to_trajectory_input -> reconciler,
+                 reward_inputs, model-space reference coords
+
+Two distinct implementation PATHS live in the latent adapter. This is
+the most important thing to understand about the API, because the design
+docs describe one and the shipped v1 uses the other:
+
+  PATH 1 -- DIRECT LEAF (what v1 actually runs).
+    LatentOptimization reads s/z off the conditioning via AttrLatentIO,
+    clones each into a leaf tensor with requires_grad=True, and hands
+    those leaves straight to Adam. The latent IS the free variable.
+
+  PATH 2 -- INJECTOR (built, kept, NOT wired into v1).
+    LatentAdaptedWrapper wraps a model wrapper and, at the featurize
+    boundary, replaces s/z with injector(s)/injector(z), where the
+    injector (DeltaInjector: latent + delta, delta the zero-init leaf;
+    or AffineInjector: k*latent + b) holds the free variables instead.
+    This is the "train a small transform" mode the design docs frame as
+    the v1 injector. It exists as a clean, tested alternative and is the
+    natural home for a future low-rank z delta, but the shipped scaler
+    does not use it -- it optimizes the leaf directly (Path 1).
+
+Both paths share the same LatentIO plumbing and the same zero-impact
+guarantee; they differ only in whether the free variable is the latent
+itself or a transform applied to it.
+
+
+--------------------------------------------------------------------
+4. THE FOUR OWNED LAYERS (architecture level)
+--------------------------------------------------------------------
+
+A. ENTRY POINT -- LatentOptimization  (core/scalers/latent_optimization.py)
+
+   A trajectory scaler. It satisfies the same TrajectoryScalerProtocol
+   as PureGuidance and FKSteering and is a drop-in peer: same
+   sample(structure, model, sampler, step_scaler, reward, num_particles)
+   entry point, same GuidanceOutput return type, same featurize-once
+   pattern. It intentionally IGNORES the passed step_scaler -- v1 does
+   latent optimization only, no coordinate-space guidance -- but keeps
+   the parameter for protocol conformance.
+
+   Its constructor knobs describe the optimization, not the model:
+   how many diffusion steps, how many outer resample rounds, the Adam
+   learning rate, per-latent gradient-clip threshold, which of s/z to
+   optimize, the anchor weights, an optional geometry-penalty weight,
+   and the two attribute names that localize s/z on this model's
+   conditioning. Defaults are Boltz-shaped ("s"/"z"); the CLI wiring
+   overrides them per model.
+
+   What it returns (GuidanceOutput.metadata) departs from its siblings:
+   where PureGuidance/FKSteering report "trajectory_denoised", IT-opt
+   reports "optimization_losses" (per-round, per-step data losses) and
+   "latent_drift" (how far each latent moved from its baseline). Both
+   are diagnostics; downstream consumers must treat scaler-specific
+   metadata keys as optional.
+
+B. LATENT ADAPTER -- the model-agnostic s/z plumbing  (models/latent_adapter.py)
+
+   This is the layer that answers cross-model compatibility.
+
+   LatentIO (protocol) -- four methods: read_single/write_single and
+   read_pair/write_pair. Writes return a COPY of the conditioning with
+   one representation replaced (dataclasses.replace), so the frozen,
+   slotted conditioning is honored and non-tensor sidecar state (e.g.
+   RF3's chiral arrays) is preserved untouched.
+
+   AttrLatentIO -- the general implementation: address each
+   representation by attribute name. This is the only place that knows
+   "s" vs "s_trunk". Pair accessors become no-ops when constructed
+   without a pair attribute (single-rep-only mode).
+
+   LatentInjector (protocol) + DeltaInjector / AffineInjector -- the
+   Path-2 transforms (see section 3). DeltaInjector is the general one
+   (zero-init additive delta; the anchor reduces to lambda*||delta||^2);
+   AffineInjector is the two-scalar identity-at-init transform.
+
+   LatentAdaptedWrapper -- the Path-2 decorator: satisfies
+   FlowModelWrapper itself, augments only featurize (inject into s then
+   z), delegates step/initialize_from_prior verbatim. Detaches injected
+   latents unless training_adapter=True, preserving the constant-
+   conditioning contract during ordinary sampling.
+
+   DEFAULT_SINGLE_REP_ATTR / DEFAULT_PAIR_REP_ATTR -- the per-model
+   attribute-name maps. Documentation/config only; the module never
+   imports a model.
+
+C. OBJECTIVE -- what the latents are optimized against
+
+   The loss the inner loop minimizes is:
+
+       loss = reward(x_hat_0)            # data term, pluggable
+            + anchor(latents, baselines) # on-manifold prior
+            + geometry(x_hat_0)          # optional geometry guard
+
+   reward -- any RewardFunctionProtocol. v1 uses the density fit
+   (RealSpaceRewardFunction), evaluated on the reconciler-aligned
+   denoised prediction x_hat_0. The objective is pluggable by design
+   (never hardcoded), so a different experimental observable is a
+   different reward, not a code change.
+
+   LatentAnchor -- co-located in the scaler (NOT a RewardFunctionProtocol,
+   because it regularizes latents, not coordinates). It penalizes
+   mean-squared deviation of each latent from its detached trunk
+   baseline, with separate weights for s and z so the two land on a
+   comparable scale despite z being O(tokens) larger.
+
+   BondGeometryReward -- (core/rewards/geometry.py) a coordinate-space
+   bond-length + steric-clash penalty. Deliberately NOT a
+   RewardFunctionProtocol: its __call__ takes only coordinates, so it is
+   added as a separate term rather than dispatched as the reward. Off by
+   default (weight 0); switched on to curb the overshoot where an
+   aggressive latent update trades valid geometry for density fit. Its
+   topology is read once from the model atom array so bond indices line
+   up with the denoised coordinate ordering.
+
+D. GRADIENT SEAM -- _GradEnablingScaler
+
+   The smallest possible object that answers Challenge 2. It is a step
+   scaler whose only real content is the class attribute
+   requires_gradients = True; its scale() returns a zero coordinate
+   direction and zero loss. Passing it into sampler.step() makes the
+   sampler (a) keep the noisy state as a grad-enabled leaf and (b) run
+   the denoiser under torch.set_grad_enabled(True). The returned
+   x_hat_0 therefore carries a graph back to the injected (s, z) leaves,
+   while the trajectory advance itself stays unguided. One denoiser
+   forward, one reward evaluation, per step.
+
+
+--------------------------------------------------------------------
+5. CONTROL FLOW (the sample() loop, at architecture level)
+--------------------------------------------------------------------
+
+    features = model.featurize(structure)          # ONCE, under no_grad
+    (s, z)   = read off features.conditioning       # via AttrLatentIO
+    baselines = (s, z).detach()                      # anchor targets
+    leaves    = baselines.clone().requires_grad_()   # the free variables
+    write leaves back onto features.conditioning
+
+    process_structure_to_trajectory_input(...)       # reconciler +
+                                                      # reward_inputs +
+                                                      # model-space ref coords
+
+    for round in range(outer_steps):                 # OUTER: fresh noise
+        adam = Adam(leaves)                           # built ONCE per round
+        coords = model.initialize_from_prior(...)
+        for i in range(num_steps):                    # INNER: the sampler
+            context = get_context_for_step(i)
+                        .with_reward(reward, reward_inputs)   # if optimizing
+                        .with_reconciler(reconciler, ref_coords)
+            out = sampler.step(coords, model, context,
+                               scaler=_GradEnablingScaler(),  # grad ON
+                               features=features)
+            loss = reward(out.denoised) + anchor + geometry
+            loss.backward()
+            clip_grad_norm_(s); clip_grad_norm_(z)    # SEPARATE per latent
+            adam.step()
+            coords = out.state.detach()               # advance, latents frozen
+
+    final: one clean pass with the leaves detached (scaler=None)
+           -> the saved ensemble (GuidanceOutput.final_state)
+
+Three correctness choices are load-bearing and are called out in the
+reference comparison doc:
+  - Adam is persistent per round, not rebuilt each step (rebuilding
+    resets the moments and degenerates Adam to lr*sign(grad)).
+  - s and z are gradient-clipped SEPARATELY, never as one joint group
+    (z's gradient is ~1e4x s's, so a joint clip starves s).
+  - The trajectory advance uses out.state.detach(), keeping each step's
+    backward graph short and independent.
+
+
+--------------------------------------------------------------------
+6. CROSS-MODEL COMPATIBILITY
+--------------------------------------------------------------------
+
+The only model-specific knowledge in the whole feature is the pair of
+attribute names. Everything else -- the loop, the objective, the
+gradient gate -- is identical across models. That is the cross-model
+answer the design asked for.
+
+Gradient readiness is NOT uniform, though, and it dictates rollout order.
+Whether a gradient can actually reach the trunk latents depends on what
+each wrapper's step() does with the cached conditioning:
+
+  Boltz1   passes s/z straight through, no detach          CLEAN (v1)
+  RF3      passes s_trunk/z_trunk straight through          CLEAN (v1)
+  Protenix step() detaches all conditioning latents under   NEEDS opt-in
+           grad; pair_z/p_lm/c_l are z-derived caches        detach bypass
+                                                              + cache recompute
+  Boltz2   never passes z; z and part of s are baked into    NEEDS conditioning
+           cached diffusion_conditioning at featurize         recompute
+
+v1 targets Boltz1 and RF3 (verified clean). Protenix and Boltz2 are a
+later phase; the seam for them already exists (the Protenix path
+disables the diffusion-shared-vars cache when guidance_type is
+latent_opt, so z_trunk gradients are not pre-empted by a stale cache).
+
+Design constraint carried from the docs: cross-model comparison is
+outcome-based (does the optimized structure fit the data better?), never
+operational-equivalence. The API guarantees the same *interface* across
+models, not the same internal gradient mechanics.
+
+
+--------------------------------------------------------------------
+7. CLI / CONFIG WIRING
+--------------------------------------------------------------------
+
+Selection is by guidance type, alongside pure_guidance and fk_steering:
+
+    GuidanceType.LATENT_OPT = "latent_opt"
+
+add_latent_opt_args registers six flags (defaults in parentheses):
+
+    --which-latent {single,pair,both}   (pair)   -> optimize_single/optimize_pair
+    --learning-rate FLOAT               (0.05)   -> learning_rate
+    --outer-steps INT                   (2)      -> outer_steps
+    --anchor-weight FLOAT               (0.0)    -> anchor_weight_single/pair
+    --max-grad-norm FLOAT               (1.0)    -> max_grad_norm
+    --bond-length-weight FLOAT          (0.0)    -> bond_length_weight
+
+The single construction site is the LATENT_OPT branch of _run_guidance
+(utils/guidance_script_utils.py). It maps flags onto the constructor:
+which_latent membership becomes the optimize_single/optimize_pair
+booleans; the single --anchor-weight is split into per-latent weights
+(each set only for the latent actually being optimized); guidance_start
+(an integer step) becomes the guidance_t_start fraction; and model_key =
+str(args.model) indexes DEFAULT_*_REP_ATTR to fill single_attr/pair_attr.
+
+  KNOWN WIRING GAP (flagged, not yet fixed): these six attributes are
+  NOT in _DYNAMIC_ATTRS, so GuidanceConfig.from_cli does not copy
+  CLI-provided values onto the config after __post_init__. In the plain
+  CLI path the values therefore stay at their defaults unless the config
+  is populated another way (e.g. the grid-search route). Fixing this is
+  a one-line addition to _DYNAMIC_ATTRS. See the reference doc.
+
+
+--------------------------------------------------------------------
+8. EXTENSION POINTS (future API -- reserve the seams, don't build now)
+--------------------------------------------------------------------
+
+The architecture leaves clean seams for the upgrades the design docs
+already commit to. None of these are in v1; they are where the API is
+designed to grow.
+
+  Low-rank z injector. The pair delta is O(N^2 * d). A structured
+  Delta = U^T V injector is a drop-in LatentInjector on Path 2, lower
+  variance and drift-resistant. Seam: LatentInjector protocol.
+
+  Objective (a): auxiliary head. A small differentiable head
+  h(latent) -> observable, so the sampler is never called during
+  optimization. Seam: the pluggable reward; documented-preferred but
+  unwired.
+
+  Truncated-BPTT / last-K-step unroll. The design doc's cost analysis
+  recommends backpropagating through only the low-noise tail (K ~ 5-20
+  steps), freezing the noise for variance reduction -- most of the
+  benefit of a full end-to-end unroll at ~10x single-step cost, without
+  the 200-step memory blow-up. Seam: a new differentiable/graph-
+  preserving sampler MODE, not a change to this scaler.
+
+  LatentSteerable protocol (Phase 2). Promote the string-dispatch attr
+  maps into an optional per-model capability: a wrapper implements
+  optimize_latent(features, reward, reward_inputs, cfg) -> features, the
+  driver isinstance-checks for it, and models that don't offer it simply
+  don't do latent-opt. This replaces DEFAULT_*_REP_ATTR + model_key
+  lookup with each wrapper owning its own s/z rule (crucial for Protenix
+  cache recompute and Boltz2 conditioning recompute).
+
+  features= sampler hook. PureGuidance.sample / FKSteering.sample gain
+  an optional features= parameter (default None = current behavior) so a
+  pre-optimized latent can be handed to an unchanged sampler -- the
+  decoupled optimize-then-sample variant, and the way depth-3 latent
+  relocation composes with an optional depth-2 coordinate steer on top.
+
+  Coordinate-guidance re-enable. v1 disables it (scaler=None advance).
+  A LatentGuidance mode with training_adapter=True would run latent-opt
+  and coordinate guidance together.
+
+  Per-member ensemble latents. v1 shares one (s, z) across the ensemble
+  (consistent with the density reward's sum-over-ensemble reduction).
+  Per-member latents need each wrapper's diffusion module to accept
+  batched conditioning; named as a follow-up.
+
+
+--------------------------------------------------------------------
+9. INVARIANTS & GUARDRAILS THE API UPHOLDS
+--------------------------------------------------------------------
+
+  - Zero-impact default: identity injector / baseline-clone leaves mean
+    "do nothing" is bit-for-bit the frozen model.
+  - Gradient isolation: latents detached outside the optimization pass;
+    coordinate guidance untouched.
+  - On-manifold discipline: anchor is required, not optional; geometry
+    penalty available as a coordinate-space guard.
+  - Persistent Adam; separate per-latent clips; bounded penalties (no
+    exp(relu(...)) clash term).
+  - Optimization is not sampling: an optimized (s, z) is a point
+    estimate. Reporting it as a single state collapses the Boltzmann /
+    population weighting -- report accordingly unless the latent is
+    sampled.
+  - The objective is always a RewardFunctionProtocol, never hardcoded.
+
+
+--------------------------------------------------------------------
+10. KNOWN GAPS / RISKS (as-built)
+--------------------------------------------------------------------
+
+  - CLI override gap: the six latent-opt flags are not in _DYNAMIC_ATTRS
+    (section 7). CLI values may not reach the scaler on the plain path.
+  - Unknown model_key raises an uncaught KeyError on the DEFAULT_*_REP_ATTR
+    lookup; only the four known models are wired.
+  - SamplerStepOutput.state/.denoised are not re-detached inside step();
+    the loop is responsible for detaching between iterations (it does).
+  - Protenix keeps s_inputs frozen (stage-1 output), matching the
+    reference; only s_trunk/z_trunk are optimized.
+  - Shared-across-ensemble latents (see section 8, per-member follow-up).
+  - Any scientific claim is gated by the design docs' guardrails: a
+    held-out R-free falsifier and matched-compute baselines, not
+    train-set loss alone.
+
+====================================================================
+END
+====================================================================

@@ -73,7 +73,7 @@ structural typing, no inheritance.
 
 | Protocol | File | Key methods | Implemented by |
 |----------|------|-------------|----------------|
-| **Model wrappers** | [models/protocol.py](../src/sampleworks/models/protocol.py) | `featurize()`, `step()`, `initialize_from_prior()` | Boltz1/2, Protenix, RF3, LatentAdaptedWrapper |
+| **Model wrappers** | [models/protocol.py](../src/sampleworks/models/protocol.py) | `featurize()`, `step()`, `initialize_from_prior()` | Boltz1/2, Protenix, RF3 |
 | **Samplers** | [core/samplers/protocol.py](../src/sampleworks/core/samplers/protocol.py) | `compute_schedule()`, `get_context_for_step()`, `step()` | `AF3EDMSampler` |
 | **Scalers** | [core/scalers/protocol.py](../src/sampleworks/core/scalers/protocol.py) | `StepScalerProtocol.scale()` · `TrajectoryScalerProtocol.sample()` | DPS scalers · PureGuidance/FKSteering |
 | **Rewards** | [core/rewards/protocol.py](../src/sampleworks/core/rewards/protocol.py) | `__call__()`, `precompute_unique_combinations()` | `RealSpaceRewardFunction` |
@@ -319,7 +319,7 @@ Files: [models/](../src/sampleworks/models/). Each wraps an external model behin
 | `Boltz1Wrapper` / `Boltz2Wrapper` | [boltz/wrapper.py](../src/sampleworks/models/boltz/wrapper.py) | Caches pairformer (`s_trunk, z_trunk`); Boltz2 also caches diffusion conditioning. Preprocessing writes NPZ/manifest/MSA. `process_structure_for_boltz` reconstructs the atom array from the processed NPZ. |
 | `ProtenixWrapper` | [protenix/wrapper.py](../src/sampleworks/models/protenix/wrapper.py) | AF3 reimpl. `structure_processing.py` builds the Protenix JSON (entities, modifications, covalent bonds). Optional diffusion-shared-vars cache (`pair_z, p_lm, c_l`). |
 | `RF3Wrapper` | [rf3/wrapper.py](../src/sampleworks/models/rf3/wrapper.py) | Baker AF3 replica. Uses an inference engine + trunk-with-recycling generator. Optional chiral-feature tracking/disabling (writes `chiral_grad_stats.json`). |
-| `LatentAdaptedWrapper` | [latent_adapter.py](../src/sampleworks/models/latent_adapter.py) | **Wraps any `FlowModelWrapper`.** Injects a learnable affine transform on the post-trunk single representation (`s` for Boltz, `s_trunk` for Protenix/RF3) inside `featurize()`; `step`/`initialize_from_prior` delegate verbatim. Identity by default (zero-impact). Enables AF2-style latent-space optimization. |
+| `LatentAdaptedWrapper` *(archived — not in the build)* | [latent_adapter/archived_injector_family.md](latent_adapter/archived_injector_family.md) | An alternative injector/decorator approach (affine/delta transform at `featurize`). Never wired in; superseded by the direct-leaf `LatentOptimization` scaler and archived. IT-opt now reads/writes latents via `AttrLatentIO` in [latent_adapter.py](../src/sampleworks/models/latent_adapter.py). |
 
 The wrappers guarantee the atom array they hand back has valid coords/occupancy/B-factors, so
 downstream `RewardInputs.from_atom_array()` never sees NaNs. Import failures are tolerated

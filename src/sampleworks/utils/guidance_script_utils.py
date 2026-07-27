@@ -463,8 +463,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
 
         structure = annotate_structure_for_protenix(
             structure,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
+            ensemble_size=args.ensemble_size,
             # IT-opt wiring (added): this enable_diffusion_shared_vars_cache argument is new — the
             # call previously used the default (cache on). We decide it here, in _run_guidance()'s
             # Protenix setup, because latent optimization of the pair representation z requires the
@@ -479,8 +479,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
 
         structure = annotate_structure_for_rf3(
             structure,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
+            ensemble_size=args.ensemble_size,
             msa_path=getattr(args, "msa_path", None),
             disable_chiral_features=getattr(args, "disable_chiral_features", False),
             track_chiral_features=getattr(args, "track_chiral_features", False),
@@ -494,8 +494,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = process_structure_for_boltz(
             structure,
             out_dir=args.output_dir,
-            ensemble_size=args.ensemble_size,
             recycling_steps=recycling_steps,
+            ensemble_size=args.ensemble_size,
         )
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")

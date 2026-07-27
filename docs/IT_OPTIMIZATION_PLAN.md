@@ -18,7 +18,10 @@ it inside Sampleworks' protocol-driven architecture.
 > [IT_OPT_TESTING_PROTENIX.md](IT_OPT_TESTING_PROTENIX.md). Two specifics changed from the plan
 > below: the anchor is a small `LatentAnchor` **co-located in the scaler** (it regularizes
 > *latents*, so it can't be a coordinate `RewardFunctionProtocol`), and there is an outer
-> optimization loop + final sampling pass (not a single pass).
+> optimization loop + final sampling pass (not a single pass). Also: the Phase-0 injector /
+> `LatentAdaptedWrapper` scaffold (§2, §3 step 2, §3.2 step 7 below) was **never wired in** and is
+> archived to [latent_adapter/archived_injector_family.md](latent_adapter/archived_injector_family.md);
+> IT-opt reads/writes `s`/`z` directly via `AttrLatentIO`.
 
 ---
 
