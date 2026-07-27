@@ -50,7 +50,6 @@ this work can be done from inside Sampleworks without opening the `it_opt` works
 source — but that source is not in this repo.** It lives in a sibling reference tree that is
 **not tracked in git** and (currently) exists only on the original local machine:
 
-- **Root (absolute, this machine):** `/Users/fengyu/Sampleworks_0622/it_opt/`
 - **Relative to the Sampleworks repo root:** `../it_opt/`
 - **Public backup (clone-able anywhere):** https://github.com/sai-advaith/it_opt
 
@@ -74,16 +73,16 @@ the `additionalDirectories` setting) so reads/greps there never prompt.
 
 ### The files that matter for the port (Protenix IT-opt layer)
 
-| Purpose | Absolute path |
+| Purpose | Path (relative to the Sampleworks repo root) |
 |---|---|
-| **Driver / the loop** (port target) | `/Users/fengyu/Sampleworks_0622/it_opt/protenix/it_optimization_manager.py` |
-| Loss modules (directory) | `/Users/fengyu/Sampleworks_0622/it_opt/protenix/src/losses/` |
+| **Driver / the loop** (port target) | `../it_opt/protenix/it_optimization_manager.py` |
+| Loss modules (directory) | `../it_opt/protenix/src/losses/` |
 | ↳ backbone-RMSD (default objective) | `.../src/losses/backbone_rmsd_loss_function.py` |
 | ↳ anchor (L2 prior to trunk baseline) | `.../src/losses/anchor_loss_function.py` |
 | ↳ NMR / bond-length / violation | `.../src/losses/{nmr,bond_length,violation}_loss_function.py` |
-| Model wrapper (stepwise, differentiable access) | `/Users/fengyu/Sampleworks_0622/it_opt/protenix/src/utils/non_diffusion_model_manager.py` |
-| Run config (weights, lr, steps) | `/Users/fengyu/Sampleworks_0622/it_opt/protenix/pipeline_configurations/rmsd_baseline.yaml` |
-| Reference PDBs (RMSD / fold-switch experiment) | `/Users/fengyu/Sampleworks_0622/it_opt/protenix/it_optim_inputs/` |
+| Model wrapper (stepwise, differentiable access) | `../it_opt/protenix/src/utils/non_diffusion_model_manager.py` |
+| Run config (weights, lr, steps) | `../it_opt/protenix/pipeline_configurations/rmsd_baseline.yaml` |
+| Reference PDBs (RMSD / fold-switch experiment) | `../it_opt/protenix/it_optim_inputs/` |
 
 Everything under `it_opt/protenix/src/protenix/**` is **stock upstream Protenix** — do *not*
 port it; Sampleworks has its own model plumbing. The IT-opt layer to study is just the driver +
@@ -92,7 +91,7 @@ port it; Sampleworks has its own model plumbing. The IT-opt layer to study is ju
 ### Locating the exact code patterns the migration plan (§2) refers to
 
 ```bash
-IT=/Users/fengyu/Sampleworks_0622/it_opt/protenix
+IT=../it_opt/protenix
 grep -n "torch.optim.Adam"   "$IT/it_optimization_manager.py"   # re-created optimizer (Tier 1 / #1)
 grep -n "clip_grad_norm_"    "$IT/it_optimization_manager.py"   # the two separate clips (Tier 1 / #3)
 grep -n "denoise_net_batched\|get_x_0_hat_from_x_noisy_batched" \

@@ -169,8 +169,13 @@ the latents have drifted). Both are one line in `_latent_adam_step`.
 
 ## 5. Note on the current wiring
 
-`LatentOptimization` is **not yet wired into the CLI** (`GuidanceType.LATENT_OPT` and
-the `_run_guidance` branch are Phase 2). Until then, drive it from a script as above —
-which is also the better debugging surface, since it isolates the scaler from the
-grid-search/save machinery. Once validated, wiring it in makes it reachable as
-`sampleworks-guidance --model protenix --guidance-type latent_opt …`.
+`LatentOptimization` **is wired into the CLI**: select it with `--guidance-type latent_opt`, e.g.
+
+```bash
+sampleworks-guidance --model protenix --guidance-type latent_opt …
+```
+
+`GuidanceType.LATENT_OPT` routes to it in `_run_guidance`, which builds the scaler and — for
+Protenix — disables the diffusion shared-vars cache so the `z` gradient survives (see above). The
+script route above is still the better *debugging* surface, since it isolates the scaler from the
+grid-search/save machinery.

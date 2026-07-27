@@ -1,0 +1,204 @@
+===============================================================================
+ IT-OPT (INFERENCE-TIME LATENT OPTIMIZATION) — OVERALL ARCHITECTURE
+===============================================================================
+Scope: the overall architecture of the latent-space optimization feature as
+built, and how its pieces fit together. Per-component technical detail is
+deliberately left to separate documents (pointers at the end); this file is the
+map, not the manual.
+
+Companion docs already in the repo:
+  - docs/IT_OPTIMIZATION_PLAN.md ......... the algorithm and phased rollout
+  - docs/IT_OPT_REFERENCE_COMPARISON.md .. port vs. the external reference driver
+  - docs/IT_OPT_TESTING_PROTENIX.md ...... the per-model gradient test recipe
+  - docs/latent_adapter/*.md ............. the design authority (targets, injector)
+
+
+-------------------------------------------------------------------------------
+1. WHAT IT DOES (one paragraph)
+-------------------------------------------------------------------------------
+Treat the frozen structure model as a differentiable sampler. Take its cached
+post-trunk latents -- the single representation s and the pair representation z --
+and make THEM the free variables. Run Adam on s/z against an experimental reward
+(density fit) evaluated on the *denoised* structure, then sample a final ensemble
+with the optimized latents held fixed. No model weights are updated; there is no
+dataset and no retraining. This is AF2/OpenFold-style latent-space optimization
+adapted to the AF3 family (Boltz, Protenix, RF3).
+
+
+-------------------------------------------------------------------------------
+2. WHERE IT SITS IN THE MODEL (the 6-stage spine)
+-------------------------------------------------------------------------------
+The AF3-style model is a 6-stage pipeline. IT-opt is an overlay on stages 3-4:
+
+  1 Input encoding    features -> s_inputs
+  2 Init projections  s_inputs -> s_init, z_init
+  3 Trunk (recycling)  ... -> (s, z)          <-- IT-opt optimizes THESE latents
+  4 Diffusion sampling  conditioned on (s, z) -> coordinates   <-- gradient decoder
+  5 Confidence head    pLDDT / PAE / pTM       (not used by the density arm)
+  6 IT-opt overlay     expose (s, z) as parameters; objective = reward + anchor
+
+The design doc frames three challenges; the architecture answers each:
+
+  Challenge                              Architectural answer
+  -------------------------------------  ------------------------------------------
+  A minimal function set that works      A tiny LatentIO abstraction: the ONLY
+  across 3+ architectures                model-specific knowledge is *which
+                                         attribute holds each latent* (s/z vs
+                                         s_trunk/z_trunk). A 4th model = one more
+                                         pair of strings, not new code.
+
+  Backprop into the encoded layers       A duck-typed gradient gate: a scaler that
+                                         exposes requires_gradients=True makes the
+                                         sampler run the denoiser under autograd, so
+                                         the reward's gradient reaches the latent
+                                         leaves through the frozen diffusion module.
+
+  Not disrupting downstream steering      Zero-impact defaults + a hard boundary:
+  and sampling                           during ordinary sampling latents are
+                                         detached; coordinate guidance is cleanly
+                                         disabled in v1 (scaler=None on the advance);
+                                         an on-manifold anchor + optional geometry
+                                         penalty keep the optimized latents valid.
+
+
+-------------------------------------------------------------------------------
+3. THE LAYERS (top to bottom)
+-------------------------------------------------------------------------------
+
+  [ CLI / config ]  utils/guidance_constants.py, guidance_script_arguments.py
+        GuidanceType.LATENT_OPT ("latent_opt"); add_latent_opt_args registers
+        --which-latent / --learning-rate / --outer-steps / --anchor-weight /
+        --max-grad-norm / --bond-length-weight.
+                    |
+                    v
+  [ Dispatch ]     utils/guidance_script_utils.py :: _run_guidance
+        The single site that CONSTRUCTS the scaler. Maps config knobs onto the
+        constructor: which_latent -> optimize_single/optimize_pair; --anchor-weight
+        -> anchor_weight_single/pair; guidance_start (steps) -> fraction; per-model
+        s/z attribute names via DEFAULT_SINGLE_REP_ATTR / DEFAULT_PAIR_REP_ATTR.
+        For Protenix it also turns the diffusion cache OFF so z gradients survive.
+                    |
+                    v
+  [ The scaler ]   core/scalers/latent_optimization.py :: LatentOptimization
+        A TrajectoryScalerProtocol (drop-in sibling of PureGuidance / FKSteering).
+        Its .sample() is the whole method:
+            featurize ONCE (no_grad)  ->  clone s/z into optimizable leaves
+            for each outer round (fresh prior noise):
+                build ONE persistent Adam over [s, z]
+                for each diffusion step:
+                    x0_hat = differentiable denoise(noisy, s, z)   # one forward
+                    loss   = reward(x0_hat) + anchor(s,z) [+ bond/clash penalty]
+                    loss.backward();  clip s and z SEPARATELY;  adam.step()
+                    advance the trajectory one step (latents frozen)
+            final clean sampling pass with the optimized latents -> saved ensemble
+        Objective terms live here too: LatentAnchor (mean-squared drift from the
+        trunk baseline) and the internal _GradEnablingScaler (the gradient gate).
+                    |
+        +-----------+-----------------------------+
+        v                                         v
+  [ Latent adapter ]                        [ Objective ]
+  models/latent_adapter.py                  core/rewards/*
+    Two paths:                                RewardFunctionProtocol (pluggable):
+    (a) DIRECT-LEAF -- what v1 uses.            RealSpaceRewardFunction (density fit)
+        AttrLatentIO reads/writes s/z by        is the shipped objective, scored on
+        attribute name (dataclasses.replace     the reconciler-aligned denoised
+        on the frozen conditioning). The        coordinates.
+        scaler makes its own leaves.          BondGeometryReward (geometry.py) is an
+    (b) INJECTOR -- kept for a future mode.     ADD-ON penalty (bond-length + clash
+        LatentAdaptedWrapper + DeltaInjector     hinges), NOT a RewardFunctionProtocol;
+        /AffineInjector train a transform at     added to the loss only when its
+        the featurize boundary. Not wired in     weight > 0.
+        for v1.
+                    |
+                    v
+  [ Consumed interfaces ]  (the seams IT-opt plugs into; it does not own them)
+        FlowModelWrapper / GenerativeModelInput / conditioning  (models/protocol.py)
+        TrajectorySampler / StepParams / SamplerStepOutput      (core/samplers/*)
+        process_structure_to_trajectory_input / AtomReconciler  (eval/structure_utils.py)
+                    |
+                    v
+  [ Outputs & scoring ]  guidance_script_utils.py :: save_everything, + it_opt_scratch/score.py
+        refined.cif (the ensemble), trajectory/next_step/*.cif, losses.txt,
+        run.log, job_metadata.json. Metrics: RSCC (density correlation over the
+        altloc region) + heavy-atom clashes, computed from refined.cif.
+
+
+-------------------------------------------------------------------------------
+4. DATA FLOW (one pass)
+-------------------------------------------------------------------------------
+  structure dict + density map
+        |
+        v   model.featurize (once, no_grad)
+  GenerativeModelInput{ x_init, conditioning{ s, z, atom arrays } }
+        |
+        v   AttrLatentIO: s,z -> detached baselines + requires_grad leaves
+  optimizable (s, z)
+        |
+        v   per diffusion step: sampler.step(scaler=_GradEnablingScaler)
+  denoised x0_hat  --(reconciler.align to experimental frame)-->  reward(x0_hat)
+        |                                                              |
+        |            loss = reward + anchor(s,z) [+ geometry] <--------+
+        v   loss.backward -> grad on s,z -> per-latent clip -> Adam.step
+  updated (s, z)   ...repeat inner steps, then outer rounds...
+        |
+        v   final frozen-latent sampling pass
+  ensemble coords -> save_everything -> refined.cif (+ trajectory, losses, metadata)
+
+
+-------------------------------------------------------------------------------
+5. CROSS-MODEL READINESS
+-------------------------------------------------------------------------------
+The only per-model knowledge is the latent attribute names; gradient reachability
+is what actually differs and dictates rollout order.
+
+  Model     single/pair attr    Gradient to latents        Status
+  --------  ------------------   -------------------------  -----------------------
+  Boltz1    s / z                clean passthrough          ready
+  RF3       s_trunk / z_trunk    clean passthrough          ready
+  Protenix  s_trunk / z_trunk    step() detaches; z caches  works with cache OFF
+                                                            (wired in _run_guidance)
+  Boltz2    s / z                z baked into cached          needs conditioning
+                                 diffusion_conditioning      recompute (future)
+
+
+-------------------------------------------------------------------------------
+6. DESIGN INVARIANTS (why it is built this way)
+-------------------------------------------------------------------------------
+  - Zero-impact by default: identity/detach so ordinary sampling is unchanged;
+    IT-opt only engages inside its own optimization pass.
+  - On-manifold discipline: the anchor pulls s/z back toward the trunk baseline;
+    optional bond/clash penalty stops density fit being bought with broken geometry.
+  - One persistent Adam per round (not rebuilt per step -- that degenerates Adam to
+    signed gradient descent, the reference's headline bug).
+  - Per-latent gradient clipping (s and z separately) -- a joint clip lets z's much
+    larger gradient starve s.
+  - Objective is pluggable (RewardFunctionProtocol), never hardcoded.
+  - optimization != sampling: v1 optimizes a single shared latent for the whole
+    ensemble and reports a point estimate; it does not sample the latent posterior.
+
+
+-------------------------------------------------------------------------------
+7. EXTENSION POINTS (reserved, not built into v1)
+-------------------------------------------------------------------------------
+  - Low-rank z injector (Delta = U^T V) to cut z's O(N^2 . d) memory and resist drift.
+  - LatentSteerable protocol: an optional per-model capability (optimize_latent ->
+    GenerativeModelInput) replacing the string dispatch.
+  - features= hook on the samplers so a pre-optimized latent can be handed to an
+    otherwise-unchanged sampler (decoupled optimize-then-sample mode).
+  - Truncated last-K-step BPTT sampler mode if the single-step decoder proves biased.
+  - Per-ensemble-member latents (needs each wrapper's diffusion module to accept
+    batched conditioning).
+  - Coordinate-guidance re-enable, composed on top of the latent update.
+
+
+-------------------------------------------------------------------------------
+8. WHERE THE TECHNICAL DETAIL LIVES
+-------------------------------------------------------------------------------
+This file is the architecture map only. For per-component detail, see the docs
+listed at the top; good candidates for their own future MDs are:
+  - the scaler loop and its objective (LatentOptimization internals)
+  - the latent adapter (LatentIO / injector protocols, per-model attr maps)
+  - the gradient gate contract with the EDM sampler (requires_gradients)
+  - the test + scoring workflow (it_opt_scratch/run_targets.py, score.py, and the
+    it_opt_test.ipynb notebook)
+===============================================================================
