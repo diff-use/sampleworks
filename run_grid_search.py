@@ -159,17 +159,41 @@ def detect_gpus() -> list[str]:
     return ["0"]
 
 
+# Every StructurePredictor must appear here; a missing entry only fails inside the
+# worker subprocess, long after the grid has been generated.
+MODEL_PIXI_ENVS: dict[StructurePredictor, str] = {
+    StructurePredictor.BOLTZ_1: "boltz",
+    StructurePredictor.BOLTZ_2: "boltz",
+    StructurePredictor.PROTENIX: "protenix",
+    StructurePredictor.RF3: "rf3",
+    StructurePredictor.PROTPARDELLE: "protpardelle",
+}
+
+
 def get_pixi_env(model: str) -> str:
-    """Return the pixi environment name needed to run a model family."""
-    if model in (StructurePredictor.BOLTZ_1, StructurePredictor.BOLTZ_2):
-        return "boltz"
-    elif model == StructurePredictor.PROTENIX:
-        return "protenix"
-    elif model == StructurePredictor.RF3:
-        return "rf3"
-    else:
-        valid_options = [m.value for m in StructurePredictor]
-        raise ValueError(f"Unknown model: {model}. Valid options are: {valid_options}")
+    """Return the pixi environment name needed to run a model family.
+
+    Parameters
+    ----------
+    model : str
+        Structure predictor name, e.g. ``boltz2`` or ``protpardelle``.
+
+    Returns
+    -------
+    str
+        Pixi environment name that provides the model's dependencies.
+
+    Raises
+    ------
+    ValueError
+        If the model is not a known ``StructurePredictor`` or has no mapped
+        pixi environment.
+    """
+    try:
+        return MODEL_PIXI_ENVS[StructurePredictor(model)]
+    except (ValueError, KeyError):
+        valid_options = [m.value for m in MODEL_PIXI_ENVS]
+        raise ValueError(f"Unknown model: {model}. Valid options are: {valid_options}") from None
 
 
 def build_args_for_process_pool(
@@ -277,27 +301,48 @@ def run_grid_search(
             futures[future] = job_queue_path
 
         for completed in concurrent.futures.as_completed(futures):  # ty: ignore
-            try:
-                with open(futures[completed].replace(".pkl", ".results.pkl"), "rb") as f:
-                    result = pickle.load(f)
+            job_queue_path = futures[completed]
+            worker_log_path = job_queue_path.replace(".pkl", ".log")
+            # The worker raises before it can write results, so surface its
+            # traceback here rather than reporting the missing results file.
+            worker_error = completed.exception()
+            if worker_error is not None:
+                failed += 1
+                log.opt(exception=worker_error).error(
+                    f"Worker for {job_queue_path} raised before writing results"
+                )
+                continue
 
-                results.extend(result)
-                for r in result:
-                    if r.status == "success":
-                        successful += 1
-                        log.info(
-                            f"SUCCESS ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
-                            f"{r.runtime_seconds:.1f}s): {r.log_path}"
-                        )
-                    else:
-                        failed += 1
-                        log.error(
-                            f"FAILED ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
-                            f"exit={r.exit_code}): {r.log_path}"
-                        )
+            process_result = completed.result()
+            if process_result.returncode != 0:
+                log.error(
+                    f"Worker for {job_queue_path} exited with code "
+                    f"{process_result.returncode}; see {worker_log_path}"
+                )
+
+            try:
+                with open(job_queue_path.replace(".pkl", ".results.pkl"), "rb") as f:
+                    result = pickle.load(f)
             except Exception as e:
                 failed += 1
-                log.error(f"Job failed with exception: {e}")  # this won't be very informative
+                log.error(f"Could not read results for {job_queue_path}: {e}")
+                log.error(f"Worker subprocess output, if any, is in {worker_log_path}")
+                continue
+
+            results.extend(result)
+            for r in result:
+                if r.status == "success":
+                    successful += 1
+                    log.info(
+                        f"SUCCESS ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
+                        f"{r.runtime_seconds:.1f}s): {r.log_path}"
+                    )
+                else:
+                    failed += 1
+                    log.error(
+                        f"FAILED ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
+                        f"exit={r.exit_code}): {r.log_path}"
+                    )
     return results
 
 
