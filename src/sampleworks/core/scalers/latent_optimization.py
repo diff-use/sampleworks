@@ -371,7 +371,9 @@ class LatentOptimization:
                 f"(single_attr={self.single_attr!r}, pair_attr={self.pair_attr!r}). "
                 "Check the attribute names for this model."
             )
-        features = GenerativeModelInput(x_init=features.x_init, conditioning=conditioning)
+        # Rebuild with the rewritten conditioning only. #330 removed x_init from
+        # GenerativeModelInput; initial coords now come from initialize_from_prior at sampling time.
+        features = GenerativeModelInput(conditioning=conditioning)
         return features, latents, baselines, anchor_weights
 
     def _optimize_one_round(
@@ -517,7 +519,7 @@ class LatentOptimization:
             conditioning = io.write_single(conditioning, detached.pop(0))
         if self.optimize_pair and io.read_pair(conditioning) is not None:
             conditioning = io.write_pair(conditioning, detached.pop(0))
-        frozen_features = GenerativeModelInput(x_init=features.x_init, conditioning=conditioning)
+        frozen_features = GenerativeModelInput(conditioning=conditioning)  # #330: conditioning-only
 
         coords = torch.as_tensor(
             model.initialize_from_prior(batch_size=self.ensemble_size, features=frozen_features)

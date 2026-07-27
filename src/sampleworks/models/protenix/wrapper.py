@@ -637,32 +637,20 @@ class ProtenixWrapper:
 
         t_tensor = match_batch(t_tensor, target_batch_size=x_t.shape[0])
 
-        # ===== IT-OPT TEST EDIT — revert this block to restore coordinate guidance =====
-        # We are TESTING inference-time latent optimization, which needs gradients to
-        # reach the trunk single/pair representations (s_trunk / z_trunk). The ORIGINAL
-        # block detached every cached pairformer output under grad so gradients flowed
-        # only through the diffusion module (correct for coordinate-space guidance). It is
-        # commented out, NOT deleted, so we can switch back.
-        #
-        # TO RESTORE GUIDANCE: uncomment the ORIGINAL block and delete the IT-OPT block.
-        #
-        # ----- ORIGINAL (coordinate guidance) -----
-        # grad_needed = torch.is_grad_enabled()
-        # s_inputs = cond.s_inputs.detach() if grad_needed else cond.s_inputs
-        # s_trunk = cond.s_trunk.detach() if grad_needed else cond.s_trunk
-        # z_trunk = cond.z_trunk.detach() if grad_needed else cond.z_trunk
-        # pair_z = cond.pair_z.detach() if grad_needed and cond.pair_z is not None else cond.pair_z
-        # p_lm = cond.p_lm.detach() if grad_needed and cond.p_lm is not None else cond.p_lm
-        # c_l = cond.c_l.detach() if grad_needed and cond.c_l is not None else cond.c_l
-        #
-        # ----- IT-OPT (latent optimization): keep s_trunk / z_trunk attached -----
-        # Safe for the guidance path too: after featurize (run under no_grad) these are
-        # requires_grad=False constants with no graph, so "not detaching" is a no-op there;
-        # it only matters when an optimizable latent leaf has been injected as s_trunk/z_trunk.
+        # Detach cached pairformer outputs under grad so the many denoising steps that reuse them
+        # don't backprop through the trunk twice -- EXCEPT a latent that IT-opt has injected as an
+        # optimizable leaf (requires_grad=True), which is kept attached so its gradient survives.
+        # In the guidance path featurize() runs the trunk under no_grad, so every cached latent
+        # is a requires_grad=False constant and detaches -- the exact behavior before IT-opt.
         grad_needed = torch.is_grad_enabled()
-        s_inputs = cond.s_inputs.detach() if grad_needed else cond.s_inputs
-        s_trunk = cond.s_trunk  # keep attached: latent gradient must reach s_trunk
-        z_trunk = cond.z_trunk  # keep attached: latent gradient must reach z_trunk
+
+        def detach_unless_leaf(latent: Tensor) -> Tensor:
+            """Detach a cached latent under grad, unless it is an optimizable IT-opt leaf."""
+            return latent.detach() if grad_needed and not latent.requires_grad else latent
+
+        s_inputs = detach_unless_leaf(cond.s_inputs)
+        s_trunk = detach_unless_leaf(cond.s_trunk)
+        z_trunk = detach_unless_leaf(cond.z_trunk)
         # pair_z / p_lm / c_l are z-derived caches. When optimizing z_trunk, featurize with
         # enable_diffusion_shared_vars_cache=False so these are None and the diffusion module
         # recomputes them from the live z_trunk; otherwise the z gradient is only partial.
@@ -670,7 +658,6 @@ class ProtenixWrapper:
         pair_z = cond.pair_z.detach() if grad_needed and cond.pair_z is not None else cond.pair_z
         p_lm = cond.p_lm.detach() if grad_needed and cond.p_lm is not None else cond.p_lm
         c_l = cond.c_l.detach() if grad_needed and cond.c_l is not None else cond.c_l
-        # ===== END IT-OPT TEST EDIT =====
 
         atom_coords_denoised = self.model.diffusion_module.forward(
             x_noisy=x_t,

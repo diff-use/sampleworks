@@ -195,11 +195,11 @@ class BondGeometryReward:
         tensor is O(n_atoms**2), so memory scales with the square of the atom count.
         """
         # Distance between every pair of atoms, for each ensemble member: [ensemble, n, n].
-        # unsqueeze adds the axis so subtraction broadcasts to an [ensemble, n, n, 3] grid of
-        # coordinate differences; the norm over the last axis collapses it to distances.
-        pos_row = coords.unsqueeze(2)  # [ensemble, n, 1, 3]
-        pos_col = coords.unsqueeze(1)  # [ensemble, 1, n, 3]
-        distances = (pos_row - pos_col).norm(dim=-1)
+        # torch.cdist gives the same distances without building the [ensemble, n, n, 3] grid of
+        # coordinate differences a manual broadcast would (3x the distance matrix). Verified on the
+        # pinned torch (2.7): its gradient is finite and matches the broadcast form even for
+        # coincident atoms, so the historical cdist zero-distance NaN does not apply here.
+        distances = torch.cdist(coords, coords)
 
         # How far each pair is inside its allowed distance (positive = overlapping).
         min_distance = self._collision_distances + self.clash_padding

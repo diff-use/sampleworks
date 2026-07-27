@@ -191,6 +191,14 @@ _DYNAMIC_ATTRS = [
     "num_gd_steps",
     "guidance_weight",
     "guidance_interval",
+    # latent optimization (IT-opt) -- must be listed here or from_cli() drops the parsed
+    # values and _run_guidance()'s getattr(args, ...) always sees the defaults (flags = no-ops).
+    "which_latent",
+    "learning_rate",
+    "outer_steps",
+    "anchor_weight",
+    "max_grad_norm",
+    "bond_length_weight",
     # model-specific
     "model_checkpoint",
     "method",

@@ -508,7 +508,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = annotate_structure_for_protenix(
             structure,
             recycling_steps=recycling_steps,
-            ensemble_size=args.ensemble_size,
+            # ensemble_size removed: #330 dropped it from the wrapper annotate signature; the
+            # ensemble is now sized by the scaler via initialize_from_prior().
             # IT-opt wiring (added): this enable_diffusion_shared_vars_cache argument is new — the
             # call previously used the default (cache on). We decide it here, in _run_guidance()'s
             # Protenix setup, because latent optimization of the pair representation z requires the
@@ -524,7 +525,6 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = annotate_structure_for_rf3(
             structure,
             recycling_steps=recycling_steps,
-            ensemble_size=args.ensemble_size,
             msa_path=getattr(args, "msa_path", None),
             disable_chiral_features=getattr(args, "disable_chiral_features", False),
             track_chiral_features=getattr(args, "track_chiral_features", False),
@@ -539,7 +539,6 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             structure,
             out_dir=args.output_dir,
             recycling_steps=recycling_steps,
-            ensemble_size=args.ensemble_size,
         )
     elif "Protpardelle" in wrapper_class_name:
         from sampleworks.models.protpardelle.wrapper import annotate_structure_for_protpardelle
@@ -683,7 +682,17 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         which_latent = getattr(args, "which_latent", "pair")  # This is "single", "pair", or "both".
         anchor_weight = getattr(args, "anchor_weight", 0.0)
         bond_length_weight = getattr(args, "bond_length_weight", 5e-5)  # smallest good default
-        model_key = str(args.model)
+        # GuidanceConfig exposes the model as `model_name` (not `args.model`); normalize to the
+        # lowercase key the DEFAULT_*_REP_ATTR maps use (as checkpoint resolution does below).
+        model_key = str(args.model_name).lower().replace("structurepredictor.", "")
+        try:
+            single_attr = DEFAULT_SINGLE_REP_ATTR[model_key]
+            pair_attr = DEFAULT_PAIR_REP_ATTR[model_key]
+        except KeyError as e:
+            raise ValueError(
+                "Latent optimization has no latent-attribute names registered for model "
+                f"{model_key!r}."
+            ) from e
 
         guidance = LatentOptimization(
             ensemble_size=args.ensemble_size,
@@ -694,8 +703,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             max_grad_norm=getattr(args, "max_grad_norm", 1.0),
             optimize_single=which_latent in ("single", "both"),
             optimize_pair=which_latent in ("pair", "both"),
-            single_attr=DEFAULT_SINGLE_REP_ATTR[model_key],
-            pair_attr=DEFAULT_PAIR_REP_ATTR[model_key],
+            single_attr=single_attr,
+            pair_attr=pair_attr,
             anchor_weight_single=anchor_weight if which_latent in ("single", "both") else 0.0,
             anchor_weight_pair=anchor_weight if which_latent in ("pair", "both") else 0.0,
             bond_length_weight=bond_length_weight,
