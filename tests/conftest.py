@@ -5,6 +5,7 @@ import inspect
 import sys
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from site import getsitepackages
 from typing import Any, TYPE_CHECKING
@@ -35,6 +36,7 @@ from sampleworks.utils.guidance_constants import (
 from sampleworks.utils.imports import (
     BOLTZ_AVAILABLE,
     PROTENIX_AVAILABLE,
+    PROTPARDELLE_AVAILABLE,
     RF3_AVAILABLE,
 )
 from sampleworks.utils.torch_utils import try_gpu
@@ -49,6 +51,7 @@ if TYPE_CHECKING:
         Boltz2Wrapper,
     )
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
     from sampleworks.models.rf3.wrapper import RF3Wrapper
 
 if BOLTZ_AVAILABLE:
@@ -59,6 +62,9 @@ if BOLTZ_AVAILABLE:
 
 if PROTENIX_AVAILABLE:
     from sampleworks.models.protenix.wrapper import ProtenixWrapper
+
+if PROTPARDELLE_AVAILABLE:
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
 
 if RF3_AVAILABLE:
     from sampleworks.models.rf3.wrapper import RF3Wrapper
@@ -150,6 +156,14 @@ MODEL_WRAPPER_REGISTRY: dict[StructurePredictor, ComponentInfo] = {
         requires_checkpoint=True,
         annotate_fn_path="sampleworks.models.rf3.wrapper.annotate_structure_for_rf3",
         conditioning_type_path="sampleworks.models.rf3.wrapper.RF3Conditioning",
+        requires_out_dir=False,
+    ),
+    StructurePredictor.PROTPARDELLE: ComponentInfo(
+        name="protpardelle",
+        module_path="sampleworks.models.protpardelle.wrapper.ProtpardelleWrapper",
+        requires_checkpoint=True,
+        annotate_fn_path="sampleworks.models.protpardelle.wrapper.annotate_structure_for_protpardelle",
+        conditioning_type_path="sampleworks.models.protpardelle.wrapper.ProtpardelleConditioning",
         requires_out_dir=False,
     ),
 }
@@ -415,9 +429,24 @@ def resources_dir() -> Path:
     return Path(__file__).parent / "resources"
 
 
+def parse_and_remove_hydrogens(path: Path | str) -> dict:
+    """
+    Parse an mmCIF structure file with atomworks.io.parser.parse with settings to remove hydrogens.
+    Parameters
+    ----------
+    path : Path | str
+        path to the mmCIF structure file.
+
+    Returns
+    _______
+        The parsed structure as a dictionary. See atomworks.io.parser.parse for details.
+    """
+    return parse(Path(path), ccd_mirror_path=None, hydrogen_policy="remove")
+
+
 @pytest.fixture(scope="session")
 def structure_1vme(resources_dir: Path) -> dict:
-    return parse(resources_dir / "1vme" / "1vme_final.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "1vme" / "1vme_final.cif")
 
 
 @pytest.fixture(scope="session")
@@ -439,52 +468,52 @@ def atom_array_1vme_with_missing_atoms(structure_1vme) -> AtomArray:
 
 @pytest.fixture(scope="session")
 def structure_6b8x(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6b8x" / "6b8x_final.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "6b8x" / "6b8x_final.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_2yl0(resources_dir: Path) -> dict:
-    return parse(resources_dir / "2YL0" / "2YL0_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "2YL0" / "2YL0_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_2yl0_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "2YL0" / "2YL0_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "2YL0" / "2YL0_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_5sop(resources_dir: Path) -> dict:
-    return parse(resources_dir / "5SOP" / "5SOP_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "5SOP" / "5SOP_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_5sop_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "5SOP" / "5SOP_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "5SOP" / "5SOP_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_6ni6(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6NI6" / "6NI6_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "6NI6" / "6NI6_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_6ni6_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "6NI6" / "6NI6_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "6NI6" / "6NI6_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_9bn8(resources_dir: Path) -> dict:
-    return parse(resources_dir / "9BN8" / "9BN8_single_001.pdb", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "9BN8" / "9BN8_single_001.pdb")
 
 
 @pytest.fixture(scope="session")
 def structure_9bn8_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "9BN8" / "9BN8_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "9BN8" / "9BN8_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
 def structure_5i09_density(resources_dir: Path) -> dict:
-    return parse(resources_dir / "5I09" / "5I09_single_001_density_input.cif", ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / "5I09" / "5I09_single_001_density_input.cif")
 
 
 @pytest.fixture(scope="session")
@@ -498,7 +527,7 @@ def structure_6b8x_with_altlocs(resources_dir: Path) -> AtomArray | AtomArraySta
 def test_structure(request, resources_dir: Path) -> dict:
     # this requires the 1st 4 characters of the filename to match the folder name,
     # so PDB IDs need to be matching case
-    return parse(resources_dir / request.param[:4] / request.param, ccd_mirror_path=None)
+    return parse_and_remove_hydrogens(resources_dir / request.param[:4] / request.param)
 
 
 @pytest.fixture(scope="session")
@@ -658,6 +687,34 @@ def rf3_wrapper(rf3_checkpoint_path: Path):  # will run on Fabric device
     )
 
 
+@pytest.fixture(scope="session")
+def protpardelle_checkpoint_path() -> Path:
+    if not PROTPARDELLE_AVAILABLE:
+        pytest.skip("Protpardelle dependencies not installed in this environment")
+    import os
+
+    # where we will eventually install the checkpoint on our containers.
+    builtin_path = Path(getsitepackages()[0]) / "release_data" / "protpardelle" / "model_params"
+
+    # if the user specifies a path to the model_params directory, use that instead.
+    path = Path(os.environ.get("PROTPARDELLE_MODEL_PARAMS", builtin_path))
+    path = path / "weights/cc89_epoch415.pth"
+    return path
+
+
+@pytest.fixture(scope="session")
+def protpardelle_wrapper(protpardelle_checkpoint_path: Path, device: torch.device):
+    if not PROTPARDELLE_AVAILABLE:
+        pytest.skip("Protpardelle dependencies not installed in this environment")
+
+    config_path = files("sampleworks.data").joinpath("cc89_epoch415.yaml")
+    return ProtpardelleWrapper(
+        config_path=str(Path(config_path).expanduser().resolve()),
+        checkpoint_path=protpardelle_checkpoint_path,
+        device=device,
+    )
+
+
 @pytest.fixture
 def temp_output_dir(tmp_path: Path) -> Generator[Path, None, None]:
     output_dir = tmp_path / "boltz_output"
@@ -675,41 +732,6 @@ def density_map_1vme(resources_dir: Path):
     if not map_path.exists():
         pytest.skip(f"Density map not found at {map_path}")
     return XMap.fromfile(str(map_path), resolution=1.8)
-
-
-@pytest.fixture(scope="session")
-def structure_1vme_density(resources_dir: Path):
-    cif_path = resources_dir / "1vme" / "1vme_final_carved_edited_0.5occA_0.5occB.cif"
-    if not cif_path.exists():
-        pytest.skip(f"Structure not found at {cif_path}")
-    return parse(cif_path, ccd_mirror_path=None)
-
-
-@pytest.fixture(scope="session")
-def reward_function_1vme(density_map_1vme, structure_1vme_density, device: torch.device):
-    from sampleworks.core.rewards.real_space_density import (
-        RealSpaceRewardFunction,
-        setup_scattering_params,
-    )
-
-    params = setup_scattering_params(em_mode=False, device=device)
-    rf = RealSpaceRewardFunction(density_map_1vme, params, torch.tensor([1], device=device))
-    return rf
-
-
-@pytest.fixture(scope="session")
-def test_coordinates_1vme(structure_1vme_density, device: torch.device):
-    atom_array = structure_1vme_density["asym_unit"]
-
-    # Handle both AtomArray and AtomArrayStack
-    if hasattr(atom_array, "stack_depth"):
-        # AtomArrayStack - take first model
-        atom_array = atom_array[0]
-
-    mask = atom_array.occupancy > 0
-    atom_array = atom_array[mask]
-    coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
-    return coords, atom_array
 
 
 @pytest.fixture(scope="module")

@@ -16,7 +16,7 @@ analysis = [
   "scikit-learn",
   "seaborn"
 ]
-dev = ["pytest", "pytest-cov", "mypy", "prek", "ty", "ruff", "pytest-loguru", "python-semantic-release"]
+dev = ["pytest", "pytest-cov", "mypy", "prek", "ty==0.0.39", "ruff", "pytest-loguru", "python-semantic-release"]
 test = ["pytest", "pytest-cov", "pytest-loguru"]
 
 [tool.pixi.feature.boltz]
@@ -24,7 +24,7 @@ pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "cuequivarianc
 platforms = ["linux-64"]
 
 [tool.pixi.feature.boltz-osx]
-pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "rdkit" = ">=2025.3.6"}
+pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "rdkit" = ">=2025.3.6", "joblib" = "*", "sfcalculator-torch" = ">=0.3.2"}
 platforms = ["osx-arm64"]
 
 
@@ -32,8 +32,41 @@ platforms = ["osx-arm64"]
 pypi-dependencies = {"protenix" = "*", "einx" = "*", "triton" = "*"}
 platforms = ["linux-64"]
 
+[tool.pixi.feature.protpardelle]
+platforms = ["linux-64", "osx-arm64"]
+
+[tool.pixi.feature.protpardelle.dependencies]
+biopython = "*"
+einops = "*"
+huggingface_hub = "*"
+hydra-core = "*"
+jupyter = "*"
+numpy = ">=1.25.0,<2.0"
+omegaconf = "*"
+pandas = "==2.3.1"
+prody = "*"
+pyyaml = "*"
+scipy = "*"
+tqdm = "*"
+typer = "*"
+
+[tool.pixi.feature.protpardelle.pypi-dependencies]
+protpardelle = {git = "https://github.com/ProteinDesignLab/protpardelle-1c.git", rev = "ee378400f25b801fa481028000f9060183d7fb4c"}
+torch = ">=2.6.0,<2.8"
+biotite = "*"
+dm-tree = "*"
+jaxtyping = "*"
+ml_collections = "*"
+modelcif = "*"
+transformers = "*"
+wandb = "*"
+
 [project]
-authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
+authors = [
+    {email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"},
+    {email = "marcus.collins@astera.org", name = "Marcus D. Collins"}
+]
+
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -59,7 +92,7 @@ dependencies = [
   "loguru",
   "omegaconf",
   "python-dotenv",
-  "sfcalculator-torch>=0.3.2"
+  "sfcalculator-torch>=0.3.3"
 ]
 description = "Experimentally guided biomolecular ensemble generation."
 keywords = ["biomolecular-structure", "crystallography", "diffusion", "ensemble-generation", "protein-structure"]
@@ -67,7 +100,7 @@ license = {file = "LICENSE"}
 name = "sampleworks"
 readme = "README.md"
 requires-python = ">= 3.11, <3.14"
-version = "0.12.2"
+version = "0.18.1"
 
 [project.urls]
 Changelog = "https://github.com/diff-use/sampleworks/blob/main/CHANGELOG.md"
@@ -115,6 +148,8 @@ PYTHONNOUSERSITE = "1"
 
 [tool.pixi.dependencies]
 ninja = "*"
+# boltz 2.2.1 requires numpy>=1.26,<2.0. Keep this workspace-wide cap until
+# Boltz supports NumPy 2.x so the shared boltz environments remain solvable.
 numpy = "<2.0"
 pyarrow = "==17.0.0"
 
@@ -132,6 +167,8 @@ boltz-dev = {features = ["boltz", "dev"]}
 boltz-osx = {features = ["boltz-osx", "dev", "analysis"]}
 protenix = {features = ["protenix"]}
 protenix-dev = {features = ["protenix", "dev"]}
+protpardelle = {features = ["protpardelle"]}
+protpardelle-dev = {features = ["protpardelle", "dev"]}
 rf3 = {features = ["rf3"]}
 rf3-dev = {features = ["rf3", "dev"]}
 
@@ -141,14 +178,15 @@ rdkit = ">=2024.3.5,<2025.9"
 [tool.pixi.feature.rf3.pypi-dependencies]
 rc-foundry = {editable = true, extras = ["rf3"], git = "https://github.com/k-chrispens/foundry.git"}
 
-[tool.pixi.pypi-dependencies]
-sampleworks = {editable = true, path = "."}
-
 # Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
 # caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins
 # pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
 [tool.pixi.pypi-options.dependency-overrides]
 pandas = "==2.3.1"
+gemmi = "==0.6.7"
+
+[tool.pixi.pypi-dependencies]
+sampleworks = {editable = true, path = "."}
 
 [tool.pixi.system-requirements]
 cuda = "12"
@@ -168,10 +206,10 @@ cmd = "pytest -m gpu"
 # depends-on/alias mechanism only works within a single environment.
 # This continues past failures, exits 1 if any env failed.
 [tool.pixi.tasks.test-all]
-cmd = "f=0; pixi run -e boltz-dev all-tests || f=1; pixi run -e protenix-dev all-tests || f=1; pixi run -e rf3-dev all-tests || f=1; exit $f"
+cmd = "f=0; pixi run -e boltz-dev all-tests || f=1; pixi run -e protenix-dev all-tests || f=1; pixi run -e rf3-dev all-tests || f=1; pixi run -e protpardelle-dev all-tests || f=1; exit $f"
 
 [tool.pixi.tasks.test-fast]
-cmd = "f=0; pixi run -e boltz-dev tests || f=1; pixi run -e protenix-dev tests || f=1; pixi run -e rf3-dev tests || f=1; exit $f"
+cmd = "f=0; pixi run -e boltz-dev tests || f=1; pixi run -e protenix-dev tests || f=1; pixi run -e rf3-dev tests || f=1; pixi run -e protpardelle-dev tests || f=1; exit $f"
 
 # NOTE: if new model environment is added, we need new entries here
 # Per-env: pixi run -e rf3-dev tests "-k integration"
@@ -198,7 +236,7 @@ testpaths = ["tests"]
 extend-include = ["*.ipynb"]
 line-length = 100
 src = []
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 fixable = ["I001", "F401", "UP"]

@@ -5,6 +5,7 @@ import os
 import pickle
 import traceback
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
+from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
 from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
@@ -61,6 +63,17 @@ try:
 except ImportError:
     RF3Wrapper = None  # ty:ignore[invalid-assignment]
     logger.warning("Failed to import RF3, hopefully you're running a different model")
+try:
+    from sampleworks.models.protpardelle.wrapper import ProtpardelleWrapper
+except (ImportError, OSError):  # OSError can arise from a missing model_params directory
+    ProtpardelleWrapper = None  # ty:ignore[invalid-assignment]
+    logger.warning(
+        "Failed to import Protpardelle, hopefully you're running a different model. "
+        "If you intended to use Protpardelle, please additionally check that the "
+        "model_params directory exists. You may need to set the environment variable "
+        "PROTPARDELLE_MODEL_PARAMS."
+    )
+
 from sampleworks.utils.torch_utils import try_gpu
 
 
@@ -171,10 +184,24 @@ def get_model_and_device(
     device_str: str,
     model_checkpoint_path: str | None,
     model_type: str,
-    method: str | None = None,
+    config: GuidanceConfig | None = None,
     model: Any = None,
 ) -> tuple[torch.device, Any]:
-    """Validate a checkpoint, choose a device, and construct the model wrapper."""
+    """Validate a checkpoint, choose a device, and construct the model wrapper.
+
+    Arguments:
+        device_str: The device to use, e.g. "cuda:0" or "cpu".
+        model_checkpoint_path: The path to the model checkpoint.
+        model_type: The type of model to use.
+        config: The configuration object, usually GuidanceConfig, from which extra
+           model-specific settings are read, e.g. a path to a YAML config file.
+        model: The model to use, if provided, helps to prevent re-loading the actual weights.
+
+    Model-specific settings are read from ``config`` rather than passed as
+    separate arguments: ``method`` is used only by the Boltz2 wrapper, and
+    ``protpardelle_config_path`` only by the Protpardelle wrapper.
+    """
+
     validated_checkpoint_path = validate_model_checkpoint(model_type, model_checkpoint_path)
 
     device = torch.device(device_str) if device_str else try_gpu()
@@ -199,6 +226,7 @@ def get_model_and_device(
     elif model_type == StructurePredictor.BOLTZ_2:
         if Boltz2Wrapper is None:
             raise ImportError("Boltz dependencies not installed")
+        method = getattr(config, "method", None)
         if method is None:
             # TODO: make a useful error msg that includes options for method
             raise ValueError("Method must be specified for Boltz2")
@@ -218,6 +246,21 @@ def get_model_and_device(
             checkpoint_path=validated_checkpoint_path,
             msa_manager=MSAManager(),
             device=device,
+            model=model,
+        )
+    elif model_type == StructurePredictor.PROTPARDELLE:
+        if ProtpardelleWrapper is None:
+            raise ImportError("Protpardelle dependencies not installed")
+        logger.debug(f"Loading Protpardelle model from {validated_checkpoint_path}")
+        protpardelle_config_path = getattr(config, "protpardelle_config_path", None)
+        config_path = protpardelle_config_path or files("sampleworks.data").joinpath(
+            "cc89_epoch415.yaml"
+        )
+        model_wrapper = ProtpardelleWrapper(
+            config_path=str(Path(config_path).expanduser().resolve()),
+            checkpoint_path=validated_checkpoint_path,
+            device=device,
+            model=model,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -458,6 +501,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     if args.num_diffusion_steps is not None and args.num_diffusion_steps <= 0:
         raise ValueError("num_diffusion_steps must be > 0")
 
+    edm_sampler_kwargs = {}  # i.e. use defaults.
     if "Protenix" in wrapper_class_name:
         from sampleworks.models.protenix.wrapper import annotate_structure_for_protenix
 
@@ -497,6 +541,18 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             recycling_steps=recycling_steps,
             ensemble_size=args.ensemble_size,
         )
+    elif "Protpardelle" in wrapper_class_name:
+        from sampleworks.models.protpardelle.wrapper import annotate_structure_for_protpardelle
+
+        structure = annotate_structure_for_protpardelle(structure)
+        edm_sampler_kwargs = {
+            "s_max": 80,
+            "s_min": 0.001,
+            "gamma_0": 0.08,
+            "gamma_min": 0.00,
+            "sigma_data": 10.3,
+            "step_scale": 1.0,
+        }
     else:
         raise ValueError(f"Unknown model wrapper class: {wrapper_class_name}")
 
@@ -510,6 +566,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         augmentation=args.augmentation,
         align_to_input=args.align_to_input,
         alignment_reverse_diffusion=use_alignment_for_reverse_diffusion,
+        **edm_sampler_kwargs,
     )
     sampler = AF3EDMSampler(
         config=sampler_config,
@@ -707,6 +764,9 @@ def _write_job_metadata(
     """
     metadata = args.as_dict()
     metadata.update(job_result.as_dict())
+    _, altloc_occupancies = extract_protein_and_occupancy(str(args.protein))
+    if altloc_occupancies:
+        metadata["altloc_occupancies"] = altloc_occupancies
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / "job_metadata.json", "w") as fp:
@@ -731,7 +791,7 @@ def get_job_result(
     end_time = epoch_seconds(ended_at)
     result = JobResult(
         protein=args.protein,
-        model=args.model,
+        model_name=args.model_name,
         method=getattr(args, "method", None),
         scaler=args.guidance_type,
         ensemble_size=args.ensemble_size,
@@ -756,7 +816,7 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     template_job = job_queue[0]
     if template_job.model_checkpoint is None or template_job.model_checkpoint == "":
         # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
-        model_key = str(template_job.model).lower().replace("structurepredictor.", "")
+        model_key = str(template_job.model_name).lower().replace("structurepredictor.", "")
         resolved = _resolve_checkpoint(model_key)  # will raise if not found
         template_job.model_checkpoint = resolved
         # Propagate to all jobs in the queue
@@ -767,8 +827,8 @@ def run_guidance_job_queue(job_queue_path: str) -> list[JobResult]:
     device, model_wrapper = get_model_and_device(
         str(template_job.device),
         template_job.model_checkpoint,
-        template_job.model,
-        method=template_job.method if hasattr(template_job, "method") else None,
+        template_job.model_name,
+        config=template_job,
     )
     job_results = []
     for i, job in enumerate(job_queue):

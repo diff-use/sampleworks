@@ -292,18 +292,15 @@ runner_env="${SAMPLEWORKS_RUNNER_ENV:-rf3}"
 if truthy_env RUNTIME_PIXI; then
     export SAMPLEWORKS_ALLOW_RUNTIME_PIXI=1
 fi
-pixi_project_dir="${SAMPLEWORKS_PIXI_PROJECT_DIR:-}"
-if [[ -z "$pixi_project_dir" ]]; then
-    if ! pixi_inputs_match_image /app "$repo_root" && truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
-        pixi_project_dir="$repo_root"
-    elif [[ -f /app/pyproject.toml && -d /app/.pixi ]]; then
-        pixi_project_dir="/app"
-    else
-        pixi_project_dir="$repo_root"
-    fi
-fi
-export SAMPLEWORKS_PIXI_PROJECT_DIR="$pixi_project_dir"
-
+# Decide the pixi project directory and env-preparation flags together, keyed on
+# whether the synced checkout still matches the baked image. The
+# pixi-with-checkpoints image bakes SAMPLEWORKS_PIXI_PROJECT_DIR=/app,
+# SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=1, and SAMPLEWORKS_SKIP_ENV_PREPARE=1. Those
+# baked values must NOT silently defeat the RUNTIME_PIXI escape hatch, so in the
+# runtime-pixi branch we assign every value unconditionally instead of relying on
+# `${VAR:-default}` or `[[ -z ]]` guards (which never fire when the image has
+# already set the variable). Keeping the project-dir and the banner in one branch
+# also guarantees the banner cannot advertise a checkout we then fail to use.
 if ! pixi_inputs_match_image /app "$repo_root"; then
     if truthy_env SAMPLEWORKS_ALLOW_RUNTIME_PIXI; then
         cat >&2 <<EOF
@@ -311,8 +308,11 @@ Synced pyproject.toml or pixi.lock differs from the baked image. Runtime pixi
 updates are enabled, so using the synced checkout as the pixi project:
   $repo_root
 EOF
-        export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI="${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-0}"
-        export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-0}"
+        # The synced checkout is the only project that defines this branch's pixi
+        # envs, so it must win over any baked SAMPLEWORKS_PIXI_PROJECT_DIR=/app.
+        pixi_project_dir="$repo_root"
+        export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=0
+        export SAMPLEWORKS_SKIP_ENV_PREPARE=0
     else
         cat >&2 <<EOF
 Synced pyproject.toml or pixi.lock differs from the baked pixi-with-checkpoints image.
@@ -328,7 +328,15 @@ EOF
         exit 2
     fi
 else
-    # The ACTL image is expected to provide ready-to-use pixi envs under /app/.pixi.
+    # Manifests match the baked image: use the ready-to-use pixi envs under
+    # /app/.pixi. An explicit SAMPLEWORKS_PIXI_PROJECT_DIR override still wins.
+    if [[ -n "${SAMPLEWORKS_PIXI_PROJECT_DIR:-}" ]]; then
+        pixi_project_dir="$SAMPLEWORKS_PIXI_PROJECT_DIR"
+    elif [[ -f /app/pyproject.toml && -d /app/.pixi ]]; then
+        pixi_project_dir="/app"
+    else
+        pixi_project_dir="$repo_root"
+    fi
     # Do not let sampleworks.runs.runner call `pixi run` just to "prepare" envs;
     # that can reinstall the CUDA stack inside the pod or spend a long time
     # refreshing caches. Use RUNTIME_PIXI=1 for dependency
@@ -336,6 +344,7 @@ else
     export SAMPLEWORKS_REQUIRE_PREBUILT_PIXI="${SAMPLEWORKS_REQUIRE_PREBUILT_PIXI:-1}"
     export SAMPLEWORKS_SKIP_ENV_PREPARE="${SAMPLEWORKS_SKIP_ENV_PREPARE:-1}"
 fi
+export SAMPLEWORKS_PIXI_PROJECT_DIR="$pixi_project_dir"
 runner_python="${SAMPLEWORKS_RUNNER_PYTHON:-$pixi_project_dir/.pixi/envs/$runner_env/bin/python}"
 
 extra_cli_args=()

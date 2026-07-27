@@ -5,11 +5,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import sampleworks.utils.guidance_script_utils as guidance_script_utils
 import torch
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig, JobResult
 from sampleworks.utils.guidance_script_utils import (
     _three_state_resolver,
     _write_job_metadata,
+    get_model_and_device,
     get_reward_function_and_structure,
     save_everything,
 )
@@ -33,6 +35,35 @@ def test_resolve_alignment_reverse_diffusion(override, is_boltz, expected):
     assert _three_state_resolver(override, is_boltz) is expected
 
 
+def test_get_model_and_device_forwards_preloaded_model_to_rf3(monkeypatch):
+    """RF3 construction receives the pre-loaded model supplied by callers."""
+    preloaded_model = object()
+
+    class StubRF3Wrapper:
+        """Capture RF3 constructor arguments without loading model dependencies."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(guidance_script_utils, "RF3Wrapper", StubRF3Wrapper)
+    monkeypatch.setattr(
+        guidance_script_utils,
+        "validate_model_checkpoint",
+        lambda model_type, checkpoint: checkpoint,
+    )
+    monkeypatch.setattr(guidance_script_utils, "MSAManager", lambda: object())
+
+    device, wrapper = get_model_and_device(
+        "cpu",
+        "rf3.ckpt",
+        "rf3",
+        model=preloaded_model,
+    )
+
+    assert device == torch.device("cpu")
+    assert wrapper.kwargs["model"] is preloaded_model
+
+
 def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
     """Mismatch final_state should save with model template when provided."""
     refined_structure = {"asym_unit": build_test_atom_array(n_atoms=3, with_occupancy=True)}
@@ -44,7 +75,7 @@ def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(tmp_path),
@@ -122,7 +153,7 @@ def test_write_job_metadata_with_job_result_appends_timing_and_status(
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(tmp_path),
@@ -134,6 +165,8 @@ def test_write_job_metadata_with_job_result_appends_timing_and_status(
     # GuidanceConfig keys are preserved
     assert metadata["protein"] == "1l63"
     assert metadata["guidance_type"] == "pure_guidance"
+    assert metadata["model_name"] == "boltz2"
+    assert "model" not in metadata
     # JobResult-only keys are appended
     assert metadata["started_at"] == "2026-05-05T10:00:00"
     assert metadata["finished_at"] == "2026-05-05T10:00:12.340000"
@@ -151,7 +184,7 @@ def test_write_job_metadata_creates_missing_output_dir(
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path="dummy",
         output_dir=str(nested),
@@ -160,6 +193,26 @@ def test_write_job_metadata_creates_missing_output_dir(
     _write_job_metadata(nested, args, guidance_job_result)
 
     assert (nested / "job_metadata.json").exists()
+
+
+def test_write_job_metadata_records_altloc_occupancies(
+    tmp_path: Path, guidance_job_result: JobResult
+):
+    """Metadata stores occupancies explicitly instead of relying on directory names."""
+    args = GuidanceConfig(
+        protein="1l63_0.25occA_0.75occB",
+        structure=Path("dummy"),
+        density=Path("dummy"),
+        model_name="boltz2",
+        guidance_type="pure_guidance",
+        log_path="dummy",
+        output_dir=str(tmp_path),
+    )
+
+    _write_job_metadata(tmp_path, args, guidance_job_result)
+
+    metadata = json.loads((tmp_path / "job_metadata.json").read_text())
+    assert metadata["altloc_occupancies"] == {"A": 0.25, "B": 0.75}
 
 
 def test_write_job_metadata_remaps_job_result_paths_to_host(
@@ -182,14 +235,14 @@ def test_write_job_metadata_remaps_job_result_paths_to_host(
         protein="1l63",
         structure=Path("dummy"),
         density=Path("dummy"),
-        model="boltz2",
+        model_name="boltz2",
         guidance_type="pure_guidance",
         log_path=container_log,
         output_dir=container_output,
     )
     job_result = JobResult(
         protein="1l63",
-        model="boltz2",
+        model_name="boltz2",
         method=None,
         scaler="pure_guidance",
         ensemble_size=8,

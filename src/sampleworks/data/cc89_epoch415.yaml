@@ -1,0 +1,101 @@
+data:
+  auto_calc_sigma_data: true
+  chain_residx_gap: 200
+  dummy_fill_mode: zero
+  fixed_size: 512
+  mixing_ratios:
+  - 1.0
+  n_aatype_tokens: 21
+  n_examples_for_sigma_data: 500
+  pdb_paths:
+  - /scratch/users/tianyulu/augmented_ingraham_cath_bugfree
+  se3_data_augment: true
+  sigma_data: 10.3
+  subset:
+  - designable_
+  translation_scale: 1.0
+diffusion:
+  sampling:
+    function: uniform
+    s_max: 80
+    s_min: 0.001
+  training:
+    function: lognormal
+    psigma_mean: -0.5
+    psigma_std: 1.5
+model:
+  compute_loss_on_all_atoms: false
+  conditioning_style: concat
+  crop_conditional: true
+  dummy_fill_masked_atoms: false
+  full_mpnn_model_path: /scratch/users/tianyulu/farfalle/ProteinMPNN/vanilla_model_weights
+  mpnn_model:
+    label_smoothing: 0.1
+    n_channel: 128
+    n_layers: 3
+    n_neighbors: 32
+    noise_cond_mult: 4
+    use_self_conditioning: true
+  mpnn_model_checkpoint: ''
+  pretrained_modules: []
+  struct_model:
+    arch: dit
+    n_atoms: 37
+    n_channel: 256
+    noise_cond_mult: 4
+    uvit:
+      cat_pwd_to_conv: false
+      conv_skip_connection: false
+      dim_head: 32
+      n_blocks_per_layer: 2
+      n_filt_per_layer: []
+      n_heads: 8
+      n_layers: 10
+      patch_size: 1
+      position_embedding_max: 32
+      position_embedding_type: rotary
+  struct_model_checkpoint: ''
+  task: ai-allatom
+train:
+  batch_size: 32
+  checkpoint_freq: 1
+  checkpoints: []
+  ckpt_path: /scratch/users/tianyulu/farfalle/out_dir/farfalle/cc89/checkpoints/epoch206_training_state.pth
+  clip_grad_norm: true
+  crop_cond:
+    contiguous_prob: 0.05
+    discontiguous_prob: 0.9
+    dist_threshold: 45.0
+    max_discontiguous_res: 24
+    max_span_len: 12
+    recenter_coords: true
+    sidechain_only_prob: 0.0
+    sidechain_prob: 0.9
+    terms_prob: 0.5
+  crop_conditional: true
+  decay_steps: 2000000
+  eval_freq: 8000000
+  eval_loss_t:
+  - 0.1
+  - 0.3
+  - 0.5
+  - 0.7
+  - 0.9
+  fpd_length_ranges_per_chain:
+  - - 50
+    - 256
+  grad_clip_val: 1.0
+  length_ranges_per_chain:
+  - - 166
+    - 188
+  lr: 0.0001
+  max_epochs: 10000
+  n_eval_samples: 10
+  n_fpd_samples: 0
+  sc_num_seqs: 4
+  seed: 0
+  self_cond_train_prob: 0.9
+  shapes_path: /scratch/users/tianyulu/protein_shapes
+  subsample_eval_set: 0.05
+  warmup_steps: 1000
+  weight_decay: 0.0

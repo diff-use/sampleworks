@@ -9,8 +9,9 @@ from typing import ClassVar
 import torch
 from loguru import logger
 from sampleworks.core.forward_models.xray.real_space_density import XMap_torch
-from sampleworks.eval.synthetic_utils import (
+from sampleworks.synthetic.synthetic_utils import (
     load_structure_for_synthetic_reward,
+    resolve_parallel_jobs,
     validate_occupancy_values,
 )
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
@@ -284,12 +285,10 @@ def process_batch(
     from joblib import delayed, Parallel
 
     rows = load_batch_csv(csv_path)
-    logger.info(f"Processing {len(rows)} structures from {csv_path} using {n_jobs} jobs")
+    effective_n_jobs = resolve_parallel_jobs(device, n_jobs)
+    logger.info(f"Processing {len(rows)} structures from {csv_path} using {effective_n_jobs} jobs")
 
-    # TODO(`#242`): When device is CUDA and n_jobs > 1, each loky worker gets its own
-    # CUDA context, risking GPU memory contention or OOM errors. Consider explicit
-    # per-worker device assignment and/or n_jobs capping. Same issue in SF script.
-    Parallel(n_jobs=n_jobs, backend="loky")(
+    Parallel(n_jobs=effective_n_jobs, backend="loky")(
         delayed(_process_single_row)(
             row=row,
             occupancy_mode=occupancy_mode,

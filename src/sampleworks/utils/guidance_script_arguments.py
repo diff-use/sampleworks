@@ -197,6 +197,7 @@ _DYNAMIC_ATTRS = [
     "msa_path",
     "disable_chiral_features",
     "track_chiral_features",
+    "protpardelle_config_path",
     # generic (overridable)
     "ensemble_size",
     "recycling_steps",
@@ -215,7 +216,7 @@ class GuidanceConfig:
     protein: str
     structure: Path | str  # actually a path to a structure file
     density: Path | str
-    model: str | StructurePredictor
+    model_name: str | StructurePredictor
     guidance_type: str | GuidanceType
     log_path: str
     output_dir: str = "output"
@@ -241,23 +242,23 @@ class GuidanceConfig:
     def from_cli(
         cls,
         argv: list[str] | None = None,
-        model: str | None = None,
+        model_name: str | None = None,
         guidance_type: str | None = None,
     ) -> GuidanceConfig:
         """Parse CLI arguments and return a fully populated GuidanceConfig.
 
-        When *model* and *guidance_type* are provided (e.g. from legacy
+        When *model_name* and *guidance_type* are provided (e.g. from legacy
         scripts), they are used directly and ``--model`` / ``--guidance-type``
         are not required on the command line.  Otherwise they are parsed as
         required CLI arguments.
         """
         model_choices = [m.value for m in StructurePredictor]
         guidance_choices = [g.value for g in GuidanceType]
-        model_preset = model is not None
+        model_preset = model_name is not None
         guidance_preset = guidance_type is not None
 
-        if model_preset and model not in model_choices:
-            raise ValueError(f"Unknown model type: {model}")
+        if model_preset and model_name not in model_choices:
+            raise ValueError(f"Unknown model type: {model_name}")
         if guidance_preset and guidance_type not in guidance_choices:
             raise ValueError(f"Unknown guidance type: {guidance_type}")
 
@@ -267,6 +268,7 @@ class GuidanceConfig:
             if not model_preset:
                 pre.add_argument(
                     "--model",
+                    dest="model_name",
                     type=str,
                     required=True,
                     choices=model_choices,
@@ -281,17 +283,21 @@ class GuidanceConfig:
                     help="Guidance method",
                 )
             pre_args, _ = pre.parse_known_args(argv)
-            model = model or pre_args.model
+            model_name = model_name or pre_args.model_name
             guidance_type = guidance_type or pre_args.guidance_type
+
+        if model_name is None or guidance_type is None:
+            raise RuntimeError("CLI parsing did not resolve a model name and guidance type")
 
         # -- full parser -----------------------------------------------------
         parser = argparse.ArgumentParser(
-            description=f"Run {guidance_type} guidance with {model}",
+            description=f"Run {guidance_type} guidance with {model_name}",
         )
         parser.add_argument(
             "--model",
+            dest="model_name",
             type=str,
-            default=model,
+            default=model_name,
             choices=model_choices,
             help=argparse.SUPPRESS if model_preset else "Structure prediction model",
         )
@@ -309,14 +315,14 @@ class GuidanceConfig:
             help="Protein identifier (must match naming used in grid search / evaluation)",
         )
         add_generic_args(parser)
-        _MODEL_ARG_ADDERS[model](parser)
+        _MODEL_ARG_ADDERS[model_name](parser)
         _GUIDANCE_ARG_ADDERS[guidance_type](parser)
 
         args = parser.parse_args(argv)
 
-        if model_preset and args.model != model:
+        if model_preset and args.model_name != model_name:
             parser.error(
-                f"This script is fixed to --model {model}."
+                f"This script is fixed to --model {model_name}."
                 f" Use sampleworks-guidance for other models."
             )
         if guidance_preset and args.guidance_type != guidance_type:
@@ -329,7 +335,7 @@ class GuidanceConfig:
             protein=args.protein,
             structure=args.structure,
             density=args.density,
-            model=model,
+            model_name=model_name,
             guidance_type=guidance_type,
             log_path=getattr(args, "log_path", None) or "",
             output_dir=args.output_dir,
@@ -362,9 +368,9 @@ class GuidanceConfig:
             raise ValueError(f"Unknown guidance type: {self.guidance_type}")
 
         try:
-            _MODEL_ARG_ADDERS[self.model](self)
+            _MODEL_ARG_ADDERS[self.model_name](self)
         except KeyError:
-            raise ValueError(f"Unknown model type: {self.model}")
+            raise ValueError(f"Unknown model type: {self.model_name}")
 
     def populate_config_for_guidance_type(self, job: JobConfig, args: argparse.Namespace):
         """Apply per-job grid-search values onto this guidance configuration."""
@@ -373,13 +379,13 @@ class GuidanceConfig:
             self.model_checkpoint = checkpoint
         elif not getattr(self, "model_checkpoint", None):
             # Auto-resolve from baked-in /checkpoints/ or legacy fallback paths
-            model_key = str(self.model).lower().replace("structurepredictor.", "")
+            model_key = str(self.model_name).lower().replace("structurepredictor.", "")
             self.model_checkpoint = _resolve_checkpoint(model_key)
 
-        if job.model == StructurePredictor.BOLTZ_2 and job.method:
+        if job.model_name == StructurePredictor.BOLTZ_2 and job.method:
             self.method = job.method
 
-        if job.model == StructurePredictor.RF3:
+        if job.model_name == StructurePredictor.RF3:
             self.disable_chiral_features = getattr(args, "disable_chiral_features", False)
             self.track_chiral_features = getattr(args, "track_chiral_features", False)
 
@@ -408,6 +414,13 @@ class GuidanceConfig:
         output["output_dir"] = _remap_container_path(str(self.output_dir))
         output["log_path"] = _remap_container_path(str(self.log_path))
         return output
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore state while migrating legacy pickles from ``model``."""
+        migrated = state.copy()
+        if "model" in migrated:
+            migrated.setdefault("model_name", migrated.pop("model"))
+        self.__dict__.update(migrated)
 
 
 def add_generic_args(parser: argparse.ArgumentParser | GuidanceConfig):
@@ -606,11 +619,31 @@ def add_rf3_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
     )
 
 
+def add_protpardelle_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
+    """Add CLI arguments specific to Protpardelle guidance runs."""
+    parser.add_argument(
+        "--model-checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Path to Protpardelle checkpoint "
+            "(default: auto-resolved from /checkpoints/ or pixi env)"
+        ),
+    )
+    parser.add_argument(
+        "--protpardelle-config-path",
+        type=str,
+        default=None,
+        help="Path to the Protpardelle model config YAML (default: bundled cc89 config)",
+    )
+
+
 _MODEL_ARG_ADDERS: dict[str, Any] = {
     "boltz1": add_boltz1_specific_args,
     "boltz2": add_boltz2_specific_args,
     "protenix": add_protenix_specific_args,
     "rf3": add_rf3_specific_args,
+    "protpardelle": add_protpardelle_specific_args,
 }
 
 
@@ -664,7 +697,7 @@ class JobConfig:
     structure_path: Path | str
     density_path: Path | str
     resolution: float
-    model: str
+    model_name: str
     scaler: str
     ensemble_size: int
     gradient_weight: float
@@ -679,7 +712,7 @@ class JobResult:
     """Serializable status record produced after a guidance job finishes."""
 
     protein: str
-    model: str
+    model_name: str
     method: str | None
     scaler: str
     ensemble_size: int
@@ -710,3 +743,10 @@ class JobResult:
         output["output_dir"] = _remap_container_path(str(self.output_dir))
         output["log_path"] = _remap_container_path(str(self.log_path))
         return output
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore state while migrating legacy pickles from ``model``."""
+        migrated = state.copy()
+        if "model" in migrated:
+            migrated.setdefault("model_name", migrated.pop("model"))
+        self.__dict__.update(migrated)
