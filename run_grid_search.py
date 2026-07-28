@@ -210,6 +210,7 @@ def build_args_for_process_pool(
         output_dir=job.output_dir,
         loss_order=args.loss_order,
         partial_diffusion_step=args.partial_diffusion_step,
+        guidance_start=args.guidance_start,
         resolution=job.resolution,
         device=f"cuda:{device_num}" if device_num is not None else "",
         gradient_normalization=args.gradient_normalization,
@@ -393,6 +394,7 @@ def run_guidance_queue_script(
         Result from the subprocess that ran the worker queue.
     """
     pixi_env_name = get_pixi_env(model)
+    log.warning(f"Running guidance job queue, job_queue_path: {job_queue_path}")
     script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
     env_python = get_pixi_env_python(pixi_env_name)
     if env_python:
@@ -524,7 +526,6 @@ def main(args: argparse.Namespace):
     )
 
     start_time = time.time()
-
     results = run_grid_search(filtered_jobs, gpus, args, job_statuses=job_statuses)
 
     if not args.dry_run and results:
@@ -698,7 +699,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="boltz2",
-        choices=["boltz1", "boltz2", "protenix", "rf3"],
+        choices=["boltz1", "boltz2", "protenix", "rf3", "protpardelle"],
         help="The protein structure predictor model to use",
     )
     parser.add_argument(
@@ -742,6 +743,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--partial-diffusion-step", type=int, default=0, help="Partial diffusion step"
     )
+    parser.add_argument(
+        "--guidance-start",
+        type=int,
+        default=-1,
+        help="Guidance start step for model inference, defaults to -1, meaning start immediately",
+    )
+
     parser.add_argument(
         "--num-gd-steps",
         default="20",
