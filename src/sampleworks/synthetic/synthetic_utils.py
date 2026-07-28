@@ -2,7 +2,9 @@
 
 import math
 import traceback
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Hashable, Iterable, Iterator
+from itertools import pairwise
 from pathlib import Path
 
 import gemmi
@@ -24,6 +26,10 @@ from sampleworks.utils.atom_array_utils import (
     load_structure_with_altlocs,
     remove_hydrogens,
 )
+
+
+# How many explicit duplicates to show in an error message when converting atomarray to gemmi.
+MAX_REPORTED_DUPLICATES = 3
 
 
 def resolve_parallel_jobs(device: torch.device | str, n_jobs: int) -> int:
@@ -310,28 +316,197 @@ def _resolve_altlocs_for_gemmi(atom_array: AtomArray) -> list[str]:
     return ["\x00" if a in BLANK_ALTLOC_IDS else a for a in atom_array.altloc_id]
 
 
-def _residue_group_bounds(atom_array: AtomArray) -> Iterator[tuple[int, int]]:
-    """Yield the atom-index spans, one per residue.
+def _check_keys_unique(keys: Iterable[Hashable], *, level: str, identity: str) -> None:
+    """Require the key gemmi uses to identify one hierarchy level to be unique.
+
+    Parameters
+    ----------
+    keys : Iterable of Hashable
+        Keys about the structure's hierarchy level to be checked for uniqueness.
+    level : str
+        Singular noun for what is identified (``"chain"``, ``"residue"``, ``"atom"``). Used
+        in the error message.
+    identity : str
+        The key's fields spelled out, so a reader can map a reported tuple positionally. Used
+        in the error message.
+
+    Raises
+    ------
+    ValueError
+        If any key appears more than once.
+    """
+    # Counter keeps first-occurrence order for error message
+    repeats = [f"{key!r} x{count}" for key, count in Counter(keys).items() if count > 1]
+    if repeats:
+        shown = ", ".join(repeats[:MAX_REPORTED_DUPLICATES])
+        if len(repeats) > MAX_REPORTED_DUPLICATES:
+            shown += f", ... and {len(repeats) - MAX_REPORTED_DUPLICATES} more"
+        raise ValueError(
+            f"gemmi identifies each {level} by {identity}, so duplicates would be "
+            f"indistinguishable: {shown}."
+        )
+
+
+def _check_residue_fields_homogeneous(
+    atom_array: AtomArray, residue_boundary_mask: np.ndarray
+) -> None:
+    """Require the fields read from a residue's first atom to hold across all atoms in the
+    residue.
+
+    ``res_id`` and ``chain_id`` need no check: they are the grouping key.
 
     Parameters
     ----------
     atom_array : AtomArray
-        Structure whose atoms are grouped into residues. Atoms of a residue are
-        assumed contiguous (true for arrays loaded in file order).
+        Structure to check.
+    residue_boundary_mask : np.ndarray
+        ``(n_atoms - 1,)`` bool residue boundaries of ``atom_array``; element ``i`` is True
+        when atom ``i + 1`` starts a new residue.
 
-    Yields
+    Raises
     ------
-    tuple of int
+    ValueError
+        If a span disagrees on ``res_name`` or ``hetero``.
+    """
+    chain_id, res_id = atom_array.chain_id, atom_array.res_id
+    for field in ("res_name", "hetero"):
+        values = atom_array.get_annotation(field)
+        # a change with no boundary at that position is a change *inside* a span
+        changed = (values[1:] != values[:-1]) & ~residue_boundary_mask  # (n_atoms - 1,) bool
+        if changed.any():
+            idx = int(np.flatnonzero(changed)[0]) + 1
+            raise ValueError(
+                f"Atoms of residue (chain {chain_id[idx]!r}, res_id {res_id[idx]}) disagree "
+                f"on {field}: atom {idx - 1} has {values[idx - 1]!r} but atom {idx} has "
+                f"{values[idx]!r}. atomarray_to_gemmi reads {field} from each residue's "
+                f"first atom, so the differing value would be silently dropped."
+            )
+
+
+def _check_no_repeated_atoms(atom_array: AtomArray, altlocs: list[str]) -> None:
+    """Require each ``(atom_name, altloc)`` pair to be unique within its residue.
+
+    gemmi (0.6.7) identifies an atom within a residue by that pair (seqid.hpp:124-141),
+    so a repeat yields two indistinguishable atoms.
+
+    Keyed on the full ``(chain_id, res_id, atom_name, altloc)`` for informative error
+    message. Assumes that each ``(chain_id, res_id)`` occupies exactly one span, which
+    should have been established by ``_check_no_repeated_residues``.
+
+    Parameters
+    ----------
+    atom_array : AtomArray
+        Structure to check.
+    altlocs : list of str
+        Per-atom altloc labels in gemmi convention.
+
+    Raises
+    ------
+    ValueError
+        If any ``(atom_name, altloc)`` pair repeats within a residue.
+    """
+    _check_keys_unique(
+        zip(
+            atom_array.chain_id.tolist(),
+            atom_array.res_id.tolist(),
+            atom_array.atom_name.tolist(),
+            altlocs,
+        ),
+        level="atom",
+        identity="(chain_id, res_id, atom_name, altloc)",
+    )
+
+
+def _check_no_repeated_residues(
+    atom_array: AtomArray, residue_span_start_idx: np.ndarray
+) -> None:
+    """Require each ``(chain_id, res_id)`` key to occupy exactly one contiguous block.
+
+    Parameters
+    ----------
+    atom_array : AtomArray
+        Structure to check.
+    residue_span_start_idx : np.ndarray
+        ``(n_residues,)`` int; first atom index of each residue of ``atom_array``.
+
+    Raises
+    ------
+    ValueError
+        If a ``(chain_id, res_id)`` key spans more than one residue block.
+    """
+    residue_keys = zip(
+        atom_array.chain_id[residue_span_start_idx].tolist(),
+        atom_array.res_id[residue_span_start_idx].tolist(),
+    )
+    _check_keys_unique(residue_keys, level="residue", identity="(chain_id, res_id)")
+
+
+def _check_no_repeated_chains(atom_array: AtomArray) -> None:
+    """Require each ``chain_id`` to occupy exactly one contiguous block.
+
+    Parameters
+    ----------
+    atom_array : AtomArray
+        Structure to check.
+
+    Raises
+    ------
+    ValueError
+        If a ``chain_id`` spans more than one chain block.
+    """
+    chain_id = atom_array.chain_id
+    chain_starts = np.flatnonzero(np.concatenate([[True], chain_id[1:] != chain_id[:-1]]))
+    _check_keys_unique(chain_id[chain_starts].tolist(), level="chain", identity="chain_id")
+
+
+def _prepare_residue_spans(
+    atom_array: AtomArray,
+    altlocs: list[str],
+) -> Iterator[tuple[int, int]]:
+    """Validate an atom array's residue spans and return the spans for building gemmi
+    Structure hierarchically.
+
+    ``_build_gemmi_residue`` reads per-residue fields from each span's first atom, and
+    the chain loop in ``atomarray_to_gemmi`` assumes contiguous chains and residues.
+    This function checks both assumptions and raises an error if they are violated.
+
+    Residues are keyed on ``(chain_id, res_id)``. ``ins_code`` is ignored until issue
+    #306 is resolved.
+
+    Parameters
+    ----------
+    atom_array : AtomArray
+        Structure to validate for conversion to gemmi. Must be non-empty.
+    altlocs : list of str
+        Per-atom altloc labels in gemmi convention.
+
+    Returns
+    -------
+    Iterator of tuple of int
         One ``(start_idx, stop_idx)`` per residue, covering the atoms
         ``atom_array[start_idx:stop_idx]`` that share the same ``(chain_id, res_id)``.
+
+    Raises
+    ------
+    ValueError
+         If ``atom_array`` is malformed by having duplicate atoms, residues, chains, or
+         atoms within a residue do not share the same per-residue fields.
     """
-    if len(atom_array) == 0:
-        return
     chain_id, res_id = atom_array.chain_id, atom_array.res_id
-    # boundary shows where a new residue begins (i.e., chain or res_id changed).
-    boundary = (chain_id[1:] != chain_id[:-1]) | (res_id[1:] != res_id[:-1])
-    start_indices = [0, *(np.flatnonzero(boundary) + 1).tolist(), len(atom_array)]
-    yield from zip(start_indices[:-1], start_indices[1:])
+    # residue_boundary_mask[i] is True when atom i + 1 starts a new residue; atom 0 always
+    # marks a new start, which is why the flatnonzero below prepends True.
+    # (n_atoms - 1,) bool
+    residue_boundary_mask = (chain_id[1:] != chain_id[:-1]) | (res_id[1:] != res_id[:-1])
+    # (n_residues,) int
+    residue_span_start_idx = np.flatnonzero(np.concatenate([[True], residue_boundary_mask]))
+
+    _check_no_repeated_chains(atom_array)
+    _check_no_repeated_residues(atom_array, residue_span_start_idx)
+    _check_residue_fields_homogeneous(atom_array, residue_boundary_mask)
+    _check_no_repeated_atoms(atom_array, altlocs)
+
+    residue_span_idx = [*residue_span_start_idx.tolist(), len(atom_array)]  # append the end
+    return pairwise(residue_span_idx)
 
 
 def _build_gemmi_residue(
@@ -345,7 +520,8 @@ def _build_gemmi_residue(
         Structure supplying per-atom annotations.
     start_idx : int
         Inclusive atom index of the residue's first atom; per-residue fields
-        (name, seqid, subchain) are read from this atom.
+        (name, seqid, subchain, het_flag) are read from this atom, which assumes the
+        span agrees on them -- ``_prepare_residue_spans`` enforces that upstream.
     stop_idx : int
         Exclusive atom index marking the end of the residue's atom span.
     altlocs : list of str
@@ -419,12 +595,13 @@ def atomarray_to_gemmi(
         raise ValueError("Cannot convert an empty AtomArray to a gemmi.Structure.")
 
     altlocs = _resolve_altlocs_for_gemmi(atom_array)
+    residue_spans = _prepare_residue_spans(atom_array, altlocs)
 
-    # Group atoms into residues up front, then walk residues into chains. Contiguous
-    # grouping guarantees the hierarchy is well-formed by construction.
+    # Group atoms into residues up front, then walk residues into chains. Validated,
+    # contiguous grouping guarantees the hierarchy is well-formed by construction.
     model = gemmi.Model("1")  # numeric name -> valid mmCIF pdbx_PDB_model_num
     current_chain: gemmi.Chain | None = None
-    for start_idx, stop_idx in _residue_group_bounds(atom_array):
+    for start_idx, stop_idx in residue_spans:
         chain_id = atom_array.chain_id[start_idx]
         if current_chain is None or chain_id != current_chain.name:
             if current_chain is not None:
