@@ -87,6 +87,40 @@ def _compute_fprotein(gemmi_structure: gemmi.Structure, device: torch.device) ->
     return assert_numpy(sfc.Fprotein_asu)
 
 
+def _build_atom_array(
+    *,
+    chain_id: list[str],
+    res_id: list[int],
+    res_name: list[str],
+    atom_name: list[str],
+    hetero: list[bool] | None = None,
+    altloc_id: list[str] | None = None,
+) -> AtomArray:
+    """Build a minimal AtomArray for residue-span validation tests.
+
+    Only the fields a test varies need to be passed; coords are distinct per atom and
+    element/b_factor/occupancy are uniform, since none of them participate in residue
+    grouping or span validation. ``hetero`` defaults to biotite's all-False, and
+    ``altloc_id`` is left unset (not blank) when omitted, exercising the
+    missing-annotation path in ``_resolve_altlocs_for_gemmi``.
+    """
+    n = len(atom_name)
+    arr = AtomArray(n)
+    arr.coord = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
+    arr.chain_id = np.array(chain_id)
+    arr.res_id = np.array(res_id)
+    arr.res_name = np.array(res_name)
+    arr.atom_name = np.array(atom_name)
+    arr.element = np.array(["C"] * n)
+    if hetero is not None:
+        arr.hetero = np.array(hetero)
+    if altloc_id is not None:
+        arr.set_annotation("altloc_id", np.array(altloc_id))
+    arr.set_annotation("b_factor", np.full(n, 20.0))
+    arr.set_annotation("occupancy", np.ones(n))
+    return arr
+
+
 def _dataset_with_columns(columns: dict[str, MTZDtype]) -> rs.DataSet:
     """Build a minimal rs.DataSet with each column cast to its MTZ dtype.
 
@@ -100,30 +134,7 @@ def _dataset_with_columns(columns: dict[str, MTZDtype]) -> rs.DataSet:
 
 
 class TestAtomArrayToGemmi:
-    """Tests for atomarray_to_gemmi using the 6b8x structure."""
-
-    @pytest.fixture
-    def multichain_shared_resid_array(self) -> AtomArray:
-        """Two chains A (residues 1, 2) and B (residues 2, 3) that collide at the boundary.
-
-        Chain A's last residue and chain B's first residue both have res_id 2 and are
-        adjacent in atom order, so residue grouping keyed on res_id alone would merge them
-        into a single residue across the chain boundary. This collision at the chain
-        boundary is exactly what exercises the chain_id term of the grouping predicate --
-        a fixture whose res_id merely changes at the boundary (e.g. 2 -> 1) would split
-        correctly with or without that term and so would not guard it.
-        """
-        n = 4
-        arr = AtomArray(n)
-        arr.coord = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
-        arr.chain_id = np.array(["A", "A", "B", "B"])
-        arr.res_id = np.array([1, 2, 2, 3])
-        arr.res_name = np.array(["ALA", "GLY", "GLY", "ALA"])
-        arr.atom_name = np.array(["CA", "CA", "CA", "CA"])
-        arr.element = np.array(["C", "C", "C", "C"])
-        arr.set_annotation("b_factor", np.full(n, 20.0))
-        arr.set_annotation("occupancy", np.ones(n))
-        return arr
+    """Tests that the atomarray→gemmi conversion is faithful, using the 6b8x structure."""
 
     def test_cell_matches_pdb(self, gemmi_structure_from_atomarray, stripped_gemmi):
         """Unit cell parameters are preserved through the biotite→gemmi conversion."""
@@ -340,6 +351,137 @@ class TestAtomArrayToGemmi:
         )
 
         assert not np.allclose(np.abs(f_uniform), np.abs(f_custom), atol=1e-3)
+
+
+class TestGemmiHierarchyValidation:
+    """Tests that atomarray_to_gemmi rejects atom arrays whose hierarchy gemmi cannot
+    represent faithfully, and accepts the legitimate shapes that resemble them.
+
+    A gemmi structure has the following hierarchy: first model is structure[0], first chain
+    is model[0], first residue is chain[0], first atom is residue[0].
+    """
+
+    def test_same_atom_name_with_distinct_altlocs_is_valid(self):
+        """Atoms that differ only by altloc are treated as distinct."""
+        arr = _build_atom_array(
+            chain_id=["A", "A"],
+            res_id=[1, 1],
+            res_name=["ALA", "ALA"],
+            atom_name=["CA", "CA"],
+            altloc_id=["A", "B"],
+        )
+        chains = list(atomarray_to_gemmi(arr)[0])
+        assert [chain.name for chain in chains] == ["A"]
+        residues = list(chains[0])
+        assert len(residues) == 1
+        assert [atom.altloc for atom in residues[0]] == ["A", "B"]
+
+    def test_span_with_mixed_res_name_raises(self):
+        """Atoms in one residue disagreeing on res_name are rejected."""
+        arr = _build_atom_array(
+            chain_id=["A", "A"],
+            res_id=[1, 1],
+            res_name=["ALA", "GLY"],
+            atom_name=["N", "CA"],
+        )
+        with pytest.raises(ValueError, match="disagree on res_name"):
+            atomarray_to_gemmi(arr)
+
+    def test_span_with_mixed_hetero_raises(self):
+        """Atoms in one residue disagreeing on hetero are rejected."""
+        arr = _build_atom_array(
+            chain_id=["A", "A"],
+            res_id=[1, 1],
+            res_name=["MSE", "MSE"],
+            atom_name=["N", "SE"],
+            hetero=[False, True],
+        )
+        with pytest.raises(ValueError, match="disagree on hetero"):
+            atomarray_to_gemmi(arr)
+
+    def test_hetero_change_between_residues_is_valid(self):
+        """hetero may change at a residue boundary, and reaches gemmi as the het_flag that
+        marks the residue HETATM ('H') or ATOM ('A')."""
+        arr = _build_atom_array(
+            chain_id=["A", "A", "A"],
+            res_id=[1, 1, 2],
+            res_name=["ALA", "ALA", "MSE"],
+            atom_name=["N", "CA", "SE"],
+            hetero=[False, False, True],
+        )
+        residues = list(atomarray_to_gemmi(arr)[0][0])
+        assert [res.het_flag for res in residues] == ["A", "H"]
+
+    @pytest.mark.parametrize(
+        "altloc_id",
+        [None, ["", "."]],
+        ids=["annotation_absent", "distinct_blank_altloc_ids"],
+    )
+    def test_duplicate_atom_name_in_residue_raises(self, altloc_id):
+        """Atoms in a residue sharing the name and with no or blank altloc are rejected."""
+        arr = _build_atom_array(
+            chain_id=["A", "A"],
+            res_id=[1, 1],
+            res_name=["ALA", "ALA"],
+            atom_name=["CA", "CA"],
+            altloc_id=altloc_id,
+        )
+        with pytest.raises(ValueError, match="identifies each atom"):
+            atomarray_to_gemmi(arr)
+
+    def test_noncontiguous_residue_raises(self):
+        """Atoms of a residue must be contiguous: a res_id that reappears after another
+        residue intervenes is rejected."""
+        arr = _build_atom_array(
+            chain_id=["A", "A", "A"],
+            res_id=[1, 2, 1],
+            res_name=["ALA", "GLY", "ALA"],
+            atom_name=["CA", "CA", "CB"],
+        )
+        with pytest.raises(ValueError, match="identifies each residue"):
+            atomarray_to_gemmi(arr)
+
+    def test_noncontiguous_chain_raises(self):
+        """Atoms of a chain must be contiguous: a chain_id that reappears after another
+        chain intervenes is rejected."""
+        arr = _build_atom_array(
+            chain_id=["A", "B", "A"],
+            res_id=[1, 2, 3],
+            res_name=["ALA", "GLY", "SER"],
+            atom_name=["CA", "CA", "CA"],
+        )
+        with pytest.raises(ValueError, match="identifies each chain"):
+            atomarray_to_gemmi(arr)
+
+
+class TestAssignOccupancies:
+    """Tests for assign_occupancies value handling, using the 6b8x altlocs."""
+
+    def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
+        """A warning is logged when more occupancy values are provided than there are altlocs."""
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with caplog.at_level(logging.WARNING):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.2, 0.8, 0.0, 0.0])
+        assert "Extra values will be ignored" in caplog.text
+
+    def test_occupancy_warns_on_missing_values(self, stripped_atom_array, caplog):
+        """A warning is logged when fewer occupancy values are provided than there are altlocs."""
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with caplog.at_level(logging.WARNING):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.5, 0.5])
+        assert "Missing values are automatically set to 0" in caplog.text
+
+    def test_occupancy_raises_on_out_of_range(self, stripped_atom_array):
+        """ValueError is raised when an occupancy value is outside [0.0, 1.0]."""
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with pytest.raises(ValueError, match="out of range"):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [1.5, 0.0, 0.0])
+
+    def test_occupancy_raises_on_bad_sum(self, stripped_atom_array):
+        """ValueError is raised when occupancy values do not sum to 1.0."""
+        altloc_info = detect_altlocs(stripped_atom_array)
+        with pytest.raises(ValueError, match="sum to 1.0"):
+            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.3, 0.3, 0.3])
 
 
 class TestResolveMtzColumn:

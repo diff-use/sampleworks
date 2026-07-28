@@ -417,9 +417,7 @@ def _check_no_repeated_atoms(atom_array: AtomArray, altlocs: list[str]) -> None:
     )
 
 
-def _check_no_repeated_residues(
-    atom_array: AtomArray, residue_span_start_idx: np.ndarray
-) -> None:
+def _check_no_repeated_residues(atom_array: AtomArray, residue_span_start_idx: np.ndarray) -> None:
     """Require each ``(chain_id, res_id)`` key to occupy exactly one contiguous block.
 
     Parameters
