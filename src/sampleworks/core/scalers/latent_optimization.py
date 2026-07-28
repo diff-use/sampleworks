@@ -5,8 +5,7 @@ A Sampleworks port of the reference ``run_it_optimization``
 structure model as a differentiable sampler and optimizes its cached post-trunk
 latents -- the single representation ``s`` and the pair representation ``z`` --
 against an experimental reward evaluated on the *denoised* structure. No model
-weights are updated. See ``docs/IT_OPTIMIZATION_PLAN.md`` and, for a line-by-line
-mapping to the reference, ``docs/IT_OPT_REFERENCE_COMPARISON.md``.
+weights are updated. See ``docs/IT_OPT_DESIGN.md`` for the design and its mapping to the reference.
 
 The algorithm (kept faithful to the reference), with the reference's bugs fixed:
 
@@ -23,7 +22,7 @@ The algorithm (kept faithful to the reference), with the reference's bugs fixed:
 Only Boltz1 and RF3 propagate gradients cleanly to the cached latents out of the
 box. Protenix now does too -- its ``step()`` keeps an injected latent leaf attached
 via ``detach_unless_leaf`` -- but still needs its diffusion cache disabled for z;
-Boltz2 needs its diffusion conditioning recomputed. See ``docs/IT_OPT_TESTING_PROTENIX.md``.
+Boltz2 needs its diffusion conditioning recomputed. See ``docs/IT_OPT_TESTING.md``.
 
 v1 does ONLY latent optimization: coordinate-space guidance is not applied (the
 attached scaler produces a zero coordinate direction), so the sole steering comes

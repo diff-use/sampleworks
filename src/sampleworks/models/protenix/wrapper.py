@@ -654,7 +654,7 @@ class ProtenixWrapper:
         # pair_z / p_lm / c_l are z-derived caches. When optimizing z_trunk, featurize with
         # enable_diffusion_shared_vars_cache=False so these are None and the diffusion module
         # recomputes them from the live z_trunk; otherwise the z gradient is only partial.
-        # See docs/IT_OPT_TESTING_PROTENIX.md.
+        # See docs/IT_OPT_TESTING.md.
         pair_z = cond.pair_z.detach() if grad_needed and cond.pair_z is not None else cond.pair_z
         p_lm = cond.p_lm.detach() if grad_needed and cond.p_lm is not None else cond.p_lm
         c_l = cond.c_l.detach() if grad_needed and cond.c_l is not None else cond.c_l

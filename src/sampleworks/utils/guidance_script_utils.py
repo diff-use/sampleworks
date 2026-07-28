@@ -514,7 +514,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             # call previously used the default (cache on). We decide it here, in _run_guidance()'s
             # Protenix setup, because latent optimization of the pair representation z requires the
             # cache to be off: with it on, the denoiser reads stale cached tensors and the gradient
-            # never reaches z_trunk (see docs/IT_OPT_TESTING_PROTENIX.md). We disable it for the
+            # never reaches z_trunk (see docs/IT_OPT_TESTING.md). We disable it for the
             # LATENT_OPT type, since other guidance types simply recompute those tensors
             # from the same frozen latents and the result is unchanged.
             enable_diffusion_shared_vars_cache=(guidance_type != GuidanceType.LATENT_OPT),

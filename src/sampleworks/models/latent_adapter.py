@@ -5,7 +5,7 @@ the model's *conditioning* -- the bundle of inputs ``featurize`` produces and ha
 (denoise) call, a (frozen) dataclass on which ``s`` and ``z`` are named attributes. This module lets
 inference-time latent optimization (IT-opt) read those attributes and swap them out, so the scaler
 in ``core/scalers/latent_optimization.py`` can optimize them against an experimental reward. See
-``docs/IT_OPTIMIZATION_PLAN.md``.
+``docs/IT_OPT_DESIGN.md``.
 
 What each piece is for
 ----------------------
