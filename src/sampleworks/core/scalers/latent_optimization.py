@@ -21,9 +21,9 @@ The algorithm (kept faithful to the reference), with the reference's bugs fixed:
     final clean sampling pass with the optimized latents -> saved ensemble
 
 Only Boltz1 and RF3 propagate gradients cleanly to the cached latents out of the
-box. Protenix needs the reversible test edit in ``models/protenix/wrapper.py``
-(and its diffusion cache disabled for z); Boltz2 needs its diffusion conditioning
-recomputed. See ``docs/IT_OPT_TESTING_PROTENIX.md``.
+box. Protenix now does too -- its ``step()`` keeps an injected latent leaf attached
+via ``detach_unless_leaf`` -- but still needs its diffusion cache disabled for z;
+Boltz2 needs its diffusion conditioning recomputed. See ``docs/IT_OPT_TESTING_PROTENIX.md``.
 
 v1 does ONLY latent optimization: coordinate-space guidance is not applied (the
 attached scaler produces a zero coordinate direction), so the sole steering comes

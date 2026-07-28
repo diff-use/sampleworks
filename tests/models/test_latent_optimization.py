@@ -35,7 +35,7 @@ class _Cond:
 def features() -> GenerativeModelInput:
     torch.manual_seed(0)
     cond = _Cond(s=torch.randn(1, 6, 4), z=torch.randn(1, 6, 6, 2))
-    return GenerativeModelInput(x_init=torch.zeros(1, 6, 3), conditioning=cond)
+    return GenerativeModelInput(conditioning=cond)
 
 
 def _make_opt(**overrides) -> LatentOptimization:
