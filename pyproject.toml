@@ -24,7 +24,7 @@ pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "cuequivarianc
 platforms = ["linux-64"]
 
 [tool.pixi.feature.boltz-osx]
-pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "rdkit" = ">=2025.3.6"}
+pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "rdkit" = ">=2025.3.6", "joblib" = "*", "sfcalculator-torch" = ">=0.3.2"}
 platforms = ["osx-arm64"]
 
 
@@ -62,7 +62,11 @@ transformers = "*"
 wandb = "*"
 
 [project]
-authors = [{email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"}]
+authors = [
+    {email = "karson.chrispens@ucsf.edu", name = "Karson Chrispens"},
+    {email = "marcus.collins@astera.org", name = "Marcus D. Collins"}
+]
+
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -88,7 +92,7 @@ dependencies = [
   "loguru",
   "omegaconf",
   "python-dotenv",
-  "sfcalculator-torch>=0.3.2"
+  "sfcalculator-torch>=0.3.3"
 ]
 description = "Experimentally guided biomolecular ensemble generation."
 keywords = ["biomolecular-structure", "crystallography", "diffusion", "ensemble-generation", "protein-structure"]
@@ -96,7 +100,7 @@ license = {file = "LICENSE"}
 name = "sampleworks"
 readme = "README.md"
 requires-python = ">= 3.11, <3.14"
-version = "0.15.0"
+version = "0.18.1"
 
 [project.urls]
 Changelog = "https://github.com/diff-use/sampleworks/blob/main/CHANGELOG.md"
@@ -174,14 +178,15 @@ rdkit = ">=2024.3.5,<2025.9"
 [tool.pixi.feature.rf3.pypi-dependencies]
 rc-foundry = {editable = true, extras = ["rf3"], git = "https://github.com/k-chrispens/foundry.git"}
 
-[tool.pixi.pypi-dependencies]
-sampleworks = {editable = true, path = "."}
-
 # Workspace-level override: reciprocalspaceship (sfcalculator-torch transitive dep)
 # caps pandas<=2.2.3 in its metadata, but runs fine on 2.3.1; protenix hard-pins
 # pandas==2.3.1. Standardize all envs on 2.3.1 to avoid silent downgrades.
 [tool.pixi.pypi-options.dependency-overrides]
 pandas = "==2.3.1"
+gemmi = "==0.6.7"
+
+[tool.pixi.pypi-dependencies]
+sampleworks = {editable = true, path = "."}
 
 [tool.pixi.system-requirements]
 cuda = "12"

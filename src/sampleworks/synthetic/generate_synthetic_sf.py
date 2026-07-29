@@ -1,9 +1,11 @@
 """Generate synthetic structure factor amplitudes via SFcalculator-torch.
 
-Produces an MTZ file of |Fmodel| (or |Fprotein| if not simulate solvent and
-scale) for each input PDB/mmCIF structure. The MTZ file has dummy values for
-SIGFP and optionally R-free flag column. Each structure can be optionally
-overridden with unit cell, space group, atom selection, and occupancy.
+For each input PDB/mmCIF structure, produces an MTZ file of protein structure factors
+only, or when ``--simulate-solvent-and-scale`` is set, both the protein and total sets
+(Fprotein/SIGFprotein/PHIFprotein and Ftotal/SIGFtotal/PHIFtotal) in the same
+MTZ. The MTZ file has dummy values for the SIGF column(s) and optionally an R-free flag
+column. Each structure can be optionally overridden with unit cell, space group, atom
+selection, and occupancy.
 """
 
 import argparse
@@ -12,24 +14,24 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, cast, ClassVar
 
 import gemmi
-import numpy as np
 import reciprocalspaceship as rs
 import reciprocalspaceship.utils
 import torch
-from biotite.structure import AtomArray
 from loguru import logger
-from sampleworks.eval.synthetic_utils import (
+from SFC_Torch import SFcalculator
+from SFC_Torch.io import PDBParser
+
+from sampleworks.synthetic.synthetic_utils import (
+    atomarray_to_gemmi,
     load_structure_for_synthetic_reward,
+    resolve_mtz_column,
     resolve_parallel_jobs,
     validate_occupancy_values,
 )
-from sampleworks.utils.atom_array_utils import BLANK_ALTLOC_IDS
 from sampleworks.utils.torch_utils import try_gpu
-from SFC_Torch import SFcalculator
-from SFC_Torch.io import array2hier, PDBParser
 
 
 @dataclass
@@ -128,62 +130,65 @@ class BatchRowForMTZ:
         )
 
 
-def atomarray_to_gemmi(
-    atom_array: AtomArray,
-    unit_cell: gemmi.UnitCell | None = None,
-    space_group: str | None = None,
-) -> gemmi.Structure:
-    """Convert a biotite AtomArray to a gemmi.Structure for SFcalculator.
+def _build_rs_dataset_for_one_label(
+    sfc: SFcalculator,
+    label: str,
+    structure_factor_column: str,
+    miller_index_column: str,
+    sigma_f_scale: float,
+) -> rs.DataSet:
+    """Build an rs.DataSet that contains only one set of F / SIGF / PHIF columns.
 
-    Anisotropic B-factors are set to zero since biotite does not store them.
-    Blank altloc labels are converted from biotite's '' to gemmi's '\\x00'.
+    ``sfc.prepare_dataset`` returns an amplitude column and a phase column (degrees)
+    for the given ``structure_factor_column`` attribute. We auto-detect those by MTZ
+    dtype (rather than assuming the unexposed ``FMODEL`` / ``PHIFMODEL`` names),
+    rename them to ``F{label}`` / ``PHIF{label}``, and synthesize a ``SIGF{label}``
+    column so several structure-factor sets (e.g. protein and total) can coexist in
+    one MTZ.
 
     Parameters
     ----------
-    atom_array
-        Input structure with occupancy and b_factor annotations
-    unit_cell
-        Crystallographic unit cell for the structure. If None, gemmi defaults
-        to (1.0, 1.0, 1.0, 90.0, 90.0, 90.0) in units of Angstroms and degrees.
-    space_group
-        Space group (in Hermann-Mauguin string format) for the structure. If
-        empty or invalid, SFcalculator defaults to P1.
+    sfc : SFcalculator
+        Structure-factor calculator holding the requested ASU amplitudes and phases.
+    label : str
+        Mtz column suffix. The resulted column names are ``F{label}``/``SIGF{label}``/
+        ``PHIF{label}``. The mtz column names should match what the structure-factor reward
+        later reads. In this script, we use ``"protein"`` and ``"total"`` as the labels.
+    structure_factor_column : str
+        SFcalculator attribute name passed to ``prepare_dataset`` (the amplitudes to emit).
+    miller_index_column : str
+        SFcalculator attribute name holding the Miller indices for ``prepare_dataset``.
+    sigma_f_scale : float
+        Multiplier used to synthesize the ``SIGF{label}`` column from the amplitudes.
 
     Returns
     -------
-    gemmi.Structure
-        Structure ready to be wrapped by SFC_Torch.io.PDBParser
+    rs.DataSet
+        Dataset with columns ``F{label}``, ``SIGF{label}``, ``PHIF{label}`` (in that order).
     """
-    n = len(atom_array)
-    cra_names = [
-        f"{atom_array.chain_id[i]}-0-{atom_array.res_name[i]}-{atom_array.atom_name[i]}"
-        for i in range(n)
-    ]
-    # gemmi uses '\x00' for blank altloc
-    atom_altloc = ["\x00" if a in BLANK_ALTLOC_IDS else a for a in atom_array.altloc_id]
-    structure: gemmi.Structure = array2hier(
-        atom_pos=atom_array.coord,
-        atom_b_aniso=np.zeros((n, 3, 3), dtype=np.float64),
-        atom_b_iso=atom_array.b_factor,
-        atom_occ=atom_array.occupancy,
-        atom_name=atom_array.element,
-        cra_name=cra_names,
-        atom_altloc=atom_altloc,
-        res_id=atom_array.res_id,
+    dataset: rs.DataSet = sfc.prepare_dataset(miller_index_column, structure_factor_column)
+    amplitude_column = resolve_mtz_column(dataset, rs.StructureFactorAmplitudeDtype())
+    phase_column = resolve_mtz_column(dataset, rs.PhaseDtype())
+    logger.debug(
+        f"Auto-detected amplitude column: {amplitude_column}, "
+        f"phase column: {phase_column} for {label}"
     )
-    if unit_cell is not None:
-        structure.cell = unit_cell
-    if space_group is not None:
-        structure.spacegroup_hm = space_group
-    return structure
+    f_col, phi_col, sig_col = f"F{label}", f"PHIF{label}", f"SIGF{label}"
+    # rs.DataSet.rename returns a DataSet at runtime, but the stub types it as DataFrame.
+    dataset = cast(
+        rs.DataSet,
+        dataset.rename(columns={amplitude_column: f_col, phase_column: phi_col}),
+    )
+    dataset[sig_col] = (dataset[f_col] * sigma_f_scale).astype(rs.StandardDeviationDtype())
+    return dataset[[f_col, sig_col, phi_col]]
 
 
 def process_amplitudes_to_dataset(
     sfc: SFcalculator,
+    structure_factor_columns: dict[str, str],
     test_fraction: float = 0.05,
     seed: int | None = None,
     miller_index_column: str = "Hasu_array",
-    structure_factor_column: str = "Ftotal_asu",
     ccp4_convention: bool = False,
     sigma_f_scale: float = 0.2,
     output_path: Path | None = None,
@@ -194,14 +199,20 @@ def process_amplitudes_to_dataset(
     ----------
     sfc: SFcalculator
         SFcalculator instance
+    structure_factor_columns: dict[str, str]
+        Mapping of ``label -> SFcalculator attribute``. Label must match the pattern of
+        SFcalculator attribute ``F{label}_asu`` (e.g. ``protein`` ->  ``Fprotein_asu``).
+        One structure-factor set (``F{label}``/``SIGF{label}``/``PHIF{label}``) is
+        emitted per label, and multiple labels are merged into one MTZ sharing the same
+        HKL list (``miller_index_column``). For example, ``{"protein": "Fprotein_asu",
+        "total": "Ftotal_asu"}`` produces ``Fprotein``/``SIGFprotein``/``PHIFprotein``/
+        ``Ftotal``/``SIGFtotal``/``PHIFtotal`` and optionallyan R-free flag column.
     test_fraction: float
         Fraction of reflections to mark as R-free test set (0 disables)
     seed: int | None
         Optional seed for reproducible R-free flag assignment
     miller_index_column: str
         Attribute name in SFcalculator for hkl indices
-    structure_factor_column: str
-        Attribute name in SFcalculator for structure factors
     ccp4_convention: bool
         If True, use CCP4 convention for R-free flag assignment. Default
         is False, which uses Phenix convention (1 = test, 0 = working).
@@ -215,18 +226,36 @@ def process_amplitudes_to_dataset(
     Returns
     -------
     rs.DataSet
-        Dataset with structure factor amplitudes, fake sigma column, and optionally
-        R-free flags.
+        Dataset with structure factor amplitudes, dummy sigma column(s), phases,
+        and optionally R-free flags.
     """
-    dataset: rs.DataSet = sfc.prepare_dataset(miller_index_column, structure_factor_column)
-    # assumes the first detected column of dtype F is the structure factor amplitude column
-    # avoids hardcoding unexposed column name "FMODEL" from sfc.prepare_dataset().
-    structure_factor_amplitude_column = dataset.select_mtzdtype(
-        rs.StructureFactorAmplitudeDtype()
-    ).columns[0]
-    sigma_f_column = f"SIG{structure_factor_amplitude_column}"
-    dataset[sigma_f_column] = dataset[structure_factor_amplitude_column] * sigma_f_scale
-    dataset[sigma_f_column] = dataset[sigma_f_column].astype(rs.StandardDeviationDtype())
+    # One dataset per label. Labels are free-form column suffixes (F{label}/SIGF{label}/
+    # PHIF{label}). User should supply the resulted column names when using the mtz for
+    # structure-factor reward. In this script, we use "protein" and "total" (for protein
+    # and bulk solvent) as the labels.
+    # All sets share the same HKL index, so this is just a column-wise concat.
+    dataset: rs.DataSet | None = None
+    for label, attribute in structure_factor_columns.items():
+        ds = _build_rs_dataset_for_one_label(
+            sfc, label, attribute, miller_index_column, sigma_f_scale
+        )
+        if dataset is None:
+            dataset = ds
+        else:
+            collisions = dataset.columns.intersection(ds.columns).tolist()
+            if collisions:
+                raise ValueError(
+                    f"Structure-factor label {label!r} would overwrite already-populated "
+                    f"column(s) {collisions} in the merged dataset. Ensure each label maps "
+                    "to a distinct set of column names."
+                )
+            dataset[ds.columns] = ds  # graft the remaining columns on (index-aligned)
+    if dataset is None:  # loop never ran -> the mapping was empty
+        raise ValueError(
+            "structure_factor_columns must contain at least one "
+            "'label -> SFcalculator attribute' entry (e.g. {'protein': 'Fprotein_asu'}), "
+            f"got {structure_factor_columns!r}."
+        )
     if test_fraction > 0:
         dataset = rs.utils.add_rfree(
             dataset,
@@ -289,8 +318,9 @@ def _process_single_row(
         If True, remove ligand molecules (non-water heteroatoms) before computing structure
         factors. Default is False.
     simulate_solvent_and_scale
-        If True, compute bulk solvent and scale factors for Ftotal instead of Fprotein.
-        Default is False.
+        If True, compute bulk solvent and scale factors and write a single MTZ containing
+        both the protein and total structure factor sets. If False (default), only the
+        protein set is written. One set contains F{label}/SIGF{label}/PHIF{label}.
     save_structure
         If True, save the processed structure (after selection and occupancy assignment)
         as mmCIF to output_dir. Unit cell and space group are preserved. Default is False.
@@ -355,15 +385,17 @@ def _process_single_row(
             f"n_atoms: {len(sfc.atom_pos_orth)}"
         )
         sfc.calc_fprotein()
+        structure_factor_columns = {"protein": "Fprotein_asu"}
         if simulate_solvent_and_scale:
             sfc.inspect_data()
             sfc.calc_fsolvent()
             sfc.init_scales(requires_grad=False)
             sfc.calc_ftotal()
-            F_attribute = "Ftotal_asu"
-        else:
-            F_attribute = "Fprotein_asu"
-        logger.debug(f"Computed {F_attribute} for {row.filename} on {device}")
+            structure_factor_columns.update({"total": "Ftotal_asu"})
+        logger.debug(
+            f"Computed {'Fprotein + Ftotal' if simulate_solvent_and_scale else 'Fprotein'} "
+            f"for {row.filename} on {device}"
+        )
     except Exception as e:
         logger.error(
             f"Failed to compute for {row.filename} ({type(e).__name__}): {e}\n"
@@ -376,7 +408,7 @@ def _process_single_row(
     try:
         process_amplitudes_to_dataset(
             sfc,
-            structure_factor_column=F_attribute,
+            structure_factor_columns=structure_factor_columns,
             test_fraction=test_fraction,
             seed=seed,
             output_path=output_path,
@@ -551,7 +583,12 @@ def parse_args() -> argparse.Namespace:
     sf_group.add_argument(
         "--simulate-solvent-and-scale",
         action="store_true",
-        help="Compute bulk solvent and overall scale factors (outputs Ftotal instead of Fprotein)",
+        help=(
+            "Compute bulk solvent and overall scale factors and write both protein and "
+            "total structure factor in one MTZ. Without this flag, protein only. Each set "
+            "is named by its label (either 'protein' or 'total') and contains: "
+            "F{label}/SIGF{label}/PHIF{label}."
+        ),
     )
     sf_group.add_argument(
         "--remove-hydrogens",
