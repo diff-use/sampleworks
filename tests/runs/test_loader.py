@@ -14,6 +14,9 @@ from tests.runs.conftest import BUNDLED
 def _get_model_env_prefixes() -> tuple[str, ...]:
     """Extract model environment prefixes from pyproject.toml.
 
+    Note that this is NOT the same as sampleworks.runs.schema._load_valid_pixi_envs(),
+    this method only pulls the prefixes, which are the environments used for running guidance.
+
     Returns unique base environment names (e.g., "boltz", "rf3") excluding
     "analysis" and dev/platform-specific variants.
     """
@@ -26,7 +29,8 @@ def _get_model_env_prefixes() -> tuple[str, ...]:
             envs = data.get("tool", {}).get("pixi", {}).get("environments", {})
 
             prefixes = {
-                env_name.split("-")[0] for env_name in envs.keys()
+                env_name.split("-")[0]
+                for env_name in envs.keys()
                 if env_name.split("-")[0] != "analysis"
             }
 

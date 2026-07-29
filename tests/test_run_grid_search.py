@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from run_grid_search import GridSearchConfig, get_pixi_env, save_results
+from run_grid_search import get_pixi_env, GridSearchConfig, save_results
 from sampleworks.runs.schema import VALID_PIXI_ENVS
 from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.guidance_script_arguments import JobResult
