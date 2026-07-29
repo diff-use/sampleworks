@@ -1,8 +1,8 @@
 # IT-Opt — Testing, Verification, and Wiring
 
 How to run [`LatentOptimization`](../src/sampleworks/core/scalers/latent_optimization.py), debug it
-when it misbehaves, what it produces on real targets, and where it is wired into the pipeline. For
-the architecture, read [IT_OPT_DESIGN.md](IT_OPT_DESIGN.md) first.
+when it misbehaves, and where it is wired into the pipeline. For the architecture, read
+[IT_OPT_DESIGN.md](IT_OPT_DESIGN.md) first.
 
 Protenix is the primary test target (it is the model the reference algorithm was written for), so the
 recipes below use it; Boltz1/RF3 need neither precondition in §1.
@@ -149,58 +149,14 @@ from the grid-search / save machinery.
 - [core/scalers/latent_optimization.py](../src/sampleworks/core/scalers/latent_optimization.py) —
   per-latent grad clips and the `latent_drift` diagnostic.
 
-## 5. Verification results
+## 5. Open problems
 
-Verified against the sampleworks-release paper's altloc metrics on the already-generated 40-protein
-ensembles (native occupancy — no regeneration). Conditions: `baseline` (unguided), `coord_guidance`
-(the paper's shipped guided method), and `z` (IT-opt) at bond-geometry weights 0 / 5e-5 / 1e-4 / 1e-3.
-
-| dimension (metric) | baseline | coord_guid | z (w=0) | z 5e-5 |
-|---|---|---|---|---|
-| density fit (RSCC ≥ 0.8) | 42% | inert | 92% | 92% |
-| accuracy (nearer-altloc RMSD, med.) | 2.14 | inert | 1.02 | ~1.0 |
-| reach both (RMSD max(A,B) med.; ≤2Å) | 2.18; 46% | inert | 1.3; 54% | ~1.3; 54% |
-| diversity (ensembles that split A/B) | 7% | 8% | 18% | 22% |
-| clean bimodal (clustering ≥ 0.5) | 10.6% | 10.6% | 8% | 9% |
-| clashes (mean) | 0.38 | — | 0.47 | 0.38 |
-
-Bond-geometry weight sweep (mean / median clash / RSCC ≥ 0.8; unguided baseline = 0.38 / 0.00 / 42%):
-
-| weight | mean clash | median clash | RSCC ≥ 0.8 | diversity |
-|---|---|---|---|---|
-| 0 | 0.47 | 0.25 | 92% | 18% |
-| **5e-5** | **0.38** | **0.25** | **92%** | **22%** (default) |
-| 1e-4 | 0.39 | 0.25 | 92% | 17% |
-| 1e-3 | 0.35 | 0.00 | 98% | 11% |
-
-**Interpretation.** IT-opt-`z` strongly improves density fit and accuracy (RSCC ≥ 0.8 goes 42% → 92%,
-mirroring the paper's *guided* 45.4% → 96.0%; nearer-altloc RMSD halves). It modestly improves
-diversity (~3× more ensembles reach both altlocs, 7% → 22%) but does **not** achieve clean bimodal
-capture — the clustering silhouette stays flat and ~80% of ensembles still collapse to one
-conformation, consistent with the paper's thesis. `coord_guidance` is inert on every metric here. The
-default bond weight `5e-5` is the smallest that restores mean clash to baseline while keeping the full
-density gain and the diversity; `1e-3` over-constrains and erodes diversity. Default
-`bond_length_weight` is `5e-5` (`LatentOptimization.__init__` + `--bond-length-weight`); `0` disables
-the penalty.
-
-## 6. Open problems
-
-1. **`coord_guidance` is inert vs. the paper.** The paper reports coordinate guidance taking RSCC ≥
-   0.8 from 45.4% to 96.0%; here it is indistinguishable from baseline on every metric, and it is the
-   *latent* optimization that reproduces the density jump. Likely a step-size/config difference (paper
-   optimal 0.1 for Protenix). Resolve with a `coord_guidance` guidance-strength sweep.
-2. **RSCC uses a local scorer, not the repo-exact pipeline.** The numbers come from a homemade scorer,
-   not `scripts/eval/rscc_grid_search_script.py` (`process_group` → density transformer → Kabsch →
-   `extract_tight` at 2.0 Å → `rscc`). The homemade baseline (42%) matches the paper's (45.4%), which
-   calibrates it, but a repo-exact run is the final confirmation. Needs a depth-4 trial-dir tree
+1. **Density fit was measured with a local scorer**, not `scripts/eval/rscc_grid_search_script.py`, so
+   no number so far is repo-exact. A repo-exact run needs a depth-4 trial-dir tree
    (`{PROTEIN}_native_occ/{model}_MD/{scaler}/ens{N}_gw{W}/refined.cif`); the generated ensembles are
    flat, so symlinks suffice.
-3. **Absolute fractions sit above the paper's.** Baseline is 42% (RSCC ≥ 0.8) and 10.6% (clustering ≥
-   0.5) vs the paper's 45.4% and 1.6% — RSCC matches, clustering is ~7× higher. Likely row population:
-   we score native occupancy only (~85 rows), the paper aggregates the full 791-segment sweep.
-   Within-our-runs comparisons are sound; cross-to-paper *absolute* fractions are not until the
-   population is matched.
-4. **Five proteins need patching.** 6RP1, 7Z0E, 4OLE, 8Z76, 2I6H raise "No common atoms found" (chain/
-   residue-naming mismatch), so they drop from every aggregate. Resolve with
-   `scripts/patch_output_cif_files.py` (needs network for `rcsb.fetch`; the `~/.sampleworks/rcsb`
-   cache is empty) or sequence-based atom matching.
+2. **Only native-occupancy rows were scored.** Enough to compare conditions on identical rows;
+   absolute fractions need a wider population.
+3. **Five proteins are excluded.** 6RP1, 7Z0E, 4OLE, 8Z76, 2I6H raise "No common atoms found"
+   (chain/residue-naming mismatch). Fix with `scripts/patch_output_cif_files.py` (needs network for
+   `rcsb.fetch`) or sequence-based atom matching.
