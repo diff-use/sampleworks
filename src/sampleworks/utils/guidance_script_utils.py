@@ -507,6 +507,10 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
 
         structure = annotate_structure_for_protenix(
             structure,
+            # Root Protenix's per-sample input dump (protenix_input*.json) under the job's output
+            # dir; otherwise out_dir falls back to the input id, resolves against the CWD, and
+            # leaves a stray <input_id>/ folder there on every run.
+            out_dir=str(Path(args.output_dir) / "protenix_input"),
             recycling_steps=recycling_steps,
             # ensemble_size removed: #330 dropped it from the wrapper annotate signature; the
             # ensemble is now sized by the scaler via initialize_from_prior().
