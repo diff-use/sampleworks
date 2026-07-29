@@ -5,7 +5,7 @@ understand the feature: **what it is, the as-built algorithm, the components and
 the code, per-model gradient readiness, and the design choices that make it correct.**
 
 Companions (read only if you need them):
-- [IT_OPT_TESTING.md](IT_OPT_TESTING.md) — how to run, debug, and verify it, plus empirical results.
+- [IT_OPT_TESTING.md](IT_OPT_TESTING.md) — how to run, debug, and verify it, plus the open problems.
 - [IT_OPT_REFERENCE_NOTES.md](developer_notes/IT_OPT_REFERENCE_NOTES.md) — deep dive on the external `it_opt/`
   reference tree and its bug catalog (only relevant if you are re-porting from the reference).
 
