@@ -10,21 +10,59 @@ assignment or an automatically allocated ``gpu_count``.
 
 from __future__ import annotations
 
+import os
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
-VALID_PIXI_ENVS = (
-    "analysis",
-    "analysis-dev",
-    "boltz",
-    "boltz-analysis",
-    "boltz-dev",
-    "protenix",
-    "protenix-dev",
-    "rf3",
-    "rf3-dev",
-)
+def _pixi_manifest_path() -> Path | None:
+    """Return the manifest declaring this workspace's pixi environments.
+
+    ``SAMPLEWORKS_PIXI_PROJECT_DIR`` wins, matching how the runner resolves the
+    pixi project, so the environments validated here are the ones the runner
+    will actually look for. In the ACTL image the source tree and the baked
+    project dir differ, and walking up from this file would silently pick up
+    whichever ``pyproject.toml`` happens to sit above the environment.
+
+    Returns
+    -------
+    Path or None
+        Manifest path, or ``None`` when no manifest is reachable.
+    """
+    override = os.environ.get("SAMPLEWORKS_PIXI_PROJECT_DIR")
+    if override:
+        candidate = Path(override) / "pyproject.toml"
+        if candidate.is_file():
+            return candidate
+    for directory in Path(__file__).resolve().parents:
+        candidate = directory / "pyproject.toml"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_valid_pixi_envs() -> tuple[str, ...]:
+    """Return the pixi environment names declared in the workspace manifest.
+
+    Returns
+    -------
+    tuple of str
+        Declared environment names, or an empty tuple when no manifest is
+        reachable — a wheel install does not ship ``pyproject.toml``. Empty
+        disables :class:`Job` env validation rather than making this module
+        unimportable; the runner still reports a missing environment clearly.
+    """
+    manifest = _pixi_manifest_path()
+    if manifest is None:
+        return ()
+    with open(manifest, "rb") as f:
+        data = tomllib.load(f)
+    return tuple(sorted(data.get("tool", {}).get("pixi", {}).get("environments", {})))
+
+
+VALID_PIXI_ENVS = _load_valid_pixi_envs()
 
 
 @dataclass(frozen=True)
@@ -83,7 +121,7 @@ class Job:
 
     def __post_init__(self) -> None:
         """Validate ``env`` and required string fields."""
-        if self.env not in VALID_PIXI_ENVS:
+        if VALID_PIXI_ENVS and self.env not in VALID_PIXI_ENVS:
             raise ValueError(
                 f"Job {self.name!r}: env must be one of {VALID_PIXI_ENVS}, got {self.env!r}"
             )
