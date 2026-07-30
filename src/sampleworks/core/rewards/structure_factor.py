@@ -567,6 +567,15 @@ class StructureFactorRewardFunction:
             contributes ``Fmask`` in a scale-invariant way. All conformers are assumed
             to contribute the solvent mask equally (1/E weight).
 
+            Two caveats from ``rsgrid2realmask``'s batch path (SFC_Torch 0.3.3):
+
+            - It is NOT permutation-invariant over the ensemble. The quantile ``CUTOFF``
+              for bulk solvent mask comes from ``real_grid_norm[0]`` (batch element 0)
+              and is then used for every conformer.
+            - Above 5M voxels per conformer the cutoff is a quantile of an unseeded
+              ``torch.randperm`` subsample, making the mask (and its gradients)
+              nondeterministic run-to-run.
+
         Parameters
         ----------
         Fprotein_HKL
