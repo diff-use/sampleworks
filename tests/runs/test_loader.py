@@ -49,7 +49,7 @@ MODEL_ENV_PREFIXES = _get_model_env_prefixes()
 def test_list_presets_returns_bundled_experiments() -> None:
     """Preset discovery returns the expected bundled experiment names."""
     names = loader.list_presets()
-    assert set(names) == BUNDLED, f"unexpected experiment presets: {names}"
+    assert set(names) == set(BUNDLED), f"unexpected experiment presets: {names}"
 
 
 @pytest.mark.parametrize("name", BUNDLED)

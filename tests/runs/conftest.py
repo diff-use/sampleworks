@@ -32,7 +32,9 @@ def force_pixi_argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SAMPLEWORKS_FORCE_PIXI", "1")
 
 
-BUNDLED = {
+# A tuple, not a set: this parametrizes tests, and set iteration order varies
+# with PYTHONHASHSEED, which would make test IDs differ between runs.
+BUNDLED = (
     "boltz",
     "boltz1",
     "boltz2",
@@ -46,4 +48,4 @@ BUNDLED = {
     "rf3_partial",
     "rf3_partial_chiral_off",
     "rf3_protenix",
-}
+)

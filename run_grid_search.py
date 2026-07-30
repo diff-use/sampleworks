@@ -394,7 +394,6 @@ def run_guidance_queue_script(
         Result from the subprocess that ran the worker queue.
     """
     pixi_env_name = get_pixi_env(model)
-    log.warning(f"Running guidance job queue, job_queue_path: {job_queue_path}")
     script_path = Path(__file__).parent / "scripts" / "run_guidance_pipeline.py"
     env_python = get_pixi_env_python(pixi_env_name)
     if env_python:
