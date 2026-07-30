@@ -15,7 +15,7 @@ def test_list_prints_all_experiment_presets(capsys: pytest.CaptureFixture[str]) 
     exit_code = cli.main(["--list"])
     assert exit_code == 0
     out = capsys.readouterr().out.splitlines()
-    assert set(out) == BUNDLED
+    assert set(out) == set(BUNDLED)
 
 
 def test_show_prints_resolved_preset(
