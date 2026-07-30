@@ -16,7 +16,10 @@ invariant instead of a latent footgun. See ``test_per_conformer_occupancy_or_b_r
 
 import logging
 from pathlib import Path
+from unittest import mock
 
+import gemmi
+import numpy as np
 import pytest
 import reciprocalspaceship as rs
 import torch
@@ -43,8 +46,8 @@ def make_prepared_reward(mtz_path, atom_array, device: torch.device, **kwargs):
     ``normalize_amplitude``, ``exclude_free_reflections``, ``expcolumns``). The single fixed
     config lives in the ``reward_function_1vme_sf`` fixture; these tests need varied configs.
     """
-    rf = StructureFactorRewardFunction(mtz_path, device=device, **kwargs)
-    rf.prepare(atom_array)
+    rf = StructureFactorRewardFunction(mtz_path, **kwargs)
+    rf.prepare(atom_array, device=device)
     return rf
 
 
@@ -67,57 +70,127 @@ def sf_true_inputs(test_coordinates_1vme_sf, device: torch.device) -> dict:
 
 
 class TestStructureFactorConstruction:
-    """Construction-time behavior. These resolve columns in ``__init__`` before any SF compute,
-    so they run on CPU (no GPU/``prepare()`` needed) and read only the MTZ header."""
+    """Construction-time behavior, on CPU: no GPU and no ``prepare()``/SF compute.
+
+    ``__init__`` reads exactly three things from the MTZ (``_resolve_mtz_metadata``): the unit
+    cell, the space group, and the amplitude/sigma column layout. For efficiency, we build a
+    ``toy_multi_set_mtz`` instead of taking the session-scoped ``mtz_path_1vme`` that on a CPU
+    costs ~18 s.
+    """
 
     @pytest.fixture
-    def mtz_columns(self, mtz_path_1vme):
-        """``(amplitude_cols, sigma_cols)`` detected in the test MTZ, in MTZ order.
+    def toy_unit_cell(self) -> gemmi.UnitCell:
+        """The unit cell written into ``toy_multi_set_mtz``."""
+        return gemmi.UnitCell(11.0, 22.0, 33.0, 90.0, 100.0, 120.0)
 
-        The 1vme MTZ is multi-set, so ``amplitude_cols``/``sigma_cols`` each list more than one
-        column (e.g. ``[Fprotein, Ftotal]`` / ``[SIGFprotein, SIGFtotal]``). Tests assert by
-        position rather than literal names so they don't hard-code the layout.
-        """
-        ds = rs.read_mtz(str(mtz_path_1vme))
-        amplitude_cols = list(ds.select_mtzdtype(rs.StructureFactorAmplitudeDtype()).columns)
-        sigma_cols = list(ds.select_mtzdtype(rs.StandardDeviationDtype()).columns)
-        assert len(amplitude_cols) > 1 and len(sigma_cols) > 1  # precondition: a multi-set MTZ
-        return amplitude_cols, sigma_cols
+    @pytest.fixture
+    def toy_space_group(self) -> str:
+        """The space group (Hermann-Mauguin string) written into ``toy_multi_set_mtz``."""
+        return "P 1 2 1"
 
-    def test_multi_set_mtz_requires_expcolumns(self, mtz_path_1vme, mtz_columns):
+    @pytest.fixture
+    def protein_columns(self) -> list[str]:
+        """The ``[amplitude, sigma]`` column names for protein structure factors."""
+        return ["Fprotein", "SIGFprotein"]
+
+    @pytest.fixture
+    def total_columns(self) -> list[str]:
+        """The ``[amplitude, sigma]`` column names for total structure factors."""
+        return ["Ftotal", "SIGFtotal"]
+
+    @pytest.fixture
+    def toy_multi_set_mtz(
+        self,
+        tmp_path: Path,
+        toy_unit_cell: gemmi.UnitCell,
+        toy_space_group: str,
+        protein_columns: list[str],
+        total_columns: list[str],
+    ) -> Path:
+        """A minimal multi-set MTZ carrying header metadata on unit cell and space group."""
+        hkl = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1], [2, 1, 0]], dtype=np.int32)
+        amplitudes = np.array([100.0, 90.0, 80.0, 70.0, 60.0], dtype=np.float32)
+        columns = {"H": hkl[:, 0], "K": hkl[:, 1], "L": hkl[:, 2]}
+        for (amplitude_col, sigma_col), scale in ((protein_columns, 1.0), (total_columns, 1.1)):
+            columns[amplitude_col] = amplitudes * scale
+            columns[sigma_col] = amplitudes / 10.0
+        dataset = rs.DataSet(
+            columns, cell=toy_unit_cell, spacegroup=toy_space_group
+        ).infer_mtz_dtypes()
+        dataset.set_index(["H", "K", "L"], inplace=True)
+        path = tmp_path / "toy_multi_set.mtz"
+        dataset.write_mtz(str(path))
+        return path
+
+    def test_multi_set_mtz_requires_expcolumns(self, toy_multi_set_mtz):
         """A multi-set MTZ with no ``expcolumns`` is ambiguous and fails fast, rather than
         silently auto-selecting the first amplitude/sigma pair.
         """
         with pytest.raises(ValueError, match="Multiple SFAmplitude columns"):
-            StructureFactorRewardFunction(mtz_path_1vme, device=torch.device("cpu"))
+            StructureFactorRewardFunction(toy_multi_set_mtz)
 
-    def test_explicit_expcolumns_override_selection(self, mtz_path_1vme, mtz_columns):
+    def test_explicit_expcolumns_override_selection(self, toy_multi_set_mtz, total_columns):
         """Explicit ``expcolumns`` are used verbatim, overriding the auto-selected first pair."""
-        amplitude_cols, sigma_cols = mtz_columns
-        explicit = [amplitude_cols[-1], sigma_cols[-1]]  # the last set, not the default first
-        reward = StructureFactorRewardFunction(
-            mtz_path_1vme, expcolumns=explicit, device=torch.device("cpu")
-        )
-        assert reward.expcolumns == explicit
+        reward = StructureFactorRewardFunction(toy_multi_set_mtz, expcolumns=total_columns)
+        assert reward.expcolumns == total_columns
 
-    def test_unknown_expcolumns_raise(self, mtz_path_1vme, mtz_columns):
+    def test_unknown_expcolumns_raise(self, toy_multi_set_mtz, protein_columns):
         """Explicit ``expcolumns`` naming a column absent from the MTZ fail fast at construction."""
-        _, sigma_cols = mtz_columns
         with pytest.raises(ValueError, match="is not among the dataset's SFAmplitude columns"):
             StructureFactorRewardFunction(
-                mtz_path_1vme, expcolumns=["Fnope", sigma_cols[0]], device=torch.device("cpu")
+                toy_multi_set_mtz, expcolumns=["Fnonexistent", protein_columns[1]]
             )
 
-    @pytest.mark.parametrize("bad_partition", [0, -5])
-    def test_nonpositive_batch_partition_raises(self, mtz_path_1vme, bad_partition):
-        """A non-positive ``batch_partition`` (an OOM knob) fails fast at construction.
+    @pytest.mark.parametrize(
+        "bad_expcolumns",
+        [
+            ["Fprotein"],  # missing the sigma
+            ["Fprotein", "SIGFprotein", "Ftotal"],  # too many
+            [],
+            "FP",  # a bare string of length 2 would otherwise split into ["F", "P"]
+        ],
+    )
+    def test_malformed_expcolumns_raise(self, toy_multi_set_mtz, bad_expcolumns):
+        """``expcolumns`` that is not an ``[amplitude, sigma]`` pair fails fast, including a
+        bare string, which would otherwise be indexed character-wise into a bogus column pair.
+        """
+        with pytest.raises(ValueError, match=r"expcolumns must be a \[amplitude, sigma\] pair"):
+            StructureFactorRewardFunction(toy_multi_set_mtz, expcolumns=bad_expcolumns)
+
+    def test_cell_and_space_group_read_from_mtz(
+        self, toy_multi_set_mtz, toy_unit_cell, toy_space_group, total_columns
+    ):
+        """With no caller override, the cell and space group are parsed off the MTZ."""
+        reward = StructureFactorRewardFunction(toy_multi_set_mtz, expcolumns=total_columns)
+        assert reward.space_group == toy_space_group
+        assert reward.unit_cell.parameters == pytest.approx(toy_unit_cell.parameters, abs=1e-3)
+
+    def test_provided_cell_and_space_group_override_mtz_with_warning(
+        self, toy_multi_set_mtz, total_columns, caplog
+    ):
+        """A caller-supplied cell / space group disagreeing with the MTZ is used and warned."""
+        override_cell = gemmi.UnitCell(80.0, 90.0, 100.0, 90.0, 90.0, 90.0)
+        override_space_group = "P 21 21 21"
+        with caplog.at_level(logging.WARNING):
+            reward = StructureFactorRewardFunction(
+                toy_multi_set_mtz,
+                expcolumns=total_columns,
+                unit_cell=override_cell,
+                space_group=override_space_group,
+            )
+        assert "Provided unit_cell" in caplog.text
+        assert "Provided space_group" in caplog.text
+        assert reward.space_group == override_space_group
+        assert reward.unit_cell.parameters == pytest.approx(override_cell.parameters, abs=1e-3)
+
+    @pytest.mark.parametrize("bad_partition", [0, -5, 10.0, 2.5, "10", None, True])
+    def test_invalid_batch_partition_raises(self, toy_multi_set_mtz, bad_partition):
+        """A non-integer or non-positive ``batch_partition`` (an OOM knob) fails fast.
 
         The check precedes column resolution, so no ``expcolumns`` are needed.
         """
         with pytest.raises(ValueError, match="batch_partition must be a positive integer"):
-            StructureFactorRewardFunction(
-                mtz_path_1vme, batch_partition=bad_partition, device=torch.device("cpu")
-            )
+            StructureFactorRewardFunction(toy_multi_set_mtz, batch_partition=bad_partition)
 
 
 @pytest.mark.gpu
@@ -206,15 +279,14 @@ class TestStructureFactorBulkSolvent:
         return kwargs, ref
 
     def test_combined_fits_ftotal_column(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
     ):
         """Adding default-scaled bulk solvent (``combined``) fits the synthetic ``Ftotal``
         column far better than protein-only (``off``) — the synthetic ground truth was generated
         with the same default scales."""
-        _, atom_array = test_coordinates_1vme_sf
         reward_with_solvent_off = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Ftotal", "SIGFtotal"],
             bulk_solvent="off",
@@ -222,7 +294,7 @@ class TestStructureFactorBulkSolvent:
         )
         reward_with_solvent_combined = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Ftotal", "SIGFtotal"],
             bulk_solvent="combined",
@@ -233,14 +305,13 @@ class TestStructureFactorBulkSolvent:
         assert loss_combined < loss_off
 
     def test_ftotal_modes_agree_for_single_conformer(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
     ):
         """For a single conformer (E=1) ``mask(<rho>)`` and ``<mask(rho)>`` are the same mask,
         so ``combined`` and ``per_conformer`` give the same loss."""
-        _, atom_array = test_coordinates_1vme_sf
         reward_with_solvent_combined = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Ftotal", "SIGFtotal"],
             bulk_solvent="combined",
@@ -248,7 +319,7 @@ class TestStructureFactorBulkSolvent:
         )
         reward_with_solvent_per_conformer = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Ftotal", "SIGFtotal"],
             bulk_solvent="per_conformer",
@@ -260,7 +331,7 @@ class TestStructureFactorBulkSolvent:
         )
 
     def test_per_conformer_averages_masks_over_ensemble(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
     ):
         """E=2 *identical* conformers (occ 1/2 each) score the same as the single conformer.
 
@@ -273,10 +344,9 @@ class TestStructureFactorBulkSolvent:
         occupancy is properly rejected by the reward now — see
         ``TestStructureFactorOccupancy.test_per_conformer_occupancy_or_b_raises``.
         """
-        _, atom_array = test_coordinates_1vme_sf
         reward = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Ftotal", "SIGFtotal"],
             bulk_solvent="per_conformer",
@@ -300,6 +370,9 @@ class TestStructureFactorBulkSolvent:
         E=2 *identical* conformers) never exercise the nonlinearity. Here the two frames differ in
         the alternate-conformation coordinates, so the combined mask (built from the summed
         density) and the per-conformer mean of masks genuinely diverge.
+
+        The mock.patch.object supplements the numerical difference test by checking the dispatch
+        logic and ensure that the correct SFcalculator method for Fsolvent is called.
         """
         ensemble, ref = sf_ensemble_inputs
         reward_combined = make_prepared_reward(
@@ -319,9 +392,20 @@ class TestStructureFactorBulkSolvent:
             normalize_amplitude=False,
         )
         loss_combined = reward_combined(**ensemble)
-        loss_per_conformer = reward_per_conformer(**ensemble)
+        # Specifcially checking the dispatch logic in _compute_ensemble_ftotal, where
+        # ``bulk_solvent="per_conformer"`` should route to a calc_fsolvent_batch call.
+        with mock.patch.object(
+            reward_per_conformer.sfc,
+            "calc_fsolvent_batch",
+            wraps=reward_per_conformer.sfc.calc_fsolvent_batch,
+        ) as sfc_calc_fsolvent_batch:
+            loss_per_conformer = reward_per_conformer(**ensemble)
+        assert sfc_calc_fsolvent_batch.call_count == 1
         assert torch.isfinite(loss_combined) and torch.isfinite(loss_per_conformer)
-        assert not torch.allclose(loss_combined, loss_per_conformer)
+        assert not torch.allclose(loss_combined, loss_per_conformer), (
+            f"combined and per_conformer agree: {loss_combined.item()} vs "
+            f"{loss_per_conformer.item()}"
+        )
 
 
 @pytest.mark.gpu
@@ -329,15 +413,14 @@ class TestStructureFactorConfig:
     """Config knobs beyond the fixture default: the raw-amplitude path and reflection selection."""
 
     def test_perturbed_has_higher_loss_with_unnormalized_amplitude(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, sf_true_inputs, device
+        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
     ):
         """The ``normalize_amplitude=False`` branch (raw ``|F|`` vs ``sfc.Fo``) runs and ranks
         the true structure below a perturbed one. The normalized path is the fixture default,
         covered by the contract tests."""
-        _, atom_array = test_coordinates_1vme_sf
         reward = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Fprotein", "SIGFprotein"],
             normalize_amplitude=False,
@@ -347,20 +430,17 @@ class TestStructureFactorConfig:
         perturbed = {**sf_true_inputs, "coordinates": coords + torch.randn_like(coords) * 0.5}
         assert reward(**perturbed) > reward(**sf_true_inputs)
 
-    def test_exclude_free_set_drops_reflections(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, device
-    ):
+    def test_exclude_free_set_drops_reflections(self, mtz_path_1vme, structure_1vme_sf, device):
         """``exclude_free_reflections=True`` drops the R-free test set from the scored mask.
 
         The synthetic MTZ's free column is ``R-free-flags`` with the test set flagged 1
         (rs/Phenix convention), so SFcalculator is pointed at it explicitly — its defaults
         (``FreeR_flag`` / testset value 0) don't match. Outliers are always excluded regardless.
         """
-        _, atom_array = test_coordinates_1vme_sf
         free_flag_kwargs = {"freeflag": "R-free-flags", "testset_value": 1}
         reward_all = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Fprotein", "SIGFprotein"],
             exclude_free_reflections=False,
@@ -368,7 +448,7 @@ class TestStructureFactorConfig:
         )
         reward_work = make_prepared_reward(
             mtz_path_1vme,
-            atom_array,
+            structure_1vme_sf,
             device,
             expcolumns=["Fprotein", "SIGFprotein"],
             exclude_free_reflections=True,
@@ -389,34 +469,28 @@ class TestStructureFactorConfig:
         dataset.write_mtz(str(path))
         return path
 
-    def test_empty_reflection_mask_raises(
-        self, mtz_all_free_1vme, test_coordinates_1vme_sf, device
-    ):
+    def test_empty_reflection_mask_raises(self, mtz_all_free_1vme, structure_1vme_sf, device):
         """A mask that scores no reflection fails in ``prepare()``."""
-        _, atom_array = test_coordinates_1vme_sf
         with pytest.raises(ValueError, match="No reflections remain"):
             make_prepared_reward(
                 mtz_all_free_1vme,
-                atom_array,
+                structure_1vme_sf,
                 device,
                 expcolumns=["Fprotein", "SIGFprotein"],
                 exclude_free_reflections=True,
                 sfcalculator_kwargs={"freeflag": "R-free-flags", "testset_value": 1},
             )
 
-    def test_inverted_testset_value_warns(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, device, caplog
-    ):
+    def test_inverted_testset_value_warns(self, mtz_path_1vme, structure_1vme_sf, device, caplog):
         """An inverted ``testset_value`` keeps only the test set, and is warned about.
 
         Inverting the flag keeps the fraction of valid reflections small although the
         asbolute size can still be large.
         """
-        _, atom_array = test_coordinates_1vme_sf
         with caplog.at_level(logging.WARNING):
             reward = make_prepared_reward(
                 mtz_path_1vme,
-                atom_array,
+                structure_1vme_sf,
                 device,
                 expcolumns=["Fprotein", "SIGFprotein"],
                 exclude_free_reflections=True,
@@ -431,19 +505,16 @@ class TestStructureFactorConfig:
         assert "testset_value" in caplog.text
         assert "the MTZ reflection range" not in caplog.text
 
-    def test_small_reflection_set_warns(
-        self, mtz_path_1vme, test_coordinates_1vme_sf, device, caplog
-    ):
+    def test_small_reflection_set_warns(self, mtz_path_1vme, structure_1vme_sf, device, caplog):
         """A reflection set too small of absolute size to guide coordinates should warn.
 
         Truncating to 10 A leaves only a few hundred reflections but the fraction of valid
         reflections can still be large.
         """
-        _, atom_array = test_coordinates_1vme_sf
         with caplog.at_level(logging.WARNING):
             reward = make_prepared_reward(
                 mtz_path_1vme,
-                atom_array,
+                structure_1vme_sf,
                 device,
                 expcolumns=["Fprotein", "SIGFprotein"],
                 resolution=10.0,

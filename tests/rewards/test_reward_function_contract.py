@@ -32,9 +32,10 @@ from tests.rewards.reward_input_helpers import build_reward_input_tensors_withou
 
 # Every test exercises CUDA-targeted reward code on the `device` fixture (try_gpu), so the
 # whole module is gpu-marked. Deliberately NOT `slow`: measured warm per-test time is ~1s
-# at most (the SFC gradient-descent loop; the rest are sub-0.5s). The ~8s fixed cost is a
-# one-time import + session-scoped reward construction (real_space + SFC), paid once per
-# pytest invocation and not skippable by `slow`-marking these tests.
+# at most (the SFC gradient-descent loop; the rest are sub-0.5s). The fixed cost is a one-time
+# import, the session-scoped synthetic SF generation, and session-scoped reward construction
+# (real_space + SFC), paid once per pytest invocation and not skippable by `slow`-marking
+# these tests.
 pytestmark = pytest.mark.gpu
 
 

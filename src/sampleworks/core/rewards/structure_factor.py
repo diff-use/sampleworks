@@ -1,41 +1,4 @@
-"""Reciprocal-space reward function for structure-factor amplitudes.
-
-Scores structures against experimental (or synthetic) structure-factor
-amplitudes ``|Fobs|`` using ``SFcalculator`` from ``SFC_Torch``. This is the
-reciprocal-space counterpart to :class:`RealSpaceRewardFunction` in
-``real_space_density.py``.
-
-Unlike the real-space reward, ``SFcalculator`` needs the full topology
-(``PDBParser`` -> ``gemmi.Structure``: atom names/elements, unit cell, space
-group, ``resolution`` -> the HKL set) at construction. That information is only
-available once the model atom array is known, i.e. *after*
-``process_structure_to_trajectory_input`` runs inside ``sample()``. We
-therefore split construction in two:
-
-* ``__init__`` stores only the up-front config (target MTZ, ``resolution``,
-  ``scattering_factor_mode``, unit cell, space group, loss, device); it does
-  *not* build ``SFcalculator``.
-* :meth:`prepare` builds ``SFcalculator`` from the model atom array. The caller
-  (a step scaler) is responsible for invoking it before the first ``__call__``.
-
-``bulk_solvent`` selects the scored amplitude and, when solvent is included, how
-it is combined across an ensemble (see :meth:`_compute_ensemble_ftotal`):
-
-* ``"off"`` (default): ``|Fprotein|`` — bare protein, no solvent, no scales.
-* ``"combined"``: ``|Ftotal|`` with one bulk-solvent mask from the *combined*
-  protein density, ``mask(<rho>)`` — matches the altloc single-structure
-  ``Ftotal`` that ``generate_synthetic_sf`` writes to the MTZ.
-* ``"per_conformer"``: ``|Ftotal|`` with the mean of the per-conformer masks,
-   ``<mask(rho)>`` — the ensemble-averaged bulk solvent. Each of the conformers
-  contributes a solvent mask at 1/E weight.
-
-``"combined"`` and ``"per_conformer"`` differ only for a real ensemble
-(batch > 1); the mask operator is nonlinear, so ``mask(<rho>) != <mask(rho)>``.
-Both use the default, *unrefined* scales ``kiso=1``, ``kmask=0.35``, small
-``uaniso``; refining them during sampling is left for a later revision.
-``normalize_amplitude`` (``|F|`` vs ``|E|``) is orthogonal and composes with any
-``bulk_solvent`` choice.
-"""
+"""Reciprocal-space reward function for structure-factor amplitudes."""
 
 from __future__ import annotations
 
@@ -50,7 +13,6 @@ import torch
 from jaxtyping import Bool, Complex, Float, Int
 from loguru import logger
 from sampleworks.synthetic.synthetic_utils import atomarray_to_gemmi, resolve_mtz_column
-from sampleworks.utils.torch_utils import try_gpu
 from SFC_Torch import SFcalculator
 from SFC_Torch.io import PDBParser
 
@@ -81,9 +43,9 @@ _RESERVED_SFC_KWARGS = frozenset(
 # 1%, so 75% is a safe threshold.
 # The min absolute number is intended to catch a reflection set too small to guide the structure
 # generation. We should have on the order of 1e4 reflections for 2A resolution macromolecular
-# data, so 1e3 is a safe threshold.
+# data, so 5e3 is a safe threshold.
 _MIN_RETAINED_REFLECTION_FRACTION = 0.75
-_MIN_RETAINED_REFLECTIONS = 1_000
+_MIN_RETAINED_REFLECTIONS = 5_000
 
 # Tolerances for warning when a caller-supplied unit cell disagrees with the MTZ's,
 # passed to gemmi.UnitCell.is_similar: relative tolerance on the cell edges (a, b, c)
@@ -92,7 +54,7 @@ _CELL_LENGTH_REL_TOL = 1e-2
 _CELL_ANGLE_DEG_TOL = 0.5
 
 
-def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> list[str]:
+def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> tuple[str, str]:
     """Resolve the ``[amplitude, sigma]`` columns to read from ``ds``, logging the choice.
 
     Auto-detection requires the MTZ to hold exactly one amplitude column and one sigma
@@ -108,8 +70,8 @@ def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> list[st
 
     Returns
     -------
-    list of str
-        The resolved ``[amplitude, sigma]`` pair.
+    tuple of str
+        The resolved ``(amplitude, sigma)`` pair, in that order.
 
     Raises
     ------
@@ -120,13 +82,13 @@ def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> list[st
     """
     amplitude_dtype, sigma_dtype = rs.StructureFactorAmplitudeDtype(), rs.StandardDeviationDtype()
     if expcolumns is not None:
-        if len(expcolumns) != 2:
-            raise ValueError(
-                f"expcolumns must be a [amplitude, sigma] pair; got {list(expcolumns)}."
-            )
+        # A bare string of length 2 could pass the length check and fail in not so obvious ways
+        # ("FP" -> amplitude "F", sigma "P"), so reject it explicitly.
+        if isinstance(expcolumns, str) or len(expcolumns) != 2:
+            raise ValueError(f"expcolumns must be a [amplitude, sigma] pair; got {expcolumns!r}.")
         amplitude = resolve_mtz_column(ds, amplitude_dtype, column=expcolumns[0])
         sigma = resolve_mtz_column(ds, sigma_dtype, column=expcolumns[1])
-        return [amplitude, sigma]
+        return amplitude, sigma
 
     amplitude = resolve_mtz_column(ds, amplitude_dtype)
     sigma = resolve_mtz_column(ds, sigma_dtype)
@@ -134,7 +96,7 @@ def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> list[st
         f"No expcolumns provided; auto-detected SFC columns: "
         f"amplitude='{amplitude}', sigma='{sigma}'."
     )
-    return [amplitude, sigma]
+    return amplitude, sigma
 
 
 class StructureFactorRewardFunction:
@@ -152,23 +114,51 @@ class StructureFactorRewardFunction:
         normalize_amplitude: bool = False,
         exclude_free_reflections: bool = False,
         batch_partition: int = 10,
-        device: torch.device | None = None,
         sfcalculator_kwargs: dict | None = None,
     ):
         """Reward for fitting structure-factor amplitudes via SFcalculator.
 
+        Scores structures against experimental (or synthetic) structure-factor
+        amplitudes ``|Fobs|`` using ``SFcalculator`` from ``SFC_Torch``. This is the
+        reciprocal-space counterpart to :class:`RealSpaceRewardFunction` in
+        ``real_space_density.py``.
+
         The reward compares the model amplitudes ``|Fcalc|`` against a target
         ``|Fobs|`` loaded from an MTZ. For an ensemble (batch dimension) of
-        ``E`` conformers indexed by ``e``, the per-conformer *protein* structure
+        ``B`` conformers indexed by ``b``, the per-conformer *protein* structure
         factors are combined by a *complex* sum in the reciprocal space
-        (``|sum F| != sum |F|``): ``Fprotein(h) = sum_e F_e(h)``. The atomic
+        (``|sum F| != sum |F|``): ``Fprotein(h) = sum_b F_b(h)``. The atomic
         occupancy is accounted for in the calculation of the per-conformer
-        *protein* structure factor F_e(h). ``|Fcalc|`` is then ``|Fprotein|``
-        (``bulk_solvent="off"``) or ``|Ftotal|`` once bulk solvent is folded in
-        (see ``bulk_solvent``).
+        *protein* structure factor F_b(h). ``|Fcalc|`` is then ``|Fprotein|``
+        (``bulk_solvent="off"``) or ``|Ftotal|`` if bulk solvent is folded in.
 
-        Construction is two-phase: see the module docstring. Call :meth:`prepare`
-        with the model atom array before the first ``__call__``.
+        ``bulk_solvent`` can take one of the following values:
+            * ``"off"`` (default): ``|Fprotein|`` — no solvent.
+            * ``"combined"``: ``|Ftotal|`` with one bulk-solvent mask from the combined
+              protein density, ``mask(<rho>)`` — matches the altloc single-structure
+              ``Ftotal`` that ``generate_synthetic_sf`` writes to the MTZ.
+            * ``"per_conformer"``: ``|Ftotal|`` with the mean of per-conformer solvent
+              mask ``<mask(rho)>`` — the ensemble-averaged bulk solvent. Each conformer
+              contributes a solvent mask at 1/B weight.
+
+        ``"combined"`` and ``"per_conformer"`` differ only for a real ensemble
+        (batch > 1); the mask operator is nonlinear, so ``mask(<rho>) != <mask(rho)>``.
+        Both use the default, *unrefined* scales ``kiso=1``, ``kmask=0.35``, small
+        ``uaniso``; refining them during sampling is left for a later revision.
+        ``normalize_amplitude`` (``|F|`` vs ``|E|``) is orthogonal and composes with
+        any ``bulk_solvent`` choice.
+
+        Unlike the real-space reward function, ``SFcalculator`` needs the full topology
+        (``PDBParser`` -> ``gemmi.Structure``: atom names/elements, unit cell, space group,
+        ``resolution`` -> the HKL set) at construction. That information is only available
+        with the model atom array, i.e. after ``process_structure_to_trajectory_input``
+        runs inside ``sample()``. Therefore, construction is two-phase:
+            * ``__init__`` stores only the up-front config (target MTZ, ``resolution``,
+              ``scattering_factor_mode``, unit cell, space group, loss); it does
+              *not* build ``SFcalculator``.
+            * :meth:`prepare` builds ``SFcalculator`` from the model atom array, on the
+              ``device`` given there. The caller (a step scaler) is responsible for
+              invoking it before the first ``__call__``.
 
         Parameters
         ----------
@@ -195,6 +185,7 @@ class StructureFactorRewardFunction:
         space_group
             Space group as a Hermann-Mauguin string, stamped onto the gemmi
             structure. Same MTZ-default / warn-on-mismatch behavior as ``unit_cell``.
+            An example string is "P 21 21 21".
         scattering_factor_mode
             SFcalculator scattering mode: ``"xray"`` or ``"cryoem"``.
         bulk_solvent
@@ -217,16 +208,12 @@ class StructureFactorRewardFunction:
         batch_partition
             Ensemble chunk size forwarded to ``SFcalculator.calc_fprotein_batch`` as its
             ``PARTITION`` parameter. SFC's own default (20) can still lead to OOM.
-        device
-            Torch device. Auto-selects a GPU when omitted.
+            Must be a positive integer.
         sfcalculator_kwargs
             Extra keyword arguments forwarded verbatim to ``SFcalculator(...)`` in
             :meth:`prepare` (e.g. ``n_bins``, ``freeflag``, ``testset_value``). Reserved
             keys in this class (listed in :data:`_RESERVED_SFC_KWARGS`) cannot be overridden.
         """
-        if device is None:
-            device = try_gpu()
-        self.device = device
         self.mtzfile = str(mtzfile)
         self.resolution = resolution
         self.scattering_factor_mode = scattering_factor_mode
@@ -236,6 +223,11 @@ class StructureFactorRewardFunction:
             )
         self.bulk_solvent = bulk_solvent
         self.exclude_free_reflections = exclude_free_reflections
+        if not isinstance(batch_partition, int) or isinstance(batch_partition, bool):
+            raise ValueError(
+                f"batch_partition must be a positive integer, got {type(batch_partition).__name__} "
+                f"{batch_partition!r}."
+            )
         if batch_partition <= 0:
             raise ValueError(f"batch_partition must be a positive integer, got {batch_partition}.")
         self.batch_partition = batch_partition
@@ -246,15 +238,14 @@ class StructureFactorRewardFunction:
         self._resolve_mtz_metadata(unit_cell, space_group, expcolumns)
 
         # All SFcalculator init kwargs are known except `pdbmodel` (needs the model
-        # atom array) and `mtzdata` (a copy of the parsed dataset), both injected in
-        # prepare(). Caller-supplied sfcalculator_kwargs override these defaults.
+        # atom array), `mtzdata` (a copy of the parsed dataset), and `device` (resolved
+        # at prepare() time), all injected in prepare().
         self._sfc_kwargs = dict(
             dmin=self.resolution,
             mode=self.scattering_factor_mode,
             anomalous=False,
             set_experiment=True,
             expcolumns=self.expcolumns,
-            device=self.device,
         )
         if sfcalculator_kwargs:
             reserved = _RESERVED_SFC_KWARGS & sfcalculator_kwargs.keys()
@@ -323,10 +314,12 @@ class StructureFactorRewardFunction:
             )
         self.space_group = space_group if space_group is not None else spacegroup_mtz
 
-        self.expcolumns = _resolve_expcolumns(expcolumns, self._mtz_dataset)
+        # Stored (and passed to SFcalculator) as a list: SFC_Torch annotates the kwarg
+        # `List[str]` and swallows any failure into a misleading "columns not in the mtz" error.
+        self.expcolumns = list(_resolve_expcolumns(expcolumns, self._mtz_dataset))
 
-    def prepare(self, atom_array: AtomArray) -> None:
-        """Build the SFcalculator from the model atom array.
+    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """Build the SFcalculator from the model atom array, on ``device``.
 
         Constructing the ``SFcalculator`` consumes the MTZ dataset parsed at
         ``__init__`` (no second file read) and populates the observed structure
@@ -339,6 +332,13 @@ class StructureFactorRewardFunction:
         ``model_atom_array or atom_array``). The atom ordering of ``atom_array``
         defines the column order of the coordinate tensor passed to ``__call__``.
 
+        This is also where the torch device is set, so pass the device the sampled
+        coordinates will live on: every tensor built here (the SFcalculator internals and
+        the reflection mask) is allocated on it, and SFcalculator bakes it in at
+        construction with no way to migrate afterwards. Re-running ``prepare`` on a new
+        device is therefore the way to move a built reward — safe to do, since the parsed
+        MTZ dataset on ``self._mtz_dataset`` is kept pristine for exactly that reason.
+
         Per-atom B-factors / occupancy are set per ``__call__`` (not here), leaving
         the door open to refining them during sampling.
 
@@ -350,7 +350,22 @@ class StructureFactorRewardFunction:
             annotations (its ``b_factor``/``occupancy`` are baked as defaults but
             overridden each ``__call__``). A missing ``altloc_id`` is defaulted to
             blank inside ``atomarray_to_gemmi``.
+        device
+            Torch device to build on. Defaults to CPU rather than auto-selecting a GPU:
+            the same behavior as how the RewardInputs' device is resolved.
+
+        Raises
+        ------
+        RuntimeError
+            If ``normalize_amplitude`` is True but SFcalculator's normalization did not
+            yield finite ``sfc.Eo`` from the supplied MTZ (absent or non-finite). When
+            ``normalize_amplitude`` is False the same condition only logs a warning,
+            since it also implies no reflection was flagged as an outlier.
+        ValueError
+            If no reflection survives the mask; see :meth:`_build_reflection_mask`.
         """
+        self.device = torch.device(device)
+
         gemmi_structure = atomarray_to_gemmi(
             atom_array,
             unit_cell=self.unit_cell,
@@ -359,7 +374,11 @@ class StructureFactorRewardFunction:
         # SFcalculator mutates its mtzdata in place (dropna / hkl_to_asu on the reference),
         # so hand it a copy of the once-parsed dataset; self._mtz_dataset stays pristine and
         # prepare() remains safely re-runnable.
-        sfc_kwargs = {"mtzdata": self._mtz_dataset.copy(), **self._sfc_kwargs}
+        sfc_kwargs = {
+            "mtzdata": self._mtz_dataset.copy(),
+            "device": self.device,
+            **self._sfc_kwargs,
+        }
         self.sfc = SFcalculator(pdbmodel=PDBParser(gemmi_structure), **sfc_kwargs)
         # inspect_data estimates solvent percentage and grid size from atom positions
         # and vdW radii, independent of occupancy / B-factor.
@@ -372,13 +391,24 @@ class StructureFactorRewardFunction:
         if self.bulk_solvent != "off":
             self.sfc._set_scales(requires_grad=False)
 
-        # |Eo| are computed in SFC's experiment init (inside a try/except).
-        if self.normalize_amplitude and getattr(self.sfc, "Eo", None) is None:
-            raise RuntimeError(
-                "normalize_amplitude=True requires sfc.Eo, but "
-                "SFcalculator did not populate them from this MTZ."
+        # |Eo|, epsilon, and Outlier all come from one bare try/except inside SFC's experiment
+        # init. A missing Eo means that block raised; a non-finite Eo means a resolution bin
+        # had zero mean intensity. Either way |Eo| is unusable and the sfc.Outlier mask would
+        # not flag the outlier reflections based on Eo.
+        Eo = getattr(self.sfc, "Eo", None)
+        if Eo is None or not torch.isfinite(Eo).all():
+            if self.normalize_amplitude:
+                raise RuntimeError(
+                    "normalize_amplitude=True requires finite sfc.Eo, but SFcalculator's "
+                    "normalization block did not yield them from this MTZ."
+                )
+            logger.warning(
+                "SFcalculator did not yield finite sfc.Eo from this MTZ; its outlier detection "
+                "failed too, so reflections may not be flagged as outliers."
             )
 
+        # True where a reflection contributes to the reward (non-outlier, and not in the
+        # R-free test set if exclude_free_reflections is True). Shape is [n_hkl].
         mask_np = self._build_reflection_mask(
             outlier=self.sfc.Outlier, free_flag=self.sfc.free_flag
         )
