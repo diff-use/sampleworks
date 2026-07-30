@@ -116,7 +116,7 @@ class StructureFactorRewardFunction:
 
         The reward compares the model amplitudes ``|Fcalc|`` against a target
         ``|Fobs|`` loaded from an MTZ. For an ensemble (batch dimension) of
-        ``B`` conformers indexed by ``b``, the per-conformer *protein* structure
+        conformers indexed by ``b``, the per-conformer *protein* structure
         factors are combined by a *complex* sum in the reciprocal space
         (``|sum F| != sum |F|``): ``Fprotein(h) = sum_b F_b(h)``. The atomic
         occupancy is accounted for in the calculation of the per-conformer
@@ -130,7 +130,7 @@ class StructureFactorRewardFunction:
               ``Ftotal`` that ``generate_synthetic_sf`` writes to the MTZ.
             * ``"per_conformer"``: ``|Ftotal|`` with the mean of per-conformer solvent
               mask ``<mask(rho)>`` — the ensemble-averaged bulk solvent. Each conformer
-              contributes a solvent mask at 1/B weight.
+              contributes a solvent mask at 1/batch_size weight.
 
         ``"combined"`` and ``"per_conformer"`` differ only for a real ensemble
         (batch > 1); the mask operator is nonlinear, so ``mask(<rho>) != <mask(rho)>``.
@@ -181,9 +181,9 @@ class StructureFactorRewardFunction:
             ``"combined"`` (``|Ftotal|`` with one mask from the combined density), or
             ``"per_conformer"`` (``|Ftotal|`` with the plain, unweighted mean of the
             per-conformer masks). The per-conformer mean is *not* occupancy-weighted,
-            meaning each conformer contributes a solvent mask at 1/E weight. For a
-            single conformer, ``"combined"`` and ``"per_conformer"`` coincide. With
-            multiple conformers, ``"per_conformer"`` should be a more faithful model.
+            meaning each conformer contributes a solvent mask at 1/batch_size weight.
+            For a single conformer, ``"combined"`` and ``"per_conformer"`` coincide.
+            For multiple conformers, ``"per_conformer"`` should be a more faithful model.
         loss
             Callable ``(|Fcalc|, |Fobs|) -> scalar`` over masked reflections.
             Defaults to mean-squared error on amplitudes. Pass any callable
@@ -493,9 +493,9 @@ class StructureFactorRewardFunction:
             ``sfc.atom_b_iso`` (reconciled: real deposited where shared with the
             structure, 20.0 for model-only / NaN atoms).
         occupancies
-            Per-atom occupancies ``[batch, n_atoms]`` (uniform ``1/E`` from the
-            pipeline), written to ``sfc.atom_occ``; the ``1/E`` weighting makes the
-            complex ensemble sum the multi-conformer total.
+            Per-atom occupancies ``[batch, n_atoms]`` (uniform ``1/batch_size`` from
+            the pipeline), written to ``sfc.atom_occ``; the ``1/batch_size`` weighting
+            makes the complex ensemble sum the multi-conformer total.
         unique_combinations
             Pre-computed unique (element, b_factor) pairs for vmap compatibility.
             Currently unused.
@@ -526,7 +526,7 @@ class StructureFactorRewardFunction:
         self.sfc.atom_occ = occupancies[0]
 
         # Multi-conformer combination: complex sum over the ensemble [batch, n_hkl].
-        # occ = 1/E (set per call) makes the summed |F| the multi-conformer total.
+        # occ = 1/batch_size (set per call) makes the summed |F| the multi-conformer total.
         Fprotein_batch = self.sfc.calc_fprotein_batch(
             coordinates, Return=True, PARTITION=self.batch_partition
         )
@@ -565,7 +565,7 @@ class StructureFactorRewardFunction:
             Average of the per-conformer bulk solvent masks. ``rsgrid2realmask``
             normalizes the protein density and cuts at a quantile, so each conformer
             contributes ``Fmask`` in a scale-invariant way. All conformers are assumed
-            to contribute the solvent mask equally (1/E weight).
+            to contribute the solvent mask equally (1/batch_size weight).
 
             Two caveats from ``rsgrid2realmask``'s batch path (SFC_Torch 0.3.3):
 
@@ -590,7 +590,7 @@ class StructureFactorRewardFunction:
         self.sfc.Fprotein_HKL = Fprotein_HKL  # drives calc_ftotal on the HKL set
         if self.bulk_solvent == "per_conformer":
             # calc_fsolvent_batch masks each conformer (from Fprotein_asu_batch, set by
-            # calc_fprotein_batch); the mean applies the 1/E weight -> <mask(rho)>.
+            # calc_fprotein_batch); the mean applies the 1/batch_size weight -> <mask(rho)>.
             Fmask_HKL_batch = self.sfc.calc_fsolvent_batch(
                 Return=True, PARTITION=self.batch_partition
             )

@@ -131,7 +131,7 @@ def sf_ensemble_inputs(
     solvent modes.
 
     SFcalculator has no per-conformer occ/B axis, so ``b_factors`` is shared from altloc-A
-    across the batch, and occupancy shared at the uniform ``1/E = 0.5``.
+    across the batch, and occupancy shared at the uniform ``1/batch_size = 0.5``.
     """
     altloc_ids = sorted(find_all_altloc_ids(structure_1vme_sf))  # ["A", "B"]
     altloc_a, altloc_b = altloc_ids
@@ -148,7 +148,7 @@ def sf_ensemble_inputs(
 
     elements, b_factors, _ = build_reward_input_tensors_without_coords(ref_atom_array, device)
     n_atoms = coords.shape[1]
-    occ = torch.full((n_atoms,), 0.5, device=device)  # uniform 1/E
+    occ = torch.full((n_atoms,), 0.5, device=device)  # uniform 1/batch_size
     reward_inputs = dict(
         coordinates=coords,
         elements=elements.unsqueeze(0).expand(2, -1),
@@ -363,8 +363,8 @@ class TestStructureFactorBulkSolvent:
     def test_ftotal_modes_agree_for_single_conformer(
         self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
     ):
-        """For a single conformer (E=1) ``mask(<rho>)`` and ``<mask(rho)>`` are the same mask,
-        so ``combined`` and ``per_conformer`` give the same loss."""
+        """For a single conformer (batch_size=1) ``mask(<rho>)`` and ``<mask(rho)>`` are the same
+        mask, so ``combined`` and ``per_conformer`` give the same loss."""
         reward_with_solvent_combined = make_prepared_reward(
             mtz_path_1vme,
             structure_1vme_sf,
@@ -389,13 +389,14 @@ class TestStructureFactorBulkSolvent:
     def test_per_conformer_averages_masks_over_ensemble(
         self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
     ):
-        """E=2 *identical* conformers (occ 1/2 each) score the same as the single conformer.
+        """batch_size=2 *identical* conformers (occ 1/2 each) score the same as the single
+        conformer.
 
         This guards the equal-population assumption in ``per_conformer``: the protein path bakes
         ``atom_occ`` into each conformer and *sums*, while the solvent path averages
         scale-invariant per-conformer masks (``Fmask_HKL_batch.mean(dim=0)``) — a hardcoded
-        uniform ``1/E`` weight. Both are population *averages*, so occ = 1/E keeps them
-        consistent and the ensemble matches the single conformer; this would break if
+        uniform ``1/batch_size`` weight. Both are population *averages*, so occ = 1/batch_size
+        keeps them consistent and the ensemble matches the single conformer; this would break if
         ``per_conformer`` summed (rather than averaged) the masks. Non-uniform per-conformer
         occupancy is properly rejected by the reward now — see
         ``TestStructureFactorOccupancy.test_per_conformer_occupancy_or_b_raises``.
@@ -422,10 +423,11 @@ class TestStructureFactorBulkSolvent:
         """For a genuine 2-conformer ensemble (altloc A vs B), ``mask(<rho>) != <mask(rho)>``, so
         ``combined`` and ``per_conformer`` give *different* losses.
 
-        This is the behavior that justifies keeping both modes — the agree-cases above (E=1 and
-        E=2 *identical* conformers) never exercise the nonlinearity. Here the two frames differ in
-        the alternate-conformation coordinates, so the combined mask (built from the summed
-        density) and the per-conformer mean of masks genuinely diverge.
+        This is the behavior that justifies keeping both modes — the agree-cases above
+        (batch_size=1 and batch_size=2 *identical* conformers) never exercise the nonlinearity.
+        Here the two frames differ in the alternate-conformation coordinates, so the combined
+        mask (built from the summed density) and the per-conformer mean of masks genuinely
+        diverge.
 
         The mock.patch.object supplements the numerical difference test by checking the dispatch
         logic and ensure that the correct SFcalculator method for Fsolvent is called.
