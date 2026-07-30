@@ -6,7 +6,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import gemmi
 import numpy as np
 import reciprocalspaceship as rs
 import torch
@@ -46,12 +45,6 @@ _RESERVED_SFC_KWARGS = frozenset(
 # data, so 5e3 is a safe threshold.
 _MIN_RETAINED_REFLECTION_FRACTION = 0.75
 _MIN_RETAINED_REFLECTIONS = 5_000
-
-# Tolerances for warning when a caller-supplied unit cell disagrees with the MTZ's,
-# passed to gemmi.UnitCell.is_similar: relative tolerance on the cell edges (a, b, c)
-# and absolute degrees on the angles (alpha, beta, gamma).
-_CELL_LENGTH_REL_TOL = 1e-2
-_CELL_ANGLE_DEG_TOL = 0.5
 
 
 def _resolve_expcolumns(expcolumns: list[str] | None, ds: rs.DataSet) -> tuple[str, str]:
@@ -106,8 +99,6 @@ class StructureFactorRewardFunction:
         *,
         expcolumns: list[str] | None = None,
         resolution: float | None = None,
-        unit_cell: gemmi.UnitCell | None = None,
-        space_group: str | None = None,
         scattering_factor_mode: str = "xray",
         bulk_solvent: str = "off",
         loss: AmplitudeLoss | None = None,
@@ -148,14 +139,20 @@ class StructureFactorRewardFunction:
         ``normalize_amplitude`` (``|F|`` vs ``|E|``) is orthogonal and composes with
         any ``bulk_solvent`` choice.
 
+        The crystal metadata is taken from the MTZ, which is the only self-consistent
+        source: ``SFcalculator``'s ``init_mtz`` overwrites the cell and space group of
+        the structure by the MTZ's whenever they disagree. Niavely overriding the cell
+        and/or the space group of MTZ can be dangerous because the reflections' indexing
+        could become wrong, so there are not arguments here to overrride them.
+
         Unlike the real-space reward function, ``SFcalculator`` needs the full topology
         (``PDBParser`` -> ``gemmi.Structure``: atom names/elements, unit cell, space group,
         ``resolution`` -> the HKL set) at construction. That information is only available
         with the model atom array, i.e. after ``process_structure_to_trajectory_input``
         runs inside ``sample()``. Therefore, construction is two-phase:
             * ``__init__`` stores only the up-front config (target MTZ, ``resolution``,
-              ``scattering_factor_mode``, unit cell, space group, loss); it does
-              *not* build ``SFcalculator``.
+              ``scattering_factor_mode``, loss) and resolves the crystal metadata against
+              the MTZ; it does *not* build ``SFcalculator``.
             * :meth:`prepare` builds ``SFcalculator`` from the model atom array, on the
               ``device`` given there. The caller (a step scaler) is responsible for
               invoking it before the first ``__call__``.
@@ -177,15 +174,6 @@ class StructureFactorRewardFunction:
             High-resolution limit (dmin) in Angstrom, or ``None`` (default) to use
             the MTZ's own resolution. The HKL set comes from the ``mtzfile``; when
             given, ``resolution`` further truncates it.
-        unit_cell
-            Crystallographic unit cell, stamped onto the gemmi structure built in
-            :meth:`prepare` (SFcalculator reads the cell from there, not the MTZ).
-            If ``None`` (default), read from the ``mtzfile``; if provided, used as-is
-            but a warning is logged when it disagrees with the MTZ.
-        space_group
-            Space group as a Hermann-Mauguin string, stamped onto the gemmi
-            structure. Same MTZ-default / warn-on-mismatch behavior as ``unit_cell``.
-            An example string is "P 21 21 21".
         scattering_factor_mode
             SFcalculator scattering mode: ``"xray"`` or ``"cryoem"``.
         bulk_solvent
@@ -223,19 +211,16 @@ class StructureFactorRewardFunction:
             )
         self.bulk_solvent = bulk_solvent
         self.exclude_free_reflections = exclude_free_reflections
-        if not isinstance(batch_partition, int) or isinstance(batch_partition, bool):
+        if type(batch_partition) is not int or batch_partition <= 0:
             raise ValueError(
-                f"batch_partition must be a positive integer, got {type(batch_partition).__name__} "
-                f"{batch_partition!r}."
+                f"batch_partition must be a positive integer, got {batch_partition!r}."
             )
-        if batch_partition <= 0:
-            raise ValueError(f"batch_partition must be a positive integer, got {batch_partition}.")
         self.batch_partition = batch_partition
         self.loss: AmplitudeLoss = loss if loss is not None else torch.nn.MSELoss()
         self.normalize_amplitude = normalize_amplitude  # |F| vs resolution-bin normalized |E|
 
         # Resolve crystal metadata / column names against the MTZ.
-        self._resolve_mtz_metadata(unit_cell, space_group, expcolumns)
+        self._resolve_mtz_metadata(expcolumns)
 
         # All SFcalculator init kwargs are known except `pdbmodel` (needs the model
         # atom array), `mtzdata` (a copy of the parsed dataset), and `device` (resolved
@@ -261,58 +246,48 @@ class StructureFactorRewardFunction:
         self.sfc: SFcalculator | None = None
         self._reflection_mask: torch.Tensor | None = None
 
-    def _resolve_mtz_metadata(
-        self,
-        unit_cell: gemmi.UnitCell | None,
-        space_group: str | None,
-        expcolumns: list[str] | None,
-    ) -> None:
-        """Set ``self.unit_cell`` / ``space_group`` / ``expcolumns``, resolved against the MTZ.
+    def _resolve_mtz_metadata(self, expcolumns: list[str] | None) -> None:
+        """Set ``self.unit_cell`` / ``space_group`` / ``expcolumns`` from the MTZ.
 
-        The MTZ is the source of truth (it must be consistent with its own
-        reflections), so it is always read. It is parsed once here and the dataset is
-        retained on ``self._mtz_dataset`` so :meth:`prepare` can build ``SFcalculator``
-        from it directly instead of re-reading the file. A caller-supplied
-        ``unit_cell`` / ``space_group`` (non-``None``) is used but a warning is logged on
-        disagreement, so a stale or mismatched override is visible. (SFcalculator reads
-        the cell/space group from the gemmi structure built in :meth:`prepare`, not the
-        MTZ, so we must supply real values.) ``expcolumns`` is instead validated against
-        the MTZ's columns and raises on an unknown name; see :func:`_resolve_expcolumns`.
+        The MTZ is the only source: it must be consistent with its own reflections, and
+        ``SFcalculator`` enforces that by overwriting the cell / space group of the
+        structure handed to it with the MTZ's (``init_mtz``) before deriving symmetry
+        operators or the reciprocal cell. The values resolved here are therefore what the
+        calculation uses; they are stamped onto the gemmi structure in :meth:`prepare`
+        only to keep it self-consistent. The dataset is parsed once here and retained on
+        ``self._mtz_dataset`` so :meth:`prepare` can build ``SFcalculator`` from it
+        directly instead of re-reading the file. ``expcolumns``, unlike the crystal
+        metadata, is caller-supplied and validated against the MTZ's columns; see
+        :func:`_resolve_expcolumns`.
 
         Parameters
         ----------
-        unit_cell
-            Caller-supplied crystallographic unit cell, or ``None`` to read the cell
-            from the MTZ. When provided, it is used as-is but a warning is logged if it
-            disagrees with the MTZ's cell.
-        space_group
-            Caller-supplied space group as a Hermann-Mauguin string, or ``None`` to read
-            it from the MTZ. Same use-but-warn-on-mismatch behavior as ``unit_cell``.
         expcolumns
             Caller-supplied ``[amplitude, sigma]`` column names to use verbatim, or
             ``None`` to auto-detect from the MTZ; forwarded to :func:`_resolve_expcolumns`.
+
+        Raises
+        ------
+        ValueError
+            If the MTZ carries no space group gemmi can recognize, or no unit cell (a
+            missing ``CELL`` header leaves gemmi's placeholder, which would make every
+            d-spacing meaningless). Also propagated from :func:`_resolve_expcolumns` for a
+            malformed or unknown ``expcolumns``.
         """
         self._mtz_dataset = rs.read_mtz(self.mtzfile)
-        cell_mtz = self._mtz_dataset.cell
-        spacegroup_mtz = (
-            self._mtz_dataset.spacegroup.hm if self._mtz_dataset.spacegroup is not None else None
-        )
-
-        if unit_cell is not None and not unit_cell.is_similar(
-            cell_mtz, _CELL_LENGTH_REL_TOL, _CELL_ANGLE_DEG_TOL
-        ):
-            logger.warning(
-                f"Provided unit_cell {unit_cell.parameters} differs from the MTZ's "
-                f"{cell_mtz.parameters}; using the provided value."
+        if self._mtz_dataset.spacegroup is None:
+            raise ValueError(
+                f"{self.mtzfile} carries no space group gemmi can recognize (missing or "
+                "unrecognized SYMINF header)."
             )
-        self.unit_cell = unit_cell if unit_cell is not None else cell_mtz
-
-        if space_group is not None and space_group != spacegroup_mtz:
-            logger.warning(
-                f"Provided space_group {space_group!r} differs from the MTZ's "
-                f"{spacegroup_mtz!r}; using the provided value."
+        # gemmi's own check on if cell_a is exactly 1A (the dummy value gemmi writes)
+        if not self._mtz_dataset.cell.is_crystal():
+            raise ValueError(
+                f"{self.mtzfile} carries no unit cell (missing CELL header, leaving gemmi's "
+                f"placeholder {self._mtz_dataset.cell.parameters}). Please re-generate the MTZ."
             )
-        self.space_group = space_group if space_group is not None else spacegroup_mtz
+        self.unit_cell = self._mtz_dataset.cell
+        self.space_group = self._mtz_dataset.spacegroup.hm
 
         # Stored (and passed to SFcalculator) as a list: SFC_Torch annotates the kwarg
         # `List[str]` and swallows any failure into a misleading "columns not in the mtz" error.
