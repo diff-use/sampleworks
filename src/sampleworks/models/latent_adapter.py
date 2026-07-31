@@ -14,12 +14,6 @@ What each piece is for
   and writes them back each step.
 - :class:`LatentIO` -- the protocol (read/write contract) that :class:`AttrLatentIO` satisfies.
 
-An earlier alternative -- training a small transform (``k*s + b`` affine / additive delta) at the
-``featurize`` boundary via a ``LatentAdaptedWrapper`` decorator -- was never wired in and was
-superseded by the direct-leaf scaler. It is archived, with the reasoning, in
-``docs/latent_adapter/archived_injector_family.md`` (revive it as the reference's structured
-``update_mode`` family -- low-rank / per-residue -- if regularized perturbations are ever needed).
-
 Design goal
 -----------
 - **Minimal, model-agnostic.** The only model-specific knowledge is *which attribute of the

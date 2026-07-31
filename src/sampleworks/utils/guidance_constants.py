@@ -10,7 +10,7 @@ class GuidanceType(StrEnum):
     References:
     - Feynman-Kaç steering http://arxiv.org/abs/2501.06848
     - Pure guidance (DPS) http://arxiv.org/abs/2209.14687
-    - Latent optimization (IT-opt): AF2/OpenFold-style trunk-latent optimization
+    - Latent optimization (IT-opt) https://arxiv.org/abs/2602.24007
     """
 
     FK_STEERING = "fk_steering"

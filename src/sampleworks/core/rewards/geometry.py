@@ -7,12 +7,13 @@ z-optimization raised clashes while dropping RSCC). This module adds a different
 denoised coordinates that the optimizer must trade against, so it cannot reach a good density score
 through broken geometry.
 
-It is a faithful port of the reference it_opt ``BondLengthLossFunction``
-(``it_opt/protenix/src/losses/bond_length_loss_function.py``): a bonded-pair length hinge plus a
-non-bonded steric-clash hinge. Both are bounded hinges -- the violation's positive part, clamped
-at zero (not the reference's ``exp(relu(...))`` clash term, which explodes) -- so the gradients stay
-well scaled. It is meant to be an additive term inside ``LatentOptimization``'s per-step loss, not a
-standalone objective, and does nothing unless its weight is set.
+It is a faithful port of the reference ``BondLengthLossFunction``
+(https://github.com/sai-advaith/it_opt, ``protenix/src/losses/bond_length_loss_function.py``):
+a bonded-pair length hinge plus a non-bonded steric-clash hinge. Both are the violation's positive
+part clamped at zero, with no exponent, exactly as the reference does it. The one deliberate
+divergence is how ``collision_loss`` reduces the ensemble axis; see the comment there. It is meant
+to be an additive term inside ``LatentOptimization``'s per-step loss, not a standalone objective,
+and does nothing unless its weight is set.
 """
 
 from __future__ import annotations
@@ -43,16 +44,18 @@ from torch import Tensor
 
 
 def _covalent_radius(element: str) -> float:
-    """Covalent radius of an element (Å), or 0 for an unknown/blank symbol.
+    """Covalent radius of an element (Å).
 
-    Model atom arrays are almost always clean single-symbol elements, but density inputs sometimes
-    carry a placeholder element ('?'); we return 0 rather than raise so one odd atom can't abort the
-    whole run.
+    gemmi resolves an unrecognized symbol (e.g. the '?' some density inputs carry) to its unknown
+    element instead of raising, so this never fails -- it returns that element's 0.50 Å radius.
+    Such an atom gets a too-short ideal bond length, so a correct bond may be penalized, and a
+    shrunken clash sphere, so its clashes are under-reported.
+
+    This function cannot flag either situation: an unresolvable symbol returns silently, and a
+    non-str element raises TypeError straight out of gemmi. If bond or clash numbers look wrong,
+    suspect the atom array's element symbols first.
     """
-    try:
-        return float(gemmi.Element(element).covalent_r)
-    except Exception:  # noqa: BLE001 -- a bad element symbol just gets a zero radius
-        return 0.0
+    return float(gemmi.Element(element).covalent_r)
 
 
 class BondGeometryReward:
@@ -66,6 +69,10 @@ class BondGeometryReward:
 
     Despite the ``Reward`` name (the module's convention), this is a penalty: it is added to,
     and minimized as part of, ``LatentOptimization``'s loss.
+
+    Note: this does not satisfy ``RewardFunctionProtocol``. ``__call__`` takes only ``coords``,
+    not the protocol's per-atom ``elements``/``b_factors``/``occupancies``, so the planned
+    redefinition of the rewards interface will have to admit penalties of this shape.
     """
 
     def __init__(
@@ -90,63 +97,63 @@ class BondGeometryReward:
         self.clash_padding = clash_padding
         self.bond_power = bond_power
 
+        # One covalent radius per atom, looked up once. Both penalties below are sums of two radii,
+        # so they index this instead of querying gemmi again per bond and per atom.
+        self._radii = self._build_radii(atom_array, device)
+
         # Each bond connects atom a to atom b and has an ideal length; these three arrays line up,
         # one entry per bond.
         self._bond_atom_a, self._bond_atom_b, self._bond_lengths = self._build_bonds(
             atom_array, device
         )
-        self._collision_distances = self._build_collision_distances(atom_array, device)
+        self._collision_distances = self._build_collision_distances()
         self._scored_pairs = self._build_scored_pairs(len(atom_array), device)
 
     # ================================ topology (built once) ================================
+
+    def _build_radii(self, atom_array: AtomArray, device) -> Tensor:
+        """Covalent radius of every atom, in atom-array order: [n_atoms].
+
+        A bond's ideal length is the sum of its two endpoints' radii, and a pair's collision
+        distance is the sum of that pair's radii, so every number both penalties need is a sum of
+        two entries of this tensor. Looking each atom up once here keeps the lookups to one pass.
+        """
+        radii = [_covalent_radius(element) for element in atom_array.element]
+        return torch.tensor(radii, dtype=torch.float32, device=device)
 
     def _build_bonds(self, atom_array: AtomArray, device):
         """Bonded-atom endpoints and ideal lengths, inferred from residue-name templates.
 
         biotite's ``connect_via_residue_names`` infers the intra- and inter-residue bonds from the
-        standard component templates; ``get_all_bonds`` returns, per atom, the indices of its bonded
-        partners padded with -1. We collect each bond once; its ideal length is the sum of the
-        two atoms' covalent radii.
+        standard component templates and returns a ``BondList``. By default that list already holds
+        each bond exactly once with the lower atom index first, so ``as_array()`` gives us the edge
+        list directly -- its columns are atom i, atom j, bond type. (``get_all_bonds()`` would
+        instead return padded per-atom adjacency, which lists every bond twice.) A bond's ideal
+        length is the sum of the two atoms' covalent radii.
 
         Returns three aligned 1-D tensors, each of length n_bonds: the first endpoint of every bond,
         the second endpoint, and the ideal length.
         """
-        partners_per_atom, _ = connect_via_residue_names(atom_array).get_all_bonds()
-
-        # Collect each bond once as a sorted (low, high) index pair, so it is not listed as both
-        # i-j and j-i.
-        pairs = set()
-        for atom_i, partners in enumerate(partners_per_atom):
-            for atom_j in partners:
-                if atom_j == -1:  # padding entry, not a real partner
-                    continue
-                bond = (min(atom_i, int(atom_j)), max(atom_i, int(atom_j)))
-                pairs.add(bond)
-        pair_array = np.array(sorted(pairs)) if pairs else np.empty((0, 2), dtype=int)
-
-        # Ideal length of a bond = sum of the two atoms' covalent radii.
-        lengths = [
-            _covalent_radius(atom_array[a].element) + _covalent_radius(atom_array[b].element)
-            for a, b in pair_array
-        ]
+        bonds = connect_via_residue_names(atom_array).as_array()  # [n_bonds, 3]: i, j, bond type
+        # as_array() is uint32, which torch refuses to convert, so cast to a signed integer.
+        pair_array = bonds[:, :2].astype(np.int64)
 
         atom_a = torch.tensor(pair_array[:, 0], dtype=torch.long, device=device)
         atom_b = torch.tensor(pair_array[:, 1], dtype=torch.long, device=device)
-        bond_lengths = torch.tensor(lengths, dtype=torch.float32, device=device)
+
+        # Ideal length of a bond = sum of the two atoms' covalent radii.
+        bond_lengths = self._radii[atom_a] + self._radii[atom_b]
         return atom_a, atom_b, bond_lengths
 
-    def _build_collision_distances(self, atom_array: AtomArray, device) -> Tensor:
+    def _build_collision_distances(self) -> Tensor:
         """The [n_atoms, n_atoms] matrix of minimum non-clashing distances (covalent-radii sums).
 
         Entry (i, j) is the sum of atom i's and atom j's covalent radii; two non-bonded atoms closer
         than this (plus ``clash_padding``) are overlapping.
         """
-        radii = np.array([_covalent_radius(atom_array[i].element) for i in range(len(atom_array))])
-        r = torch.tensor(radii, dtype=torch.float32, device=device)
-
         # radius_i + radius_j for every pair: a column plus a row vector broadcasts to [n, n].
-        radius_column = r.unsqueeze(1)  # [n, 1]
-        radius_row = r.unsqueeze(0)  # [1, n]
+        radius_column = self._radii.unsqueeze(1)  # [n, 1]
+        radius_row = self._radii.unsqueeze(0)  # [1, n]
         return radius_column + radius_row
 
     def _build_scored_pairs(self, n_atoms: int, device) -> Tensor:
@@ -190,9 +197,10 @@ class BondGeometryReward:
         """Hinge on non-bonded atoms closer than their collision distance + ``clash_padding``.
 
         ``coords`` is the denoised coordinate tensor, shape [ensemble, atoms, 3]. This is the
-        steric-clash term: overlap is reduced over the ensemble to its worst member per atom
-        pair (matching the reference), then summed over the scored pairs. Note the pairwise-distance
-        tensor is O(n_atoms**2), so memory scales with the square of the atom count.
+        steric-clash term: per atom pair we take the worst member's overlap plus the ensemble mean,
+        then sum over the scored pairs. The reference used the worst member alone; the comment on
+        the reduction below compares the four options and says why we add the mean. Note the
+        pairwise-distance tensor is O(n_atoms**2), so memory scales with the square of the count.
         """
         # Distance between every pair of atoms, for each ensemble member: [ensemble, n, n].
         # torch.cdist gives the same distances without building the [ensemble, n, n, 3] grid of
@@ -201,13 +209,28 @@ class BondGeometryReward:
         # coincident atoms, so the historical cdist zero-distance NaN does not apply here.
         distances = torch.cdist(coords, coords)
 
-        # How far each pair is inside its allowed distance (positive = overlapping).
+        # How far each pair is inside its allowed distance (positive = overlapping). We clamp per
+        # member, before reducing; the reference clamps after its max, which is equivalent there
+        # (relu commutes with max) but not once the mean below is added, where a comfortably
+        # separated member's negative gap would cancel another member's real overlap.
         min_distance = self._collision_distances + self.clash_padding
         overlap_per_member = (min_distance - distances).clamp(min=0)
 
-        # Worst overlap across the ensemble for each pair, then drop self- and bonded pairs.
-        worst_overlap = overlap_per_member.max(dim=0).values  # [n, n]
-        scored_overlap = worst_overlap * self._scored_pairs  # zero out the unscored pairs
+        # Reduce the ensemble axis, then drop self- and bonded pairs. Four reductions were weighed;
+        # the value column is relative to max, the reference's choice, with E ensemble members:
+        #
+        #   max          1x            only the worst member gets gradient -- the rest are ignored
+        #   mean         1/E .. 1x     every member counted, but can weaken the penalty E-fold
+        #   max + mean   1x .. 2x      every member counted, never weaker than max, capped at 2x
+        #   sum          1x .. Ex      every member counted, but scales the penalty with E
+        #
+        # We take max + mean. The max keeps the worst member's full push, so the penalty can never
+        # come out weaker than it is today -- which matters because bond_length_weight is tuned to
+        # the smallest value that fixes clashes, and mean alone could drop below that floor. The
+        # mean then gives every other clashing member a share instead of nothing, which is what
+        # max alone failed to do. sum would do that too, but its value grows with ensemble size.
+        combined_overlap = overlap_per_member.max(dim=0).values + overlap_per_member.mean(dim=0)
+        scored_overlap = combined_overlap * self._scored_pairs  # [n, n]; unscored pairs zeroed
         return scored_overlap.sum()
 
     def __call__(self, coords: Tensor) -> Tensor:

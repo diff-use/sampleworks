@@ -2,10 +2,6 @@
 
 These run on CPU with no model checkpoints, using minimal mock conditioning
 dataclasses whose representations are stored in named attributes.
-
-(The injector / ``LatentAdaptedWrapper`` family these tests used to cover was
-archived to ``docs/latent_adapter/archived_injector_family.md`` -- it is no
-longer part of the build.)
 """
 
 from __future__ import annotations
