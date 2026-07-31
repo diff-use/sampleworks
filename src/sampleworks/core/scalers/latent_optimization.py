@@ -1,11 +1,15 @@
 """Inference-time latent-space optimization (IT-opt).
 
-A Sampleworks port of the reference ``run_it_optimization``
-(``it_opt/protenix/it_optimization_manager.py:288``). It treats the frozen
-structure model as a differentiable sampler and optimizes its cached post-trunk
-latents -- the single representation ``s`` and the pair representation ``z`` --
-against an experimental reward evaluated on the *denoised* structure. No model
-weights are updated. See ``docs/IT_OPT_DESIGN.md`` for the design and its mapping to the reference.
+A Sampleworks port of the method in Maddipatla et al., "Inference-time optimization for
+experiment-grounded protein ensemble generation" (ICML 2026, https://arxiv.org/abs/2602.24007).
+Reference implementation: https://github.com/sai-advaith/it_opt -- cited paths such as
+``run_it_optimization`` in ``protenix/it_optimization_manager.py`` are relative to that repo, and
+name symbols rather than line numbers, which drift as that repo changes.
+
+It treats the frozen structure model as a differentiable sampler and optimizes its cached
+post-trunk latents -- the single representation ``s`` and the pair representation ``z`` -- against
+an experimental reward evaluated on the *denoised* structure. No model weights are updated. See
+``docs/IT_OPT_DESIGN.md`` for the design and its mapping to the reference.
 
 The algorithm (kept faithful to the reference), with the reference's bugs fixed:
 
@@ -40,8 +44,9 @@ from tqdm import tqdm
 
 from sampleworks.core.rewards.geometry import BondGeometryReward
 from sampleworks.core.rewards.protocol import RewardFunctionProtocol
-from sampleworks.core.samplers.protocol import StepParams, TrajectorySampler
+from sampleworks.core.samplers.protocol import TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
+from sampleworks.core.scalers.step_scalers import NoScalingScaler
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.models.latent_adapter import AttrLatentIO
 from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
@@ -67,33 +72,22 @@ from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
 # -------------------------------------------------------------------------------
 
 
-class _GradEnablingScaler:
-    """Step scaler that only enables gradients, applying zero coordinate guidance.
+class _GradEnablingScaler(NoScalingScaler):
+    """``NoScalingScaler`` that also asks the sampler to run its denoiser under autograd.
 
-    ``AF3EDMSampler`` runs its denoiser forward under autograd only when the
-    attached scaler exposes ``requires_gradients=True``; that is what makes the
-    returned :attr:`SamplerStepOutput.denoised` carry a graph back to the injected
-    latent leaves. Returning a zero direction keeps the diffusion *advance*
-    unguided -- realizing "coordinate guidance disabled" without editing the
-    sampler. The reward is recomputed by the trajectory scaler on ``denoised``, so
-    there is exactly one denoiser forward and one reward evaluation per step (the
-    reference's Tier-2 single-forward optimization, for free).
+    The zero-guidance behavior is inherited unchanged; the flag below is the only difference.
+    ``AF3EDMSampler`` runs its denoiser forward under autograd only when the attached scaler
+    exposes ``requires_gradients=True``, and it reads that with ``getattr(..., False)``. Plain
+    ``NoScalingScaler`` therefore leaves :attr:`SamplerStepOutput.denoised` detached, and IT-opt
+    would get no gradient back to the injected latent leaves.
+
+    Keeping guidance at zero leaves the diffusion *advance* unguided, realizing "coordinate
+    guidance disabled" without editing the sampler. The reward is recomputed by the trajectory
+    scaler on ``denoised``, so there is exactly one denoiser forward and one reward evaluation
+    per step (the reference's Tier-2 single-forward optimization, for free).
     """
 
     requires_gradients = True
-
-    def scale(
-        self, state, context: StepParams, *, model: FlowModelWrapper | None = None
-    ) -> tuple[Tensor, Tensor]:
-        # state is the denoiser's coordinate prediction, shape [batch, atoms, 3]. Return a zero
-        # coordinate direction (no guidance move) and a zero loss, one value per batch member.
-        direction = torch.zeros_like(state)  # no coordinate move this step
-        loss = torch.zeros(state.shape[0], device=state.device)  # zero loss, one per batch member
-        return direction, loss
-
-    def guidance_strength(self, context: StepParams) -> Tensor:
-        # t_effective is the per-member noise level, shape [batch]; we want a matching zero weight.
-        return torch.zeros_like(context.t_effective)
 
 
 class LatentAnchor:
@@ -107,6 +101,12 @@ class LatentAnchor:
     different element counts of ``s`` and ``z`` (``z`` is O(tokens) larger), so the
     weights ``w_s`` and ``w_z`` land on a comparable scale -- part of keeping the
     two latent updates harmonized. Retune the weights when switching objectives.
+
+    Planned move: this belongs under ``core.rewards`` with
+    ``BondGeometryReward``, so regularizers are collected and reusable. Deferred
+    because its input is *latents*, not coordinates, so it fits neither
+    ``RewardFunctionProtocol`` nor the coordinate-space shape of that package --
+    the rewards interface has to admit latent-space terms first.
     """
 
     def __init__(self, weights: Sequence[float]):
@@ -255,24 +255,22 @@ class LatentOptimization:
 
         # --- optional coordinate-space geometry penalty -------------------------
         # BondGeometryReward penalizes stretched bonds and steric clashes in the denoised structure,
-        # curbing the overshoot where an aggressive latent update trades valid geometry for density
-        # fit. Its topology is read from the model atom array -- the atom set whose ordering matches
-        # the denoised coords and reward inputs -- so the bond indices line up. It stays None
-        # (disabled) unless a positive bond_length_weight was configured.
-        bond_geometry = None
+        # curbing the overshoot where an aggressive latent update trades geometry for density fit.
         if self.bond_length_weight > 0:
             # Prefer the model atom array; fall back to the input atom array if it is absent.
             geometry_atom_array = processed.model_atom_array or processed.atom_array
             bond_geometry = BondGeometryReward(
                 geometry_atom_array, self.bond_length_weight, coords.device
             )
+        else:
+            bond_geometry = None
 
         # --- optimize the latents (outer resample × inner diffusion steps) ------
         # These two lists are diagnostics only -- reported in the returned metadata, never read by
         # the loop. One entry is appended per round.
         optimization_losses = []  # per round: the per-step data losses
         latent_drift = []  # per round: how far each latent moved from its baseline (see below)
-        for outer in range(self.outer_steps):
+        for outer in tqdm(range(self.outer_steps)):
             optimizer = torch.optim.Adam(latents, lr=self.learning_rate)  # a fresh, persistent Adam
             round_losses = self._optimize_one_round(
                 model=model,
@@ -480,7 +478,7 @@ class LatentOptimization:
 
         optimizer.zero_grad()
         loss.backward()
-        # Clip each latent SEPARATELY (matches reference it_optimization_manager.py:394-395), never
+        # Clip each latent SEPARATELY (the reference makes two clip_grad_norm_ calls too), never
         # as one joint [s, z] group. NB: with the density reward the gradients are tiny (grad-norm
         # ~1e-4, far below a max_grad_norm of 1.0), so this clip is effectively inert here -- it
         # bites only for rewards whose gradients exceed the threshold, where separate (not joint)

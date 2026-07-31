@@ -16,11 +16,12 @@ document is the *call graph*, showing how that philosophy is wired together in p
 
 ```
 ENTRY POINTS (pyproject.toml [project.scripts])
-  sampleworks-guidance  → cli/guidance.py            (one run)
-  sampleworks-runs      → runs/cli.py                 (TOML-preset grid search, parallel)
-  sampleworks-analysis  → runs/analysis_cli.py        (post-hoc eval, same machinery)
-        │                        │
-        │  both paths converge on ↓
+  sampleworks-guidance  → cli/guidance.py       (one run, in-process)
+  sampleworks-runs      → runs/cli.py           (TOML-preset grid search; spawns one
+                                                subprocess per job, each re-entering the spine)
+  sampleworks-analysis  → runs/analysis_cli.py  (post-hoc eval; never enters the spine)
+        │
+        │  the two guidance paths converge on ↓
         ▼
   run_guidance()  in  utils/guidance_script_utils.py   ← THE SPINE
         │
@@ -28,7 +29,7 @@ ENTRY POINTS (pyproject.toml [project.scripts])
         ├─ get_model_and_device()                → Boltz/Protenix/RF3 wrapper on a device
         ├─ AF3EDMSampler(EDMSamplerConfig)        → the diffusion solver
         ├─ {DataSpace,NoiseSpace,No}DPSScaler     → per-step guidance rule
-        └─ {PureGuidance | FKSteering}.sample(structure, model, sampler, scaler, reward)
+        └─ {PureGuidance | FKSteering | LatentOptimization}.sample(structure, model, sampler, ...)
                │
                └─ FOR each diffusion step:
                     sampler.step(coords, model, context, scaler)
@@ -52,7 +53,7 @@ promise in AGENTS.md).
 | `cli/` | `sampleworks-guidance` entry point | §10 |
 | `runs/` | `sampleworks-runs` / `sampleworks-analysis` TOML-preset orchestrator | §10 |
 | `core/samplers/` | Diffusion solver protocol + `AF3EDMSampler` | §4.2, §2 |
-| `core/scalers/` | Step scalers (DPS) + trajectory scalers (PureGuidance/FKSteering) | §4.1, §4.3, §2 |
+| `core/scalers/` | Step scalers (DPS) + trajectory scalers (PureGuidance/FKSteering/LatentOptimization) | §4.1, §4.3, §2 |
 | `core/rewards/` | Reward protocol + `RealSpaceRewardFunction` | §5, §2 |
 | `core/forward_models/` | Differentiable X-ray density calc + vendored qFit crystallography | §5 |
 | `models/` | Model-wrapper protocols + Boltz/Protenix/RF3 wrappers + latent adapter | §6, §2 |
@@ -75,7 +76,7 @@ structural typing, no inheritance.
 |----------|------|-------------|----------------|
 | **Model wrappers** | [models/protocol.py](../src/sampleworks/models/protocol.py) | `featurize()`, `step()`, `initialize_from_prior()` | Boltz1/2, Protenix, RF3 |
 | **Samplers** | [core/samplers/protocol.py](../src/sampleworks/core/samplers/protocol.py) | `compute_schedule()`, `get_context_for_step()`, `step()` | `AF3EDMSampler` |
-| **Scalers** | [core/scalers/protocol.py](../src/sampleworks/core/scalers/protocol.py) | `StepScalerProtocol.scale()` · `TrajectoryScalerProtocol.sample()` | DPS scalers · PureGuidance/FKSteering |
+| **Scalers** | [core/scalers/protocol.py](../src/sampleworks/core/scalers/protocol.py) | `StepScalerProtocol.scale()` · `TrajectoryScalerProtocol.sample()` | DPS scalers · PureGuidance/FKSteering/LatentOptimization |
 | **Rewards** | [core/rewards/protocol.py](../src/sampleworks/core/rewards/protocol.py) | `__call__()`, `precompute_unique_combinations()` | `RealSpaceRewardFunction` |
 
 ### 2.1 The data objects that flow between them
@@ -83,12 +84,9 @@ structural typing, no inheritance.
 Understanding these five dataclasses is enough to read any part of the sampling loop.
 
 - **`GenerativeModelInput`** ([models/protocol.py:25](../src/sampleworks/models/protocol.py))
-  — `{x_init, conditioning}`. Produced by `featurize()`. `x_init` is the batched starting
-  coordinates (reference or prior noise, shape `(ensemble, atoms, 3)`); `conditioning` is a
-  model-specific object holding the cached trunk/pairformer output.
-  > **Update (#330).** `x_init` has since been removed — `GenerativeModelInput` now carries only
-  > `conditioning`. Starting coordinates come from `initialize_from_prior(batch_size=...)` at
-  > sampling time instead. Read the `{x_init, conditioning}` line above as the pre-#330 shape.
+  — `{conditioning}`. Produced by `featurize()`. `conditioning` is a model-specific object
+  holding the cached trunk/pairformer output. Starting coordinates are not carried here; they
+  come from `initialize_from_prior(batch_size=...)` at sampling time.
 
 - **`StepParams`** ([core/samplers/protocol.py:44](../src/sampleworks/core/samplers/protocol.py))
   — the per-step context bundle. Carries `t, dt, noise_scale` (diffusion timing) plus
@@ -114,14 +112,15 @@ Understanding these five dataclasses is enough to read any part of the sampling 
 
 ## 3. The spine: `run_guidance()` step by step
 
-Both CLI paths converge here. File:
-[utils/guidance_script_utils.py](../src/sampleworks/utils/guidance_script_utils.py).
+File: [utils/guidance_script_utils.py](../src/sampleworks/utils/guidance_script_utils.py).
+Both guidance entry points reach `run_guidance()` — directly from `sampleworks-guidance`, or
+once per spawned subprocess under `sampleworks-runs`. §10 walks both end to end.
 
-`run_guidance()` ([:379](../src/sampleworks/utils/guidance_script_utils.py)) is a thin
+`run_guidance()` ([:427](../src/sampleworks/utils/guidance_script_utils.py)) is a thin
 wrapper — it sets up per-job logging, times the run, catches exceptions into a `JobResult`,
-and writes `job_metadata.json`. The real work is in `_run_guidance()` ([:433](../src/sampleworks/utils/guidance_script_utils.py)):
+and writes `job_metadata.json`. The real work is in `_run_guidance()` ([:481](../src/sampleworks/utils/guidance_script_utils.py)):
 
-1. **Load inputs & build reward** — `get_reward_function_and_structure()` ([:225](../src/sampleworks/utils/guidance_script_utils.py)):
+1. **Load inputs & build reward** — `get_reward_function_and_structure()` ([:273](../src/sampleworks/utils/guidance_script_utils.py)):
    - `resolve_mixed_hetatm_atom_altlocs()` fixes a CIF edge case (mixed ATOM/HETATM altlocs
      that atomworks would misparse as an insertion), then `atomworks.parse(hydrogen_policy="remove")`.
    - `XMap.fromfile(density, resolution)` loads the experimental map.
@@ -134,23 +133,24 @@ and writes `job_metadata.json`. The real work is in `_run_guidance()` ([:433](..
    `output_dir` so parallel grid jobs don't race). This stamps `ensemble_size`,
    `recycling_steps`, etc. onto the structure dict for the wrapper's `featurize()` to read.
 
-3. **Build the sampler** — `AF3EDMSampler(EDMSamplerConfig(...))` ([:493](../src/sampleworks/utils/guidance_script_utils.py)).
+3. **Build the sampler** — `AF3EDMSampler(EDMSamplerConfig(...))` ([:563](../src/sampleworks/utils/guidance_script_utils.py)).
    Note `alignment_reverse_diffusion` defaults on only for Boltz.
 
 4. **Build the step scaler** — `dataspace` → `DataSpaceDPSScaler`, `noisespace` →
-   `NoiseSpaceDPSScaler`, `none` → `NoScalingScaler` ([:509](../src/sampleworks/utils/guidance_script_utils.py)).
+   `NoiseSpaceDPSScaler`, `none` → `NoScalingScaler` ([:582](../src/sampleworks/utils/guidance_script_utils.py)).
 
-5. **Build the trajectory scaler & run** — `PureGuidance` or `FKSteering`, then call
-   `.sample(structure, model_wrapper, sampler, step_scaler, reward_function[, num_particles])`.
+5. **Build the trajectory scaler & run** — `PureGuidance`, `FKSteering`, or `LatentOptimization`,
+   then call `.sample(structure, model_wrapper, sampler, step_scaler, reward_function[, num_particles])`.
    `guidance_start` and `partial_diffusion_step` are converted from step counts to fractions
-   of `num_steps` here.
+   of `num_steps` here. `LatentOptimization` optimizes the model's cached trunk latents instead
+   of steering coordinates, so it ignores `step_scaler`.
 
-6. **Save** — `save_everything()` ([:272](../src/sampleworks/utils/guidance_script_utils.py))
+6. **Save** — `save_everything()` ([:320](../src/sampleworks/utils/guidance_script_utils.py))
    writes `refined.cif` (final ensemble coords written into the atom-array template, plus the
    config injected as a `sampleworks` CIF category via `add_category_to_cif`), the denoised and
    next-step trajectories (sub-sampled every 10 steps), and `losses.txt`.
 
-`run_guidance_job_queue()` ([:676](../src/sampleworks/utils/guidance_script_utils.py)) is
+`run_guidance_job_queue()` ([:820](../src/sampleworks/utils/guidance_script_utils.py)) is
 the batch entry: unpickle a list of `GuidanceConfig`, load the model **once**, loop
 `run_guidance()` over jobs, emptying CUDA cache between them.
 
@@ -160,7 +160,7 @@ the batch entry: unpickle a list of `GuidanceConfig`, load the model **once**, l
 
 ### 4.1 Trajectory scalers — the loop *around* the sampler
 
-Both live in `core/scalers/`. They implement `TrajectoryScalerProtocol.sample()`, whose job
+All three live in `core/scalers/`. They implement `TrajectoryScalerProtocol.sample()`, whose job
 is: featurize → sample prior → build reconciler → run the step loop → package
 `GuidanceOutput`.
 
@@ -197,7 +197,14 @@ in parallel and periodic **resampling** toward low loss:
   single structures.
 - Returns the single lowest-loss particle ensemble.
 
-Both call `process_structure_to_trajectory_input()`
+**`LatentOptimization.sample()`** ([core/scalers/latent_optimization.py:123](../src/sampleworks/core/scalers/latent_optimization.py))
+— inference-time latent optimization (IT-opt). Instead of steering coordinates, it makes the
+model's cached trunk latents (`s`, `z`) optimizable leaves, runs one or more full diffusion
+rounds updating them against the reward, then samples the final ensemble with the latents
+frozen. Coordinate guidance is not applied, so `step_scaler` is ignored. See
+[IT_OPT_DESIGN.md](IT_OPT_DESIGN.md) for the algorithm and its mapping to the reference.
+
+All three call `process_structure_to_trajectory_input()`
 ([eval/structure_utils.py:106](../src/sampleworks/eval/structure_utils.py)), which cleans the
 atom array, builds the **`AtomReconciler`**, tiles coordinates across the batch, and returns a
 frozen `SampleworksProcessedStructure`. Its `.to_reward_inputs()` produces the `RewardInputs`.
@@ -311,8 +318,8 @@ Files: [models/](../src/sampleworks/models/). Each wraps an external model behin
 `FlowModelWrapper`. Common shape:
 
 - **`featurize(structure)`** — convert the atomworks dict into the model's native input,
-  run the expensive trunk/pairformer **once**, cache it in a model-specific `Conditioning`
-  dataclass, and build `x_init`. Also loads the **model-space atom array** for reconciliation.
+  run the expensive trunk/pairformer **once**, and cache it in a model-specific `Conditioning`
+  dataclass. Also loads the **model-space atom array** for reconciliation.
 - **`step(x_t, t, features)`** — run only the diffusion/structure module on the cached
   conditioning; return predicted clean coords. Called every diffusion step.
 - **`initialize_from_prior(batch_size, features)`** — Gaussian noise at the model's atom count.
@@ -322,12 +329,12 @@ Files: [models/](../src/sampleworks/models/). Each wraps an external model behin
 | `Boltz1Wrapper` / `Boltz2Wrapper` | [boltz/wrapper.py](../src/sampleworks/models/boltz/wrapper.py) | Caches pairformer (`s_trunk, z_trunk`); Boltz2 also caches diffusion conditioning. Preprocessing writes NPZ/manifest/MSA. `process_structure_for_boltz` reconstructs the atom array from the processed NPZ. |
 | `ProtenixWrapper` | [protenix/wrapper.py](../src/sampleworks/models/protenix/wrapper.py) | AF3 reimpl. `structure_processing.py` builds the Protenix JSON (entities, modifications, covalent bonds). Optional diffusion-shared-vars cache (`pair_z, p_lm, c_l`). |
 | `RF3Wrapper` | [rf3/wrapper.py](../src/sampleworks/models/rf3/wrapper.py) | Baker AF3 replica. Uses an inference engine + trunk-with-recycling generator. Optional chiral-feature tracking/disabling (writes `chiral_grad_stats.json`). |
-| `LatentAdaptedWrapper` *(archived — not in the build)* | [latent_adapter/archived_injector_family.md](latent_adapter/archived_injector_family.md) | An alternative injector/decorator approach (affine/delta transform at `featurize`). Never wired in; superseded by the direct-leaf `LatentOptimization` scaler and archived. IT-opt now reads/writes latents via `AttrLatentIO` in [latent_adapter.py](../src/sampleworks/models/latent_adapter.py). |
 
 The wrappers guarantee the atom array they hand back has valid coords/occupancy/B-factors, so
 downstream `RewardInputs.from_atom_array()` never sees NaNs. Import failures are tolerated
-([guidance_script_utils.py:48-62](../src/sampleworks/utils/guidance_script_utils.py)) because
-Boltz/Protenix/RF3 have mutually incompatible dependencies and live in separate pixi envs.
+([guidance_script_utils.py:51-75](../src/sampleworks/utils/guidance_script_utils.py)) because
+Boltz/Protenix/RF3/Protpardelle have mutually incompatible dependencies and live in separate
+pixi envs.
 
 ---
 
