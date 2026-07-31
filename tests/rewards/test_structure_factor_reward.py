@@ -6,12 +6,13 @@ batch=1 occupancy gradients, batch/edge handling) live in
 here is specific to ``StructureFactorRewardFunction``
 (``sampleworks.core.rewards.structure_factor``) or to SFcalculator's forward model.
 
-The headline SF-specific behavior is that SFcalculator has **no per-conformer (batch)
-occupancy/B axis**: ``F_protein_batch`` batches only coordinates (its docstring still reads
-``TODO: Support batched B factors``), so ``__call__`` can only honor a single shared
-occupancy/B vector. Rather than silently using row 0 and dropping the rest, the reward
-*rejects* non-broadcast occupancy/B — making the limitation a loud, caller-visible
-invariant instead of a latent footgun. See ``test_per_conformer_occupancy_or_b_raises``.
+Specific features of the SF reward include:
+- No per-conformer occupancy/B-factors — SFcalculator batches only coordinates, so
+  ``__call__`` should reject if not broadcastable across the batch.
+- Bulk-solvent modes — ``off`` scores ``|Fprotein|``; ``combined`` or ``per_conformer``
+  additionally account for bulk solvent contributions depending on the ensemble.
+- MTZ information — unit cell, space group, and amplitude/sigma column; reflection masking
+  for outliers and R-free test set.
 """
 
 import logging
@@ -113,7 +114,7 @@ def sf_true_inputs(test_coordinates_1vme_sf, device: torch.device) -> dict[str, 
     )
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def sf_ensemble_inputs(
     structure_1vme_sf, device: torch.device
 ) -> tuple[dict[str, torch.Tensor], AtomArray]:
@@ -127,8 +128,7 @@ def sf_ensemble_inputs(
     alternate-conformation coordinates. Residues modeled in only one altloc have no counterpart
     and are dropped to keep that shared topology. This divergence is what separates behavior
     that is nonlinear in the per-conformer density from behavior that is not — for example, the
-    different bulk solvent modes. Class-scoped as it is currently only used to test the bulk
-    solvent modes.
+    different bulk solvent modes.
 
     SFcalculator has no per-conformer occ/B axis, so ``b_factors`` is shared from altloc-A
     across the batch, and occupancy shared at the uniform ``1/batch_size = 0.5``.
@@ -334,12 +334,88 @@ class TestStructureFactorBulkSolvent:
     depend on the raw ``|F|`` scale.
     """
 
+    # Four prepared Ftotal rewards: {combined, per_conformer} x {full, ensemble} topology, all
+    # raw |F| and all scored against the MTZ's Ftotal set. The topology differs on atom counts:
+    #   _full     -- a single 1vme structure with both altlocs present
+    #   _ensemble -- topology consists of blank + shared atoms between the two altlocs
+    @pytest.fixture(scope="class")
+    @classmethod
+    def reward_with_solvent_combined_full(cls, mtz_path_1vme, structure_1vme_sf, device):
+        """``combined`` on the full 1vme topology."""
+        return make_prepared_reward(
+            mtz_path_1vme,
+            structure_1vme_sf,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="combined",
+            normalize_amplitude=False,
+        )
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def reward_with_solvent_per_conformer_full(cls, mtz_path_1vme, structure_1vme_sf, device):
+        """``per_conformer`` on the full 1vme topology."""
+        return make_prepared_reward(
+            mtz_path_1vme,
+            structure_1vme_sf,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="per_conformer",
+            normalize_amplitude=False,
+        )
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def reward_with_solvent_combined_ensemble(cls, mtz_path_1vme, sf_ensemble_inputs, device):
+        """``combined`` on the altloc-ensemble topology."""
+        _, ref_atom_array = sf_ensemble_inputs
+        return make_prepared_reward(
+            mtz_path_1vme,
+            ref_atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="combined",
+            normalize_amplitude=False,
+        )
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def reward_with_solvent_per_conformer_ensemble(cls, mtz_path_1vme, sf_ensemble_inputs, device):
+        """``per_conformer`` on the altloc-ensemble topology."""
+        _, ref_atom_array = sf_ensemble_inputs
+        return make_prepared_reward(
+            mtz_path_1vme,
+            ref_atom_array,
+            device,
+            expcolumns=["Ftotal", "SIGFtotal"],
+            bulk_solvent="per_conformer",
+            normalize_amplitude=False,
+        )
+
+    def test_ftotal_modes_agree_for_single_conformer(
+        self,
+        reward_with_solvent_combined_full,
+        reward_with_solvent_per_conformer_full,
+        sf_true_inputs,
+    ):
+        """For a single conformer (batch_size=1) ``mask(<rho>)`` and ``<mask(rho)>`` are the same
+        mask, so ``combined`` and ``per_conformer`` give the same loss."""
+        torch.testing.assert_close(
+            reward_with_solvent_combined_full(**sf_true_inputs),
+            reward_with_solvent_per_conformer_full(**sf_true_inputs),
+        )
+
     def test_combined_fits_ftotal_column(
-        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
+        self,
+        mtz_path_1vme,
+        structure_1vme_sf,
+        reward_with_solvent_combined_full,
+        sf_true_inputs,
+        device,
     ):
         """Adding default-scaled bulk solvent (``combined``) fits the synthetic ``Ftotal``
-        column far better than protein-only (``off``) — the synthetic ground truth was generated
-        with the same default scales."""
+        column far better than protein-only (``off``). It should also reproduce ``Ftotal``
+        as the synthetic MTZ should be generated with the same structure and config."""
         reward_with_solvent_off = make_prepared_reward(
             mtz_path_1vme,
             structure_1vme_sf,
@@ -348,46 +424,16 @@ class TestStructureFactorBulkSolvent:
             bulk_solvent="off",
             normalize_amplitude=False,
         )
-        reward_with_solvent_combined = make_prepared_reward(
-            mtz_path_1vme,
-            structure_1vme_sf,
-            device,
-            expcolumns=["Ftotal", "SIGFtotal"],
-            bulk_solvent="combined",
-            normalize_amplitude=False,
-        )
-        loss_combined = reward_with_solvent_combined(**sf_true_inputs)
+        loss_combined = reward_with_solvent_combined_full(**sf_true_inputs)
         loss_off = reward_with_solvent_off(**sf_true_inputs)
         assert loss_combined < loss_off
-
-    def test_ftotal_modes_agree_for_single_conformer(
-        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
-    ):
-        """For a single conformer (batch_size=1) ``mask(<rho>)`` and ``<mask(rho)>`` are the same
-        mask, so ``combined`` and ``per_conformer`` give the same loss."""
-        reward_with_solvent_combined = make_prepared_reward(
-            mtz_path_1vme,
-            structure_1vme_sf,
-            device,
-            expcolumns=["Ftotal", "SIGFtotal"],
-            bulk_solvent="combined",
-            normalize_amplitude=False,
-        )
-        reward_with_solvent_per_conformer = make_prepared_reward(
-            mtz_path_1vme,
-            structure_1vme_sf,
-            device,
-            expcolumns=["Ftotal", "SIGFtotal"],
-            bulk_solvent="per_conformer",
-            normalize_amplitude=False,
-        )
-        torch.testing.assert_close(
-            reward_with_solvent_combined(**sf_true_inputs),
-            reward_with_solvent_per_conformer(**sf_true_inputs),
+        assert loss_combined.item() < 1e-6, (
+            "combined mode should reproduce MTZ's Ftotal with loss less than 1e-6, but the "
+            f"combined loss here is {loss_combined.item():.6e}"
         )
 
     def test_per_conformer_averages_masks_over_ensemble(
-        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
+        self, reward_with_solvent_per_conformer_full, sf_true_inputs
     ):
         """batch_size=2 *identical* conformers (occ 1/2 each) score the same as the single
         conformer.
@@ -401,24 +447,22 @@ class TestStructureFactorBulkSolvent:
         occupancy is properly rejected by the reward now — see
         ``TestStructureFactorOccupancy.test_per_conformer_occupancy_or_b_raises``.
         """
-        reward = make_prepared_reward(
-            mtz_path_1vme,
-            structure_1vme_sf,
-            device,
-            expcolumns=["Ftotal", "SIGFtotal"],
-            bulk_solvent="per_conformer",
-            normalize_amplitude=False,
-        )
-        ensemble = dict(
+        identical_ensemble = dict(
             coordinates=sf_true_inputs["coordinates"].expand(2, -1, -1),
             elements=sf_true_inputs["elements"].expand(2, -1),
             b_factors=sf_true_inputs["b_factors"].expand(2, -1),
             occupancies=(sf_true_inputs["occupancies"] / 2).expand(2, -1),
         )
-        torch.testing.assert_close(reward(**sf_true_inputs), reward(**ensemble))
+        torch.testing.assert_close(
+            reward_with_solvent_per_conformer_full(**sf_true_inputs),
+            reward_with_solvent_per_conformer_full(**identical_ensemble),
+        )
 
     def test_ftotal_modes_diverge_for_distinct_conformer_ensemble(
-        self, mtz_path_1vme, sf_ensemble_inputs, device
+        self,
+        reward_with_solvent_combined_ensemble,
+        reward_with_solvent_per_conformer_ensemble,
+        sf_ensemble_inputs,
     ):
         """For a genuine 2-conformer ensemble (altloc A vs B), ``mask(<rho>) != <mask(rho)>``, so
         ``combined`` and ``per_conformer`` give *different* losses.
@@ -432,32 +476,18 @@ class TestStructureFactorBulkSolvent:
         The mock.patch.object supplements the numerical difference test by checking the dispatch
         logic and ensure that the correct SFcalculator method for Fsolvent is called.
         """
-        ensemble_reward_inputs, ref_atom_array = sf_ensemble_inputs
-        reward_combined = make_prepared_reward(
-            mtz_path_1vme,
-            ref_atom_array,
-            device,
-            expcolumns=["Ftotal", "SIGFtotal"],
-            bulk_solvent="combined",
-            normalize_amplitude=False,
-        )
-        reward_per_conformer = make_prepared_reward(
-            mtz_path_1vme,
-            ref_atom_array,
-            device,
-            expcolumns=["Ftotal", "SIGFtotal"],
-            bulk_solvent="per_conformer",
-            normalize_amplitude=False,
-        )
-        loss_combined = reward_combined(**ensemble_reward_inputs)
+        ensemble_reward_inputs, _ = sf_ensemble_inputs
+        loss_combined = reward_with_solvent_combined_ensemble(**ensemble_reward_inputs)
         # Specifically checking the dispatch logic in _compute_ensemble_ftotal, where
         # ``bulk_solvent="per_conformer"`` should route to a calc_fsolvent_batch call.
         with mock.patch.object(
-            reward_per_conformer.sfc,
+            reward_with_solvent_per_conformer_ensemble.sfc,
             "calc_fsolvent_batch",
-            wraps=reward_per_conformer.sfc.calc_fsolvent_batch,
+            wraps=reward_with_solvent_per_conformer_ensemble.sfc.calc_fsolvent_batch,
         ) as sfc_calc_fsolvent_batch:
-            loss_per_conformer = reward_per_conformer(**ensemble_reward_inputs)
+            loss_per_conformer = reward_with_solvent_per_conformer_ensemble(
+                **ensemble_reward_inputs
+            )
         assert sfc_calc_fsolvent_batch.call_count == 1
         assert torch.isfinite(loss_combined) and torch.isfinite(loss_per_conformer)
 
@@ -471,28 +501,56 @@ class TestStructureFactorBulkSolvent:
             f"{loss_per_conformer.item()}"
         )
 
+    @pytest.mark.parametrize(
+        "reward_fixture",
+        ["reward_with_solvent_combined_ensemble", "reward_with_solvent_per_conformer_ensemble"],
+    )
+    def test_bulk_solvent_branch_carries_gradient(
+        self, request: pytest.FixtureRequest, reward_fixture: str, sf_ensemble_inputs
+    ):
+        """Fsolvent under ``combined`` and ``per_conformer`` modes should contribute gradients
+        to the coordinates.
+
+        ``Ftotal = kiso * aniso * (Fprotein_HKL + kmask * Fmask_HKL)``, and ``Fmask_HKL``
+        descends from ``Fprotein_asu_batch`` rather than from ``Fprotein_HKL``.
+        """
+        reward = request.getfixturevalue(reward_fixture)
+        ensemble_reward_inputs, _ = sf_ensemble_inputs
+        coordinates = ensemble_reward_inputs["coordinates"].clone().requires_grad_(True)
+        loss = reward(**{**ensemble_reward_inputs, "coordinates": coordinates})
+
+        Fprotein_HKL, Fmask_HKL = reward.sfc.Fprotein_HKL, reward.sfc.Fmask_HKL
+        assert Fprotein_HKL.requires_grad and Fmask_HKL.requires_grad, (
+            f"{reward.bulk_solvent} mode should have requires_grad=True on both Fprotein_HKL "
+            f"and Fmask_HKL, but got {Fprotein_HKL.requires_grad} and {Fmask_HKL.requires_grad}"
+        )
+        (total_gradient,) = torch.autograd.grad(loss, coordinates, retain_graph=True)
+        d_protein, d_solvent = torch.autograd.grad(
+            loss, (Fprotein_HKL, Fmask_HKL), retain_graph=True
+        )
+        (via_protein,) = torch.autograd.grad(
+            Fprotein_HKL, coordinates, grad_outputs=d_protein, retain_graph=True
+        )
+        (via_solvent,) = torch.autograd.grad(Fmask_HKL, coordinates, grad_outputs=d_solvent)
+
+        for branch, gradient in (("Fprotein", via_protein), ("Fmask", via_solvent)):
+            assert 0 < gradient.norm().item() < 1e6, (
+                f"the coordinate gradient through {branch} in {reward.bulk_solvent} mode has "
+                f"norm {gradient.norm().item():.3e}"
+            )
+
+        residual = (
+            (via_protein + via_solvent - total_gradient).norm() / total_gradient.norm()
+        ).item()
+        assert residual < 1e-3, (
+            "coordinate gradients from the Fprotein and Fmask branches do not sum back to "
+            f"d(loss)/d(coords) (relative residual norm {residual:.2e})"
+        )
+
 
 @pytest.mark.gpu
 class TestStructureFactorConfig:
-    """Config knobs beyond the fixture default: the raw-amplitude path and reflection selection."""
-
-    def test_perturbed_has_higher_loss_with_unnormalized_amplitude(
-        self, mtz_path_1vme, structure_1vme_sf, sf_true_inputs, device
-    ):
-        """The ``normalize_amplitude=False`` branch (raw ``|F|`` vs ``sfc.Fo``) runs and ranks
-        the true structure below a perturbed one. The normalized path is the fixture default,
-        covered by the contract tests."""
-        reward = make_prepared_reward(
-            mtz_path_1vme,
-            structure_1vme_sf,
-            device,
-            expcolumns=["Fprotein", "SIGFprotein"],
-            normalize_amplitude=False,
-        )
-        torch.manual_seed(42)
-        coords = sf_true_inputs["coordinates"]
-        perturbed = {**sf_true_inputs, "coordinates": coords + torch.randn_like(coords) * 0.5}
-        assert reward(**perturbed) > reward(**sf_true_inputs)
+    """Config knobs beyond the forward model: reflection selection."""
 
     def test_exclude_free_set_drops_reflections(self, mtz_path_1vme, structure_1vme_sf, device):
         """``exclude_free_reflections=True`` drops the R-free test set from the scored mask.
