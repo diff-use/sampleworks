@@ -37,7 +37,7 @@ _RESERVED_SFC_KWARGS = frozenset(
 
 # Two thresholds for warnings reflection set too small after dropping outliers and R-free test
 # set; see _build_reflection_mask.
-# The min fraction is intended to catch  an R-free convention mismatch (specify the wrong test
+# The min fraction is intended to catch an R-free convention mismatch (specify the wrong test
 # set value for example). R-free test sets are conventionally 5-10% and outlier should be under
 # 1%, so 75% is a safe threshold.
 # The min absolute number is intended to catch a reflection set too small to guide the structure
@@ -141,9 +141,9 @@ class StructureFactorRewardFunction:
 
         The crystal metadata is taken from the MTZ, which is the only self-consistent
         source: ``SFcalculator``'s ``init_mtz`` overwrites the cell and space group of
-        the structure by the MTZ's whenever they disagree. Niavely overriding the cell
+        the structure by the MTZ's whenever they disagree. Naively overriding the cell
         and/or the space group of MTZ can be dangerous because the reflections' indexing
-        could become wrong, so there are not arguments here to overrride them.
+        could become wrong, so there are no arguments here to override them.
 
         Unlike the real-space reward function, ``SFcalculator`` needs the full topology
         (``PDBParser`` -> ``gemmi.Structure``: atom names/elements, unit cell, space group,
@@ -211,6 +211,7 @@ class StructureFactorRewardFunction:
             )
         self.bulk_solvent = bulk_solvent
         self.exclude_free_reflections = exclude_free_reflections
+        # bool will pass isinstance(..., int) check but not the type check
         if type(batch_partition) is not int or batch_partition <= 0:
             raise ValueError(
                 f"batch_partition must be a positive integer, got {batch_partition!r}."
@@ -379,7 +380,7 @@ class StructureFactorRewardFunction:
                 )
             logger.warning(
                 "SFcalculator did not yield finite sfc.Eo from this MTZ; its outlier detection "
-                "failed too, so reflections may not be flagged as outliers."
+                "will only flag non-positive amplitudes as outliers instead of also using Eo."
             )
 
         # True where a reflection contributes to the reward (non-outlier, and not in the
@@ -506,12 +507,35 @@ class StructureFactorRewardFunction:
         -------
         torch.Tensor
             Scalar reward (loss).
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`prepare` has not been called.
+        ValueError
+            If any input's atom count differs from the SFcalculator topology built by `prepare`
+            or if ``b_factors`` / ``occupancies`` are not broadcast-identical across batch dim.
         """
         if self.sfc is None or self._reflection_mask is None:
             raise RuntimeError(
                 "StructureFactorRewardFunction.prepare() must be called with the model "
                 "atom array before the reward is evaluated."
             )
+
+        # The topology (atom count included) is fixed by prepare(); a mismatch would otherwise
+        # surface as a broadcast error inside calc_fprotein_batch.
+        n_topology_atoms = len(self.sfc.atom_pos_orth)
+        for name, n_atoms in (
+            ("coordinates", coordinates.shape[-2]),
+            ("b_factors", b_factors.shape[-1]),
+            ("occupancies", occupancies.shape[-1]),
+        ):
+            if n_atoms != n_topology_atoms:
+                raise ValueError(
+                    f"{name} has {n_atoms} atoms but the SFcalculator topology built by "
+                    f"prepare() has {n_topology_atoms}. Call prepare() with the same atom array "
+                    "the sampled coordinates correspond to (model atom space)."
+                )
 
         # SFcalculator has no per-conformer (batch) occupancy/B axis, so these must be shared
         # across the ensemble; row 0 is used. Reject non-broadcast input as a guard.

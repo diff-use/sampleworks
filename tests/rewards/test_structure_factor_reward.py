@@ -450,7 +450,7 @@ class TestStructureFactorBulkSolvent:
             normalize_amplitude=False,
         )
         loss_combined = reward_combined(**ensemble_reward_inputs)
-        # Specifcially checking the dispatch logic in _compute_ensemble_ftotal, where
+        # Specifically checking the dispatch logic in _compute_ensemble_ftotal, where
         # ``bulk_solvent="per_conformer"`` should route to a calc_fsolvent_batch call.
         with mock.patch.object(
             reward_per_conformer.sfc,
@@ -546,7 +546,7 @@ class TestStructureFactorConfig:
         """An inverted ``testset_value`` keeps only the test set, and is warned about.
 
         Inverting the flag keeps the fraction of valid reflections small although the
-        asbolute size can still be large.
+        absolute size can still be large.
         """
         with caplog.at_level(logging.WARNING):
             reward = make_prepared_reward(
