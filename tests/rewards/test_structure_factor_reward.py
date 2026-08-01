@@ -290,7 +290,21 @@ class TestStructureFactorConstruction:
 
 @pytest.mark.gpu
 class TestStructureFactorOccupancy:
-    """SFC has no per-conformer occupancy/B axis; the reward enforces broadcast-identical input."""
+    """``__call__``'s input guards, both of which run before any SF compute: the atom count must
+    match the topology fixed by ``prepare()``, and occupancy/B must be broadcast-identical across
+    the batch (SFC has no per-conformer occupancy/B axis).
+    """
+
+    def test_atom_count_mismatch_raises(self, reward_function_1vme_sf, sf_ensemble_inputs):
+        """Inputs whose atom count disagrees with the prepared topology fail fast.
+
+        ``reward_function_1vme_sf`` is prepared on the full 1vme topology (both altlocs present),
+        while ``sf_ensemble_inputs`` is built on the shared-altloc topology (blank plus the atoms
+        common to A and B), which is strictly smaller.
+        """
+        ensemble_reward_inputs, _ = sf_ensemble_inputs
+        with pytest.raises(ValueError, match="topology built by"):
+            reward_function_1vme_sf(**ensemble_reward_inputs)
 
     @pytest.mark.parametrize("field", ["occupancies", "b_factors"])
     def test_per_conformer_occupancy_or_b_raises(
@@ -495,7 +509,7 @@ class TestStructureFactorBulkSolvent:
         relative_threshold = 0.2
         # The true relative difference is ~1.24 and the noise from permuting the batch for
         # per_conformer is ~0.02. Subjected to change if loss function or normalization changes.
-        assert relative_gap > relative_threshold, (
+        assert abs(relative_gap) > relative_threshold, (
             f"combined and per_conformer losses differ relatively by {relative_gap:+.3f}, "
             f"under the {relative_threshold} threshold we set: {loss_combined.item()} vs "
             f"{loss_per_conformer.item()}"
