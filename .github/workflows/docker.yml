@@ -17,11 +17,13 @@ env:
   # public registry path.
   PUBLIC_REGISTRY: ${{ vars.SAMPLEWORKS_PUBLIC_REGISTRY || 'docker.io' }}
   PUBLIC_IMAGE_NAME: ${{ vars.SAMPLEWORKS_PUBLIC_IMAGE || 'diffuseproject/pixi-with-checkpoints' }}
-  CHECKPOINTS_SOURCE_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE || 'harbor.astera.sh/library/sampleworks-checkpoints@sha256:ff1dd2b42c3afd593e034cf81df1bf1862c27ae491f46cc10e105629f1102781' }}
+  # No in-repo fallback: the digest-pinned Harbor ref lives in the repository
+  # variable so the internal registry hostname stays out of git.
+  CHECKPOINTS_SOURCE_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE }}
   CHECKPOINTS_DOCKERHUB_IMAGE: ${{ vars.SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE || 'docker.io/diffuseproject/sampleworks-checkpoints:latest' }}
   CUDA_BASE_IMAGE: ${{ vars.SAMPLEWORKS_CUDA_BASE_IMAGE || 'nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5' }}
 
-  ASTERA_REGISTRY: harbor.astera.sh
+  ASTERA_REGISTRY: ${{ vars.ASTERA_REGISTRY }}
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
   SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
 
@@ -190,6 +192,15 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Validate Astera registry configured
+        run: |
+          # login-action with an empty registry defaults to Docker Hub and
+          # would send the Harbor credentials there; fail fast instead.
+          if [ -z "${ASTERA_REGISTRY}" ]; then
+            echo "ASTERA_REGISTRY repository variable must be set."
+            exit 1
+          fi
 
       - name: Login to Harbor
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4

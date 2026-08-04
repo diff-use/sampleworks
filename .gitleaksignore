@@ -1,0 +1,29 @@
+# Internal Astera references intentionally kept while this repo is private
+# (README/Dockerfile docs for Astera-internal usage). Per the going-public
+# runbook the repo gets republished as a fresh single-commit repo anyway,
+# so these historical fingerprints only silence the warn-only scan.
+21f51bdfe62805e30e61a72d8d9ca74a861ddecb:README.md:astera-internal-hostname:161
+2da1e2dffb9ab646a8189b189aed03b9693222b0:Dockerfile:astera-internal-hostname:11
+2da1e2dffb9ab646a8189b189aed03b9693222b0:Dockerfile:astera-internal-hostname:111
+2da1e2dffb9ab646a8189b189aed03b9693222b0:Dockerfile:astera-internal-hostname:59
+535c66566162b4a693055e34b0777cb55cbb9c78:README.md:astera-internal-hostname:161
+57f3beceb44da3d751cd16d8afb61dd2d10f50de:README.md:astera-internal-hostname:161
+95b5b3a49ae45eac48d4075204620ab37ba5b803:Dockerfile:astera-internal-hostname:11
+95b5b3a49ae45eac48d4075204620ab37ba5b803:Dockerfile:astera-internal-hostname:112
+95b5b3a49ae45eac48d4075204620ab37ba5b803:Dockerfile:astera-internal-hostname:59
+95b5b3a49ae45eac48d4075204620ab37ba5b803:.github/workflows/docker.yml:astera-internal-hostname:16
+95b5b3a49ae45eac48d4075204620ab37ba5b803:.github/workflows/docker.yml:astera-internal-hostname:4
+95b5b3a49ae45eac48d4075204620ab37ba5b803:.github/workflows/docker.yml:astera-internal-hostname:49
+95b5b3a49ae45eac48d4075204620ab37ba5b803:README.md:astera-internal-hostname:167
+aa4cdcf141962491211afa63b0a7174d35b42c30:Dockerfile.astera:astera-internal-hostname:12
+aa4cdcf141962491211afa63b0a7174d35b42c30:Dockerfile.astera:astera-internal-hostname:16
+aa4cdcf141962491211afa63b0a7174d35b42c30:.github/workflows/docker.yml:astera-internal-hostname:20
+aa4cdcf141962491211afa63b0a7174d35b42c30:.github/workflows/docker.yml:astera-internal-hostname:24
+aa4cdcf141962491211afa63b0a7174d35b42c30:.github/workflows/docker.yml:astera-internal-hostname:28
+aa4cdcf141962491211afa63b0a7174d35b42c30:README.md:astera-internal-hostname:263
+aa4cdcf141962491211afa63b0a7174d35b42c30:README.md:astera-internal-hostname:264
+aa4cdcf141962491211afa63b0a7174d35b42c30:README.md:astera-internal-hostname:303
+cf5873a3aff314755107278226bc4ec49edc083b:.github/workflows/docker.yml:astera-internal-hostname:21
+cf5873a3aff314755107278226bc4ec49edc083b:.github/workflows/docker.yml:astera-internal-hostname:25
+cf5873a3aff314755107278226bc4ec49edc083b:.github/workflows/docker.yml:astera-internal-hostname:29
+e56d1f1199de7e0238f013a58b8d0f2b4a4962ee:README.md:astera-internal-hostname:161
