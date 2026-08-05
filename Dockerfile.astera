@@ -5,11 +5,12 @@
 # private image adds Astera-only tooling (EXT, rsync, editor conveniences) and is
 # pushed to Harbor. It intentionally does not duplicate the public build.
 #
-# Build locally:
+# Build locally (ASTERA_REGISTRY = the internal registry host, same value as
+# the CI repository variable):
 #   docker build --platform linux/amd64 \
 #     -f Dockerfile.astera \
 #     --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:local \
-#     -t harbor.astera.sh/library/pixi-with-checkpoints:local \
+#     -t "${ASTERA_REGISTRY}/library/pixi-with-checkpoints:local" \
 #     .
 
 ARG PIXI_WITH_CHECKPOINTS_IMAGE

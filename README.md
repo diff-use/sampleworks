@@ -167,10 +167,10 @@ setting equivalent local paths for `DATA_DIR`, `PROTEINS_CSV`, `RESULTS_DIR`,
 `MSA_CACHE_DIR`, and model checkpoints.
 
 Start an 8-GPU ACTL machine named `sampleworks` with the private Astera
-`pixi-with-checkpoints:sampleworks` image and the shared data volume mounted:
+`sampleworks` image alias and the shared data volume mounted:
 
 ```bash
-actl pod up sampleworks --profile 8x --image harbor.astera.sh/library/pixi-with-checkpoints:sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
+actl pod up sampleworks --profile 8x --image sampleworks --storage shared --pvc-size 200Gi --mount diffuse-shared --yes
 ```
 
 Keep that terminal open; it maintains sync and SSH. From another terminal:
@@ -299,8 +299,7 @@ Image names:
 | Purpose | Image |
 |---|---|
 | Public Sampleworks runtime | `diffuseproject/pixi-with-checkpoints` |
-| Astera/ACTL runtime | `harbor.astera.sh/library/pixi-with-checkpoints` |
-| ACTL scientist tag | `harbor.astera.sh/library/pixi-with-checkpoints:sampleworks` |
+| Astera/ACTL runtime | `sampleworks` alias; run `actl pod images` for the resolved, digest-pinned ref |
 
 CI publishes these tags:
 
@@ -333,13 +332,15 @@ docker build --platform linux/amd64 \
   .
 ```
 
-Build the Astera overlay locally after a public image is available:
+Build the Astera overlay locally after a public image is available. Set
+`ASTERA_REGISTRY` to the internal registry host (same value as the CI
+repository variable):
 
 ```bash
 docker build --platform linux/amd64 \
   -f Dockerfile.astera \
   --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:local \
-  -t harbor.astera.sh/library/pixi-with-checkpoints:local \
+  -t "${ASTERA_REGISTRY}/library/pixi-with-checkpoints:local" \
   .
 ```
 
