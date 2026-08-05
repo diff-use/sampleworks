@@ -135,6 +135,60 @@ class RewardInputs:
             input_coords=input_coords.to(device),
         )
 
+    def to_atom_array(self, template_atom_array: AtomArray) -> AtomArray:
+        """Build the single-conformer reference atom array these inputs describe.
+
+        This is intended for reward's ``prepare()``, which needs an atom array that
+        not only matches the topology in model atom space but also holds the reward
+        input (reconciled) coordinates and b-factors (both are assumed to be identical
+        across the batch dimension). Reconciled coordinates are especially important,
+        as for example, SFcalculator estimates solventpct from the atomic positions
+        during prepare(). Occupancy is set to 1.0 for every atom because this is not
+        meant to be an ensemble representation.
+
+        Parameters
+        ----------
+        template_atom_array
+            Atom array defining the model atom space (topology) these inputs were built
+            for. Copied, never mutated.
+
+        Returns
+        -------
+        AtomArray
+            Copy of the template with ``coord`` / ``b_factor`` / ``occupancy`` overwritten
+            to properly represent the reward inputs.
+
+        Raises
+        ------
+        ValueError
+            If the template_atom_array has a different atom count than these inputs.
+        """
+        n_atoms = self.b_factors.shape[-1]
+        if len(template_atom_array) != n_atoms:
+            raise ValueError(
+                f"template_atom_array has {len(template_atom_array)} atoms, but these RewardInput "
+                f"describe {n_atoms} atoms; pass the atom array the inputs were built from."
+            )
+
+        atom_array = template_atom_array.copy()
+        # Biotite annotations are numpy: a tensor reaches `np.asarray` inside
+        # `set_annotation` (which raises for CUDA tensors), and `coord` rejects
+        # non-ndarray outright. Collapse leading batch dims.
+        atom_array.coord = (
+            self.input_coords.reshape(-1, n_atoms, 3)[0]
+            .detach()
+            .to(device="cpu", dtype=torch.float32)
+            .numpy()
+        )
+        atom_array.b_factor = (
+            self.b_factors.reshape(-1, n_atoms)[0]
+            .detach()
+            .to(device="cpu", dtype=torch.float32)
+            .numpy()
+        )
+        atom_array.occupancy = np.ones(n_atoms, dtype=np.float32)
+        return atom_array
+
 
 @runtime_checkable
 class RewardFunctionProtocol(Protocol):

@@ -66,7 +66,9 @@ class PureGuidance:
         step_scaler : StepScalerProtocol
             StepScalerProtocol to use for guidance scaling.
         reward : RewardFunctionProtocol
-            Reward function to use for guidance.
+            Reward function to use for guidance. If it exposes ``prepare(atom_array, *,
+            device)``, that is called once the model atom space is resolved and before the
+            first step, with the reference atom array the reward inputs describe.
         num_particles : int (optional)
             Number of particles to sample in parallel. For PureGuidance, this is ignored since
             no reweighting/resampling is performed.
@@ -89,6 +91,12 @@ class PureGuidance:
 
         reconciler = processed_structure.reconciler.to(coords.device)
         reward_inputs = processed_structure.to_reward_inputs(device=coords.device)
+
+        if hasattr(reward, "prepare"):
+            reward.prepare(
+                reward_inputs.to_atom_array(processed_structure.reward_atom_array),
+                device=coords.device,
+            )
 
         trajectory_denoised: list[torch.Tensor] = []
         trajectory_next_step: list[torch.Tensor] = []
@@ -136,7 +144,12 @@ class PureGuidance:
             else:
                 losses.append(None)
 
-        metadata: dict = {"trajectory_denoised": trajectory_denoised}
+        # reward_inputs is returned so callers can re-score the trajectory after the fact
+        # (per-step or final) without rebuilding the model atom space from scratch.
+        metadata: dict = {
+            "trajectory_denoised": trajectory_denoised,
+            "reward_inputs": reward_inputs,
+        }
 
         # If we had a mismatch, we need to add this key to the metadata so the save_everything
         # function can get the right number of atoms.
