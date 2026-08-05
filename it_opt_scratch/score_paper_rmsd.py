@@ -43,7 +43,12 @@ import pandas as pd
 import torch
 from atomworks.io.utils.io_utils import load_any
 from loguru import logger
-from sampleworks.utils.atom_array_utils import remove_atoms_with_any_nan_coords
+from sampleworks.utils.atom_array_utils import (
+    make_atom_id,
+    make_normalized_atom_id,
+    remove_atoms_with_any_nan_coords,
+)
+from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
 
 # Same directory as this script, which is sys.path[0] when run as `python it_opt_scratch/...`.
 from score_paper_rscc import align_prediction_to_reference, read_selections
@@ -61,13 +66,26 @@ def parse_selection(selection: str) -> tuple[str, range]:
 
 
 def reference_conformers(
-    ref_path: Path, selections: list[str]
-) -> dict[str, dict[str, dict[tuple[str, int, str], np.ndarray]]]:
-    """Per selection, the altloc-A and altloc-B conformers keyed by (chain, res_id, atom_name).
+    ref_path: Path, selections: list[str], normalize: bool = False
+) -> dict[str, dict[str, dict]]:
+    """Per selection, the altloc-A and altloc-B conformers keyed by atom id.
 
     Atoms with a blank altloc are shared between conformers, so they appear in both.
+
+    ``normalize=False`` keys by deposited ``(chain, res_id, atom_name)`` -- the default.
+    ``normalize=True`` keys by ``make_normalized_atom_id`` (the same normalization
+    ``filter_to_common_atoms(normalize_ids=True)`` uses for RSCC), a fallback for a relabelled
+    reference. gemmi reads coordinates because ``load_any`` drops the altloc character; the biotite
+    load only builds the deposited-key -> normalized-key map.
     """
     st = gemmi.read_structure(str(ref_path))
+    raw_to_norm = None
+    if normalize:
+        ref_bio = load_any(str(ref_path), altloc="all")
+        raw_to_norm = dict(
+            zip(make_atom_id(ref_bio), make_normalized_atom_id(ref_bio), strict=True)
+        )
+
     by_res: dict[tuple[str, int], list] = {}
     for chain in st[0]:
         for res in chain:
@@ -75,26 +93,41 @@ def reference_conformers(
                 (a.name, a.altloc, np.array([a.pos.x, a.pos.y, a.pos.z])) for a in res
             )
 
-    out: dict[str, dict[str, dict[tuple[str, int, str], np.ndarray]]] = {}
+    out: dict[str, dict[str, dict]] = {}
     for sel in selections:
         chain, residues = parse_selection(sel)
-        conformers: dict[str, dict[tuple[str, int, str], np.ndarray]] = {"A": {}, "B": {}}
+        conformers: dict[str, dict] = {"A": {}, "B": {}}
         for res_id in residues:
             for name, altloc, xyz in by_res.get((chain, res_id), []):
+                if normalize:
+                    key = raw_to_norm.get(f"{chain}_{res_id}_{name}")
+                    if key is None:
+                        continue  # atom absent from the biotite load
+                else:
+                    key = (chain, res_id, name)
                 alt = altloc.strip()
                 targets = ("A", "B") if alt == "" else (alt,)
                 for t in targets:
                     if t in conformers:
-                        conformers[t][(chain, res_id, name)] = xyz
+                        conformers[t][key] = xyz
         out[sel] = conformers
     return out
 
 
-def prediction_lookup(atom_array) -> dict[tuple[str, int, str], np.ndarray]:
-    """Map (chain, res_id, atom_name) -> per-model coordinates, shape [n_models, 3]."""
+def prediction_lookup(atom_array, normalize: bool = False) -> dict:
+    """Map atom id -> per-model coordinates, shape [n_models, 3].
+
+    ``normalize=False`` keys by raw ``(chain, res_id, atom_name)`` -- the default, so a prediction
+    whose chain/numbering already match the reference scores exactly as before. ``normalize=True``
+    keys by ``make_normalized_atom_id`` (sequential per-chain numbering + chain-index), used only as
+    a fallback for a relabelled/renumbered prediction (Protenix chain 'A' vs deposited 'P').
+    """
     coords = atom_array.coord
     if coords.ndim == 2:  # single model -> add the model axis
         coords = coords[None]
+    if normalize:
+        ids = make_normalized_atom_id(atom_array)
+        return {ids[i]: coords[:, i] for i in range(len(ids))}
     return {
         (str(c), int(r), str(n)): coords[:, i]
         for i, (c, r, n) in enumerate(
@@ -128,6 +161,9 @@ def score_protein(
 ) -> list[dict]:
     rows: list[dict] = []
     ref_path = inputs_dir / "processed" / protein / f"{protein}_single_001_density_input.cif"
+    # Match generation + the RSCC scorer: collapse mixed ATOM/HETATM modified-residue positions
+    # (e.g. CYS+CSO) so the reference has the same atoms as a prediction from the cleaned CIF.
+    ref_path = resolve_mixed_hetatm_atom_altlocs(ref_path)
 
     def fail(arm: str, err: str) -> None:
         for sel in selections:
@@ -145,7 +181,7 @@ def score_protein(
             )
 
     try:
-        conformers = reference_conformers(ref_path, selections)
+        conformers_raw = reference_conformers(ref_path, selections, normalize=False)
         # Alignment target: the same array score_paper_rscc.py aligns against, so both metrics
         # place the prediction identically.
         ref_atom_array = remove_atoms_with_any_nan_coords(load_any(str(ref_path)))
@@ -155,6 +191,9 @@ def score_protein(
             fail(arm, f"setup: {e}")
         return rows
 
+    raw_ref_keys = {k for c in conformers_raw.values() for d in (c["A"], c["B"]) for k in d}
+    conformers_norm = None  # built lazily, only if a prediction needs the fallback
+
     for arm in arms:
         cif = runs_dir / dir_template.format(protein=protein) / arm / target_filename
         if not cif.exists():
@@ -163,7 +202,17 @@ def score_protein(
         try:
             aa = remove_atoms_with_any_nan_coords(load_any(str(cif)))
             aa = align_prediction_to_reference(ref_atom_array, aa)
-            pred = prediction_lookup(aa)
+            pred = prediction_lookup(aa, normalize=False)
+            # Prefer exact (chain,res,name) matching so a protein whose frame already agrees keeps
+            # its exact score. Only when the prediction shares NO atoms with the reference (chain
+            # relabelled, e.g. deposited 'P' vs Protenix 'A') fall back to normalized keys.
+            if raw_ref_keys.isdisjoint(pred):
+                if conformers_norm is None:
+                    conformers_norm = reference_conformers(ref_path, selections, normalize=True)
+                conformers = conformers_norm
+                pred = prediction_lookup(aa, normalize=True)
+            else:
+                conformers = conformers_raw
         except Exception as e:  # noqa: BLE001
             logger.error(f"{protein}/{arm}: {e}\n{traceback.format_exc()}")
             fail(arm, str(e))

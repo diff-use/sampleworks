@@ -46,6 +46,7 @@ from sampleworks.utils.atom_array_utils import (
     filter_to_common_atoms,
     remove_atoms_with_any_nan_coords,
 )
+from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
 from sampleworks.utils.density_utils import build_density_transformer, run_density_transformer
 from sampleworks.utils.frame_transforms import (
     apply_forward_transform,
@@ -136,6 +137,10 @@ def score_protein(
     maps_base = maps_dir if maps_dir is not None else inputs_dir / "density_maps"
     map_path = maps_base / map_template.format(protein=protein)
     ref_path = inputs_dir / "processed" / protein / f"{protein}_single_001_density_input.cif"
+    # Match generation: collapse modified-residue positions (mixed ATOM/HETATM, different resname,
+    # e.g. CYS+CSO) that atomworks would otherwise duplicate into an extra residue, so the reference
+    # carries the same atoms as a prediction generated from the cleaned CIF. No-op otherwise.
+    ref_path = resolve_mixed_hetatm_atom_altlocs(ref_path)
 
     def fail(arm: str, err: str) -> None:
         for sel in selections:
