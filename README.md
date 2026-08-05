@@ -16,7 +16,7 @@ Currently, each structure prediction model has a different implementation, requi
 
 ## Citation
 If you use **sampleworks**, please cite:
- 
+
 Chrispens, K., Collins, M., Mai, D., Wankowicz, S. A., Fraser, J. S., & van den Bedem, H. (2026). sampleworks: A Modular Platform for Experimentally Guided Biomolecular Ensemble Generation. https://doi.org/10.82153/jkxj-tw08
 
 ## Installation
@@ -319,7 +319,8 @@ CI configuration variables:
 |---|---|
 | `SAMPLEWORKS_PUBLIC_REGISTRY` | Public registry host; defaults to `docker.io` |
 | `SAMPLEWORKS_PUBLIC_IMAGE` | Public image path; defaults to `diffuseproject/pixi-with-checkpoints` |
-| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | Optional private/source checkpoint image that CI mirrors to Docker Hub; defaults to the current digest-pinned Harbor image |
+| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | **Required.** Digest-pinned private/source checkpoint image that CI mirrors to Docker Hub; no in-repo default so the internal registry hostname stays out of git |
+| `ASTERA_REGISTRY` | **Required.** Internal registry host for the Astera overlay image; the astera CI job fails fast when unset |
 | `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional public Docker Hub checkpoint mirror destination tag; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
 | `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
 
