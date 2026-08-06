@@ -120,5 +120,20 @@ def test_leaf_latents_raises_when_no_attribute_matches(features):
     # wrong attribute names -> nothing to optimize -> a clear error, not a silent no-op
     opt = _make_opt()
     io = AttrLatentIO("does_not_exist", "also_missing")
-    with pytest.raises(ValueError, match="no optimizable latent"):
+    with pytest.raises(ValueError, match="does not expose"):
         opt._leaf_latents(features, io)
+
+
+def test_leaf_latents_raises_when_only_one_attribute_matches(features):
+    # The dangerous case: one name is right, so the run would otherwise optimize half of what
+    # was asked for and still look successful.
+    opt = _make_opt()
+    io = AttrLatentIO("does_not_exist", "z")
+    with pytest.raises(ValueError, match="does not expose"):
+        opt._leaf_latents(features, io)
+
+
+def test_leaf_latents_raises_when_nothing_is_enabled(features):
+    opt = _make_opt(optimize_single=False, optimize_pair=False)
+    with pytest.raises(ValueError, match="no latent enabled"):
+        opt._leaf_latents(features, AttrLatentIO("s", "z"))

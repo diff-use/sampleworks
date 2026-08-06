@@ -9,9 +9,10 @@ through broken geometry.
 
 It is a faithful port of the reference ``BondLengthLossFunction``
 (https://github.com/sai-advaith/it_opt, ``protenix/src/losses/bond_length_loss_function.py``):
-a bonded-pair length hinge plus a non-bonded steric-clash hinge. Both are the violation's positive
-part clamped at zero, with no exponent, exactly as the reference does it. The one deliberate
-divergence is how ``collision_loss`` reduces the ensemble axis; see the comment there. It is meant
+a bonded-pair length hinge plus a non-bonded steric-clash hinge. Both take the violation's positive
+part; the bond term then raises it to ``bond_power`` (default 2) while the clash term stays linear,
+matching the reference. The one deliberate divergence is how ``collision_loss`` reduces the
+ensemble axis; see the comment there. It is meant
 to be an additive term inside ``LatentOptimization``'s per-step loss, not a standalone objective,
 and does nothing unless its weight is set.
 """
@@ -189,8 +190,11 @@ class BondGeometryReward:
         pos_b = coords[:, self._bond_atom_b]
         lengths = (pos_a - pos_b).norm(dim=-1)
 
-        deviation = (lengths - self._bond_lengths).abs()  # distance from the ideal length
-        excess = (deviation - self.bond_tolerance).clamp(min=0)  # part beyond the tolerance
+        # The deviation is unsigned, so a stretched and a compressed bond of equal error are
+        # penalized alike. The clamp below is the tolerance window -- deviations under it are free
+        # -- not a one-sided penalty like the one in collision_loss, which clamps a signed gap.
+        deviation = (lengths - self._bond_lengths).abs()
+        excess = (deviation - self.bond_tolerance).clamp(min=0)
         return excess.pow(self.bond_power).sum()
 
     def collision_loss(self, coords: Tensor) -> Tensor:

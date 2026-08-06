@@ -21,7 +21,12 @@ The algorithm (kept faithful to the reference), with the reference's bugs fixed:
             loss    = reward(x0_hat) + anchor(s, z)
             loss.backward();  per-latent grad-clip (s, then z);  adam.step()
             advance the trajectory one step (latents frozen)
-    final clean sampling pass with the optimized latents -> saved ensemble
+    final clean sampling round with the optimized latents -> saved ensemble
+
+Terminology: a **round** is one full traversal of the ``num_steps`` diffusion schedule; a **step**
+is one point on it, costing one denoiser forward. ``outer_steps`` counts the optimization rounds,
+and one final sampling round follows them. "Pass" is used only in its usual sense of a forward
+pass through the model, never as a synonym for either unit.
 
 Only Boltz1 and RF3 propagate gradients cleanly to the cached latents out of the
 box. Protenix now does too -- its ``step()`` keeps an injected latent leaf attached
@@ -35,6 +40,7 @@ from the evolving latents.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 
 import torch
@@ -151,13 +157,13 @@ class LatentOptimization:
         ensemble_size
             Number of structures sampled in parallel (they share the latents).
         num_steps
-            Number of diffusion steps per pass.
+            Number of diffusion steps in one round.
         guidance_t_start
             Fraction of ``num_steps`` after which to begin optimizing within each
             round. Before it, steps are plain frozen-latent diffusion. Default 0
             (optimize from the first step, as the reference does).
         outer_steps
-            Number of optimization rounds -- full diffusion passes, each with fresh
+            Number of optimization rounds. Each traverses the whole schedule with fresh
             prior noise, sharing the persisting latents (the reference's
             ``outer_diffusion_steps``). Default 1 for a cheap first run.
         learning_rate
@@ -299,7 +305,7 @@ class LatentOptimization:
                 ]
             )
 
-        # --- final clean sampling pass with the optimized latents ---------------
+        # --- final clean sampling round with the optimized latents --------------
         final_coords, trajectory, losses = self._sample_with_frozen_latents(
             model=model,
             sampler=sampler,
@@ -343,30 +349,38 @@ class LatentOptimization:
         baselines: list[Tensor] = []
         anchor_weights: list[float] = []
 
-        # One row per optimizable latent: (optimize it?, how to read it off the conditioning, how to
-        # write it back, its anchor weight). We handle the single representation, then the pair.
+        # One row per optimizable latent: (optimize it?, its attribute on the conditioning, its
+        # anchor weight). We handle the single representation, then the pair.
         specs = (
-            (self.optimize_single, io.read_single, io.write_single, self.anchor_weight_single),
-            (self.optimize_pair, io.read_pair, io.write_pair, self.anchor_weight_pair),
+            (self.optimize_single, io.single_attr, self.anchor_weight_single),
+            (self.optimize_pair, io.pair_attr, self.anchor_weight_pair),
         )
-        for enabled, read, write, anchor_weight in specs:
+        for enabled, attr, anchor_weight in specs:
             if not enabled:
                 continue
-            baseline = read(conditioning)
+            baseline = getattr(conditioning, attr, None)
             if baseline is None:
-                continue
+                # Enabled but absent means the configured attribute name is wrong for this model.
+                # Skipping it would optimize fewer latents than asked for and look like success.
+                raise ValueError(
+                    f"LatentOptimization was asked to optimize {attr!r}, but the model's "
+                    "conditioning does not expose it. Check the attribute names for this model."
+                )
             baseline = baseline.detach()
             leaf = baseline.clone().requires_grad_(True)
-            conditioning = write(conditioning, leaf)
+            # The conditioning is a frozen dataclass, so setattr would raise; replace() returns a
+            # copy with this one field swapped and every sidecar field left untouched.
+            conditioning = dataclasses.replace(conditioning, **{attr: leaf})
             latents.append(leaf)
             baselines.append(baseline)
             anchor_weights.append(anchor_weight)
 
+        # A missing attribute already raised above, so reaching here means neither latent was
+        # enabled -- nothing to optimize, which is a misconfiguration rather than a valid run.
         if not latents:
             raise ValueError(
-                "LatentOptimization found no optimizable latent on the conditioning "
-                f"(single_attr={self.single_attr!r}, pair_attr={self.pair_attr!r}). "
-                "Check the attribute names for this model."
+                "LatentOptimization has no latent enabled "
+                f"(optimize_single={self.optimize_single}, optimize_pair={self.optimize_pair})."
             )
         # Rebuild with the rewritten conditioning only. #330 removed x_init from
         # GenerativeModelInput; initial coords now come from initialize_from_prior at sampling time.
@@ -392,7 +406,7 @@ class LatentOptimization:
         round_index,
         bond_geometry,
     ) -> list[float]:
-        """One optimization round: a full diffusion pass that updates the latents.
+        """One optimization round: a full traversal of the schedule that updates the latents.
 
         Fresh prior noise; the persisting latents are updated once per diffusion
         step against the reward on that step's denoised prediction, then the
@@ -502,14 +516,14 @@ class LatentOptimization:
         alignment_reference,
         reward_inputs,
     ):
-        """Final clean diffusion pass with the optimized latents held fixed.
+        """Final clean sampling round with the optimized latents held fixed.
 
         No optimization and no coordinate guidance (``scaler=None``). This produces
         the ensemble that is returned/saved -- the reference's
         ``run_diffusion_process_it_optimized``. The per-step reward (evaluated under
         no-grad on the denoised prediction) is returned for logging.
         """
-        # Re-inject detached copies so the final pass is purely a frozen sampler.
+        # Re-inject detached copies so the final round is purely a frozen sampler.
         conditioning = features.conditioning
         detached = [lat.detach() for lat in latents]
         if self.optimize_single and io.read_single(conditioning) is not None:

@@ -66,9 +66,11 @@ def test_attr_latent_io_satisfies_protocol():
     assert isinstance(AttrLatentIO("s"), LatentIO)
 
 
-def test_attr_latent_io_missing_attr_returns_none(s_tensor: Tensor):
+def test_attr_latent_io_missing_attr_raises(s_tensor: Tensor):
+    """A name that matches no attribute is a configuration error, not an empty read."""
     io = AttrLatentIO(single_attr="does_not_exist")
-    assert io.read_single(_SingleRepConditioning(s=s_tensor)) is None
+    with pytest.raises(AttributeError):
+        io.read_single(_SingleRepConditioning(s=s_tensor))
 
 
 # --- Pair (z) representation support -----------------------------------------

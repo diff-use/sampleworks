@@ -444,7 +444,7 @@ def run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device
         Result of the guidance run including status and timing.
     """
 
-    log_path = getattr(args, "log_path", None) or os.path.join(args.output_dir, "run.log")
+    log_path = args.log_path or os.path.join(args.output_dir, "run.log")
     os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
 
     # just in case log_path does not go to args.output_dir, make sure the latter exists
@@ -508,15 +508,9 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = annotate_structure_for_protenix(
             structure,
             recycling_steps=recycling_steps,
-            # ensemble_size removed: #330 dropped it from the wrapper annotate signature; the
-            # ensemble is now sized by the scaler via initialize_from_prior().
-            # IT-opt wiring (added): this enable_diffusion_shared_vars_cache argument is new — the
-            # call previously used the default (cache on). We decide it here, in _run_guidance()'s
-            # Protenix setup, because latent optimization of the pair representation z requires the
-            # cache to be off: with it on, the denoiser reads stale cached tensors and the gradient
-            # never reaches z_trunk (see docs/IT_OPT_TESTING.md). We disable it for the
-            # LATENT_OPT type, since other guidance types simply recompute those tensors
-            # from the same frozen latents and the result is unchanged.
+            # Disable diffusion shared-vars cache for LATENT_OPT so gradients can
+            # flow to z_trunk; cached tensors can otherwise become stale.
+            # Keep cache enabled for other guidance types.
             enable_diffusion_shared_vars_cache=(guidance_type != GuidanceType.LATENT_OPT),
         )
     elif "RF3" in wrapper_class_name:
@@ -525,9 +519,9 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         structure = annotate_structure_for_rf3(
             structure,
             recycling_steps=recycling_steps,
-            msa_path=getattr(args, "msa_path", None),
-            disable_chiral_features=getattr(args, "disable_chiral_features", False),
-            track_chiral_features=getattr(args, "track_chiral_features", False),
+            msa_path=args.msa_path,
+            disable_chiral_features=args.disable_chiral_features,
+            track_chiral_features=args.track_chiral_features,
         )
     elif "Boltz" in wrapper_class_name:
         from sampleworks.models.boltz.wrapper import process_structure_for_boltz
@@ -679,9 +673,9 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         # carries it as an integer step count, so we convert it here and default to optimizing from
         # the first step.
         guidance_t_start = args.guidance_start / num_steps if args.guidance_start > 0 else 0.0
-        which_latent = getattr(args, "which_latent", "pair")  # This is "single", "pair", or "both".
-        anchor_weight = getattr(args, "anchor_weight", 0.0)
-        bond_length_weight = getattr(args, "bond_length_weight", 5e-5)  # smallest good default
+        which_latent = args.which_latent  # This is "single", "pair", or "both".
+        anchor_weight = args.anchor_weight
+        bond_length_weight = args.bond_length_weight
         # GuidanceConfig exposes the model as `model_name` (not `args.model`); normalize to the
         # lowercase key the DEFAULT_*_REP_ATTR maps use (as checkpoint resolution does below).
         model_key = str(args.model_name).lower().replace("structurepredictor.", "")
@@ -698,9 +692,9 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             ensemble_size=args.ensemble_size,
             num_steps=num_steps,
             guidance_t_start=guidance_t_start,
-            outer_steps=getattr(args, "outer_steps", 2),
-            learning_rate=getattr(args, "learning_rate", 0.05),
-            max_grad_norm=getattr(args, "max_grad_norm", 1.0),
+            outer_steps=args.outer_steps,
+            learning_rate=args.learning_rate,
+            max_grad_norm=args.max_grad_norm,
             optimize_single=which_latent in ("single", "both"),
             optimize_pair=which_latent in ("pair", "both"),
             single_attr=single_attr,
@@ -811,7 +805,7 @@ def get_job_result(
         runtime_seconds=round(end_time - start_time, 2),
         started_at=started_at.isoformat(),
         finished_at=ended_at.isoformat(),
-        log_path=getattr(args, "log_path", None) or os.path.join(args.output_dir, "run.log"),
+        log_path=args.log_path or os.path.join(args.output_dir, "run.log"),
         output_dir=args.output_dir,
     )
     return result
