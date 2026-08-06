@@ -16,9 +16,6 @@ ARG PIXI_WITH_CHECKPOINTS_IMAGE
 
 FROM ${PIXI_WITH_CHECKPOINTS_IMAGE} AS astera
 
-# Re-declare inside the stage so the base ref is usable below (a global ARG
-# before FROM is only in scope for the FROM line itself).
-ARG PIXI_WITH_CHECKPOINTS_IMAGE
 ARG EXT_VERSION=v0.1.8
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -29,8 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SHELL=/bin/bash \
     SAMPLEWORKS_PIXI_PROJECT_DIR=/app \
     SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=1 \
-    SAMPLEWORKS_SKIP_ENV_PREPARE=1 \
-    EXT_REPLAY_BASE_IMAGE=${PIXI_WITH_CHECKPOINTS_IMAGE}
+    SAMPLEWORKS_SKIP_ENV_PREPARE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
