@@ -1,0 +1,28 @@
+# Accepted internal-reference findings (ENG-597).
+#
+# Internal registry hostnames present in history from May-June 2026. These are
+# accepted, not suppressed in error: the host resolves only on the tailnet, so
+# the disclosure is reconnaissance-only, and removing it would mean rewriting 81
+# commits and moving 22 tags while our forks would retain the objects anyway.
+#
+# Fingerprints are commit-scoped, so a NEW occurrence of an internal hostname
+# still alerts. This file accepts these specific historical findings only; it
+# does not disable the check.
+95b5b3a49ae45eac48d4075204620ab37ba5b803:Dockerfile:astera-internal-hostname:11
+95b5b3a49ae45eac48d4075204620ab37ba5b803:Dockerfile:astera-internal-hostname:112
+95b5b3a49ae45eac48d4075204620ab37ba5b803:Dockerfile:astera-internal-hostname:59
+95b5b3a49ae45eac48d4075204620ab37ba5b803:.github/workflows/docker.yml:astera-internal-hostname:16
+95b5b3a49ae45eac48d4075204620ab37ba5b803:.github/workflows/docker.yml:astera-internal-hostname:4
+95b5b3a49ae45eac48d4075204620ab37ba5b803:.github/workflows/docker.yml:astera-internal-hostname:49
+95b5b3a49ae45eac48d4075204620ab37ba5b803:README.md:astera-internal-hostname:167
+aa4cdcf141962491211afa63b0a7174d35b42c30:Dockerfile.astera:astera-internal-hostname:12
+aa4cdcf141962491211afa63b0a7174d35b42c30:Dockerfile.astera:astera-internal-hostname:16
+aa4cdcf141962491211afa63b0a7174d35b42c30:.github/workflows/docker.yml:astera-internal-hostname:20
+aa4cdcf141962491211afa63b0a7174d35b42c30:.github/workflows/docker.yml:astera-internal-hostname:24
+aa4cdcf141962491211afa63b0a7174d35b42c30:.github/workflows/docker.yml:astera-internal-hostname:28
+aa4cdcf141962491211afa63b0a7174d35b42c30:README.md:astera-internal-hostname:263
+aa4cdcf141962491211afa63b0a7174d35b42c30:README.md:astera-internal-hostname:264
+aa4cdcf141962491211afa63b0a7174d35b42c30:README.md:astera-internal-hostname:303
+cf5873a3aff314755107278226bc4ec49edc083b:.github/workflows/docker.yml:astera-internal-hostname:21
+cf5873a3aff314755107278226bc4ec49edc083b:.github/workflows/docker.yml:astera-internal-hostname:25
+cf5873a3aff314755107278226bc4ec49edc083b:.github/workflows/docker.yml:astera-internal-hostname:29
