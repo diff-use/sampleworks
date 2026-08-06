@@ -6,7 +6,7 @@
 # pushed to Harbor. It intentionally does not duplicate the public build.
 #
 # Build locally (ASTERA_REGISTRY = the internal registry host, same value as
-# the CI repository variable):
+# the CI repository secret):
 #   docker build --platform linux/amd64 \
 #     -f Dockerfile.astera \
 #     --build-arg PIXI_WITH_CHECKPOINTS_IMAGE=diffuseproject/pixi-with-checkpoints:local \

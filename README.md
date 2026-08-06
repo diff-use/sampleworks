@@ -340,7 +340,7 @@ docker build --platform linux/amd64 \
 
 Build the Astera overlay locally after a public image is available. Set
 `ASTERA_REGISTRY` to the internal registry host (same value as the CI
-repository variable):
+repository secret):
 
 ```bash
 docker build --platform linux/amd64 \

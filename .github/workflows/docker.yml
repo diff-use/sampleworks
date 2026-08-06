@@ -59,6 +59,13 @@ jobs:
             echo "ASTERA_REGISTRY secret and SAMPLEWORKS_CHECKPOINTS_SOURCE_PATH variable must be set."
             exit 1
           fi
+          # skopeo receives HARBOR_USERNAME/PASSWORD as --src-creds for this
+          # host, so a public registry here would leak them to a third party.
+          case "${ASTERA_REGISTRY}" in
+            docker.io|index.docker.io|registry-1.docker.io|"${PUBLIC_REGISTRY}")
+              echo "ASTERA_REGISTRY must be the internal registry, not a public one."
+              exit 1 ;;
+          esac
           if [ -z "${CHECKPOINTS_DOCKERHUB_IMAGE}" ]; then
             echo "Docker Hub destination image ref must be set."
             exit 1
@@ -210,12 +217,18 @@ jobs:
 
       - name: Validate Astera registry configured
         run: |
-          # login-action with an empty registry defaults to Docker Hub and
-          # would send the Harbor credentials there; fail fast instead.
+          # The Harbor credentials are sent to whatever host this names, so an
+          # empty value (login-action then defaults to Docker Hub) or a public
+          # registry would hand them to a third party. Fail fast on both.
           if [ -z "${ASTERA_REGISTRY}" ]; then
             echo "ASTERA_REGISTRY repository secret must be set."
             exit 1
           fi
+          case "${ASTERA_REGISTRY}" in
+            docker.io|index.docker.io|registry-1.docker.io|"${PUBLIC_REGISTRY}")
+              echo "ASTERA_REGISTRY must be the internal registry, not a public one."
+              exit 1 ;;
+          esac
 
       - name: Login to Harbor
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
