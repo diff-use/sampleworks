@@ -318,10 +318,16 @@ CI configuration variables:
 |---|---|
 | `SAMPLEWORKS_PUBLIC_REGISTRY` | Public registry host; defaults to `docker.io` |
 | `SAMPLEWORKS_PUBLIC_IMAGE` | Public image path; defaults to `diffuseproject/pixi-with-checkpoints` |
-| `SAMPLEWORKS_CHECKPOINTS_SOURCE_IMAGE` | **Required.** Digest-pinned private/source checkpoint image that CI mirrors to Docker Hub; no in-repo default so the internal registry hostname stays out of git |
-| `ASTERA_REGISTRY` | **Required.** Internal registry host for the Astera overlay image; the astera CI job fails fast when unset |
 | `SAMPLEWORKS_CHECKPOINTS_DOCKERHUB_IMAGE` | Optional public Docker Hub checkpoint mirror destination tag; defaults to `docker.io/diffuseproject/sampleworks-checkpoints:latest` |
 | `SAMPLEWORKS_CUDA_BASE_IMAGE` | Optional digest-pinned CUDA base override |
+| `SAMPLEWORKS_CHECKPOINTS_SOURCE_PATH` | **Required.** Digest-pinned path of the private checkpoint image CI mirrors to Docker Hub, without the registry host (e.g. `library/foo@sha256:...`) |
+
+One CI secret, `ASTERA_REGISTRY`, holds the internal registry host. It is a
+secret rather than a variable because this repo is public, which makes its
+Actions logs public, and only secrets are masked there. Log masking is
+substring-based, so keeping the secret to the bare host masks it inside every
+longer image ref while leaving paths and digests readable when a build fails.
+The CI jobs fail fast when it is unset.
 
 Build the public image locally:
 
