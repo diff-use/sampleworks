@@ -221,11 +221,7 @@ def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
     # strict rule still applies and `4hhb_final` is still skipped rather than silently
     # patched as `4hhb`.
     pattern_states_delimiter = m.end(0) > m.end(1)
-    end_ok = (
-        pattern_states_delimiter
-        or m.end(1) == len(path_str)
-        or path_str[m.end(1)] == "/"
-    )
+    end_ok = pattern_states_delimiter or m.end(1) == len(path_str) or path_str[m.end(1)] == "/"
     if not (start_ok and end_ok):
         return None
     token = m.group(1)
