@@ -164,9 +164,9 @@ def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
     """Extract and validate the RCSB id from a cif path.
 
     ``rcsb_regex`` locates the candidate (it must contain exactly one capturing group around
-    the id; see ``--rcsb-pattern``). The id must be a **complete folder component**: a
-    capture that is only the prefix of a longer folder name is rejected, so a stray suffix
-    can't silently resolve to the wrong entry. The whole-component token is then checked
+    the id; see ``--rcsb-pattern``). The id must **start a folder component**, and must
+    either fill that component or be followed by a delimiter the pattern itself matches --
+    so a stray prefix can't silently resolve to the wrong entry. The token is then checked
     against the PDB-id grammar and returned *verbatim* (legacy ``4hhb`` or extended
     ``pdb_00004hhb`` -- no normalization).
 
@@ -180,11 +180,19 @@ def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
         1abc_pdb_1000abcd     -> None  (two id-like parts -- ambiguous)
         logs                  -> None  (not a PDB id)
 
-    Possible problem this guards against: without the whole-component rule, ``4hhb_final``
-    would yield ``4hhb`` and ``1abc_pdb_1000abcd`` would yield ``1abc`` -- both silently
-    patching the wrong entry. Such folders are skipped with a warning instead. If your
-    folders embed the id in a larger name, pass a custom ``--rcsb-pattern`` (beware names
-    with more than one id-like substring).
+    Possible problem this guards against: without the rule, ``4hhb_final`` would yield
+    ``4hhb`` and ``1abc_pdb_1000abcd`` would yield ``1abc`` -- both silently patching the
+    wrong entry. Such folders are skipped with a warning instead.
+
+    When the id is genuinely embedded in a longer folder name, say so in the pattern by
+    matching the delimiter after the capturing group. Occupancy-sweep runs produce folders
+    like ``1VME_0.25occA_0.75occB`` whose reference entry really is ``1VME``::
+
+        --rcsb-pattern '<results-dir>/([0-9][A-Za-z0-9]{3}|pdb_[A-Za-z0-9]{8})_[0-9.]+occ'
+
+    Matching past the group is what distinguishes "I know what follows the id" from the
+    default pattern's "the id is the whole folder", so relaxing it here does not weaken the
+    default. Beware names containing more than one id-like substring.
 
     Returns ``None`` when no complete PDB-id folder is found. Raises ``InvalidRcsbIdError``
     when a whole component is captured but is not a valid PDB id (a likely sign the pattern
@@ -202,12 +210,22 @@ def extract_rcsb_id(cif_path: Path, rcsb_regex: str) -> str | None:
     m = rcsb_re.search(path_str)
     if not m:
         return None
-    # The id must be a whole folder component: reject a capture that is only a prefix/suffix of
-    # a longer name (e.g. "4hhb" out of "4hhb_final" or "4hhb" out of "foo4hhb"), which would
-    # silently resolve to the wrong entry. A whole-component id is bounded by path separators (or
-    # the start/end of the path).
+    # The id must start a folder component: reject a capture that begins mid-name
+    # (e.g. "4hhb" out of "foo4hhb"), which would silently resolve to the wrong entry.
     start_ok = m.start(1) == 0 or path_str[m.start(1) - 1] == "/"
-    end_ok = m.end(1) == len(path_str) or path_str[m.end(1)] == "/"
+    # For the right-hand edge the id must either fill the component, or the pattern itself
+    # must say what follows it. A pattern that matches past its capturing group has stated
+    # the delimiter explicitly (e.g. `([0-9][A-Za-z0-9]{3})_[0-9.]+occ` for occupancy-sweep
+    # folders like `1VME_0.25occA_0.75occB`), which is the documented way to handle ids
+    # embedded in longer names. With the default pattern nothing follows the group, so the
+    # strict rule still applies and `4hhb_final` is still skipped rather than silently
+    # patched as `4hhb`.
+    pattern_states_delimiter = m.end(0) > m.end(1)
+    end_ok = (
+        pattern_states_delimiter
+        or m.end(1) == len(path_str)
+        or path_str[m.end(1)] == "/"
+    )
     if not (start_ok and end_ok):
         return None
     token = m.group(1)
