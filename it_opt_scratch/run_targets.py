@@ -321,7 +321,16 @@ def guidance_for_mode(mode: str, args) -> tuple[GuidanceType, dict]:
     if mode == "baseline":
         return GuidanceType.PURE_GUIDANCE, {"step_scaler_type": "none"}
     if mode == "coord_guidance":
-        return GuidanceType.PURE_GUIDANCE, {"step_scaler_type": "noisespace", "step_size": args.step_size}
+        # The paper's coordinate guidance normalizes the density gradient to the EDM denoising-update
+        # magnitude (gradient_normalization) and applies AF3 augmentation + realign each step; only
+        # then does step_size act as a fraction of the denoising step. These are mode-scoped so the
+        # latent-opt arms are unaffected.
+        return GuidanceType.PURE_GUIDANCE, {
+            "step_scaler_type": "noisespace",
+            "step_size": args.step_size,
+            "gradient_normalization": args.gradient_normalization,
+            "augmentation": args.augmentation,
+        }
     if mode in ("s_only", "z_only", "s_plus_z"):
         which = {"s_only": "single", "z_only": "pair", "s_plus_z": "both"}[mode]
         return GuidanceType.LATENT_OPT, {
@@ -346,6 +355,7 @@ def build_config(target: dict, guidance_type: GuidanceType, out_dir: Path, args)
         output_dir=str(out_dir),
         resolution=float(target["resolution"]),
         num_diffusion_steps=args.num_steps,
+        guidance_start=args.guidance_start,  # -1 -> guide from step 0; e.g. 120 -> last low-noise steps
         align_to_input=True,
     )
     config.ensemble_size = args.ensemble_size  # set dynamically (not a declared GuidanceConfig field)
@@ -399,12 +409,22 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--model", default="protenix", choices=[m.value for m in StructurePredictor])
     ap.add_argument("--ensemble-size", dest="ensemble_size", type=int, default=4)
     ap.add_argument("--num-steps", dest="num_steps", type=int, default=200)
+    ap.add_argument("--guidance-start", dest="guidance_start", type=int, default=-1,
+                    help="step at which guidance begins (coord DPS and IT-opt both use it as a "
+                         "fraction of num_steps); -1 means from step 0. e.g. 120 of 200 guides "
+                         "only the last low-noise steps, matching the tuned coordinate-guidance recipe")
     ap.add_argument("--outer-steps", dest="outer_steps", type=int, default=2)
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--anchor", type=float, default=0.0, help="on-manifold anchor weight (IT-opt)")
     ap.add_argument("--bond-length-weight", dest="bond_length_weight", type=float, default=0.0,
                     help="coordinate-space bond-geometry penalty weight (IT-opt); 0 disables")
     ap.add_argument("--step-size", dest="step_size", type=float, default=0.1, help="coord-guidance DPS step")
+    ap.add_argument("--gradient-normalization", dest="gradient_normalization", action="store_true",
+                    help="coord guidance: normalize the density gradient to the denoising-update "
+                         "magnitude before scaling by --step-size (the paper's recipe; makes 0.1 mean "
+                         "10%% of the denoising step rather than 0.1x the raw gradient)")
+    ap.add_argument("--augmentation", action="store_true",
+                    help="coord guidance: apply AF3 random augmentation + realign each step (paper recipe)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--checkpoint", default=None)
