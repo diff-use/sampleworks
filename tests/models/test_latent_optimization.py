@@ -92,7 +92,9 @@ def test_leaf_latents_makes_requires_grad_leaves(features):
         assert leaf.requires_grad and leaf.is_leaf  # a true leaf Adam can update directly
     for leaf, base in zip(latents, baselines):
         assert not base.requires_grad  # the anchor target is detached
-        torch.testing.assert_close(leaf.detach(), base)  # leaf starts exactly at the baseline
+        # one leaf per ensemble member on a leading batch dim; the baseline stays un-batched
+        for member in leaf.detach():
+            torch.testing.assert_close(member, base)  # every member starts at the baseline
     # the rewritten conditioning holds the SAME leaf objects, so the model reads
     # the optimizable tensor rather than the original cached one
     assert new_features.conditioning.s is latents[0]
@@ -120,5 +122,20 @@ def test_leaf_latents_raises_when_no_attribute_matches(features):
     # wrong attribute names -> nothing to optimize -> a clear error, not a silent no-op
     opt = _make_opt()
     io = AttrLatentIO("does_not_exist", "also_missing")
-    with pytest.raises(ValueError, match="no optimizable latent"):
+    with pytest.raises(ValueError, match="does not expose"):
         opt._leaf_latents(features, io)
+
+
+def test_leaf_latents_raises_when_only_one_attribute_matches(features):
+    # The dangerous case: one name is right, so the run would otherwise optimize half of what
+    # was asked for and still look successful.
+    opt = _make_opt()
+    io = AttrLatentIO("does_not_exist", "z")
+    with pytest.raises(ValueError, match="does not expose"):
+        opt._leaf_latents(features, io)
+
+
+def test_leaf_latents_raises_when_nothing_is_enabled(features):
+    opt = _make_opt(optimize_single=False, optimize_pair=False)
+    with pytest.raises(ValueError, match="no latent enabled"):
+        opt._leaf_latents(features, AttrLatentIO("s", "z"))

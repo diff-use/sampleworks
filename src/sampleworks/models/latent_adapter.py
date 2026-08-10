@@ -24,7 +24,6 @@ Design goal
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 from typing import Protocol, runtime_checkable
 
@@ -62,25 +61,7 @@ DEFAULT_PAIR_REP_ATTR: dict[str, str] = {
 
 
 # "conditioning" throughout this file is the model's conditioning object: a (frozen) dataclass
-# carrying the latents ``s``/``z`` (and other cached state) as named attributes. These two helpers
-# just get, or replace, one such attribute on it.
-def _read_attr(conditioning, attr: str) -> Tensor | None:
-    """Return ``conditioning.<attr>`` (a representation tensor), or None if it is absent."""
-    if conditioning is None:
-        return None
-    return getattr(conditioning, attr, None)
-
-
-def _write_attr(conditioning, attr: str, value: Tensor):
-    """Return a copy of ``conditioning`` with ``<attr>`` set to ``value`` (dataclass-aware)."""
-    if dataclasses.is_dataclass(conditioning) and not isinstance(conditioning, type):
-        return dataclasses.replace(conditioning, **{attr: value})  # ty: ignore
-    # Fallback for non-dataclass conditioning: mutate a shallow copy.
-    new_cond = copy.copy(conditioning)
-    setattr(new_cond, attr, value)
-    return new_cond
-
-
+# carrying the latents ``s``/``z`` (and other cached state) as named attributes.
 class AttrLatentIO:
     """A general-purpose :class:`LatentIO` addressing each representation by attribute name.
 
@@ -106,21 +87,25 @@ class AttrLatentIO:
         self.single_attr = single_attr
         self.pair_attr = pair_attr
 
-    def read_single(self, conditioning) -> Tensor | None:
-        return _read_attr(conditioning, self.single_attr)
+    def read_single(self, conditioning) -> Tensor:
+        # No default: a name that does not match this model's conditioning is a configuration
+        # error, and AttributeError says so more usefully than a silent None would.
+        return getattr(conditioning, self.single_attr)
 
     def write_single(self, conditioning, single: Tensor):
-        return _write_attr(conditioning, self.single_attr, single)
+        return dataclasses.replace(conditioning, **{self.single_attr: single})  # ty: ignore
 
     def read_pair(self, conditioning) -> Tensor | None:
+        # None here means "this io addresses no pair rep", which is a supported configuration --
+        # unlike a missing attribute above.
         if self.pair_attr is None:
             return None
-        return _read_attr(conditioning, self.pair_attr)
+        return getattr(conditioning, self.pair_attr)
 
     def write_pair(self, conditioning, pair: Tensor):
         if self.pair_attr is None:
             return conditioning
-        return _write_attr(conditioning, self.pair_attr, pair)
+        return dataclasses.replace(conditioning, **{self.pair_attr: pair})  # ty: ignore
 
 
 # ============================ protocol (template / interface) ============================
