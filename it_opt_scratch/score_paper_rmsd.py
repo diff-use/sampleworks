@@ -48,10 +48,14 @@ from sampleworks.utils.atom_array_utils import (
     make_normalized_atom_id,
     remove_atoms_with_any_nan_coords,
 )
-from sampleworks.utils.cif_utils import resolve_mixed_hetatm_atom_altlocs
+from sampleworks.utils.cif_utils import remap_altlocs_to_ab, resolve_mixed_hetatm_atom_altlocs
 
 # Same directory as this script, which is sys.path[0] when run as `python it_opt_scratch/...`.
-from score_paper_rscc import align_prediction_to_reference, read_selections
+from score_paper_rscc import (
+    align_prediction_to_reference,
+    read_selections,
+    strict_frame_is_consistent,
+)
 
 SELECTION_RE = re.compile(r"^chain\s+(\S+)\s+and\s+resi\s+(-?\d+)\s*-\s*(-?\d+)$")
 
@@ -164,6 +168,9 @@ def score_protein(
     # Match generation + the RSCC scorer: collapse mixed ATOM/HETATM modified-residue positions
     # (e.g. CYS+CSO) so the reference has the same atoms as a prediction from the cleaned CIF.
     ref_path = resolve_mixed_hetatm_atom_altlocs(ref_path)
+    # Relabel non-A/B alternate altlocs (e.g. A/C) to A/B so the A/B-only conformer split below
+    # does not drop the second conformer (7Z0E, 7AVG). No-op for already-A/B structures.
+    ref_path = remap_altlocs_to_ab(ref_path)
 
     def fail(arm: str, err: str) -> None:
         for sel in selections:
@@ -191,7 +198,6 @@ def score_protein(
             fail(arm, f"setup: {e}")
         return rows
 
-    raw_ref_keys = {k for c in conformers_raw.values() for d in (c["A"], c["B"]) for k in d}
     conformers_norm = None  # built lazily, only if a prediction needs the fallback
 
     for arm in arms:
@@ -202,17 +208,18 @@ def score_protein(
         try:
             aa = remove_atoms_with_any_nan_coords(load_any(str(cif)))
             aa = align_prediction_to_reference(ref_atom_array, aa)
-            pred = prediction_lookup(aa, normalize=False)
-            # Prefer exact (chain,res,name) matching so a protein whose frame already agrees keeps
-            # its exact score. Only when the prediction shares NO atoms with the reference (chain
-            # relabelled, e.g. deposited 'P' vs Protenix 'A') fall back to normalized keys.
-            if raw_ref_keys.isdisjoint(pred):
+            # Key on deposited (chain,res,name) only when those identifiers demonstrably pair the
+            # same residues. Sharing *some* keys is not enough: a prediction renumbered from 1
+            # overlaps a deposited range like 8-258 on most of its residues while denoting
+            # different ones, which silently compared residue i against residue i-offset.
+            if strict_frame_is_consistent(ref_atom_array, aa):
+                conformers = conformers_raw
+                pred = prediction_lookup(aa, normalize=False)
+            else:
                 if conformers_norm is None:
                     conformers_norm = reference_conformers(ref_path, selections, normalize=True)
                 conformers = conformers_norm
                 pred = prediction_lookup(aa, normalize=True)
-            else:
-                conformers = conformers_raw
         except Exception as e:  # noqa: BLE001
             logger.error(f"{protein}/{arm}: {e}\n{traceback.format_exc()}")
             fail(arm, str(e))

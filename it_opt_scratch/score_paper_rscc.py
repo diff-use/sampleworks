@@ -70,6 +70,57 @@ def read_selections(csv_path: Path) -> dict[str, list[str]]:
     return out
 
 
+MIN_RESIDUE_IDENTITY = 0.95  # matched pairs below this share a numbering frame only by accident
+
+
+def strict_frame_is_consistent(ref_atom_array, pred_atom_array) -> bool:
+    """Whether prediction and reference can be paired on deposited (chain, res_id, atom_name).
+
+    ``filter_to_common_atoms`` pairs atoms by identifier alone, never checking that the paired
+    atoms are the same residue. Predictions are renumbered from 1 on chain 'A' while references
+    keep the deposited numbering, so whenever the deposited range merely *overlaps* 1..N -- 3AZY
+    is 8..258, 2YNT is 36..295 -- strict matching succeeds on a large but sequence-shifted set,
+    pairing prediction residue i with reference residue i-offset. Kabsch then fits that shifted
+    correspondence and reports a fold-scale error for a structure that is actually correct.
+
+    Comparing residue names separates the two cases cleanly: a correct frame agrees on every
+    pair, a shifted one agrees only at the ~5% rate expected from 20 residue types by chance.
+
+    Parameters
+    ----------
+    ref_atom_array, pred_atom_array
+        Reference and predicted structures, as loaded by ``load_any``.
+
+    Returns
+    -------
+    bool
+        True when strict matching pairs chemically identical residues and so may be used
+        directly; False when the caller should fall back to normalized (sequential) ids.
+    """
+    try:
+        ref_common, pred_common = filter_to_common_atoms(ref_atom_array, pred_atom_array)
+    except RuntimeError:
+        return False  # no shared identifiers at all, e.g. deposited chain 'B' vs Protenix 'A'
+    identity = residue_identity(ref_common, pred_common)
+    return identity is not None and identity >= MIN_RESIDUE_IDENTITY
+
+
+def residue_identity(ref_common, pred_common) -> float | None:
+    """Fraction of matched pairs whose residue names agree, or None if they cannot be paired.
+
+    ``filter_to_common_atoms`` masks with ``np.isin``, so a reference carrying two altlocs of one
+    atom contributes both copies of a duplicated (chain, res_id, atom_name) key while a
+    single-conformer prediction contributes one. The two matched sets then differ in length and
+    there is no atom-for-atom correspondence to score at all (6NI5 and 6NI6 are the known cases).
+    Returning None keeps that distinct from "paired, but the residues disagree".
+    """
+    ref_names = np.asarray(ref_common.res_name)
+    pred_names = np.asarray(pred_common.res_name)
+    if ref_names.shape != pred_names.shape:
+        return None
+    return float((ref_names == pred_names).mean())
+
+
 def align_prediction_to_reference(ref_atom_array, pred_atom_array):
     """Global uniform-weight Kabsch of prediction onto reference, applied to every predicted atom.
 
@@ -78,17 +129,22 @@ def align_prediction_to_reference(ref_atom_array, pred_atom_array):
     fitting on the 3-residue window itself would let a wrong local conformation be rotated into
     apparent agreement.
     """
-    try:
-        ref_common, pred_common = filter_to_common_atoms(ref_atom_array, pred_atom_array)
-    except RuntimeError:
-        # The prediction relabels every chain to 'A' and renumbers residues from 1, while the
-        # reference keeps the deposited chain id and numbering (e.g. chain 'P', res 5-234). Strict
-        # (chain,res,name) matching then finds nothing. Fall back to sequential per-chain matching,
-        # which realigns these (otherwise identical) structures. This only runs when strict matching
-        # raises, so the proteins that already align keep their exact matched-atom set unchanged.
-        ref_common, pred_common = filter_to_common_atoms(
-            ref_atom_array, pred_atom_array, normalize_ids=True
-        )
+    # Sequential per-chain matching is used unless the deposited identifiers demonstrably pair the
+    # same residues, so a partial numbering overlap can no longer produce a silently shifted fit.
+    normalize = not strict_frame_is_consistent(ref_atom_array, pred_atom_array)
+    ref_common, pred_common = filter_to_common_atoms(
+        ref_atom_array, pred_atom_array, normalize_ids=normalize
+    )
+    if normalize:
+        identity = residue_identity(ref_common, pred_common)
+        # None means the matched sets are different sizes; the explicit shape check below reports
+        # that with the actual atom counts, which is the more useful message for it.
+        if identity is not None and identity < MIN_RESIDUE_IDENTITY:
+            raise ValueError(
+                f"neither deposited nor sequential atom ids pair matching residues "
+                f"(sequential identity {identity:.2f}); the reference and the prediction are "
+                f"not the same construct"
+            )
     ref_t = torch.from_numpy(ref_common.coord).float()
     pred_t = torch.from_numpy(pred_common.coord).float()
     ref_t = match_batch(ref_t, pred_t.shape[0])
