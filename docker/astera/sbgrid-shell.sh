@@ -1,11 +1,10 @@
 # Put the SBGrid collection on $PATH when it is mounted.
 #
-# SBGrid is a site installation on the shared `sbgrid-programs` PVC, which the
-# actl catalog auto-mounts read-only at /programs for every diffuse profile. It
-# is not part of this image — the collection is well over a terabyte — so this
-# script must be a no-op whenever the mount is absent (any non-diffuse
-# workspace, or a run with --no-mount). Every step is guarded accordingly:
-# /programs is an ordinary empty directory without the PVC.
+# SBGrid is a site installation on shared storage, which actl mounts read-only
+# at /programs for every diffuse workspace. It is not part of this image, so
+# this script must be a no-op whenever the mount is absent (any non-diffuse
+# workspace). Every step is guarded accordingly: without the mount, /programs
+# is an ordinary empty directory.
 #
 # Set SBGRID_NO_AUTOINIT=1 before shell start to opt out.
 

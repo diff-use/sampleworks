@@ -70,9 +70,9 @@ RUN install -m 0644 \
     && EXT_VERSION="${EXT_VERSION}" bash /usr/local/share/sampleworks/astera/install-ext.sh \
     && bash /usr/local/share/sampleworks/astera/install-ext-shell-hooks.sh
 
-# SBGrid lives on the shared sbgrid-programs PVC, auto-mounted read-only at
-# /programs by the actl catalog. /programs is created empty so the guarded init
-# is a clean no-op when the PVC is not mounted.
+# SBGrid lives on shared storage, mounted read-only at /programs for every
+# diffuse workspace by the actl catalog. /programs is created empty so the
+# guarded init is a clean no-op when the mount is absent.
 RUN mkdir -p /programs \
     && install -m 0644 \
         /usr/local/share/sampleworks/astera/sbgrid-shell.sh \
