@@ -167,7 +167,15 @@ class _PerMemberStepper:
             if self._optimize_single:
                 cond_i = self._io.write_single(cond_i, self._io.read_single(cond)[i])
             if self._optimize_pair:
-                cond_i = self._io.write_pair(cond_i, self._io.read_pair(cond)[i])
+                # read_pair returns None when the io addresses no pair rep. sample() only sets
+                # optimize_pair together with a pair_attr, so this is a misconfigured io reaching
+                # us directly; say so rather than failing on a None subscript mid-denoise.
+                pair = self._io.read_pair(cond)
+                if pair is None:
+                    raise ValueError(
+                        "optimize_pair is set, but the io addresses no pair representation."
+                    )
+                cond_i = self._io.write_pair(cond_i, pair[i])
             t_i = t
             if isinstance(t, Tensor) and t.ndim >= 1 and t.shape[0] == x_t.shape[0]:
                 t_i = t[i : i + 1]

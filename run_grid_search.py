@@ -20,10 +20,10 @@ from typing import Any
 from loguru import logger as log
 from sampleworks.utils.guidance_constants import GuidanceType, StructurePredictor
 from sampleworks.utils.guidance_script_arguments import (
+    add_latent_opt_args,
     GuidanceConfig,
     JobConfig,
     JobResult,
-    add_latent_opt_args,
 )
 from sampleworks.utils.protein_input import ProteinInput
 
