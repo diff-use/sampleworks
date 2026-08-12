@@ -353,6 +353,32 @@ def scan_grid_search_results(
     return trials
 
 
+def translate_selection(selection: str) -> str:
+    """Convert a pymol-style selection (``chain A and resi N-M``) to
+    atomworks/pandas style (``chain_id == 'A' and res_id >= N and res_id <= M``).
+
+    Selections that already use atomworks comparison operators are returned
+    unchanged. This temporary until selections are unified on the
+    atomworks style upstream.
+    """
+    if any(x in selection for x in ("==", ">", "<", "<=", ">=", " in ")):
+        # assume this is already atomworks/pandas style and ignore.
+        return selection
+
+    DeprecationWarning(
+        "DEPRECATED: translate_selection converts from some pymol-like selection strings to "
+        "AtomWorks selection strings, but is not guaranteed to be correct for all cases."
+    )
+
+    pattern = re.compile(r"chain ([A-Z]) and resi (\d+)-(\d+)")
+    match = pattern.search(selection)
+    if match is None:
+        raise RuntimeError(f"Failed to match selection string {selection}")
+    new_selection = f"chain_id == '{match.group(1)}' "
+    new_selection += f"and res_id >= {match.group(2)} and res_id <= {match.group(3)}"
+    return new_selection
+
+
 def get_method_and_model_name(model_name: str) -> tuple[str | None, str]:
     if "MD" in model_name:
         method = "MD"
@@ -436,13 +462,13 @@ def setup_evaluation_parameters(
     logger.info(f"Grid search directory: {grid_search_dir}")
     logger.info(f"Proteins configured: {list(protein_configs.keys())}")
 
-    # Scan for experiments (look for refined.cif files)
+    # Scan for experiments (look for the target cif files)
     all_trials = scan_grid_search_results(
         grid_search_dir,
         target_depth=args.depth,
         target_filename=args.target_filename,
     )
-    logger.info(f"Found {len(all_trials)} experiments with refined.cif files")
+    logger.info(f"Found {len(all_trials)} experiments with {args.target_filename} files")
 
     if all_trials:
         all_trials.summarize()  # Prints some summary stats, e.g. number of unique proteins

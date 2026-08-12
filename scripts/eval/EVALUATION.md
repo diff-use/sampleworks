@@ -3,10 +3,13 @@
 # External software requirements
 ## tortoize
 SampleWorks relies on tortoize to compute backbone and sidechain dihedral angle outliers.
-`tortoize` is free software and can be downloaded from https://github.com/PDB-REDO/tortoize.
-You should install it following their instructions and make sure it is available in the environment
-where you run SampleWorks. The script scripts/eval/run_and_process_tortoize.py will check for the
-`tortoize` executable before running and will raise an error if it is not available.
+`tortoize` is free software from https://github.com/PDB-REDO/tortoize, and it ships in the `analysis`
+and `analysis-dev` pixi environments via bioconda, so `pixi run -e analysis` (and the `external_tools`
+preset, which runs its jobs in `analysis`) already has it on `PATH`. No manual install is needed.
+
+If you invoke the script from some other environment, install tortoize yourself and make sure it is
+on `PATH`: scripts/eval/run_and_process_tortoize.py checks for the `tortoize` executable before
+running and raises an error if it is not available.
 
 ## phenix
 Information about the phenix package can be found at https://phenix-online.org/. Phenix requires a 

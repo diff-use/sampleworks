@@ -1,6 +1,5 @@
 import argparse
 import itertools
-import re
 import traceback
 
 import numpy as np
@@ -11,7 +10,11 @@ from biotite.structure import AtomArray, AtomArrayStack
 from joblib import delayed, Parallel
 from loguru import logger
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial
-from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
+from sampleworks.eval.grid_search_eval_utils import (
+    parse_eval_args,
+    setup_evaluation_parameters,
+    translate_selection,
+)
 from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import filter_to_common_atoms, map_altlocs_to_stack
@@ -168,28 +171,6 @@ def nn_lddt_clustering(
         "cross_lddt_matrix": cross_lddt_matrix,
         "closest_ref_indices": closest_ref_indices,
     }
-
-
-def translate_selection(selection: str) -> str:
-    # current selection strings are pymol like, and we want to convert to atomworks/pandas like
-    # this should be a temporary measure only until we switch to atomworks style in the RSCC script
-
-    if any(x in selection for x in ("==", ">", "<", "<=", ">=", " in ")):
-        # assume this is already atomworks/pandas style and ignore.
-        return selection
-
-    DeprecationWarning(
-        "DEPRECATED: translate_selection converts from some pymol-like selection strings to "
-        "AtomWorks selection strings, but is not guaranteed to be correct for all cases."
-    )
-
-    pattern = re.compile(r"chain ([A-Z]) and resi (\d+)-(\d+)")
-    match = pattern.search(selection)
-    if match is None:
-        raise RuntimeError(f"Failed to match selection string {selection}")
-    new_selection = f"chain_id == '{match.group(1)}' "
-    new_selection += f"and res_id >= {match.group(2)} and res_id <= {match.group(3)}"
-    return new_selection
 
 
 # TODO make more general: https://github.com/diff-use/sampleworks/issues/93

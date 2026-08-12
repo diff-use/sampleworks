@@ -159,17 +159,41 @@ def detect_gpus() -> list[str]:
     return ["0"]
 
 
+# Every StructurePredictor must appear here; a missing entry only fails inside the
+# worker subprocess, long after the grid has been generated.
+MODEL_PIXI_ENVS: dict[StructurePredictor, str] = {
+    StructurePredictor.BOLTZ_1: "boltz",
+    StructurePredictor.BOLTZ_2: "boltz",
+    StructurePredictor.PROTENIX: "protenix",
+    StructurePredictor.RF3: "rf3",
+    StructurePredictor.PROTPARDELLE: "protpardelle",
+}
+
+
 def get_pixi_env(model: str) -> str:
-    """Return the pixi environment name needed to run a model family."""
-    if model in (StructurePredictor.BOLTZ_1, StructurePredictor.BOLTZ_2):
-        return "boltz"
-    elif model == StructurePredictor.PROTENIX:
-        return "protenix"
-    elif model == StructurePredictor.RF3:
-        return "rf3"
-    else:
-        valid_options = [m.value for m in StructurePredictor]
-        raise ValueError(f"Unknown model: {model}. Valid options are: {valid_options}")
+    """Return the pixi environment name needed to run a model family.
+
+    Parameters
+    ----------
+    model : str
+        Structure predictor name, e.g. ``boltz2`` or ``protpardelle``.
+
+    Returns
+    -------
+    str
+        Pixi environment name that provides the model's dependencies.
+
+    Raises
+    ------
+    ValueError
+        If the model is not a known ``StructurePredictor`` or has no mapped
+        pixi environment.
+    """
+    try:
+        return MODEL_PIXI_ENVS[StructurePredictor(model)]
+    except (ValueError, KeyError):
+        valid_options = [m.value for m in MODEL_PIXI_ENVS]
+        raise ValueError(f"Unknown model: {model}. Valid options are: {valid_options}") from None
 
 
 def build_args_for_process_pool(
@@ -186,6 +210,7 @@ def build_args_for_process_pool(
         output_dir=job.output_dir,
         loss_order=args.loss_order,
         partial_diffusion_step=args.partial_diffusion_step,
+        guidance_start=args.guidance_start,
         resolution=job.resolution,
         device=f"cuda:{device_num}" if device_num is not None else "",
         gradient_normalization=args.gradient_normalization,
@@ -198,6 +223,25 @@ def build_args_for_process_pool(
     # with defaults for remaining required args, but we want to set them further here.
     guidance_config.populate_config_for_guidance_type(job, args)
     return guidance_config
+
+
+def worker_log_path_for(job_queue_path: str) -> str:
+    """Return the path a worker redirects its subprocess output to.
+
+    Derived in one place so the collector's error messages always name the
+    file ``run_guidance_queue_script`` actually wrote.
+
+    Parameters
+    ----------
+    job_queue_path : str
+        Path to the worker's pickled job queue.
+
+    Returns
+    -------
+    str
+        Sibling ``.log`` path for that worker's subprocess output.
+    """
+    return job_queue_path.replace(".pkl", ".log")
 
 
 def run_grid_search(
@@ -277,27 +321,50 @@ def run_grid_search(
             futures[future] = job_queue_path
 
         for completed in concurrent.futures.as_completed(futures):  # ty: ignore
-            try:
-                with open(futures[completed].replace(".pkl", ".results.pkl"), "rb") as f:
-                    result = pickle.load(f)
+            job_queue_path = futures[completed]
+            # Same file the worker redirects its subprocess output to; these
+            # messages exist to point the reader at it.
+            worker_log_path = worker_log_path_for(job_queue_path)
+            # The worker raises before it can write results, so surface its
+            # traceback here rather than reporting the missing results file.
+            worker_error = completed.exception()
+            if worker_error is not None:
+                failed += 1
+                log.opt(exception=worker_error).error(
+                    f"Worker for {job_queue_path} raised before writing results"
+                )
+                continue
 
-                results.extend(result)
-                for r in result:
-                    if r.status == "success":
-                        successful += 1
-                        log.info(
-                            f"SUCCESS ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
-                            f"{r.runtime_seconds:.1f}s): {r.log_path}"
-                        )
-                    else:
-                        failed += 1
-                        log.error(
-                            f"FAILED ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
-                            f"exit={r.exit_code}): {r.log_path}"
-                        )
+            process_result = completed.result()
+            if process_result.returncode != 0:
+                log.error(
+                    f"Worker for {job_queue_path} exited with code "
+                    f"{process_result.returncode}; see {worker_log_path}"
+                )
+
+            try:
+                with open(job_queue_path.replace(".pkl", ".results.pkl"), "rb") as f:
+                    result = pickle.load(f)
             except Exception as e:
                 failed += 1
-                log.error(f"Job failed with exception: {e}")  # this won't be very informative
+                log.error(f"Could not read results for {job_queue_path}: {e}")
+                log.error(f"Worker subprocess output, if any, is in {worker_log_path}")
+                continue
+
+            results.extend(result)
+            for r in result:
+                if r.status == "success":
+                    successful += 1
+                    log.info(
+                        f"SUCCESS ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
+                        f"{r.runtime_seconds:.1f}s): {r.log_path}"
+                    )
+                else:
+                    failed += 1
+                    log.error(
+                        f"FAILED ({r.protein}, {r.model_name}, {r.method}, {r.scaler} "
+                        f"exit={r.exit_code}): {r.log_path}"
+                    )
     return results
 
 
@@ -355,7 +422,7 @@ def run_guidance_queue_script(
         f"(selected GPU {requested_gpu} via {gpu_source})"
     )
 
-    with open(job_queue_path.replace(".pkl", ".log"), "w") as log_file:
+    with open(worker_log_path_for(job_queue_path), "w") as log_file:
         result = subprocess.run(
             cmd,
             stdout=log_file,
@@ -458,7 +525,6 @@ def main(args: argparse.Namespace):
     )
 
     start_time = time.time()
-
     results = run_grid_search(filtered_jobs, gpus, args, job_statuses=job_statuses)
 
     if not args.dry_run and results:
@@ -632,7 +698,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="boltz2",
-        choices=["boltz1", "boltz2", "protenix", "rf3"],
+        choices=["boltz1", "boltz2", "protenix", "rf3", "protpardelle"],
         help="The protein structure predictor model to use",
     )
     parser.add_argument(
@@ -676,6 +742,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--partial-diffusion-step", type=int, default=0, help="Partial diffusion step"
     )
+    parser.add_argument(
+        "--guidance-start",
+        type=int,
+        default=-1,
+        help="Guidance start step for model inference, defaults to -1, meaning start immediately",
+    )
+
     parser.add_argument(
         "--num-gd-steps",
         default="20",
