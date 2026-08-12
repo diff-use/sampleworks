@@ -3,7 +3,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast, overload, Any
+from typing import Any, cast, overload
 
 import numpy as np
 import torch

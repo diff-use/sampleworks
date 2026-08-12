@@ -541,7 +541,9 @@ class ProtpardelleWrapper:
             valid_atom_mask = get_valid_atom_mask(atom_array)
             atom_array = atom_array[valid_atom_mask]
             # Also filter the indices to match the filtered atoms.
-            valid_mask_tensor = torch.as_tensor(valid_atom_mask, dtype=torch.bool, device=self.device)
+            valid_mask_tensor = torch.as_tensor(
+                valid_atom_mask, dtype=torch.bool, device=self.device
+            )
             atom37_residue_index = atom37_residue_index[valid_mask_tensor]
             atom37_atom_index = atom37_atom_index[valid_mask_tensor]
 
