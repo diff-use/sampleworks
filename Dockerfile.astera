@@ -30,6 +30,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
+        bsdextrautils \
         ca-certificates \
         curl \
         dnsutils \
@@ -40,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nano \
         ncdu \
         rsync \
+        tcsh \
         tini \
         tmux \
         vim \
@@ -52,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install -m 0755 /app/run_experiments.sh /usr/local/bin/run_experiments.sh \
     && install -m 0755 /app/run_all_models.sh /usr/local/bin/run_all_models.sh \
     && for cmd in \
-        bash curl dig emacs git htop nano ncdu ping rsync tini tmux vim wget zsh; do \
+        bash column csh curl dig emacs git htop nano ncdu ping rsync tini tmux vim wget zsh; do \
           command -v "${cmd}" >/dev/null 2>&1 || exit 1; \
         done
 
@@ -63,6 +65,15 @@ RUN install -m 0644 \
         /etc/profile.d/sampleworks-ext-shell.sh \
     && EXT_VERSION="${EXT_VERSION}" bash /usr/local/share/sampleworks/astera/install-ext.sh \
     && bash /usr/local/share/sampleworks/astera/install-ext-shell-hooks.sh
+
+# SBGrid lives on shared storage, mounted read-only at /programs for every
+# diffuse workspace by the actl catalog. /programs is created empty so the
+# guarded init is a clean no-op when the mount is absent.
+RUN mkdir -p /programs \
+    && install -m 0644 \
+        /usr/local/share/sampleworks/astera/sbgrid-shell.sh \
+        /etc/profile.d/sbgrid-shell.sh \
+    && bash /usr/local/share/sampleworks/astera/install-sbgrid-shell-hooks.sh
 
 WORKDIR /home/dev
 
