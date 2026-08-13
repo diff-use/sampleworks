@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol
+from sampleworks.core.rewards.protocol import prepare_reward_if_needed, RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import (
     SamplerStepOutput,
     StepParams,
@@ -114,6 +114,7 @@ class FKSteering:
 
         reconciler = processed.reconciler.to(coords.device)
         reward_inputs = processed.to_reward_inputs(device=coords.device)
+        prepare_reward_if_needed(reward, processed.reward_atom_array, device=coords.device)
 
         schedule = sampler.compute_schedule(self.num_steps)
         loss_history: list[torch.Tensor] = []

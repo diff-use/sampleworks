@@ -585,6 +585,57 @@ class TestTrajectoryScalerMatrixMock:
         assert result.final_state is not None
         assert torch.isfinite(torch.as_tensor(result.final_state)).all()
 
+    @pytest.mark.parametrize(
+        "trajectory_scaler_type", get_all_trajectory_scalers(), ids=lambda s: s.value
+    )
+    def test_preparable_reward_is_prepared_with_model_topology_before_first_call(
+        self,
+        trajectory_scaler_type: TrajectoryScalers,
+        device: torch.device,
+        mock_wrapper: MockFlowModelWrapper,
+        mock_structure: dict,
+        mock_step_scaler: MockStepScaler,
+    ):
+        """Two-phase rewards see the model atom array before any reward evaluation."""
+
+        class RecordingPreparableReward(MockGradientRewardFunction):
+            """Reward that records its preparation, in the order it happened."""
+
+            def __init__(self):
+                super().__init__()
+                self.prepared_atom_counts: list[int] = []
+                self.calls_before_prepare = 0
+
+            def prepare(self, atom_array, *, device="cpu") -> None:
+                self.prepared_atom_counts.append(atom_array.array_length())
+
+            def __call__(self, coordinates: Tensor, *args, **kwargs) -> Tensor:
+                if not self.prepared_atom_counts:
+                    self.calls_before_prepare += 1
+                return super().__call__(coordinates, *args, **kwargs)
+
+        reward = RecordingPreparableReward()
+        sampler = AF3EDMSampler(
+            EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
+        )
+        trajectory_scaler = create_trajectory_scaler_from_type(
+            trajectory_scaler_type,
+            ensemble_size=1,
+            num_steps=3,
+        )
+
+        trajectory_scaler.sample(
+            structure=mock_structure,
+            model=mock_wrapper,
+            sampler=sampler,
+            step_scaler=mock_step_scaler,
+            reward=reward,
+            num_particles=1,
+        )
+
+        assert reward.prepared_atom_counts == [mock_wrapper.num_atoms]
+        assert reward.calls_before_prepare == 0
+
 
 class TestPartialDiffusion:
     """Test partial diffusion (t_start > 0) behavior."""

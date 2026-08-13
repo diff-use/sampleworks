@@ -189,6 +189,59 @@ class RewardFunctionProtocol(Protocol):
 
 
 @runtime_checkable
+class PreparableRewardFunctionProtocol(RewardFunctionProtocol, Protocol):
+    """Protocol for reward functions that must see the model topology first.
+
+    Rewards whose forward model needs the atom ordering itself — element symbols,
+    residue identity, a unit cell — cannot be fully built from the input structure
+    file, because the model may represent the same protein with a different atom
+    set (see ``utils/atom_reconciler.py``). Those rewards are constructed in two
+    phases: ``__init__`` takes the up-front configuration, and :meth:`prepare`
+    binds the reward to the model atom array once sampling knows it.
+    """
+
+    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """Bind this reward to the model atom ordering.
+
+        Mutates the reward in place and returns nothing. Implementations must be
+        re-runnable, so a caller can prepare the same reward again for a different
+        atom array or device.
+
+        Parameters
+        ----------
+        atom_array
+            Model-order atom array the subsequent ``__call__`` coordinates follow.
+        device
+            PyTorch device the prepared state is placed on.
+        """
+        ...
+
+
+def prepare_reward_if_needed(
+    reward: RewardFunctionProtocol,
+    atom_array: AtomArray,
+    *,
+    device: torch.device | str = "cpu",
+) -> None:
+    """Prepare ``reward`` against the model topology when it asks to be prepared.
+
+    Rewards that do not implement :class:`PreparableRewardFunctionProtocol` are
+    left untouched, so callers can apply this unconditionally.
+
+    Parameters
+    ----------
+    reward
+        Reward function about to be used for guidance.
+    atom_array
+        Model-order atom array the reward's coordinates will follow.
+    device
+        PyTorch device the reward's prepared state is placed on.
+    """
+    if isinstance(reward, PreparableRewardFunctionProtocol):
+        reward.prepare(atom_array, device=device)
+
+
+@runtime_checkable
 class PrecomputableRewardFunctionProtocol(RewardFunctionProtocol, Protocol):
     """Protocol for reward functions with precomputation for vmap compatibility.
 

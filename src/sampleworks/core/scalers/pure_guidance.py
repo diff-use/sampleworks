@@ -6,7 +6,7 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol
+from sampleworks.core.rewards.protocol import prepare_reward_if_needed, RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
 from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
@@ -89,6 +89,9 @@ class PureGuidance:
 
         reconciler = processed_structure.reconciler.to(coords.device)
         reward_inputs = processed_structure.to_reward_inputs(device=coords.device)
+        prepare_reward_if_needed(
+            reward, processed_structure.reward_atom_array, device=coords.device
+        )
 
         trajectory_denoised: list[torch.Tensor] = []
         trajectory_next_step: list[torch.Tensor] = []
