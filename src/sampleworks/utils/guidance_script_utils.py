@@ -18,11 +18,6 @@ from biotite.structure.io import save_structure
 from loguru import logger
 
 from sampleworks.core.rewards.config import build_reward
-from sampleworks.core.rewards.options import RealSpaceDensityOptions
-from sampleworks.core.rewards.real_space_density import (
-    build_real_space_density_reward,
-    RealSpaceRewardFunction,
-)
 from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.scalers.fk_steering import FKSteering
@@ -298,33 +293,6 @@ def load_guidance_structure(structure_path: str | Path) -> dict[str, Any]:
         safe_structure_path.unlink()  # delete the temporary file if it was created
 
     return structure
-
-
-def get_reward_function_and_structure(
-    density: str | Path,
-    device: torch.device,
-    em,
-    loss_order,
-    resolution,
-    structure_path: str | Path,
-) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
-    """Load structure and density inputs and build the real-space reward function.
-
-    .. deprecated::
-        Build rewards through
-        :func:`sampleworks.core.rewards.registry.build_single_reward` (or
-        :func:`build_reward` for a whole run configuration) instead. Kept for
-        callers that still construct the density reward positionally.
-    """
-    structure = load_guidance_structure(structure_path)
-    logger.info("Creating reward function")
-    reward_function = build_real_space_density_reward(
-        RealSpaceDensityOptions(
-            density=str(density), resolution=resolution, loss_order=loss_order, em=em
-        ),
-        RewardBuildContext(structure=structure, device=device),
-    )
-    return reward_function, structure
 
 
 def save_everything(
