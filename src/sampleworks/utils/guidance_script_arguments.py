@@ -624,13 +624,19 @@ def add_reward_args(parser: argparse.ArgumentParser, reward: Rewards | str):
         }
         if value_type is bool:
             kwargs["action"] = argparse.BooleanOptionalAction
-        elif metadata["json_arg"]:
-            kwargs["type"] = json.loads
-        elif typing.get_origin(value_type) is list:
-            kwargs["type"] = typing.get_args(value_type)[0]
-            kwargs["nargs"] = "+"
         else:
-            kwargs["type"] = value_type
+            if not metadata["choices"]:
+                # Otherwise the prefixed dest becomes the metavar and --help reads
+                # "--mtzfile REWARD_OPTION_MTZFILE". Options with choices are left
+                # alone so argparse can show the choices in their place.
+                kwargs["metavar"] = option.name.upper()
+            if metadata["json_arg"]:
+                kwargs["type"] = json.loads
+            elif typing.get_origin(value_type) is list:
+                kwargs["type"] = typing.get_args(value_type)[0]
+                kwargs["nargs"] = "+"
+            else:
+                kwargs["type"] = value_type
 
         if metadata["choices"] and value_type is not bool:
             kwargs["choices"] = list(metadata["choices"])
