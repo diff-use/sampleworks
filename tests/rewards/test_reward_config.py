@@ -114,6 +114,12 @@ class TestValidation:
                 {"structure_factor": {"reward_options": {"mtz_file": "/data/x.mtz"}}}
             )
 
+    def test_reward_options_must_be_a_mapping(self):
+        with pytest.raises(ValueError, match="must be a mapping of option name to value"):
+            RewardConfig.from_mapping(
+                {"real_space_density": {"reward_options": ["density", "x.ccp4"]}}
+            )
+
     def test_options_outside_reward_options_are_rejected(self):
         """A flat entry is the most likely mistake; say where the options go."""
         with pytest.raises(ValueError, match="Reward options belong under 'reward_options'"):

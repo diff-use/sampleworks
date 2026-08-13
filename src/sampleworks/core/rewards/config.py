@@ -26,6 +26,7 @@ unless the user says otherwise.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import tomllib
 from collections.abc import Mapping
@@ -181,12 +182,19 @@ class RewardConfig:
                     f"'{reward.value}'. Reward options belong under '{REWARD_OPTIONS_KEY}'."
                 )
 
+            raw_options = entry.get(REWARD_OPTIONS_KEY) or {}
+            if not isinstance(raw_options, Mapping):
+                raise ValueError(
+                    f"'{REWARD_OPTIONS_KEY}' for reward '{reward.value}' must be a mapping of "
+                    f"option name to value, got {type(raw_options).__name__}."
+                )
+
             weight = entry.get(WEIGHT_KEY)
             entries.append(
                 RewardEntry(
                     reward=reward,
                     weight=None if weight is None else float(weight),
-                    options=dict(entry.get(REWARD_OPTIONS_KEY) or {}),
+                    options=dict(raw_options),
                 )
             )
 
@@ -266,6 +274,54 @@ class RewardConfig:
                 payload[REWARD_OPTIONS_KEY] = dict(entry.options)
             mapping[entry.reward.value] = payload
         return mapping
+
+    def with_effective_options(self) -> RewardConfig:
+        """Return this configuration with every reward's defaults written out.
+
+        A run's metadata should record what actually ran, not only what was typed:
+        defaults change between versions, and an option that was defaulted is
+        otherwise indistinguishable from one that did not exist. Options left at
+        ``None`` stay absent, so they remain fillable by
+        :meth:`with_experimental_data`.
+
+        Returns
+        -------
+        RewardConfig
+            The same rewards, with defaulted option values materialized.
+        """
+        entries = []
+        for entry in self.entries:
+            options = coerce_options(get_reward_spec(entry.reward), entry.options)
+            effective = {
+                name: value
+                for name, value in dataclasses.asdict(options).items()
+                if value is not None
+            }
+            entries.append(replace(entry, options=effective))
+        return RewardConfig(tuple(entries))
+
+    def missing_required_options(self) -> dict[str, tuple[str, ...]]:
+        """Report configured rewards that are still missing an input they need.
+
+        Lets a caller refuse a configuration before doing expensive work, without
+        knowing anything about individual rewards. The builders check the same
+        thing when they run, which is what protects callers that never come
+        through here.
+
+        Returns
+        -------
+        dict[str, tuple[str, ...]]
+            Reward name to the options it is missing, for rewards missing any.
+        """
+        missing = {}
+        for entry in self.entries:
+            spec = get_reward_spec(entry.reward)
+            absent = tuple(
+                name for name in spec.required_options if entry.options.get(name) is None
+            )
+            if absent:
+                missing[entry.reward.value] = absent
+        return missing
 
     def resolved_weights(self) -> tuple[float, ...]:
         """Resolve the per-reward weights, filling in the uniform default.

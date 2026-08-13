@@ -86,6 +86,18 @@ def test_option_type_strips_optionality():
     assert option_type(RealSpaceDensityOptions, "em") is bool
 
 
+def test_option_type_keeps_a_generic_whole():
+    """Collapsing list[str] to str would silently drop nargs from its CLI flag."""
+
+    @dataclasses.dataclass(frozen=True)
+    class Options:
+        required_columns: list[str] = dataclasses.field(default_factory=list)
+        optional_columns: list[str] | None = None
+
+    assert option_type(Options, "required_columns") == list[str]
+    assert option_type(Options, "optional_columns") == list[str]
+
+
 class TestBuilderValidation:
     """Missing required inputs are the reward's own error to raise."""
 
