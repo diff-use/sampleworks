@@ -127,14 +127,42 @@ RUN --mount=type=bind,from=checkpoints,target=/ck \
 # IMPORTANT: keep these installs in a single RUN. Splitting them into separate
 # Docker layers duplicates shared conda packages (numpy, CUDA libs, etc.) and can
 # add tens of GB to the image.
-RUN --mount=type=cache,target=/root/.cache/pixi \
-    --mount=type=cache,target=/root/.cache/rattler \
+#
+# The `rm -rf` and the assertion below are both load-bearing. Published images
+# have shipped with all five environments as empty shells: the directories and
+# pixi's own bookkeeping in conda-meta present, but no package records, no bin/,
+# no lib/. `pixi install --frozen` then reports "The <env> environment has been
+# installed" against them and exits 0, so the breakage is invisible at build
+# time and only surfaces when a scientist finds /app/.pixi/envs/protenix has no
+# python. `SAMPLEWORKS_REQUIRE_PREBUILT_PIXI=1` makes the runner refuse to fall
+# back, so the image promises environments it does not carry.
+#
+# Clearing the prefix first forces a genuine install even when a stale or stub
+# prefix arrives from a cached layer, the base image, or the registry
+# buildcache. The per-environment check then makes an empty env fail the build
+# instead of shipping: a directory that exists but has no interpreter is exactly
+# the state that got published, and `pixi install` alone does not catch it.
+#
+# `/root/.cache/pixi` is deliberately not cached across builds — it carries
+# pixi's own "is this environment current" state, which is the thing that can
+# disagree with a prefix restored from a different build. The rattler and uv
+# caches stay: they hold downloaded packages and wheels, are what actually make
+# rebuilds fast, and were verified not to affect what lands in the layer.
+RUN --mount=type=cache,target=/root/.cache/rattler \
     --mount=type=cache,target=/root/.cache/uv \
+    rm -rf /app/.pixi/envs && \
     pixi install -e boltz --frozen && \
     pixi install -e protenix --frozen && \
     pixi install -e rf3 --frozen && \
     pixi install -e protpardelle --frozen && \
-    pixi install -e analysis --frozen
+    pixi install -e analysis --frozen && \
+    for env in boltz protenix rf3 protpardelle analysis; do \
+        test -x "/app/.pixi/envs/${env}/bin/python" || { \
+            echo "FATAL: pixi environment '${env}' has no interpreter at /app/.pixi/envs/${env}/bin/python."; \
+            echo "       pixi reported success but installed nothing — refusing to ship an empty environment."; \
+            exit 1; \
+        }; \
+    done
 
 # A GPU is not required to build the image. Pre-compile CUDA extensions only when
 # the builder exposes NVIDIA devices; if present, failures should stop the build.
