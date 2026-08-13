@@ -20,8 +20,6 @@ def test_list_prints_all_experiment_presets(capsys: pytest.CaptureFixture[str]) 
         "boltz2_md",
         "boltz2_xrd",
         "full_8gpu",
-        "it_opt_1gpu",
-        "it_opt_4gpu",
         "protenix",
         "protenix_dual",
         "rf3",
