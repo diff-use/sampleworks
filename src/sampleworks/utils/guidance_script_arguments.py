@@ -351,8 +351,12 @@ class GuidanceConfig:
         args = parser.parse_args(argv)
 
         # The file names its own rewards; taking a --reward-type alongside it would
-        # mean silently ignoring one of the two.
-        if args.reward_config is not None and "--reward-type" in (argv or sys.argv[1:]):
+        # mean silently ignoring one of the two. --reward-type always has a default,
+        # so "was it passed" has to be answered from the command line itself.
+        given = argv if argv is not None else sys.argv[1:]
+        if args.reward_config is not None and any(
+            token.split("=", 1)[0] == "--reward-type" for token in given
+        ):
             parser.error(
                 "--reward-type and --reward-config are alternatives: the configuration "
                 "file already names the rewards it configures."
