@@ -69,6 +69,11 @@ class RewardSpec:
         knowing which reward they are configuring.
     resolution_option
         Name of the option holding the resolution, if any. Same rationale.
+    required_options
+        Options this reward cannot be built without. The builder raises on them
+        too -- that is the guarantee for library callers -- but declaring them
+        here lets the CLI report a missing one as a usage error, before a model
+        is loaded.
     """
 
     name: Rewards
@@ -77,6 +82,7 @@ class RewardSpec:
     description: str
     data_path_option: str | None = None
     resolution_option: str | None = None
+    required_options: tuple[str, ...] = ()
 
     def builder(self) -> Callable[[Any, RewardBuildContext], RewardFunctionProtocol]:
         """Import and return this reward's builder function.
@@ -98,6 +104,7 @@ REWARD_SPECS: dict[Rewards, RewardSpec] = {
         description="Real-space density fit (X-ray or cryo-EM map).",
         data_path_option="density",
         resolution_option="resolution",
+        required_options=("density", "resolution"),
     ),
     Rewards.STRUCTURE_FACTOR: RewardSpec(
         name=Rewards.STRUCTURE_FACTOR,
@@ -106,6 +113,8 @@ REWARD_SPECS: dict[Rewards, RewardSpec] = {
         description="Reciprocal-space structure-factor amplitude fit (MTZ target).",
         data_path_option="mtzfile",
         resolution_option="resolution",
+        # No resolution: the MTZ carries its own, and --resolution only truncates it.
+        required_options=("mtzfile",),
     ),
 }
 

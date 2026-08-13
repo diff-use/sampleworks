@@ -17,6 +17,7 @@ from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io import save_structure
 from loguru import logger
 
+from sampleworks.core.rewards.config import build_reward
 from sampleworks.core.rewards.options import RealSpaceDensityOptions
 from sampleworks.core.rewards.real_space_density import (
     build_real_space_density_reward,
@@ -489,13 +490,12 @@ def _three_state_resolver(value: str | bool | None, default: bool) -> bool:
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     """Run one configured guidance trajectory and save its outputs."""
-    reward_function, structure = get_reward_function_and_structure(
-        args.density,  # str/path to a map file.
-        device,  # this needs to come from the global context, not the args object.
-        args.em,
-        args.loss_order,
-        args.resolution,
-        args.structure,  # path/string to a structure file.
+    structure = load_guidance_structure(args.structure)
+    logger.info("Creating reward function")
+    reward_function = build_reward(
+        args.resolved_reward_config(),
+        # device comes from the global context, not the args object.
+        RewardBuildContext(structure=structure, device=device),
     )
 
     # Determine model type from wrapper class name
