@@ -14,13 +14,14 @@ from sampleworks.core.rewards.protocol import (
     PreparableRewardFunctionProtocol,
     prepare_reward_if_needed,
     RewardFunctionProtocol,
-    RewardInputs,
 )
 from sampleworks.core.rewards.real_space_density import RealSpaceRewardFunction
 from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.core.rewards.structure_factor import StructureFactorRewardFunction
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import load_guidance_structure
+
+from tests.rewards.reward_input_helpers import build_reward_input_tensors_without_coords
 
 
 # Building either reward loads real experimental data through the qFit / SFcalculator
@@ -73,7 +74,9 @@ def test_density_reward_is_reachable_from_the_command_line(resources_dir: Path, 
 
 
 def test_structure_factor_reward_scores_a_structure_end_to_end(
-    sf_1vme_cif_and_mtz_paths: tuple[Path, Path], device: torch.device
+    sf_1vme_cif_and_mtz_paths: tuple[Path, Path],
+    structure_1vme_sf,
+    device: torch.device,
 ):
     """--reward-type structure_factor: parse, build, prepare, and score."""
     structure_path, mtz_path = sf_1vme_cif_and_mtz_paths
@@ -90,6 +93,7 @@ def test_structure_factor_reward_scores_a_structure_end_to_end(
             "--expcolumns",
             "Fprotein",
             "SIGFprotein",
+            "--normalize-amplitude",
         ],
         structure_path,
         device,
@@ -98,22 +102,25 @@ def test_structure_factor_reward_scores_a_structure_end_to_end(
     assert isinstance(reward, StructureFactorRewardFunction)
     assert isinstance(reward, PreparableRewardFunctionProtocol)
 
-    structure = load_guidance_structure(structure_path)
-    atom_array = structure["asym_unit"]
+    # The scalers prepare against the model-order atom array
+    # (SampleworksProcessedStructure.reward_atom_array); here that is the structure the
+    # synthetic MTZ was computed from, altlocs and all.
+    atom_array = structure_1vme_sf
     prepare_reward_if_needed(reward, atom_array, device=device)
-    reward_inputs = RewardInputs.from_atom_array(atom_array, ensemble_size=1, device=device)
+    elements, b_factors, occupancies = build_reward_input_tensors_without_coords(atom_array, device)
+    coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
+    # One conformer, as a batch of one: rewards are always called batched.
+    per_atom = (elements.unsqueeze(0), b_factors.unsqueeze(0), occupancies.unsqueeze(0))
 
-    value = reward(
-        reward_inputs.input_coords,
-        reward_inputs.elements,
-        reward_inputs.b_factors,
-        reward_inputs.occupancies,
-    )
+    value = reward(coords.unsqueeze(0), *per_atom)
+    perturbed = reward((coords + torch.randn_like(coords) * 0.5).unsqueeze(0), *per_atom)
 
-    # The MTZ was generated from this structure, so the amplitudes agree: the value
-    # is finite, non-negative, and near zero.
+    # The MTZ was computed from these coordinates, so a run configured this way scores
+    # them as a match (normalized amplitudes are unit-variance per shell), and moving
+    # away from them costs more.
     assert torch.isfinite(value)
-    assert 0.0 <= value.item() < 1e-2
+    assert 0.0 <= value.item() < 0.1
+    assert perturbed > value
 
 
 def test_a_configuration_file_composes_two_rewards(
