@@ -31,12 +31,22 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger
 from sampleworks.core.rewards.options import path_option_names
-from sampleworks.core.rewards.registry import coerce_options, get_reward_spec, reward_type_names
+from sampleworks.core.rewards.registry import (
+    build_single_reward,
+    coerce_options,
+    get_reward_spec,
+    reward_type_names,
+    RewardBuildContext,
+)
 from sampleworks.utils.guidance_constants import Rewards
+
+
+if TYPE_CHECKING:
+    from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 
 
 # Key holding a reward's options inside a configuration file entry.
@@ -353,3 +363,43 @@ class RewardConfig:
                 if options.get(option_name) is not None:
                     options[option_name] = remap(str(options[option_name]))
         return mapping
+
+
+def build_reward(config: RewardConfig, context: RewardBuildContext) -> RewardFunctionProtocol:
+    """Build the reward function a run scores against.
+
+    One configured reward at full weight is built and returned directly, so the
+    single-reward runs that are today's norm keep exactly the values and gradients
+    they had before there was a registry. Anything else becomes a
+    :class:`~sampleworks.core.rewards.composite.CompositeReward`.
+
+    Parameters
+    ----------
+    config
+        The run's reward configuration.
+    context
+        Run-level inputs (the parsed input structure, the device).
+
+    Returns
+    -------
+    RewardFunctionProtocol
+        A single reward or a weighted combination of several.
+    """
+    weights = config.resolved_weights()
+    rewards = [
+        build_single_reward(entry.reward, entry.options, context) for entry in config.entries
+    ]
+
+    if len(rewards) == 1 and weights[0] == 1.0:
+        return rewards[0]
+
+    from sampleworks.core.rewards.composite import CompositeReward
+
+    logger.info(
+        "Combining rewards: "
+        + ", ".join(
+            f"{weight:g}*{entry.reward.value}"
+            for entry, weight in zip(config.entries, weights, strict=True)
+        )
+    )
+    return CompositeReward(rewards, weights)
