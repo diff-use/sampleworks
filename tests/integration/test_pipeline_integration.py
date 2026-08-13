@@ -46,8 +46,14 @@ from tests.conftest import (
     STEP_SCALER_REGISTRY,
     STRUCTURES,
 )
-from tests.mocks import MockFlowModelWrapper, MockStepScaler
+from tests.mocks import (
+    MismatchCase,
+    MismatchCaseWrapper,
+    MockFlowModelWrapper,
+    MockStepScaler,
+)
 from tests.mocks.rewards import MockGradientRewardFunction
+from tests.utils.atom_array_builders import build_test_atom_array
 
 
 def create_step_context_with_reward(
@@ -592,27 +598,50 @@ class TestTrajectoryScalerMatrixMock:
         self,
         trajectory_scaler_type: TrajectoryScalers,
         device: torch.device,
-        mock_wrapper: MockFlowModelWrapper,
-        mock_structure: dict,
-        mock_step_scaler: MockStepScaler,
     ):
-        """Two-phase rewards see the model atom array before any reward evaluation."""
+        """Two-phase rewards see the model atom array before any reward evaluation.
+
+        The model and the structure deliberately have different atom counts. A reward
+        prepared against the input structure would bind the wrong atom ordering, which
+        is how the structure-factor reward silently scores the wrong thing.
+        """
 
         class RecordingPreparableReward(MockGradientRewardFunction):
             """Reward that records its preparation, in the order it happened."""
 
             def __init__(self):
+                """Start with no preparations and no evaluations recorded."""
                 super().__init__()
                 self.prepared_atom_counts: list[int] = []
+                self.calls = 0
                 self.calls_before_prepare = 0
 
             def prepare(self, atom_array, *, device="cpu") -> None:
+                """Record the size of the topology this reward was bound to."""
                 self.prepared_atom_counts.append(atom_array.array_length())
 
             def __call__(self, coordinates: Tensor, *args, **kwargs) -> Tensor:
+                """Score as usual, counting evaluations and any that precede prepare()."""
+                self.calls += 1
                 if not self.prepared_atom_counts:
                     self.calls_before_prepare += 1
                 return super().__call__(coordinates, *args, **kwargs)
+
+        struct_atom_array = build_test_atom_array(
+            chain_ids=["A"] * 5,
+            res_ids=[1, 2, 3, 4, 5],
+            atom_names=["N", "CA", "C", "O", "CB"],
+        )
+        case = MismatchCase(
+            id="model_drops_one_atom",
+            description="Model represents four of the structure's five atoms.",
+            model_atom_array=struct_atom_array[:4].copy(),
+            struct_atom_array=struct_atom_array,
+            expected_n_common=4,
+            expected_has_mismatch=True,
+        )
+        wrapper = MismatchCaseWrapper(case, device=device)
+        structure = {"asym_unit": struct_atom_array, "metadata": {"id": "mismatch"}}
 
         reward = RecordingPreparableReward()
         sampler = AF3EDMSampler(
@@ -625,15 +654,18 @@ class TestTrajectoryScalerMatrixMock:
         )
 
         trajectory_scaler.sample(
-            structure=mock_structure,
-            model=mock_wrapper,
+            structure=structure,
+            model=wrapper,
             sampler=sampler,
-            step_scaler=mock_step_scaler,
+            # A real step scaler, so the reward is actually evaluated and the
+            # before-first-call assertion below has something to be true about.
+            step_scaler=DataSpaceDPSScaler(step_size=0.1),
             reward=reward,
             num_particles=1,
         )
 
-        assert reward.prepared_atom_counts == [mock_wrapper.num_atoms]
+        assert reward.prepared_atom_counts == [case.n_model]
+        assert reward.calls > 0
         assert reward.calls_before_prepare == 0
 
 

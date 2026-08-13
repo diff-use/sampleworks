@@ -32,6 +32,7 @@ class PreparableReward(PlainReward):
         self.calls_before_prepare = 0
 
     def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """Record the topology and device this reward was bound to."""
         self.prepared_with.append((atom_array.array_length(), str(device)))
 
     def __call__(self, coordinates: torch.Tensor, *args, **kwargs) -> torch.Tensor:
@@ -49,6 +50,7 @@ def make_atom_array(n_atoms: int = 4) -> AtomArray:
 
 
 def test_preparable_reward_satisfies_both_protocols():
+    """A reward with prepare() is still an ordinary reward function."""
     reward = PreparableReward()
 
     assert isinstance(reward, RewardFunctionProtocol)
@@ -56,10 +58,12 @@ def test_preparable_reward_satisfies_both_protocols():
 
 
 def test_plain_reward_is_not_preparable():
+    """Structural typing must not classify every reward as two-phase."""
     assert not isinstance(PlainReward(), PreparableRewardFunctionProtocol)
 
 
 def test_prepare_hook_forwards_atom_array_and_device():
+    """The reward is bound to the atom array and device the caller passed."""
     reward = PreparableReward()
     atom_array = make_atom_array(7)
 
@@ -69,6 +73,7 @@ def test_prepare_hook_forwards_atom_array_and_device():
 
 
 def test_prepare_hook_is_a_no_op_for_rewards_that_do_not_need_it():
+    """Callers can prepare unconditionally, so one-phase rewards must be untouched."""
     reward = PlainReward()
 
     prepare_reward_if_needed(reward, make_atom_array(), device="cpu")
@@ -77,6 +82,7 @@ def test_prepare_hook_is_a_no_op_for_rewards_that_do_not_need_it():
 
 
 def test_prepare_is_rerunnable_for_a_new_topology():
+    """Preparing again rebinds, so a reward can move between topologies or devices."""
     reward = PreparableReward()
 
     prepare_reward_if_needed(reward, make_atom_array(3), device="cpu")
