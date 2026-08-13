@@ -7,26 +7,15 @@ from pathlib import Path
 import pytest
 from sampleworks.runs import cli, runner
 
+from tests.runs.conftest import BUNDLED
+
 
 def test_list_prints_all_experiment_presets(capsys: pytest.CaptureFixture[str]) -> None:
     """``--list`` prints every bundled experiment preset exactly once."""
     exit_code = cli.main(["--list"])
     assert exit_code == 0
     out = capsys.readouterr().out.splitlines()
-    assert set(out) == {
-        "boltz",
-        "boltz1",
-        "boltz2",
-        "boltz2_md",
-        "boltz2_xrd",
-        "full_8gpu",
-        "protenix",
-        "protenix_dual",
-        "rf3",
-        "rf3_partial",
-        "rf3_partial_chiral_off",
-        "rf3_protenix",
-    }
+    assert set(out) == set(BUNDLED)
 
 
 def test_show_prints_resolved_preset(

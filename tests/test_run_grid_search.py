@@ -2,7 +2,10 @@
 
 import json
 
-from run_grid_search import GridSearchConfig, save_results
+import pytest
+from run_grid_search import get_pixi_env, GridSearchConfig, save_results
+from sampleworks.runs.schema import VALID_PIXI_ENVS
+from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.guidance_script_arguments import JobResult
 
 
@@ -52,3 +55,19 @@ def test_save_results_normalizes_legacy_model_key(tmp_path) -> None:
     assert len(saved["runs"]) == 1
     assert saved["runs"][0]["model_name"] == "boltz2"
     assert "model" not in saved["runs"][0]
+
+
+def test_every_structure_predictor_has_a_valid_pixi_env() -> None:
+    """Each supported model resolves to a pixi environment declared in pyproject.
+
+    A model that reaches the grid search without a mapped environment only
+    fails inside the worker subprocess, so this is checked up front.
+    """
+    for predictor in StructurePredictor:
+        assert get_pixi_env(predictor) in VALID_PIXI_ENVS
+
+
+def test_get_pixi_env_rejects_unknown_model() -> None:
+    """An unrecognized model name fails with the valid options listed."""
+    with pytest.raises(ValueError, match="Unknown model: not-a-model"):
+        get_pixi_env("not-a-model")

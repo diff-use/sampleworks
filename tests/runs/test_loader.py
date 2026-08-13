@@ -2,26 +2,48 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
 from sampleworks.runs import loader
 
+from tests.runs.conftest import BUNDLED
 
-BUNDLED = [
-    "boltz",
-    "boltz1",
-    "boltz2",
-    "boltz2_md",
-    "boltz2_xrd",
-    "full_8gpu",
-    "protenix",
-    "protenix_dual",
-    "rf3",
-    "rf3_partial",
-    "rf3_partial_chiral_off",
-    "rf3_protenix",
-]
+
+def _get_model_env_prefixes() -> tuple[str, ...]:
+    """Extract model environment prefixes from pyproject.toml.
+
+    Note that this is NOT the same as sampleworks.runs.schema._load_valid_pixi_envs(),
+    this method only pulls the prefixes, which are the environments used for running guidance.
+
+    Returns unique base environment names (e.g., "boltz", "rf3") excluding
+    "analysis" and dev/platform-specific variants.
+    """
+    current = Path(__file__).parent
+    while current != current.parent:
+        pyproject_path = current / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+            envs = data.get("tool", {}).get("pixi", {}).get("environments", {})
+
+            prefixes = {
+                env_name.split("-")[0]
+                for env_name in envs.keys()
+                if env_name.split("-")[0] != "analysis"
+            }
+
+            if not prefixes:
+                raise ValueError("No valid model environment prefixes found in pyproject.toml")
+
+            return tuple(sorted(prefixes))
+
+        current = current.parent
+    raise FileNotFoundError("Could not find pyproject.toml while searching from test_loader.py")
+
+
+MODEL_ENV_PREFIXES = _get_model_env_prefixes()
 
 
 def test_list_presets_returns_bundled_experiments() -> None:
@@ -38,7 +60,7 @@ def test_each_experiment_preset_loads(name: str, monkeypatch: pytest.MonkeyPatch
     assert preset.name == name
     assert preset.jobs, f"{name} has no jobs"
     for job in preset.jobs:
-        assert job.env in ("boltz", "protenix", "rf3")
+        assert job.env in MODEL_ENV_PREFIXES
 
 
 def test_env_var_wins_over_defaults_block(monkeypatch: pytest.MonkeyPatch) -> None:

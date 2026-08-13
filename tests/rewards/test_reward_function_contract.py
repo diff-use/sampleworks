@@ -31,9 +31,11 @@ from tests.rewards.reward_input_helpers import build_reward_input_tensors_withou
 
 
 # Every test exercises CUDA-targeted reward code on the `device` fixture (try_gpu), so the
-# whole module is gpu-marked. Deliberately NOT `slow`: measured warm per-test time is
-# sub-second. The fixed cost is one-time import + session-scoped reward construction, which
-# is paid once per pytest invocation and cannot be skipped by `slow`-marking these tests.
+# whole module is gpu-marked. Deliberately NOT `slow`: measured warm per-test time is ~1s
+# at most (the SFC gradient-descent loop; the rest are sub-0.5s). The fixed cost is a one-time
+# import, the session-scoped synthetic SF generation, and session-scoped reward construction
+# (real_space + SFC), paid once per pytest invocation and not skippable by `slow`-marking
+# these tests.
 pytestmark = pytest.mark.gpu
 
 
@@ -61,10 +63,12 @@ class RewardCase:
 
 # Per-reward bundles: each param resolves its OWN coordinates/atom_array/reward so the
 # inputs are self-consistent with that reward's target. real_space uses the recentered
-# carved 1vme (matches its .ccp4 map frame). New rewards register here alongside a matching
-# entry in `_LOSS_THRESHOLDS`.
+# carved 1vme (matches its .ccp4 map frame); structure_factor uses the crystal-frame
+# chain-A model the synthetic MTZ was generated from (recentering corrupts SF symmetry
+# mates). New rewards register here alongside a matching entry in `_LOSS_THRESHOLDS`.
 _REWARD_BUNDLES = {
     "real_space": ("test_coordinates_1vme", "reward_function_1vme"),
+    "structure_factor": ("test_coordinates_1vme_sf", "reward_function_1vme_sf"),
 }
 
 # Absolute loss bar for the TRUE structure, per reward. RealSpace's loss is MSE on
@@ -72,8 +76,12 @@ _REWARD_BUNDLES = {
 # a 0.5 A perturbation ~0.034, and random coordinates ~O(1). The 0.01 bar sits ~5x above
 # the true loss (robust to device/precision variance) yet ~3x below the 0.5 A-perturbed
 # loss, so it comfortably passes the truth while meaningfully failing a wrong structure.
+# SFC (normalize_amplitude=True -> normalized E-values) measured on the synthetic MTZ:
+# true ~2e-14, a 0.5 A perturbation ~0.34, and random ~0.44, so the 0.1 bar sits well
+# above numerical zero and ~3x below the smallest perturbation signal.
 _LOSS_THRESHOLDS = {
     "real_space": 0.01,
+    "structure_factor": 0.1,
 }
 
 
