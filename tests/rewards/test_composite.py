@@ -74,6 +74,7 @@ class TestCompositeValue:
 
         composite(x, **per_atom()).backward()
 
+        assert x.grad is not None
         assert torch.allclose(x.grad, 2.0 * coords())
 
     def test_a_single_term_is_returned_unweighted(self):

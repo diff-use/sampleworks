@@ -384,19 +384,25 @@ def test_job_result_migrates_legacy_model_pickle() -> None:
 # ============================================================================
 
 
-def _density_config(**overrides) -> GuidanceConfig:
+def _density_config(
+    density: str | None = "/data/inputs/1abc.ccp4",
+    resolution: float | None = 1.8,
+    loss_order: int = 2,
+    em: bool = False,
+    reward_config: dict | None = None,
+) -> GuidanceConfig:
     """A config built the way grid search builds one: flat density fields only."""
     return GuidanceConfig(
-        **{
-            "protein": "1abc",
-            "structure": "/data/inputs/1abc.cif",
-            "density": "/data/inputs/1abc.ccp4",
-            "model_name": StructurePredictor.BOLTZ_2,
-            "guidance_type": GuidanceType.PURE_GUIDANCE,
-            "log_path": "/data/results/run.log",
-            "resolution": 1.8,
-            **overrides,
-        }
+        protein="1abc",
+        structure="/data/inputs/1abc.cif",
+        density=density,
+        model_name=StructurePredictor.BOLTZ_2,
+        guidance_type=GuidanceType.PURE_GUIDANCE,
+        log_path="/data/results/run.log",
+        resolution=resolution,
+        loss_order=loss_order,
+        em=em,
+        reward_config=reward_config or {},
     )
 
 
