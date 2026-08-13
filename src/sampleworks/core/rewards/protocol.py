@@ -142,6 +142,14 @@ class RewardFunctionProtocol(Protocol):
 
     Any callable that computes a scalar reward from atomic coordinates
     and properties can implement this protocol.
+
+    Sign convention: the returned scalar is **minimized**. Lower is better, so
+    every implementation is a loss or a penalty, and a term naturally written as
+    a score to maximize must negate itself. Guidance backpropagates the value as
+    a loss and Feynman-Kac steering selects particles with ``argmin``, so a
+    sign-inverted term steers away from the data rather than towards it. Weighted
+    combinations (:class:`~sampleworks.core.rewards.composite.CompositeReward`)
+    are only meaningful when every term agrees on this.
     """
 
     def __call__(
