@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import sampleworks.utils.guidance_script_utils as guidance_script_utils
@@ -12,7 +11,7 @@ from sampleworks.utils.guidance_script_utils import (
     _three_state_resolver,
     _write_job_metadata,
     get_model_and_device,
-    get_reward_function_and_structure,
+    load_guidance_structure,
     save_everything,
 )
 
@@ -95,7 +94,7 @@ def test_save_everything_uses_model_atom_array_for_mismatch(tmp_path: Path):
     assert (tmp_path / "refined.cif").exists()
 
 
-def test_get_reward_function_keeps_original_structure_file(
+def test_load_guidance_structure_keeps_original_structure_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """The input structure file must survive when altloc resolution leaves it unchanged.
@@ -119,30 +118,12 @@ def test_get_reward_function_keeps_original_structure_file(
             "asym_unit": build_test_atom_array(n_atoms=3, with_occupancy=True)
         },
     )
-    monkeypatch.setattr(
-        "sampleworks.utils.guidance_script_utils.XMap",
-        MagicMock(fromfile=MagicMock(return_value=MagicMock())),
-    )
-    monkeypatch.setattr(
-        "sampleworks.utils.guidance_script_utils.setup_scattering_params",
-        MagicMock(return_value=MagicMock()),
-    )
-    monkeypatch.setattr(
-        "sampleworks.utils.guidance_script_utils.RealSpaceRewardFunction",
-        MagicMock(return_value=MagicMock()),
-    )
 
     # Pass the path as a string to exercise the str-vs-Path comparison.
-    get_reward_function_and_structure(
-        density="dummy_density.mrc",
-        device=torch.device("cpu"),
-        em=False,
-        loss_order=2,
-        resolution=2.0,
-        structure_path=str(structure_file),
-    )
+    structure = load_guidance_structure(str(structure_file))
 
     assert structure_file.exists(), "original structure file must not be deleted"
+    assert "asym_unit" in structure
 
 
 def test_write_job_metadata_with_job_result_appends_timing_and_status(
