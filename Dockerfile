@@ -49,7 +49,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-RUN curl -fsSL https://pixi.sh/install.sh | bash
+# Pinned, because everything else about this build is: the base image is a
+# digest, the checkpoints are a digest, and CI's setup-pixi is v0.73.0. An
+# unpinned `curl | bash` made the build tool the one component that could change
+# under us between two builds of the same commit, which is a bad property to
+# have while chasing a build that installs nothing (see the guard below). Keep
+# in step with `pixi-version` in .github/workflows/ci.yml.
+ARG PIXI_VERSION=v0.73.0
+RUN curl -fsSL https://pixi.sh/install.sh | PIXI_VERSION="${PIXI_VERSION}" bash
 
 WORKDIR /app
 
@@ -148,8 +155,17 @@ RUN --mount=type=bind,from=checkpoints,target=/ck \
 # disagree with a prefix restored from a different build. The rattler and uv
 # caches stay: they hold downloaded packages and wheels, are what actually make
 # rebuilds fast, and were verified not to affect what lands in the layer.
+#
+# The guard prints diagnostics before it exits. The empty-environment install
+# has not been reproducible outside this builder: the same manifest, lock and
+# pixi version install all five environments correctly on linux/amd64 with both
+# a cold and a warm rattler cache. So when it happens here, the build log is the
+# only place the cause can come from, and "pixi said installed, nothing is
+# there" is not enough to act on.
 RUN --mount=type=cache,target=/root/.cache/rattler \
     --mount=type=cache,target=/root/.cache/uv \
+    pixi --version && \
+    pixi info && \
     rm -rf /app/.pixi/envs && \
     pixi install -e boltz --frozen && \
     pixi install -e protenix --frozen && \
@@ -160,6 +176,15 @@ RUN --mount=type=cache,target=/root/.cache/rattler \
         test -x "/app/.pixi/envs/${env}/bin/python" || { \
             echo "FATAL: pixi environment '${env}' has no interpreter at /app/.pixi/envs/${env}/bin/python."; \
             echo "       pixi reported success but installed nothing — refusing to ship an empty environment."; \
+            echo "--- what pixi left behind ---"; \
+            ls -la "/app/.pixi/envs/${env}" 2>&1 | head -20; \
+            echo "--- prefix bookkeeping (conda-meta) ---"; \
+            ls -A "/app/.pixi/envs/${env}/conda-meta" 2>&1 | head -10; \
+            head -c 400 "/app/.pixi/envs/${env}/conda-meta/pixi" 2>&1; echo; \
+            echo "--- environments pixi thinks exist ---"; \
+            ls -A /app/.pixi/envs 2>&1 | head; \
+            echo "--- where pixi is installing to ---"; \
+            pixi info 2>&1 | grep -iE "cache dir|environments|manifest|version" | head; \
             exit 1; \
         }; \
     done
