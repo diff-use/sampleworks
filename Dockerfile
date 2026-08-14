@@ -156,14 +156,23 @@ RUN --mount=type=bind,from=checkpoints,target=/ck \
 # caches stay: they hold downloaded packages and wheels, are what actually make
 # rebuilds fast, and were verified not to affect what lands in the layer.
 #
+# The cache mounts carry an explicit id so this build can be moved off the
+# contents it inherited. Cache mounts live in the builder's own state and
+# survive `--no-cache`, a fresh checkout and a new BuildKit builder container,
+# so a poisoned one is invisible from the repository and unfixable from it. The
+# same step, from the same base image with the same mounts, installs all five
+# environments correctly on astera-sh-builder with pixi 0.76.2, cold and warm
+# (Astera-org/docker-images#25); it is only diffuse-sh-builder that produces
+# empty prefixes. Bump the suffix if that ever recurs.
+#
 # The guard prints diagnostics before it exits. The empty-environment install
 # has not been reproducible outside this builder: the same manifest, lock and
 # pixi version install all five environments correctly on linux/amd64 with both
 # a cold and a warm rattler cache. So when it happens here, the build log is the
 # only place the cause can come from, and "pixi said installed, nothing is
 # there" is not enough to act on.
-RUN --mount=type=cache,target=/root/.cache/rattler \
-    --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,id=sampleworks-rattler-2,target=/root/.cache/rattler \
+    --mount=type=cache,id=sampleworks-uv-2,target=/root/.cache/uv \
     pixi --version && \
     pixi info && \
     rm -rf /app/.pixi/envs && \
