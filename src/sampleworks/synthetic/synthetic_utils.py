@@ -393,6 +393,12 @@ def atomarray_to_gemmi(
     the atom array has no ``altloc_id`` annotation (e.g. arrays reconstructed by
     a model wrapper), all altlocs default to blank.
 
+    No entities are assigned, so a cif written from the result has no entity block
+    and ``_atom_site.label_entity_id`` is ``.``. Sequences are then inferred from
+    ``_atom_site`` on reload, which is what model wrappers need; the cost is that
+    ``chain_info`` loses ``rcsb_entity`` (only Protenix reads it, and it falls back
+    to the chain id).
+
     Parameters
     ----------
     atom_array
@@ -408,14 +414,6 @@ def atomarray_to_gemmi(
     -------
     gemmi.Structure
         Structure ready to be wrapped by SFC_Torch.io.PDBParser
-
-    Notes
-    -----
-    No entities are assigned, so a cif written from the result has no entity block
-    and ``_atom_site.label_entity_id`` is ``.``. Sequences are then inferred from
-    ``_atom_site`` on reload, which is what model wrappers need; the cost is that
-    ``chain_info`` loses ``rcsb_entity`` (only Protenix reads it, and it falls back
-    to the chain id).
     """
     if len(atom_array) == 0:
         raise ValueError("Cannot convert an empty AtomArray to a gemmi.Structure.")

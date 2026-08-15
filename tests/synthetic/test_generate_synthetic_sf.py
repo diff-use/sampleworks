@@ -41,7 +41,19 @@ CROSS_MODEL_CHAIN_INFO_KEYS = ("chain_type", "processed_entity_canonical_sequenc
 
 
 def _parse_at_production_kwargs(path: Path) -> dict:
-    """Parse a structure with the kwargs ``run_guidance`` uses."""
+    """Parse a structure with the kwargs ``run_guidance`` uses.
+
+    Parameters
+    ----------
+    path : Path
+        Path to the structure file to parse.
+
+    Returns
+    -------
+    dict
+        The parsed Atomworks structure, keyed by ``"asym_unit"``, ``"chain_info"``, and the
+        rest of the parse metadata.
+    """
     return parse(path, hydrogen_policy="remove", add_missing_atoms=False, ccd_mirror_path=None)
 
 
@@ -241,13 +253,13 @@ class TestAtomArrayToGemmi:
         The load_any test above covers _atom_site fidelity. This one covers the layer above
         it: atomworks derives chain_info from the entity block when one is present and from
         _atom_site when it is not. Emitting a partial entity block (an _entity/_entity_poly
-        with no _entity_poly_seq, which gemmi's setup_entities() produces) puts atomworks on
-        the first path with nothing to read, so chain_info comes back carrying
+        with no _entity_poly_seq, which gemmi's setup_entities() would produce) leads to the
+        first path with nothing to read, so chain_info comes back carrying
         unprocessed_entity_canonical_sequence and every wrapper that reads
         processed_entity_canonical_sequence raises KeyError.
         """
         source = _parse_at_production_kwargs(resources_dir / "6b8x" / "6b8x_final.pdb")
-        ref = get_asym_unit_from_structure(source, 0)  # parse returns a stack; take model 0
+        ref = get_asym_unit_from_structure(source, 0)  # parse returns a stack; take the first model
 
         save_cif_path = tmp_path / "saved.cif"
         gemmi_structure = atomarray_to_gemmi(ref, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm)
@@ -265,12 +277,16 @@ class TestAtomArrayToGemmi:
                     f"chain {chain_id} field {key!r} did not round-trip"
                 )
 
-        # chain_info only means something if the same atoms came back: parse's processing
-        # (altloc resolution, chain splitting, hydrogen policy) can drop or renumber atoms
-        # without disturbing the sequence.
+        # The canonical sequence is per-residue, but parse's processing could drop or renumber
+        # atoms without disturbing the sequence. Here we check that on a per-atom level the
+        # identity is preserved. Other annotation fields (b_factor/occupancy/element) are checked
+        # in the annotations round-trip test above.
         loaded = get_asym_unit_from_structure(written, 0)
         assert len(loaded) == len(ref)
-        assert np.array_equal(loaded.res_id, ref.res_id)
+        for category in ("chain_id", "res_id", "atom_name"):
+            assert np.array_equal(loaded.get_annotation(category), ref.get_annotation(category)), (
+                f"annotation {category!r} did not survive the parse round-trip"
+            )
 
     def test_multichain_shared_res_ids_not_merged_in_gemmi(self, multichain_shared_resid_array):
         """Test that atomarray_to_gemmi splits shared res_ids into separate residues per chain
