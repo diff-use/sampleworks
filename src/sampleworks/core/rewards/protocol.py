@@ -138,13 +138,13 @@ class RewardInputs:
     def to_atom_array(self, template_atom_array: AtomArray) -> AtomArray:
         """Build the single-conformer reference atom array these inputs describe.
 
-        This is intended for reward's ``prepare()``, which needs an atom array that
-        not only matches the topology in model atom space but also holds the reward
-        input (reconciled) coordinates and b-factors (both are assumed to be identical
-        across the batch dimension). Reconciled coordinates are especially important,
-        as for example, SFcalculator estimates solventpct from the atomic positions
-        during prepare(). Occupancy is set to 1.0 for every atom because this is not
-        meant to be an ensemble representation.
+        This is intended for reward's ``prepare()``, which needs an atom array that not only
+        matches the topology in model atom space but also holds the reward input (reconciled
+        against input reference structure) coordinates and b-factors (both are assumed to be
+        identical across the batch dimension). Reconciled coordinates can be important -- for
+        example, SFcalculator estimates solventpct from the atomic positions during prepare().
+        Occupancy is set to 1.0 for every atom because this is a topology representation, not
+        an ensemble representation.
 
         Parameters
         ----------
@@ -230,6 +230,25 @@ class RewardFunctionProtocol(Protocol):
         -------
         Float[torch.Tensor, ""]
             Scalar reward value
+        """
+        ...
+
+    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """Perform one-time setup against the model atom space, before the first ``__call__``.
+
+        Intended to be called once by the trajectory scaler after the model atom space is resolved,
+        with the single-conformer reference atom array (see :meth:`RewardInputs.to_atom_array`).
+        Rewards needing no setup implement this as a no-op; rewards that build states from the
+        structure topology or depend on a reference structure reconciled in the model atom space
+        build the states here.
+
+        Parameters
+        ----------
+        atom_array
+            AtomArray for the atoms the model operates on, carrying the reconciled coordinates and
+            B-factors.
+        device
+            Torch device to build reward states on.
         """
         ...
 

@@ -86,7 +86,9 @@ class FKSteering:
         step_scaler : StepScalerProtocol
             Step scaler for per-step guidance.
         reward : RewardFunctionProtocol
-            Reward function for computing particle energies.
+            Reward function for computing particle energies. Its ``prepare()`` is called once
+            the model atom space is resolved and before the first step, with the reference
+            atom array the reward inputs describe.
         num_particles : int
             Number of particles. Default is 1, i.e., no population.
 
@@ -114,6 +116,9 @@ class FKSteering:
 
         reconciler = processed.reconciler.to(coords.device)
         reward_inputs = processed.to_reward_inputs(device=coords.device)
+
+        processed_atom_array = reward_inputs.to_atom_array(processed.reward_atom_array)
+        reward.prepare(processed_atom_array, device=coords.device)
 
         schedule = sampler.compute_schedule(self.num_steps)
         loss_history: list[torch.Tensor] = []

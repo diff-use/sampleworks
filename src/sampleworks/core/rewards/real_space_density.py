@@ -224,6 +224,18 @@ class RealSpaceRewardFunction:
         else:
             raise ValueError("Invalid loss_order, must be 1 or 2")
 
+    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """No-op: the density map and scattering parameters are built at ``__init__``. No set
+        up depends on the model atom space.
+
+        Parameters
+        ----------
+        atom_array
+            Unused; accepted to satisfy :class:`RewardFunctionProtocol`.
+        device
+            Unused; the device is fixed at ``__init__``.
+        """
+
     def precompute_unique_combinations(
         self,
         elements: Int[torch.Tensor, "batch n_atoms"],

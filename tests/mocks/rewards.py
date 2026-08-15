@@ -1,6 +1,7 @@
 """Mock implementations of reward protocols for testing."""
 
-from torch import Tensor
+from biotite.structure import AtomArray
+from torch import device as TorchDevice, Tensor
 
 
 class MockGradientRewardFunction:
@@ -24,3 +25,6 @@ class MockGradientRewardFunction:
     ) -> Tensor:
         """Loss = 0.5 * scale * ||coords||^2, so grad = scale * coords."""
         return 0.5 * self.gradient_scale * (coordinates**2).sum()
+
+    def prepare(self, atom_array: AtomArray, *, device: TorchDevice | str = "cpu") -> None:
+        """No-op: the mock has no state to build from the model atom space."""
