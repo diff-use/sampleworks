@@ -9,6 +9,10 @@ data/
 initial_dataset_40*/
 checkpoints/
 release_data/
+# lunus is its own repo (github.com/lanl/lunus). If a working copy is sandboxed
+# here it is hundreds of MB; clone it on the pod, or install it as a dependency
+# (`lunus[sf]`), rather than syncing it.
+lunus/
 *.ckpt
 *.pt
 *.tar.gz
