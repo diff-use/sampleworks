@@ -701,6 +701,50 @@ class TestPreprocessingPipeline:
             expected_common_b_factors,
         )
 
+    def test_reward_atom_array_has_model_topology_and_reconciled_values(
+        self, mismatch_case: MismatchCase
+    ):
+        """The array handed to a reward's ``prepare()`` combines both sides of the mismatch.
+
+        Topology comes from the model atom array, coordinates and B-factors from the reward
+        inputs (which carry the structure's values on common atoms, see
+        ``test_b_factor_override``), and occupancy from neither. This is the handoff both
+        trajectory scalers perform, and the only place ``to_atom_array`` is given a template
+        it was not built from.
+        """
+        struct_atom_array = mismatch_case.struct_atom_array.copy()
+        struct_atom_array.set_annotation(
+            "b_factor", np.linspace(5.0, 35.0, mismatch_case.n_struct, dtype=np.float32)
+        )
+        # rebuilt as in test_b_factor_override above, since MismatchCase is frozen
+        case = MismatchCase(
+            id=mismatch_case.id,
+            description=mismatch_case.description,
+            model_atom_array=mismatch_case.model_atom_array.copy(),
+            struct_atom_array=struct_atom_array,
+            expected_n_common=mismatch_case.expected_n_common,
+            expected_has_mismatch=mismatch_case.expected_has_mismatch,
+        )
+        structure = {"asym_unit": struct_atom_array.copy(), "metadata": {"id": case.id}}
+
+        processed, _ = _preprocess(MismatchCaseWrapper(case), structure)
+        reward_inputs = processed.to_reward_inputs(device="cpu")
+        assert not np.allclose(
+            processed.reward_atom_array.b_factor, reward_inputs.b_factors[0].numpy()
+        ), "setup failed to make the template and the reward inputs disagree"
+
+        prepared = reward_inputs.to_atom_array(processed.reward_atom_array)
+        assert len(prepared) == mismatch_case.n_model
+
+        for category in ["atom_name", "res_id", "chain_id", "element"]:
+            assert np.array_equal(
+                prepared.get_annotation(category),
+                mismatch_case.model_atom_array.get_annotation(category),
+            ), f"annotation {category!r} should come from the model atom array"
+        np.testing.assert_allclose(prepared.coord, reward_inputs.input_coords[0].numpy())
+        np.testing.assert_allclose(prepared.b_factor, reward_inputs.b_factors[0].numpy())
+        np.testing.assert_allclose(prepared.occupancy, np.ones(mismatch_case.n_model))
+
 
 class TestSamplerStep:
     """EDM sampler mismatch behavior with coordinate level checks."""
