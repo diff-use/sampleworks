@@ -198,6 +198,11 @@ pandas = "==2.3.1"
 gemmi = "==0.6.7"
 
 [tool.pixi.pypi-dependencies]
+# Differentiable structure factors / diffuse scattering (lunus.sf), used by the
+# diffuse guidance target. The `sf` extra pulls torch + gemmi, both already
+# present in every environment. Pinned to the `sf` branch until it merges to
+# main, at which point the `branch` key should be dropped.
+lunus = {branch = "sf", extras = ["sf"], git = "https://github.com/lanl/lunus.git"}
 sampleworks = {editable = true, path = "."}
 
 [tool.pixi.system-requirements]
