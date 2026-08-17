@@ -246,6 +246,23 @@ def compute_ensemble_amplitudes(
         )
         mean_f, diffuse = mean_and_diffuse(f_configs)
 
+    if solvent is not None:
+        # SolventModel warns only when the mask is degenerate (all solvent or
+        # none). A mask can clear that bar and still be wrong, so report the
+        # numbers: the solvent fraction should look like a protein crystal's
+        # (roughly 0.4-0.7), and the boundary shell wants to be 2-3 voxels
+        # thick. Both are set by `cutoff`, which is an absolute density and has
+        # no meaning until measured this way.
+        # Populated only when check_occupancy is on, which is SolventModel's default.
+        if solvent.last_occupancy is None:
+            logger.info("Solvent mask applied; occupancy not measured (check_occupancy off)")
+        else:
+            logger.info(
+                f"Solvent mask: occupancy {solvent.last_occupancy:.3f}, "
+                f"shell {solvent.last_shell_voxels:.1f} voxels "
+                f"(cutoff {solvent.cutoff}, taper {solvent.taper_width} e/A^3)"
+            )
+
     return hkl_np, mean_f.cpu().numpy(), diffuse.cpu().numpy()
 
 
