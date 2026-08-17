@@ -269,23 +269,38 @@ measure inside a guidance run. Assert rather than document: a run that both
 refines occupancies and detaches the mask is computing a gradient of a different
 model than the one it evaluates.
 
-### Diffuse-only guidance cannot see the mean structure
+### Diffuse-only guidance CAN see the mean structure — in a real crystal
 
-The variance term is invariant to anything shared across configurations: a common
-rigid translation multiplies every `F_b` by the same phase factor, leaving both
-`<|F|²>` and `|<F>|²` unchanged. So this reward constrains the ensemble's
-*spread* and nothing about where it sits — the mean is held only by the
-generative prior and `--align-to-input`.
+An earlier draft of this plan claimed the opposite, at ~85% confidence, and
+flagged it for numerical checking. **The check was run on 2026-08-17 and the
+claim was wrong.**
 
-Fine for the synthetic recovery test. For real work, diffuse will likely need to
-compose with density or amplitudes as a second term, and **sampleworks has no
-composite reward today** (`RewardFunctionProtocol` is single-valued). A weighted-sum
-`CompositeRewardFunction` is the natural addition when that time comes;
-deliberately out of scope here.
+The invariance argument holds only in P1. A common rigid translation multiplies
+every `F_b` by one phase factor, leaving `<|F|²>` and `|<F>|²` unchanged —
+measured relative deviation 9.2e-4 on 1VME chain A recomputed in P1, and that
+residual is grid discretization (atoms moving relative to voxel centres), not
+round-off: float32 noise in the same pipeline measures 3.1e-8.
 
-Confidence ~85% on the invariance argument — verify numerically before betting an
-experimental design on it: translate one synthetic ensemble rigidly and confirm
-the diffuse loss is unchanged.
+In a real space group it fails, because translating the asymmetric unit is not
+translating the crystal. A symmetry mate at `Rx + t` moves to `Rx + t + Rd`, so
+the packing changes. Equivalently, in
+
+```
+F_total(h) = Σ_g exp(2πi h·t_g) · F_ASU(h R_g)
+```
+
+a translation by `d` multiplies each term by `exp(2πi (h R_g)·d)` — a phase
+depending on `g`, which therefore cannot factor out of the sum. Measured on 1VME
+(P 1 21 1) at 1.8 Å: relative deviation 0.72, roughly 800× the P1 residual.
+
+**This is good news for the method.** Packing contacts against symmetry mates make
+absolute position observable, so diffuse-only scoring is not the blind-to-the-mean
+reward this plan assumed. The argument for needing a composite reward purely to
+pin down the mean is correspondingly weaker — a composite may still be wanted for
+signal strength or for combining data types, but not for that reason.
+
+Both regimes are pinned by
+`tests/synthetic/test_generate_synthetic_sf_lunus.py::TestSelfConsistency`.
 
 ## Related work: the lunus-backed synthetic generator
 
