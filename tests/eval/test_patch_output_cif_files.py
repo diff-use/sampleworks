@@ -57,7 +57,9 @@ def test_extract_rcsb_id_from_folder(script, folder: str, expected: str | None) 
     ``1abc_pdb_1000abcd`` embeds an id-shaped substring, and without the whole-component rule
     the extractor would silently capture ``4hhb`` / ``1abc`` and patch the wrong entry. These
     are skipped instead. Extracting an id embedded inside a larger folder name is deliberately
-    NOT supported by the default pattern (it is ambiguous when several id-like parts appear).
+    NOT supported by the default pattern (it is ambiguous when several id-like parts appear);
+    a pattern that names the delimiter explicitly can opt in -- see
+    ``test_pattern_stating_delimiter_extracts_embedded_id``.
     """
     path = Path(f"/data/results/grid_search_results/{folder}/trial_1/refined.cif")
     assert script.extract_rcsb_id(path, _DEFAULT_REGEX) == expected
@@ -95,3 +97,38 @@ def test_extract_rcsb_id_requires_single_group(script, bad_regex: str) -> None:
     path = Path("/data/results/grid_search_results/pdb_00004hhb/refined.cif")
     with pytest.raises(ValueError, match="exactly one capturing group"):
         script.extract_rcsb_id(path, bad_regex)
+
+
+def test_pattern_stating_delimiter_extracts_embedded_id(script) -> None:
+    """A pattern that matches past its capturing group opts into an embedded id.
+
+    Occupancy-sweep grid searches emit one folder per (entry, occupancy) pair --
+    ``1VME_0.25occA_0.75occB`` -- whose reference entry really is ``1VME``: the inputs tree
+    stores it at ``processed/1VME/1VME_single_001_density_input.cif``. The default pattern
+    rejects these because the id does not fill the folder component, and before this was
+    supported no ``--rcsb-pattern`` could rescue them: the whole-component rule was applied
+    after the match, so capturing the prefix was rejected and capturing the whole folder
+    failed id validation. Matching the delimiter after the group is how the caller states
+    that it knows what follows the id.
+    """
+    occ = r"results/([0-9][A-Za-z0-9]{3}|pdb_[A-Za-z0-9]{8})_[0-9.]+occ"
+    for folder, expected in [
+        ("1VME_0.25occA_0.75occB", "1VME"),
+        ("1VME_1.0occA", "1VME"),
+        ("9BN8_1.0occB", "9BN8"),
+        ("2A26_0.5occA_0.5occB", "2A26"),
+    ]:
+        path = Path(f"/data/results/{folder}/protpardelle_X-RAY_DIFFRACTION/ens8/refined.cif")
+        assert script.extract_rcsb_id(path, occ) == expected
+
+
+def test_default_pattern_still_rejects_embedded_ids(script) -> None:
+    """Relaxing the rule for delimiter-stating patterns must not relax the default.
+
+    Nothing follows the capturing group in the default pattern, so the strict
+    whole-component rule still applies and these stay skipped rather than silently
+    patching the wrong entry.
+    """
+    for folder in ("4hhb_final", "1abc_pdb_1000abcd", "4hhb_0.5occA"):
+        path = Path(f"/data/results/grid_search_results/{folder}/trial_1/refined.cif")
+        assert script.extract_rcsb_id(path, _DEFAULT_REGEX) is None
