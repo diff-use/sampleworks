@@ -248,18 +248,28 @@ def compute_ensemble_amplitudes(
 
     if solvent is not None:
         # SolventModel warns only when the mask is degenerate (all solvent or
-        # none). A mask can clear that bar and still be wrong, so report the
-        # numbers: the solvent fraction should look like a protein crystal's
-        # (roughly 0.4-0.7), and the boundary shell wants to be 2-3 voxels
-        # thick. Both are set by `cutoff`, which is an absolute density and has
-        # no meaning until measured this way.
-        # Populated only when check_occupancy is on, which is SolventModel's default.
+        # none). A mask can clear that bar and still be wrong, so report what it
+        # measured: `cutoff` is an absolute density in e/A^3 and means nothing
+        # until checked against the structure it was applied to.
+        #
+        # Occupancy should look like a protein crystal's, roughly 0.4-0.7.
+        # shell_voxels is a COUNT of voxels inside the taper (strictly between
+        # solvent and protein), not a thickness -- report it as a fraction of
+        # the grid, since what matters is that the taper is resolved at all. Too
+        # few and the mask is a hard threshold sampled on a grid, which for a
+        # variance observable like diffuse adds frame-to-frame noise that
+        # depends on grid alignment rather than on the structure.
+        #
+        # Populated only when check_occupancy is on, SolventModel's default.
         if solvent.last_occupancy is None:
             logger.info("Solvent mask applied; occupancy not measured (check_occupancy off)")
         else:
+            n_voxels = int(np.prod(setup.grid_shape))
+            shell_fraction = solvent.last_shell_voxels / n_voxels
             logger.info(
                 f"Solvent mask: occupancy {solvent.last_occupancy:.3f}, "
-                f"shell {solvent.last_shell_voxels:.1f} voxels "
+                f"taper shell {solvent.last_shell_voxels} voxels "
+                f"({shell_fraction:.1%} of the {n_voxels} in the grid) "
                 f"(cutoff {solvent.cutoff}, taper {solvent.taper_width} e/A^3)"
             )
 
@@ -552,7 +562,12 @@ def parse_args() -> argparse.Namespace:
 
     output_group = parser.add_argument_group("Output Options")
     output_group.add_argument("--output", "-o", type=Path, help="Output MTZ path")
-    output_group.add_argument("--output-dir", type=Path, default=Path("."))
+    output_group.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("."),
+        help="Directory for outputs, in both single-structure and batch mode",
+    )
 
     parser.add_argument("--n-jobs", type=int, default=-1, help="Parallel jobs for batch mode")
 
@@ -596,10 +611,13 @@ def main() -> None:
                 "occupancy_values": args.occupancy_values,
             }
         )
+        # --output names a file and wins when given; otherwise --output-dir
+        # applies, in single-structure mode as well as batch. (The SFcalculator
+        # script silently ignores --output-dir here and writes to the CWD.)
         _process_single_row(
             row=row,
             base_dir=args.structure.parent,
-            output_dir=args.output.parent if args.output else Path("."),
+            output_dir=args.output.parent if args.output else args.output_dir,
             resolution=args.resolution,
             occupancy_mode=args.occupancy_mode,
             test_fraction=args.test_fraction,
