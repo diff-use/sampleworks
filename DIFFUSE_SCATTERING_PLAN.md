@@ -1,6 +1,7 @@
 # Plan: Diffuse Scattering as a Guidance Target (lunus.sf)
 
-Status: planned, not started. Written 2026-08-12.
+Status: planned, not started. Written 2026-08-12; upstream state and
+correctness traps updated 2026-08-16.
 
 Adds diffuse scattering as an experimental target for guidance, using the
 differentiable structure-factor engine in `lunus/lunus/sf/`.
@@ -48,25 +49,81 @@ path.
 - `utils/atom_reconciler.py` — alignment into the crystal frame. Diffuse is no
   more SE(3)-invariant than density; assume coordinates arrive pre-aligned.
 
-## Upstream state (lunus, as of 2026-08-12)
+## Upstream state (lunus, as of 2026-08-16)
 
-Both prerequisites have landed. The adapter is written against this API:
+The adapter is written against this API:
 
 ```python
-from lunus.sf import structure_factors_batch, mean_and_diffuse
+from lunus.sf import structure_factors_batch, mean_and_diffuse, SolventModel
 
 structure_factors_batch(
     frac_coords_batch,    # (n_configs, n_atoms, 3), differentiable
-    element_idx, occ,     # (n_atoms,) — one atom set shared across configs
+    element_idx, occ,     # (n_atoms,) shared, OR (n_configs, n_atoms) per-config
     atom_A, atom_lam, elem_offsets, atom_radius_ang,
     grid_shape, orth_matrix, cell_volume, hkl, taper_width,
     blur=0.0, max_atoms_per_batch=50_000, grid_ops=None, compile_core=True,
-    use_checkpoint=False,
+    use_checkpoint=False, solvent=None, supercell=None,
 ) -> (n_configs, n_refl) complex
 ```
 
 `lunus/lunus/sf/__init__.py` re-exports lazily (PEP 562), so the import above
 costs nothing until first use. `mean_and_diffuse()` takes the result directly.
+
+### Per-configuration occupancies
+
+`occ` may be `(n_atoms,)` (shared) or `(n_configs, n_atoms)` (per member), and
+**gradients flow to `occ` as well as to coordinates**. Two consequences for this
+work:
+
+- Unequal ensemble populations are now expressible at the engine level. The
+  `1/N` in `RewardInputs` is a sampleworks *choice*, no longer a constraint
+  imposed from below. Refining populations is out of scope here, but this is
+  where it would start.
+- Varying hydration between members is expressed as one array slot at two
+  occupancies, never as atoms entering and leaving. The atom array must
+  correspond across configurations — same slots, same count — which the
+  reconciler already guarantees.
+
+### Bulk solvent
+
+`lunus/lunus/sf/solvent_torch.py` implements the flat/mask model:
+`solvent_mask`, `f_solvent`, `f_total`, `calibrate_cutoff`, `mask_occupancy`,
+`shell_voxels`, and a `SolventModel` config object. Passing `solvent=None`
+leaves today's behaviour bit-identical.
+
+**Masks are applied per configuration, and that is the only choice that reaches
+diffuse.** One mask shared across the ensemble has zero variance: it changes
+`<F>` but contributes exactly nothing to `<|F|²> − |<F>|²`. Per-configuration
+masks fluctuate anti-correlated with the protein — where an atom moves out,
+solvent moves in — which is the excluded-volume contrast correction. Note this
+decides the `mask(⟨ρ⟩)` vs `⟨mask(ρ)⟩` question the opposite way from SFC's
+`bulk_solvent="combined"` default.
+
+Two knobs to be aware of before using it:
+
+- `mask_blur` is this model's probe radius (default σ ≈ 1.13 Å). Setting it to
+  `0.0` restores an unsmoothed threshold and does **not** reproduce conventional
+  solvent scales on real data.
+- `detach_mask` defaults to `False`, which is the consistent choice — measured
+  4.8× lower refinement loss on 7FPV with the mask live. See the trap below
+  before changing it.
+
+**Memory is solved; throughput is not.** `structure_factors_batch` is still a
+Python loop over configurations, with `use_checkpoint=True` recomputing each
+splat during backward instead of retaining it. Measured (3000 atoms, 90³ grid,
+peak RSS above baseline):
+
+| N | retained | checkpointed |
+|---|---|---|
+| 8 | 839 MB | 361 MB |
+| 16 | 1604 MB | 371 MB |
+
+Flat in N rather than linear, for ~2.4× the time, with bit-identical gradients
+(`lunus/lunus/sf/tests/test_batch.py`). Fusing the splat into one kernel remains
+open upstream, as does checkpointing only the members that do not fit rather
+than all of them; both are listed under "Not yet built" in
+`lunus/lunus/sf/README.md`. So guidance should assume **N sequential splat+FFT
+passes per guided step**, with `use_checkpoint=True` once N or the grid is large.
 
 **Memory is solved; throughput is not.** `structure_factors_batch` is still a
 Python loop over configurations, with `use_checkpoint=True` recomputing each
@@ -84,13 +141,30 @@ open upstream and is listed under "Not yet built" in `lunus/lunus/sf/README.md`.
 So guidance should assume **N sequential splat+FFT passes per guided step**, with
 `use_checkpoint=True` as the default once N or the grid is large.
 
-### Dependency wiring (sampleworks side, not yet done)
+### Dependency wiring (done)
 
-lunus now installs as an ordinary package (`pip install lunus[sf]`; extras pull
-torch + gemmi, both already in the sampleworks envs). It needs adding to
-whichever pixi envs run diffuse guidance. Note that lunus's own `[tool.pixi]`
-tables are marked in its `pyproject.toml` as written-but-unresolved — irrelevant
-to consuming it as a dependency, but do not copy them as a working example.
+lunus is declared workspace-level in `pyproject.toml`:
+
+```toml
+lunus = {branch = "sf", extras = ["sf"], git = "https://github.com/lanl/lunus.git"}
+```
+
+and resolved into all 13 environments on both platforms. Two operational notes:
+
+- **The lock can only be regenerated on Linux.** lunus is a git source dependency
+  with no published wheel, so a solve must build it for linux-64, which macOS
+  cannot do. Use the **Relock** workflow (Actions → Relock → pick the branch); it
+  runs `pixi lock` on ubuntu-latest with pixi pinned to v0.73.0 and commits the
+  result back. Do not hand-copy a lock generated elsewhere — a different pixi
+  version rewrites far more than the one dependency, including dropping the
+  `osx-arm64` entries entirely.
+- **The branch pin resolves to a SHA** (currently `60bd44db4`). A later `pixi
+  lock` silently advances it if `origin/sf` has moved. Switch `branch` to `rev`
+  if the adapter starts depending on specific lunus behaviour, and drop the key
+  entirely once `sf` merges upstream.
+
+`scripts/install_lunus.sh` covers environments where the pixi declaration is not
+in play; it becomes redundant once the declared route is verified end to end.
 
 ## Phases (sampleworks)
 
@@ -180,6 +254,21 @@ both moments scale by `1/N²` and the variance term collapses toward zero — wh
 presents as "guidance does nothing" rather than as an error. Assert the
 convention explicitly rather than silently correcting it.
 
+Note this is now a sampleworks-side convention only: lunus accepts
+per-configuration occupancies and differentiates them (see "Upstream state"). The
+`1/N` flattening is a choice this pipeline makes, and the place to revisit if
+unequal ensemble populations ever become a target.
+
+### The occupancy gradient is incomplete when the mask is detached
+
+With `SolventModel(detach_mask=True)`, `d(F_total)/d(occ)` carries the protein
+term but **not** the bulk term that replaces it as an occupancy falls. Forward
+the two stay continuous; in the gradient they do not. The default is `False`, so
+this only bites if something turns detaching on — most plausibly as a memory
+measure inside a guidance run. Assert rather than document: a run that both
+refines occupancies and detaches the mask is computing a gradient of a different
+model than the one it evaluates.
+
 ### Diffuse-only guidance cannot see the mean structure
 
 The variance term is invariant to anything shared across configurations: a common
@@ -198,10 +287,44 @@ Confidence ~85% on the invariance argument — verify numerically before betting
 experimental design on it: translate one synthetic ensemble rigidly and confirm
 the diffuse loss is unchanged.
 
+## Related work: the lunus-backed synthetic generator
+
+`src/sampleworks/synthetic/generate_synthetic_sf.py` (SFcalculator-backed) is
+being ported to lunus as a **separate script first, merged behind an `--engine`
+flag later**. It is worth doing before Phase 1 because it exercises every adapter
+primitive — cell → orthogonalization matrix, space group → grid ops via gemmi,
+elements → IT92, per-atom B → kernels, resolution → grid sizing — forward-only,
+non-differentiably, against an oracle (SFC) that already works. Build those
+shared pieces in `core/forward_models/xray/lunus_sf.py` and have the script
+import them.
+
+Two things settled since that discussion:
+
+- **Bulk solvent is no longer a blocker.** `--simulate-solvent-and-scale` has a
+  real lunus path now, so the lunus generator can emit both protein and total
+  sets rather than rejecting the flag.
+- **The generator should take a multi-model structure, not altlocs.** The
+  existing script collapses altloc conformers into one `Fprotein` (deliberately —
+  it matches the reward's `bulk_solvent="combined"` mode). That collapse destroys
+  the second moment, so it cannot produce a diffuse target at all. An
+  `AtomArrayStack` input — the same form guidance *outputs* — maps one model per
+  configuration and feeds `structure_factors_batch` directly. Leave the altloc
+  path on the SFC generator; the reward fixtures in `tests/rewards/conftest.py`
+  depend on it.
+
+Validation: same structure through both engines, compared with lunus's own
+`tools/compare_icalc_mtz.py` (correlation and R-factor, overall and by shell).
+Expect agreement at the level of lunus-vs-gemmi, ~0.999989 correlation and
+R ≈ 0.0077 — the taper is the main source of the difference. That ~0.8% is a
+floor under any fit that pairs a lunus-generated target with the SFC-based
+reward, so prefer to keep engine pairs consistent.
+
 ## Sequencing
 
-1. lunus repo: packaging + batched entry point.
-2. Phases 1-2 (bulk of the work).
-3. Phase 4 (small).
-4. Phase 5 recovery test — the milestone.
-5. Phase 3 and real data after that.
+1. lunus repo: packaging, batched entry point, bulk solvent, per-config
+   occupancies — **all landed as of 2026-08-16**.
+2. The lunus-backed synthetic generator (above), which de-risks Phase 1.
+3. Phases 1-2 (bulk of the work).
+4. Phase 4 (small).
+5. Phase 5 recovery test — the milestone.
+6. Phase 3 and real data after that.
