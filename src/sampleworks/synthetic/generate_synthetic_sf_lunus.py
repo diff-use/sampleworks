@@ -12,9 +12,10 @@ each model is one configuration and the emitted amplitude is the ensemble mean
 ``<F>``. The SFcalculator script instead collapses altloc conformers into a
 single weighted structure. Those agree for the first moment, but the collapsed
 form cannot express the second (``<|F|²> − |<F>|²``), which is why diffuse work
-needs this shape. The per-configuration ``F`` are computed here and the diffuse
-term is one call away (``lunus.sf.mean_and_diffuse``); only amplitudes are
-written for now.
+needs this shape. ``--write-diffuse`` emits that second moment as a separate MTZ
+from the same forward pass, and ``--altlocs-as-models`` turns a deposited
+multi-conformer structure into the ensemble it already is — which is how to get
+a nonzero diffuse target out of a file like ``1vme_final.cif``.
 
 **Grid method, not direct summation.** lunus splats density onto a unit-cell
 grid, symmetry-expands, and FFTs, where SFcalculator sums over atoms in
@@ -106,6 +107,7 @@ def load_configurations(
     strip_hydrogens: bool = False,
     strip_waters: bool = False,
     strip_ligands: bool = False,
+    altlocs_as_models: bool = False,
 ) -> tuple[AtomArray, np.ndarray]:
     """Load a structure as a topology plus a stack of configuration coordinates.
 
@@ -118,6 +120,16 @@ def load_configurations(
     does not exist yet, and silently applying it to one model would be worse than
     refusing. Occupancies come from the file as deposited.
 
+    With ``altlocs_as_models``, a single-model structure carrying alternate
+    conformations is expanded into one configuration per altloc. A deposited
+    multi-conformer model *is* an ensemble, written in the altloc convention
+    rather than as models, and expanding it is what makes the diffuse term
+    nonzero — the shared backbone contributes nothing to the variance and the
+    alternate conformations contribute all of it. Note this is the exact inverse
+    of what ``generate_synthetic_sf.py`` does, which collapses altlocs into one
+    occupancy-weighted structure: right for amplitudes, and fatal for a second
+    moment.
+
     Parameters
     ----------
     structure_path
@@ -128,6 +140,8 @@ def load_configurations(
         ``'default'``, ``'uniform'`` or ``'custom'``; single-model input only.
     strip_hydrogens, strip_waters, strip_ligands
         Filters; single-model input only.
+    altlocs_as_models
+        Expand alternate conformations into configurations.
 
     Returns
     -------
@@ -166,6 +180,9 @@ def load_configurations(
         logger.info(f"Loaded {loaded.stack_depth()} models from {structure_path.name}")
         return loaded[0], np.asarray(loaded.coord, dtype=np.float64)
 
+    if altlocs_as_models:
+        return _expand_altlocs(loaded, structure_path, row.selection)
+
     atom_array = load_structure_for_synthetic_reward(
         structure_path,
         occupancy_mode=occupancy_mode,
@@ -178,6 +195,60 @@ def load_configurations(
     if atom_array is None:
         raise ValueError(f"Failed to load {structure_path}")
     return atom_array, np.asarray(atom_array.coord, dtype=np.float64)[None, ...]
+
+
+def _expand_altlocs(
+    loaded, structure_path: Path, selection: str | None
+) -> tuple[AtomArray, np.ndarray]:
+    """Turn a deposited multi-conformer model into one configuration per altloc.
+
+    Wraps :func:`map_altlocs_to_stack`, which returns a stack with the shared
+    atoms repeated in every model and the alternate conformations differing —
+    exactly the ensemble the diffuse term needs.
+
+    Occupancies come back as a separate ``n_altloc x n_res`` array rather than on
+    the stack, because biotite cannot hold conflicting per-model annotations.
+    Those are *not* applied here: ``mean_and_diffuse`` weights configurations
+    equally, which is right for the uniform altloc occupancies these structures
+    usually carry (1VME is 0.5/0.5) and wrong for unequal ones. The measured
+    spread is logged so an unequal case is visible rather than silent; carrying
+    real weights through would mean per-configuration occupancies, which the
+    engine supports and this does not yet.
+
+    Raises
+    ------
+    ValueError
+        If the structure has fewer than two altlocs, since a single conformation
+        has no variance to report.
+    """
+    from sampleworks.utils.atom_array_utils import map_altlocs_to_stack
+
+    stack, annotations = map_altlocs_to_stack(
+        loaded, selection=selection, return_full_array=True
+    )
+    if stack.stack_depth() < 2:
+        raise ValueError(
+            f"{structure_path.name} has fewer than two alternate conformations, so "
+            "--altlocs-as-models yields nothing to take a variance over."
+        )
+
+    occupancies = annotations.get("occupancy")
+    if occupancies is not None:
+        per_altloc = np.nanmean(np.asarray(occupancies, dtype=np.float64), axis=1)
+        spread = float(np.nanmax(per_altloc) - np.nanmin(per_altloc))
+        message = (
+            f"Expanded {structure_path.name} into {stack.stack_depth()} configurations "
+            f"from altlocs; mean occupancy per altloc {np.round(per_altloc, 3).tolist()}"
+        )
+        if spread > 0.05:
+            logger.warning(
+                message + " — these are unequal, but the configurations are weighted "
+                "equally. The diffuse term will not reflect the deposited populations."
+            )
+        else:
+            logger.info(message)
+
+    return stack[0], np.asarray(stack.coord, dtype=np.float64)
 
 
 def compute_ensemble_amplitudes(
@@ -274,6 +345,66 @@ def compute_ensemble_amplitudes(
             )
 
     return hkl_np, mean_f.cpu().numpy(), diffuse.cpu().numpy()
+
+
+def dataset_from_intensities(
+    hkl: np.ndarray,
+    intensities: np.ndarray,
+    unit_cell: gemmi.UnitCell,
+    space_group: gemmi.SpaceGroup,
+    *,
+    label: str = "ID",
+    output_path: Path | None = None,
+) -> rs.DataSet:
+    """Write diffuse intensities as an MTZ.
+
+    The column is named ``ID`` and carries the MTZ intensity type ``J``, which is
+    what ``lunus/sf/xtraj.py`` writes for ``diffuse=<name>.mtz``. Matching it
+    means a target from either source is read the same way, and
+    ``DiffuseBraggRewardFunction`` can auto-detect the column in both.
+
+    Parameters
+    ----------
+    hkl
+        ``(n_refl, 3)`` integer Miller indices.
+    intensities
+        ``(n_refl,)`` real intensities. Diffuse is a variance and so is
+        non-negative in exact arithmetic, but float32 cancellation on strong
+        reflections can make it slightly negative; the values are written as
+        computed rather than clipped, since clipping would bias the target.
+    unit_cell, space_group
+        Crystal metadata written into the MTZ.
+    label
+        Column name.
+    output_path
+        If given, write the dataset there.
+
+    Returns
+    -------
+    reciprocalspaceship.DataSet
+        Indexed by H, K, L with one intensity column.
+    """
+    dataset = rs.DataSet(
+        {
+            "H": hkl[:, 0].astype(np.int32),
+            "K": hkl[:, 1].astype(np.int32),
+            "L": hkl[:, 2].astype(np.int32),
+            label: intensities.astype(np.float32),
+        },
+        cell=unit_cell,
+        spacegroup=space_group,
+    )
+    for miller_column in ("H", "K", "L"):
+        dataset[miller_column] = dataset[miller_column].astype(rs.HKLIndexDtype())
+    dataset[label] = dataset[label].astype(rs.IntensityDtype())
+    dataset = dataset.set_index(["H", "K", "L"])
+
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset.write_mtz(str(output_path))
+        logger.info(f"Saved diffuse intensities to {output_path}")
+
+    return dataset
 
 
 def dataset_from_amplitudes(
@@ -393,8 +524,14 @@ def _process_single_row(
     strip_ligands: bool = False,
     solvent_cutoff: float | None = None,
     solvent_taper_width: float = DEFAULT_SOLVENT_TAPER_WIDTH,
+    write_diffuse: bool = False,
+    altlocs_as_models: bool = False,
 ) -> None:
     """Compute and write synthetic amplitudes for one structure.
+
+    With ``write_diffuse``, a second MTZ of diffuse intensities is written
+    alongside the amplitudes, from the same forward pass. It requires a
+    multi-model input, since the diffuse term of a single configuration is zero.
 
     Errors are logged and swallowed so a batch run continues past a bad row,
     matching the SFcalculator script's behaviour.
@@ -408,6 +545,7 @@ def _process_single_row(
             strip_hydrogens=strip_hydrogens,
             strip_waters=strip_waters,
             strip_ligands=strip_ligands,
+            altlocs_as_models=altlocs_as_models,
         )
         unit_cell, space_group = _resolve_crystal_metadata(row, structure_path)
     except Exception as e:
@@ -435,13 +573,33 @@ def _process_single_row(
         )
         return
 
-    if coords.shape[0] > 1:
-        # Reported rather than written: the diffuse term is what the ensemble
-        # form exists for, but its output format is not settled yet.
-        logger.info(
-            f"{row.filename}: {coords.shape[0]} configurations, "
-            f"mean diffuse intensity {float(diffuse.mean()):.4g}"
-        )
+    if write_diffuse:
+        # <|F|²> − |<F>|² is identically zero for one configuration, so a diffuse
+        # target from a single model would be a file full of float32 noise.
+        # Refusing is better than writing something that looks like data.
+        if coords.shape[0] < 2:
+            logger.error(
+                f"{row.filename}: --write-diffuse needs a multi-model structure; "
+                f"got {coords.shape[0]} configuration, whose diffuse term is zero "
+                "by construction. Supply an ensemble."
+            )
+        else:
+            logger.info(
+                f"{row.filename}: {coords.shape[0]} configurations, "
+                f"mean diffuse intensity {float(diffuse.mean()):.4g}"
+            )
+            diffuse_path = output_dir / (
+                f"{structure_path.stem}_{resolution:.2f}A_diffuse.mtz"
+            )
+            try:
+                dataset_from_intensities(hkl, diffuse, unit_cell, space_group,
+                                         output_path=diffuse_path)
+            except Exception as e:
+                logger.error(
+                    f"Failed to write diffuse MTZ for {row.filename} to {diffuse_path} "
+                    f"({type(e).__name__}): {e}\n"
+                    f"{''.join(traceback.format_tb(e.__traceback__))}"
+                )
 
     label = "total" if solvent_cutoff is not None else "protein"
     output_path = output_dir / (row.mtzfile or f"{structure_path.stem}_{resolution:.2f}A.mtz")
@@ -552,6 +710,29 @@ def parse_args() -> argparse.Namespace:
         help="Width of the mask's smooth transition, e/A^3",
     )
 
+    diffuse_group = parser.add_argument_group("Diffuse Options")
+    diffuse_group.add_argument(
+        "--altlocs-as-models",
+        action="store_true",
+        help=(
+            "Treat each alternate conformation as a configuration, rather than "
+            "collapsing them into one occupancy-weighted structure. A deposited "
+            "multi-conformer model is already an ensemble; this is what makes the "
+            "diffuse term nonzero for a single-model file. Configurations are "
+            "weighted equally, so unequal altloc occupancies are not reproduced "
+            "(a warning says so)."
+        ),
+    )
+    diffuse_group.add_argument(
+        "--write-diffuse",
+        action="store_true",
+        help=(
+            "Also write <|F|^2> - |<F>|^2 as an MTZ with an ID intensity column, "
+            "matching what lunus xtraj writes. Requires a multi-model structure: "
+            "the diffuse term of a single configuration is zero by construction."
+        ),
+    )
+
     rfree_group = parser.add_argument_group("R-free Options")
     rfree_group.add_argument("--test-fraction", type=float, default=0.05)
     rfree_group.add_argument("--seed", type=int, default=None)
@@ -585,6 +766,8 @@ def main() -> None:
         strip_ligands=args.remove_ligands,
         solvent_cutoff=solvent_cutoff,
         solvent_taper_width=args.solvent_taper_width,
+        write_diffuse=args.write_diffuse,
+        altlocs_as_models=args.altlocs_as_models,
     )
 
     if args.batch_csv:
