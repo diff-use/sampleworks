@@ -40,6 +40,7 @@ BUNDLED = (
     "boltz2",
     "boltz2_md",
     "boltz2_xrd",
+    "demo",
     "full_8gpu",
     "protenix",
     "protenix_dual",

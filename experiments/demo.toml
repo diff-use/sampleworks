@@ -1,0 +1,69 @@
+description = "Fast RF3 demo run (~1 min). NOT scientifically valid - for smoke tests and demos only."
+
+# ---------------------------------------------------------------------------
+# This preset deliberately trades away result quality for wall-clock time. It
+# runs the same code path as experiments/rf3.toml, but shrinks every axis that
+# drives runtime:
+#
+#   axis                    rf3.toml           demo.toml
+#   ---------------------------------------------------------------
+#   proteins                all rows           1 (first row)
+#   gradient-weights        7 values           1 value
+#   ensemble-sizes          8                  1
+#   num-diffusion-steps     200 (default)      10
+#   recycling-steps         model default      1
+#   gpu_count               8                  1
+#
+# That is 7 x 8 = 56 grid points per protein reduced to 1, with each point
+# doing ~20x fewer denoising steps. Do NOT interpret any numbers this preset
+# produces: 10 diffusion steps and an ensemble of 1 cannot converge.
+#
+# partial-diffusion-step is a step index, but the sampler uses it as the
+# fraction partial-diffusion-step / num-diffusion-steps. The canonical presets
+# use 120/200 = 0.6, so 6/10 keeps the demo on the same trajectory segment.
+# ---------------------------------------------------------------------------
+
+[defaults]
+DATA_DIR = "/data/inputs"
+RESULTS_DIR = "/data/results/demo"
+MSA_CACHE_DIR = "/root/.sampleworks"
+PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
+RF3_CHECKPOINT = "/checkpoints/rf3_foundry_01_24_latest.ckpt"
+DEMO_PROTEINS_CSV = "${RESULTS_DIR}/_demo_inputs/proteins.csv"
+
+# Subset the real manifest to its first row so the demo exercises the true
+# input path without needing a second dataset checked in anywhere.
+#
+# The row count lives in args, not in [defaults], on purpose: `--set` coerces
+# bare integers to int, and the loader's ${VAR} expander only handles strings,
+# so a numeric [defaults] key cannot be overridden. Run more proteins with:
+#   run_experiments demo --set pre_jobs.demo_manifest.args.limit=3
+[[pre_jobs]]
+name = "demo_manifest"
+env = "rf3"
+gpus = "none"
+script = "scripts/make_demo_manifest.py"
+output_arg = ""
+output_subdir = "_demo_inputs"
+args = { proteins = "${PROTEINS_CSV}", out = "${DEMO_PROTEINS_CSV}", limit = 1 }
+
+[shared_args]
+proteins = "${DEMO_PROTEINS_CSV}"
+model = "rf3"
+scalers = "pure_guidance"
+num-diffusion-steps = 10
+partial-diffusion-step = 6
+recycling-steps = 1
+ensemble-sizes = "1"
+gradient-weights = "0.05"
+model-checkpoint = "${RF3_CHECKPOINT}"
+gradient-normalization = true
+augmentation = true
+align-to-input = true
+
+[[jobs]]
+name = "demo"
+env = "rf3"
+gpu_count = 1
+output_subdir = "demo"
+args = {}
