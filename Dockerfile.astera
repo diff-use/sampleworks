@@ -18,6 +18,7 @@ ARG PIXI_WITH_CHECKPOINTS_IMAGE
 FROM ${PIXI_WITH_CHECKPOINTS_IMAGE} AS astera
 
 ARG EXT_VERSION=v0.2.0
+ARG DYNAMIC_PDB_VERSION=v0.1.4
 
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/dev \
@@ -65,6 +66,7 @@ RUN install -m 0644 \
         /usr/local/share/sampleworks/astera/sampleworks-ext-shell.sh \
         /etc/profile.d/sampleworks-ext-shell.sh \
     && EXT_VERSION="${EXT_VERSION}" bash /usr/local/share/sampleworks/astera/install-ext.sh \
+    && DYNAMIC_PDB_VERSION="${DYNAMIC_PDB_VERSION}" bash /usr/local/share/sampleworks/astera/install-dynamic-pdb.sh \
     && bash /usr/local/share/sampleworks/astera/install-ext-shell-hooks.sh
 
 # SBGrid lives on shared storage, mounted read-only at /programs for every
