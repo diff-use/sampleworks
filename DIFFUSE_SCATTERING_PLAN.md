@@ -1,8 +1,9 @@
 # Plan: Diffuse Scattering as a Guidance Target (lunus.sf)
 
-Status: **the adapter, the generator and the reward are built and verified on the
-pod.** What remains is wiring the reward into the sampling loop (Phase 4) and
-then the recovery test (Phase 5). Written 2026-08-12; last updated 2026-08-18.
+Status: **built, wired, and running end to end on the pod.** A full guided run
+completes; what it does not yet do is converge — see Phase 4a. The recovery test
+(Phase 5) is the remaining milestone. Written 2026-08-12; last updated
+2026-08-18.
 
 Adds diffuse scattering as an experimental target for guidance, using the
 differentiable structure-factor engine in `lunus/lunus/sf/`.
@@ -126,31 +127,22 @@ than all of them; both are listed under "Not yet built" in
 `lunus/lunus/sf/README.md`. So guidance should assume **N sequential splat+FFT
 passes per guided step**, with `use_checkpoint=True` once N or the grid is large.
 
-**Memory is solved; throughput is not.** `structure_factors_batch` is still a
-Python loop over configurations, with `use_checkpoint=True` recomputing each
-splat during backward instead of retaining it. Measured (3000 atoms, 90³ grid,
-peak RSS above baseline):
-
-| N | retained | checkpointed |
-|---|---|---|
-| 8 | 839 MB | 361 MB |
-| 16 | 1604 MB | 371 MB |
-
-Flat in N rather than linear, for ~2.4× the time, with bit-identical gradients
-(`lunus/lunus/sf/tests/test_batch.py`). Fusing the splat into one kernel remains
-open upstream and is listed under "Not yet built" in `lunus/lunus/sf/README.md`.
-So guidance should assume **N sequential splat+FFT passes per guided step**, with
-`use_checkpoint=True` as the default once N or the grid is large.
-
 ### Dependency wiring (done)
 
 lunus is declared workspace-level in `pyproject.toml`:
 
 ```toml
-lunus = {branch = "sf", extras = ["sf"], git = "https://github.com/lanl/lunus.git"}
+lunus = {rev = "fb22633f...", extras = ["sf"], git = "https://github.com/lanl/lunus.git"}
 ```
 
-and resolved into all 13 environments on both platforms. Two operational notes:
+and resolved into all 13 environments on both platforms. Three operational notes:
+
+- **A rev, not a branch.** A branch pin resolves to a SHA once and then never
+  moves: the manifest still reads the same, so `pixi lock` finds nothing stale
+  and re-resolves nothing, and new lunus commits never arrive. Bumping the rev
+  changes the manifest, which is what makes a re-lock pick them up. The cost is
+  an edit per lunus bump, which is the point — the version in use is stated
+  rather than implied by whenever someone last happened to re-lock.
 
 - **The lock can only be regenerated on Linux.** lunus is a git source dependency
   with no published wheel, so a solve must build it for linux-64, which macOS
