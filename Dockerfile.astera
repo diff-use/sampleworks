@@ -66,7 +66,7 @@ RUN install -m 0644 \
         /usr/local/share/sampleworks/astera/sampleworks-ext-shell.sh \
         /etc/profile.d/sampleworks-ext-shell.sh \
     && EXT_VERSION="${EXT_VERSION}" bash /usr/local/share/sampleworks/astera/install-ext.sh \
-    && DYNAMIC_PDB_VERSION="${DYNAMIC_PDB_VERSION}" bash /usr/local/share/sampleworks/astera/install-dynamic-pdb.sh \
+    && curl -fsSL https://dynamicpdb.com/install.sh | bash -s -- --version "${DYNAMIC_PDB_VERSION}" --dir /usr/local/bin \
     && bash /usr/local/share/sampleworks/astera/install-ext-shell-hooks.sh
 
 # SBGrid lives on shared storage, mounted read-only at /programs for every
