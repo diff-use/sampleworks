@@ -13,6 +13,8 @@ from sampleworks.utils.elements import elements_to_scattering_indices
 if TYPE_CHECKING:
     from biotite.structure import AtomArray, AtomArrayStack
 
+    from sampleworks.eval.structure_utils import SampleworksProcessedStructure
+
 
 @dataclass
 class RewardInputs:
@@ -178,6 +180,71 @@ class RewardFunctionProtocol(Protocol):
             Scalar reward value
         """
         ...
+
+
+@runtime_checkable
+class PreparableRewardFunctionProtocol(RewardFunctionProtocol, Protocol):
+    """Protocol for rewards that need the model atom array before they can score.
+
+    Reciprocal-space rewards need the full topology -- atom names, elements, unit
+    cell, space group -- to build scattering kernels, a grid and a reflection
+    list, none of which depend on coordinates. That information only exists once
+    :func:`~sampleworks.eval.structure_utils.process_structure_to_trajectory_input`
+    has run inside ``sample()``, and rebuilding it per evaluation would be
+    wasteful, so construction is two-phase: ``__init__`` takes the configuration,
+    ``prepare`` takes the atom array.
+
+    Trajectory scalers call :meth:`prepare` once, before the first evaluation,
+    via :func:`prepare_reward_if_needed`. Rewards needing nothing extra simply do
+    not implement it and are left alone.
+    """
+
+    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """Build whatever depends on the topology but not on the coordinates.
+
+        Parameters
+        ----------
+        atom_array
+            The atoms the sampled coordinates correspond to. Its ordering fixes
+            the column order of every coordinate tensor the reward is given.
+        device
+            Device the sampled coordinates will live on; tensors built here are
+            allocated on it.
+        """
+        ...
+
+
+def prepare_reward_if_needed(
+    reward: RewardFunctionProtocol | None,
+    processed_structure: "SampleworksProcessedStructure",
+    device: torch.device | str = "cpu",
+) -> None:
+    """Call ``reward.prepare`` with the model atom array, if the reward has one.
+
+    The array a reward must be prepared with is the one the sampled coordinates
+    correspond to: ``model_atom_array`` where the reconciler found a mismatch
+    between the model's topology and the input structure's, and the structure's
+    own array otherwise. That is the same choice
+    :meth:`SampleworksProcessedStructure.to_reward_inputs` makes when building the
+    tensors, and the two must agree -- otherwise the reward is prepared for one
+    atom ordering and evaluated on another, which no shape check would catch
+    because the counts match.
+
+    Parameters
+    ----------
+    reward
+        Any reward, or None. Anything not satisfying
+        :class:`PreparableRewardFunctionProtocol` is left untouched.
+    processed_structure
+        The bundle built at the start of sampling.
+    device
+        Device the sampled coordinates live on.
+    """
+    if reward is None or not isinstance(reward, PreparableRewardFunctionProtocol):
+        return
+
+    atom_array = processed_structure.model_atom_array or processed_structure.atom_array
+    reward.prepare(atom_array, device=device)
 
 
 @runtime_checkable
