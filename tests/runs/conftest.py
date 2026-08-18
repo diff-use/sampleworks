@@ -47,5 +47,6 @@ BUNDLED = (
     "rf3",
     "rf3_partial",
     "rf3_partial_chiral_off",
+    "rf3_smoke",
     "rf3_protenix",
 )

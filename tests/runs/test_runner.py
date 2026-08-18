@@ -166,6 +166,31 @@ def test_rf3_partial_chiral_off_flag_present(monkeypatch: pytest.MonkeyPatch) ->
     assert "--force-all" in inv.argv
 
 
+def test_rf3_smoke_is_real_and_short(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The RF3 smoke preset keeps real inference while minimizing runtime."""
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setattr(runner, "_detect_available_gpus", lambda: [str(i) for i in range(8)])
+    preset = loader.load_preset("rf3_smoke")
+    inv = runner.build_invocations(preset, results_dir=Path("/r"))[0]
+    pairs = _argv_to_dict(inv.argv[6:])
+
+    assert inv.env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert pairs["--model"] == "rf3"
+    assert pairs["--scalers"] == "pure_guidance"
+    assert pairs["--max-proteins"] == "2"
+    assert pairs["--max-parallel"] == "1"
+    assert pairs["--partial-diffusion-step"] == "1"
+    assert pairs["--ensemble-sizes"] == "1"
+    assert pairs["--gradient-weights"] == "0.01"
+    assert pairs["--step-scaler-type"] == "dataspace"
+    assert pairs["--recycling-steps"] == "1"
+    assert pairs["--num-diffusion-steps"] == "2"
+    assert pairs["--output-dir"] == "/r/rf3"
+    assert pairs["--align-to-input"] is True
+    assert pairs["--force-all"] is True
+    assert "--augmentation" not in inv.argv
+
+
 def test_build_invocations_records_output_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     """`run_grid_search.py` assumes its --output-dir exists; the runner must mkdir it."""
     monkeypatch.setenv("HOME", "/home/test")

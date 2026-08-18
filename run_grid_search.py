@@ -35,6 +35,7 @@ class GridSearchConfig:
     method: str
     proteins_file: str
     output_dir: str
+    max_proteins: int | None = None
 
 
 def get_job_status(job: JobConfig) -> str:
@@ -522,6 +523,7 @@ def main(args: argparse.Namespace):
         method=args.method,
         proteins_file=args.proteins,
         output_dir=args.output_dir,
+        max_proteins=args.max_proteins,
     )
 
     start_time = time.time()
@@ -540,6 +542,12 @@ def generate_jobs(args: argparse.Namespace) -> list[JobConfig]:
     jobs = []
 
     proteins = ProteinInput.from_csv(Path(args.proteins))
+    max_proteins = getattr(args, "max_proteins", None)
+    if max_proteins is not None:
+        if max_proteins <= 0:
+            raise ValueError("--max-proteins must be positive when provided")
+        proteins = proteins[:max_proteins]
+
     model = args.model
     scalers = args.scalers.split()
     ensemble_sizes = [int(x) for x in args.ensemble_sizes.split()]
@@ -692,6 +700,12 @@ def parse_args() -> argparse.Namespace:
     # Experiment level arguments
     parser.add_argument(
         "--proteins", required=True, help="CSV file with columns: structure,density,resolution,name"
+    )
+    parser.add_argument(
+        "--max-proteins",
+        type=int,
+        default=None,
+        help="Limit the run to the first N proteins from --proteins, useful for smoke runs",
     )
 
     # Model arguments

@@ -1,9 +1,11 @@
 """Tests for grid-search result serialization."""
 
+import argparse
 import json
+from pathlib import Path
 
 import pytest
-from run_grid_search import get_pixi_env, GridSearchConfig, save_results
+from run_grid_search import generate_jobs, get_pixi_env, GridSearchConfig, save_results
 from sampleworks.runs.schema import VALID_PIXI_ENVS
 from sampleworks.utils.guidance_constants import StructurePredictor
 from sampleworks.utils.guidance_script_arguments import JobResult
@@ -71,3 +73,36 @@ def test_get_pixi_env_rejects_unknown_model() -> None:
     """An unrecognized model name fails with the valid options listed."""
     with pytest.raises(ValueError, match="Unknown model: not-a-model"):
         get_pixi_env("not-a-model")
+
+
+def test_generate_jobs_can_limit_protein_count(tmp_path: Path) -> None:
+    """``--max-proteins`` limits the grid to the first N CSV rows."""
+    resource_dir = Path(__file__).parent / "resources" / "1vme"
+    csv_path = tmp_path / "proteins.csv"
+    csv_path.write_text(
+        "name,structure,density,resolution\n"
+        "first,"
+        f"{resource_dir / '1vme_final_carved_edited_0.5occA_0.5occB.cif'},"
+        f"{resource_dir / '1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4'},"
+        "1.8\n"
+        "second,"
+        f"{resource_dir / '1vme_final_carved_edited_0.5occA_0.5occB.cif'},"
+        f"{resource_dir / '1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4'},"
+        "1.8\n"
+    )
+    args = argparse.Namespace(
+        proteins=str(csv_path),
+        max_proteins=1,
+        model="rf3",
+        scalers="pure_guidance",
+        ensemble_sizes="1",
+        gradient_weights="0.0",
+        num_gd_steps="1",
+        method="",
+        output_dir=str(tmp_path / "out"),
+    )
+
+    jobs = generate_jobs(args)
+
+    assert len(jobs) == 1
+    assert jobs[0].protein == "first"

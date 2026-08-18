@@ -195,6 +195,7 @@ run_experiments --list        # show available presets (does not require DATA_DI
 run_experiments --show rf3    # inspect what will run
 run_experiments --dry-run rf3 # print commands without running
 run_experiments rf3           # run the standalone RF3 preset
+run_experiments rf3_smoke     # run a very short real RF3 plumbing check
 run_experiments boltz         # run Boltz2 X-ray + Boltz2 MD
 run_experiments boltz1        # run standalone Boltz1
 run_experiments protenix      # run the standalone Protenix preset
@@ -209,10 +210,12 @@ run_experiments full_8gpu --jobs rf3,protenix
 ```
 
 Standalone presets are available for each model/model family: `boltz`,
-`boltz1`, `boltz2`, `boltz2_xrd`, `boltz2_md`, `rf3`, and `protenix`.
+`boltz1`, `boltz2`, `boltz2_xrd`, `boltz2_md`, `rf3`, `rf3_smoke`, and `protenix`.
 Additional comparison presets include `protenix_dual`, `rf3_protenix`, and RF3
-variants. Single-job presets default to `gpu_count = 8`, so on an 8-GPU pod
-they use the whole machine.
+variants. `rf3_smoke` is intentionally non-scientific: it runs the first two
+proteins with one gradient weight, one ensemble member, one recycling step, and
+one real RF3 denoising step per trial. Single-job presets default to
+`gpu_count = 8`, so on an 8-GPU pod they use the whole machine.
 
 Presets live in `experiments/*.toml` in your local checkout and on the pod at
 `/home/dev/workspace/experiments/*.toml`. To modify an experiment, edit or copy

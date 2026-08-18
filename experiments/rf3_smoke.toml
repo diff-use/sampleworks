@@ -1,0 +1,32 @@
+description = "RF3 real smoke run: two proteins, three one-step RF3 variations each."
+
+[defaults]
+DATA_DIR = "/data/inputs"
+RESULTS_DIR = "/data/results/rf3_smoke"
+MSA_CACHE_DIR = "/root/.sampleworks"
+PROTEINS_CSV = "${DATA_DIR}/proteins.csv"
+RF3_CHECKPOINT = "/checkpoints/rf3_foundry_01_24_latest.ckpt"
+
+[shared_args]
+proteins = "${PROTEINS_CSV}"
+model = "rf3"
+scalers = "pure_guidance"
+max-proteins = 2
+max-parallel = 1
+partial-diffusion-step = 1
+ensemble-sizes = "1"
+gradient-weights = "0.01"
+step-scaler-type = "dataspace"
+recycling-steps = 1
+num-diffusion-steps = 2
+gradient-normalization = false
+augmentation = false
+align-to-input = true
+force-all = true
+
+[[jobs]]
+name = "rf3"
+env = "rf3"
+gpu_count = 1
+output_subdir = "rf3"
+args = { model-checkpoint = "${RF3_CHECKPOINT}" }
