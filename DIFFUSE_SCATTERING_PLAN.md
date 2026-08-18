@@ -224,6 +224,37 @@ indices off the FFT grid, so the target needs reduction to integer hkl — see
   `core/scalers/fk_steering.py:108`) — the point where the model atom array and
   device are both known. Build it generically so the SFC reward can use it later.
 
+### Phase 4a — what the first guided run showed
+
+A full `sampleworks-guidance --target-type diffuse` run completed end to end
+(Boltz-2, 1VME, N=4, 200 steps, `bragg_weight=0.5`). The wiring works. The
+science did not: **loss rose from 0.7669 to 0.7999**. Two causes, both
+configuration rather than code, and both must be fixed before Phase 5 means
+anything.
+
+**Alignment was off.** The run used `align_to_input=False`. The reward scores in
+the crystal frame and the model generates in an arbitrary one, so the gradient
+was computed on a structure in the wrong frame. `--augmentation
+--align-to-input` are not optional for any reciprocal-space target — the same
+requirement the density reward has, per AGENTS.md's alignment section.
+
+**The model and the target were chemically different objects.** The log reported
+`model=6613, structure=6462, common=4515`, and the model's elements came back as
+`['C', 'Fe', 'N', 'O', 'S']` — no **Se**. 1VME is selenomethionine; Boltz models
+MSE as ordinary methionine, so the model has sulfur where the target has
+selenium, and the target additionally contains waters and ligands the model never
+produces. Roughly a third of the atoms on either side are unmatched.
+
+That puts a floor under the loss that no amount of guidance can remove, and it is
+not specific to diffuse — it applies to any target generated from a deposited
+structure and scored against a model's topology.
+
+**So the recovery test must generate its target from the model's own atom array**,
+not from the deposited file. Concretely: run the model once, take
+`model_atom_array`, generate Bragg and diffuse targets from a perturbed ensemble
+of *that*, then guide. Anything else measures the MSE/MET discrepancy rather than
+the reward.
+
 ### Phase 5 — tests
 
 The **recovery test** is the milestone that says the whole thing works: build a
@@ -245,15 +276,22 @@ reflections, 2 configurations. A100 for the GPU figures, pod CPU otherwise.
 | `build_setup` | 0.09–1.7 s | once per structure; BLAS-bound, see threading below |
 | anisotropic transform build | 46–139 ms | 24 shells, 8 MB basis |
 | target load, intersect, resolution cut | ~0.05 s | after vectorizing; minutes before |
-| forward pass, GPU | ~3.8 s | includes the bulk-solvent mask |
+| forward pass, GPU, **first call** | ~3.8 s | dominated by `torch.compile` warmup |
+| forward pass, GPU, **steady state** | **~0.08 s per configuration** | measured in a guided loop |
 | forward pass, CPU | ~4–5 s | what makes the reward tests ~3 min |
 
-**Per guided step the cost is N sequential forward passes**, ~2.4× that with
-`use_checkpoint=True`. At this system size and N=8 on GPU that is ~30 s/step
-before backward, and a 200-step trajectory is hours. Setup costs are noise
-beside it. If wall-clock rather than memory binds, the fused batched splat is the
-upstream lever; the time-dependent conditioning idea (AGENTS.md §5) — coarsen the
-grid and truncate resolution at high noise — is the lever on this side.
+**The steady-state figure is the one that matters, and it is ~50× better than the
+first-call figure.** A guided Boltz-2 run — 200 steps, N=4, reward and backward on
+every step — took **62 s total, 3.19 it/s**, including the model's own forward
+pass. An earlier revision of this section extrapolated ~30 s/step and "hours per
+trajectory" from a single generator invocation; that measurement paid the entire
+compile warmup and never amortized it, which a 200-step loop does immediately.
+
+Consequences: cost is **not** currently a reason to reach for the fused batched
+splat or for `use_checkpoint`, and the time-dependent conditioning lever
+(AGENTS.md §5) is available if wanted but not needed at this system size. Both
+become relevant again on a much larger cell, where the grid rather than the
+warmup dominates.
 
 #### Threading
 
@@ -403,10 +441,14 @@ reward, so prefer to keep engine pairs consistent.
 
 **Remaining:**
 
-5. Phase 4, wiring: `--target-type` dispatch and the `prepare()` hook in the
-   trajectory scalers. This also unblocks the stranded SFC reward.
+5. Phase 4, wiring — **done**. `--target-type` dispatch, the target arguments,
+   and a generic `prepare()` hook in both trajectory scalers, which also
+   unblocks the stranded SFC reward. A full guided run completes; see Phase 4a
+   for what it showed.
 6. Phase 5, the recovery test — guidance actually driving a mismatched ensemble
-   toward the target. The milestone.
+   toward the target. The milestone, and still ahead. Needs the two fixes in
+   Phase 4a first: alignment on, and a target generated from the model's own
+   topology.
 7. Phase 3 and real experimental data after that.
 
 ### What is still unproven
