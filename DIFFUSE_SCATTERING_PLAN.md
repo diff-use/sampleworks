@@ -1,7 +1,8 @@
 # Plan: Diffuse Scattering as a Guidance Target (lunus.sf)
 
-Status: planned, not started. Written 2026-08-12; upstream state and
-correctness traps updated 2026-08-16.
+Status: **the adapter, the generator and the reward are built and verified on the
+pod.** What remains is wiring the reward into the sampling loop (Phase 4) and
+then the recovery test (Phase 5). Written 2026-08-12; last updated 2026-08-18.
 
 Adds diffuse scattering as an experimental target for guidance, using the
 differentiable structure-factor engine in `lunus/lunus/sf/`.
@@ -236,12 +237,62 @@ lunus's own gemmi comparison (`lunus/lunus/sf/tools/compare_icalc_mtz.py`).
 
 ### Phase 6 — cost
 
-Per guided step: N **sequential** splat+FFT+backward passes (see "Upstream
-state"), ~2.4× that with `use_checkpoint=True`. For 1VME-sized cells the grid is
-~90³ and this should be tolerable; a 300³ grid will dominate. The time-dependent
-conditioning lever (AGENTS.md §5) applies naturally — coarsen the grid and
-truncate resolution at high noise, sharpen as t→0. If wall-clock rather than
-memory turns out to bind, the fused batched splat upstream is the lever.
+Measured 2026-08-17/18 on 1VME: 6,819–7,092 atoms, grid 96×160×160, 86,499
+reflections, 2 configurations. A100 for the GPU figures, pod CPU otherwise.
+
+| phase | cost | |
+|---|---|---|
+| `build_setup` | 0.09–1.7 s | once per structure; BLAS-bound, see threading below |
+| anisotropic transform build | 46–139 ms | 24 shells, 8 MB basis |
+| target load, intersect, resolution cut | ~0.05 s | after vectorizing; minutes before |
+| forward pass, GPU | ~3.8 s | includes the bulk-solvent mask |
+| forward pass, CPU | ~4–5 s | what makes the reward tests ~3 min |
+
+**Per guided step the cost is N sequential forward passes**, ~2.4× that with
+`use_checkpoint=True`. At this system size and N=8 on GPU that is ~30 s/step
+before backward, and a 200-step trajectory is hours. Setup costs are noise
+beside it. If wall-clock rather than memory binds, the fused batched splat is the
+upstream lever; the time-dependent conditioning idea (AGENTS.md §5) — coarsen the
+grid and truncate resolution at high noise — is the lever on this side.
+
+#### Threading
+
+`OMP_NUM_THREADS` matters only where the compute is on the CPU, and then it
+mostly speeds up *setup* rather than the hot loop:
+
+- **Generator on GPU**: 4.017 / 3.893 s unset vs 3.744 s at `OMP=2` —
+  indistinguishable, since only host-side work is on the CPU.
+- **Reward tests on CPU**: 232.5 s → 179.7 s, **−23%**. Concentrated in
+  `build_setup` (1.67 s → 0.086 s) and the spline basis (139 ms → 46 ms), both
+  BLAS-bound. A forward-pass-dominated test went 22.7 s → 24.2 s, i.e. slightly
+  worse: the compiled splat manages its own threading.
+
+Single samples with a warm cache on the second, so treat 23% as indicative.
+lunus reports a much larger effect on a more heavily oversubscribed pod — splat
+287.9 ms/frame at 104 threads on 3 CPUs vs 66.3 ms at `OMP=2` — because threads
+beyond the cgroup quota spin-wait and get the whole process throttled. BLAS reads
+the environment before the process starts, so exporting the variable is not the
+same as calling `torch.set_num_threads`.
+
+#### Memory
+
+The anisotropic basis is `n_refl × n_bins`: 8 MB here, but **~330 MB** for the
+1.57M-reflection xtraj map, and it is built in float64 before being cast, so peak
+setup is roughly 3×. `prepare()` logs the size.
+
+Upstream, checkpointing makes the ensemble splat flat in N rather than linear:
+839 MB → 361 MB at N=8, 1604 MB → 371 MB at N=16.
+
+#### The noise floor moves between runs
+
+Three independent sightings: the identical-ensemble diffuse RMS ratio moved
+3.1e-8 → 4.4e-8; a mixed-weight recovery loss came out 4.53e-10 against 3.08e-10
+predicted from its pure-diffuse counterpart; and a regenerated diffuse target's
+minimum went from exactly 0 to −0.00391. Reduction order varies and diffuse is a
+difference of nearly-equal large numbers. Individual near-zero diffuse values are
+unresolved — which is also why the generator does not clip negatives, since
+clipping would hide exactly this and bias the target upward where the signal is
+weakest.
 
 ## Correctness traps
 
@@ -336,10 +387,34 @@ reward, so prefer to keep engine pairs consistent.
 
 ## Sequencing
 
-1. lunus repo: packaging, batched entry point, bulk solvent, per-config
-   occupancies — **all landed as of 2026-08-16**.
-2. The lunus-backed synthetic generator (above), which de-risks Phase 1.
-3. Phases 1-2 (bulk of the work).
-4. Phase 4 (small).
-5. Phase 5 recovery test — the milestone.
-6. Phase 3 and real data after that.
+**Done and verified on the pod:**
+
+1. lunus: packaging, batched entry point, bulk solvent, per-configuration
+   occupancies, and the anisotropic-component extraction (`sf/aniso.py`,
+   `sf/aniso_torch.py`, with `to_aniso` refactored onto it and pinned bit-exact).
+2. Phase 1, the adapter — cross-checked against SFcalculator at correlation
+   1.000000, R 0.0002 over 86,499 reflections.
+3. The lunus-backed synthetic generator, including `--write-diffuse` and
+   `--altlocs-as-models`, which is what produces a nonzero diffuse target from
+   the single-model files in `tests/resources`.
+4. Phase 2, the reward — `DiffuseBraggRewardFunction`, 15 tests covering
+   recovery (~1e-14 Bragg, ~1e-9 diffuse), discrimination (monotonic from a
+   0.02 Å displacement), per-configuration gradients, and gradient sign.
+
+**Remaining:**
+
+5. Phase 4, wiring: `--target-type` dispatch and the `prepare()` hook in the
+   trajectory scalers. This also unblocks the stranded SFC reward.
+6. Phase 5, the recovery test — guidance actually driving a mismatched ensemble
+   toward the target. The milestone.
+7. Phase 3 and real experimental data after that.
+
+### What is still unproven
+
+Everything above establishes that the reward is correct and differentiable at and
+near the answer. None of it shows that **guidance converges** — that a DPS step
+size exists for which the diffuse term improves an ensemble without wrecking the
+geometry the generative prior supplies. That is Phase 5's job, and the two open
+questions feeding it are the step size (a normalized loss has different gradient
+scale than the density reward, so nothing transfers) and whether a mixture beats
+either pure target.
