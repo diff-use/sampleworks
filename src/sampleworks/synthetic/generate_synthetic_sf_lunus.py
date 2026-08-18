@@ -206,14 +206,30 @@ def _expand_altlocs(
     atoms repeated in every model and the alternate conformations differing —
     exactly the ensemble the diffuse term needs.
 
-    Occupancies come back as a separate ``n_altloc x n_res`` array rather than on
-    the stack, because biotite cannot hold conflicting per-model annotations.
-    Those are *not* applied here: ``mean_and_diffuse`` weights configurations
-    equally, which is right for the uniform altloc occupancies these structures
-    usually carry (1VME is 0.5/0.5) and wrong for unequal ones. The measured
-    spread is logged so an unequal case is visible rather than silent; carrying
-    real weights through would mean per-configuration occupancies, which the
-    engine supports and this does not yet.
+    ``map_altlocs_to_stack`` strips ``occupancy``, ``b_factor`` and ``altloc_id``
+    off the stack -- biotite cannot hold annotations that conflict between models
+    -- and returns them as ``(n_altloc, n_atoms)`` arrays. They have to be put
+    back on the topology, since the scattering kernels are built from elements and
+    B-factors.
+
+    Two choices are made here, both because the engine bakes B and occupancy in
+    per atom rather than per configuration:
+
+    **B-factors are averaged across conformers.** They are identical for the
+    shared atoms, so this only affects atoms that genuinely differ, and it beats
+    arbitrarily taking the first conformer's.
+
+    **Alternate-conformation atoms are set to full occupancy.** Each
+    configuration stands for a unit cell containing that conformer, so averaging
+    over configurations reproduces the crystallographic
+    ``F_shared + 0.5·F_A + 0.5·F_B`` of a 0.5/0.5 pair. Passing the deposited 0.5
+    through as well would apply the weight twice. Atoms that are partially
+    occupied for other reasons -- a half-occupied ion, say -- keep their
+    deposited value, since only altloc atoms are reweighted.
+
+    Configurations are then weighted equally by ``mean_and_diffuse``, which is
+    right for uniform altloc occupancies and wrong for unequal ones; the measured
+    populations are logged, and warn when they disagree.
 
     Raises
     ------
@@ -221,7 +237,7 @@ def _expand_altlocs(
         If the structure has fewer than two altlocs, since a single conformation
         has no variance to report.
     """
-    from sampleworks.utils.atom_array_utils import map_altlocs_to_stack
+    from sampleworks.utils.atom_array_utils import BLANK_ALTLOC_IDS, map_altlocs_to_stack
 
     stack, annotations = map_altlocs_to_stack(
         loaded, selection=selection, return_full_array=True
@@ -232,23 +248,41 @@ def _expand_altlocs(
             "--altlocs-as-models yields nothing to take a variance over."
         )
 
-    occupancies = annotations.get("occupancy")
-    if occupancies is not None:
-        per_altloc = np.nanmean(np.asarray(occupancies, dtype=np.float64), axis=1)
-        spread = float(np.nanmax(per_altloc) - np.nanmin(per_altloc))
-        message = (
-            f"Expanded {structure_path.name} into {stack.stack_depth()} configurations "
-            f"from altlocs; mean occupancy per altloc {np.round(per_altloc, 3).tolist()}"
-        )
-        if spread > 0.05:
+    b_factors = np.asarray(annotations["b_factor"], dtype=np.float64)
+    occupancies = np.asarray(annotations["occupancy"], dtype=np.float64)
+    altloc_ids = np.asarray(annotations["altloc_id"])
+
+    topology = stack[0]
+    topology.set_annotation("b_factor", b_factors.mean(axis=0).astype(np.float32))
+
+    # Row 0 identifies which atoms are alternates: with return_full_array=True
+    # every configuration holds the shared atoms plus its own conformer, so a
+    # non-blank altloc in any row marks a position that differs between them.
+    is_alternate = ~np.isin(altloc_ids[0], list(BLANK_ALTLOC_IDS))
+    per_atom_occupancy = occupancies[0].copy()
+    per_atom_occupancy[is_alternate] = 1.0
+    topology.set_annotation("occupancy", per_atom_occupancy.astype(np.float32))
+
+    # Averaged over the ALTERNATE atoms only. Averaging over every atom would be
+    # dominated by the shared backbone at 1.0 and could never show an imbalance.
+    populations = occupancies[:, is_alternate].mean(axis=1) if is_alternate.any() else None
+    message = (
+        f"Expanded {structure_path.name} into {stack.stack_depth()} configurations "
+        f"from altlocs, {int(is_alternate.sum())} alternate atoms of {len(is_alternate)}"
+    )
+    if populations is None:
+        logger.info(message)
+    else:
+        message += f"; deposited populations {np.round(populations, 3).tolist()}"
+        if float(populations.max() - populations.min()) > 0.05:
             logger.warning(
                 message + " — these are unequal, but the configurations are weighted "
-                "equally. The diffuse term will not reflect the deposited populations."
+                "equally, so the diffuse term will not reflect the deposited populations."
             )
         else:
             logger.info(message)
 
-    return stack[0], np.asarray(stack.coord, dtype=np.float64)
+    return topology, np.asarray(stack.coord, dtype=np.float64)
 
 
 def compute_ensemble_amplitudes(
