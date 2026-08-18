@@ -29,6 +29,7 @@ motion where the data says it is.
 
 import argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 import gemmi
 import numpy as np
@@ -45,7 +46,6 @@ from sampleworks.synthetic.generate_synthetic_sf_lunus import (
 from atomworks.io.utils.io_utils import load_any
 
 from sampleworks.utils.atom_array_utils import save_structure_to_cif
-from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import get_model_and_device
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -74,19 +74,11 @@ def model_topology_and_coords(
     from sampleworks.models.boltz.wrapper import process_structure_for_boltz
     from sampleworks.utils.guidance_script_utils import _load_structure
 
-    config = GuidanceConfig.from_cli(
-        [
-            "--model", "boltz2",
-            "--guidance-type", "pure_guidance",
-            "--protein", "recovery",
-            "--structure", str(structure_path),
-            "--target-type", "diffuse",
-            "--diffuse-target", "unused.mtz",
-            "--bragg-weight", "0.0",
-            "--model-checkpoint", str(checkpoint),
-            "--method", "X-RAY DIFFRACTION",
-        ]
-    )  # fmt: skip
+    # get_model_and_device reads only `.method` off the config for Boltz-2, so a
+    # stand-in carries it. Building a real GuidanceConfig would make this harness
+    # satisfy every required argument of the guidance CLI -- --resolution among
+    # them -- to do nothing but load a checkpoint.
+    config = SimpleNamespace(method="X-RAY DIFFRACTION")
 
     _, model = get_model_and_device(str(device), str(checkpoint), "boltz2", config=config)
     structure = process_structure_for_boltz(_load_structure(structure_path), out_dir=out_dir)
