@@ -290,9 +290,9 @@ or output roots differ from the defaults.
 Sampleworks now has a two-layer image split:
 
 1. `Dockerfile` builds the regular public `pixi-with-checkpoints` image.
-2. `Dockerfile.astera` builds the private Astera overlay with EXT plus small
-   workspace conveniences, using the public `pixi-with-checkpoints` image as its
-   base.
+2. `Dockerfile.astera` builds the private Astera overlay with EXT, Dynamic PDB
+   CLI, and small workspace conveniences, using the public
+   `pixi-with-checkpoints` image as its base.
 
 Image names:
 
@@ -309,8 +309,8 @@ CI publishes these tags:
 | Astera/Harbor | `latest` and `sampleworks` on `main`, `sha-<short-sha>`, release semver tags |
 
 The Astera image is always built from the exact public `sha-<short-sha>` image
-produced earlier in the same workflow run, then adds EXT and small workspace
-tools on top.
+produced earlier in the same workflow run, then adds EXT, Dynamic PDB CLI, and
+small workspace tools on top.
 
 CI configuration variables:
 
