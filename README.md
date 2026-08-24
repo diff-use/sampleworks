@@ -1,6 +1,6 @@
 # Sampleworks
 
-> This repository is under active development. Please always use the latest version. If you encounter any problems, please [create an issue on GitHub](https://github.com/diff-use/sampleworks/issues) and include: the PDB ID, the CIF file you used, your density map(s), and log information.
+> This repository is under active development. Please always use the latest version. If you encounter any problems, please [create an issue on GitHub](https://github.com/prism-science/sampleworks/issues) and include: the PDB ID, the CIF file you used, your density map(s), and log information.
 
 > We would welcome contributions from the community. We are most interested in:
  - new ModelWrappers for additional structure prediction models (especially smaller models which may be more steerable)
@@ -32,7 +32,7 @@ curl -fsSL https://pixi.sh/install.sh | sh
 ### 2. Clone and install
 
 ```bash
-git clone git@github.com:diff-use/sampleworks.git
+git clone git@github.com:prism-science/sampleworks.git
 cd sampleworks
 pixi install -a   # install all environments
 ```
