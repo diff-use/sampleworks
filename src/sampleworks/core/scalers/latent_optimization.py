@@ -203,6 +203,7 @@ class LatentOptimization:
         num_steps: int = 200,
         guidance_t_start: float = 0.0,
         *,
+        t_start: float = 0.0,
         outer_steps: int = 1,
         learning_rate: float = 0.05,
         max_grad_norm: float = 1.0,
@@ -269,6 +270,9 @@ class LatentOptimization:
         self.ensemble_size = ensemble_size
         self.num_steps = num_steps
         self.guidance_start = int(guidance_t_start * num_steps)
+        # Partial diffusion: rollouts begin here, from the noised input structure rather than the
+        # prior. Mirrors PureGuidance.starting_step.
+        self.starting_step = int(t_start * num_steps)
         self.outer_steps = outer_steps
         self.learning_rate = learning_rate
         self.max_grad_norm = max_grad_norm
@@ -380,7 +384,7 @@ class LatentOptimization:
             )
 
         # --- final clean sampling round with the optimized latents --------------
-        final_coords, trajectory, losses = self._sample_with_frozen_latents(
+        final_coords, trajectory, trajectory_denoised, losses = self._sample_with_frozen_latents(
             model=stepper,
             sampler=sampler,
             reward=reward,
@@ -396,6 +400,7 @@ class LatentOptimization:
         metadata = {
             "optimization_losses": optimization_losses,
             "latent_drift": latent_drift,
+            "trajectory_denoised": trajectory_denoised,
         }
         if reconciler.has_mismatch and processed.model_atom_array is not None:
             metadata["model_atom_array"] = processed.model_atom_array
@@ -501,8 +506,11 @@ class LatentOptimization:
         coords = torch.as_tensor(
             model.initialize_from_prior(batch_size=self.ensemble_size, features=features)
         )
+        if self.starting_step > 0:
+            starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
+            coords = alignment_reference + coords * torch.as_tensor(starting_context.noise_scale)
         losses: list[float] = []
-        steps = tqdm(range(self.num_steps), f"IT-opt round {round_index}")
+        steps = tqdm(range(self.starting_step, self.num_steps), f"IT-opt round {round_index}")
         for i in steps:
             optimize = i >= self.guidance_start
             context = sampler.get_context_for_step(i, schedule)
@@ -620,9 +628,13 @@ class LatentOptimization:
         coords = torch.as_tensor(
             model.initialize_from_prior(batch_size=self.ensemble_size, features=frozen_features)
         )
+        if self.starting_step > 0:
+            starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
+            coords = alignment_reference + coords * torch.as_tensor(starting_context.noise_scale)
         trajectory: list[Tensor] = []
+        trajectory_denoised: list[Tensor] = []
         losses: list[float | None] = []
-        steps = tqdm(range(self.num_steps), "IT-opt final sampling")
+        steps = tqdm(range(self.starting_step, self.num_steps), "IT-opt final sampling")
         for i in steps:
             context = sampler.get_context_for_step(i, schedule).with_reconciler(
                 reconciler=reconciler, alignment_reference=alignment_reference
@@ -638,6 +650,7 @@ class LatentOptimization:
             trajectory.append(coords.clone().cpu())
 
             if step_output.denoised is not None:
+                trajectory_denoised.append(step_output.denoised.clone().cpu())
                 with torch.no_grad():
                     loss = reward(
                         coordinates=step_output.denoised,
@@ -648,4 +661,4 @@ class LatentOptimization:
                 losses.append(float(loss))
             else:
                 losses.append(None)
-        return coords, trajectory, losses
+        return coords, trajectory, trajectory_denoised, losses
