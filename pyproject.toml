@@ -115,10 +115,10 @@ requires-python = ">= 3.11, <3.14"
 version = "0.18.1"
 
 [project.urls]
-Changelog = "https://github.com/diff-use/sampleworks/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/prism-science/sampleworks/blob/main/CHANGELOG.md"
 Homepage = "https://diffuse.science/posts/sampleworks/"
-Issues = "https://github.com/diff-use/sampleworks/issues"
-Repository = "https://github.com/diff-use/sampleworks"
+Issues = "https://github.com/prism-science/sampleworks/issues"
+Repository = "https://github.com/prism-science/sampleworks"
 
 [project.scripts]
 sampleworks-analysis = "sampleworks.runs.analysis_cli:main"

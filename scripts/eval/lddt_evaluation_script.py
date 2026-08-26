@@ -173,7 +173,7 @@ def nn_lddt_clustering(
     }
 
 
-# TODO make more general: https://github.com/diff-use/sampleworks/issues/93
+# TODO make more general: https://github.com/prism-science/sampleworks/issues/93
 def main(args: argparse.Namespace):
     all_trials, protein_configs = setup_evaluation_parameters(args)
 

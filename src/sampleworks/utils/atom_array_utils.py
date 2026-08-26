@@ -36,7 +36,7 @@ class AltlocInfo:
 
 
 # TODO: migrate this to atomworks's selection algebra that is added to AtomArray/Stack
-#   https://github.com/diff-use/sampleworks/issues/56
+#   https://github.com/prism-science/sampleworks/issues/56
 def parse_selection_string(selection: str) -> tuple[str | None, int | None, int | None]:
     """Parse a selection string like 'chain A and resi 326-339'.
 

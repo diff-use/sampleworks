@@ -489,7 +489,8 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
     is_boltz = "Boltz" in wrapper_class_name
 
     # Annotate structure with model-specific configuration (including recycling_steps)
-    # See https://github.com/diff-use/sampleworks/issues/192 for a plan to organize this better.
+    # See https://github.com/prism-science/sampleworks/issues/192 for a plan to organize this
+    # better.
     recycling_steps = getattr(args, "recycling_steps", None)
     if recycling_steps is not None and recycling_steps <= 0:
         raise ValueError("recycling_steps must be > 0")
