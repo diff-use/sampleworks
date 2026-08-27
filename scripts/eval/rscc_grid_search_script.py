@@ -134,7 +134,9 @@ def process_group(
                 f"Could not find reference structure for occupancy {trials[0].altloc_occupancies}"
             )
         # parse() returns only the first altloc.
-        ref_structure = parse(ref_path, ccd_mirror_path=None)
+        ref_structure = parse(
+            ref_path, ccd_mirror_path=None, hydrogen_policy="remove", add_missing_atoms=False
+        )
         ref_atom_array = get_asym_unit_from_structure(ref_structure)
         ref_atom_array = remove_atoms_with_any_nan_coords(ref_atom_array)
     except (FileNotFoundError, OSError, ValueError, RuntimeError, AttributeError, TypeError) as e:
@@ -156,8 +158,16 @@ def process_group(
 
     # parse refined, align, and compute density once per trial.
     for trial in trials:
+        logger.info(
+            f"Processing trial for protein {trial.protein} occupancies {trial.altloc_occupancies}"
+        )
         try:
-            structure = parse(trial.refined_cif_path, ccd_mirror_path=None)
+            structure = parse(
+                trial.refined_cif_path,
+                ccd_mirror_path=None,
+                hydrogen_policy="remove",
+                add_missing_atoms=False
+            )
             atom_array = get_asym_unit_from_structure(structure)
             if not hasattr(atom_array, "coord") or atom_array.coord is None:
                 raise AttributeError("AtomArray | AtomArrayStack is missing coordinates")
