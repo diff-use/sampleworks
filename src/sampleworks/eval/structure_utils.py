@@ -435,8 +435,8 @@ def canonicalize_mixed_altloc_residues(
     ``res_id`` rather than an altloc. That path still needs the CIF-level
     :func:`~sampleworks.utils.cif_utils.resolve_mixed_hetatm_atom_altlocs`.
 
-    That CIF-level function is not simply reused here because has a different tolerance for losing
-    the modified conformer: it prepares a *single* structure to feed a ModelWrapper, where
+    That CIF-level function is not simply reused here because it has a different tolerance for
+    losing the modified conformer: it prepares a *single* structure to feed a ModelWrapper, where
     atomworks would otherwise insert a spurious extra residue, so it deliberately drops the
     modified altloc and keeps only the canonical one. This function instead prepares an evaluation
     *reference ensemble*, where both conformers are real experimental data that must be preserved
