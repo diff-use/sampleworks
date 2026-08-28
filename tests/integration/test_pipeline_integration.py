@@ -50,6 +50,7 @@ from tests.mocks import (
     MismatchCase,
     MismatchCaseWrapper,
     MockFlowModelWrapper,
+    MockPreparableRewardFunction,
     MockStepScaler,
 )
 from tests.mocks.rewards import MockGradientRewardFunction
@@ -606,27 +607,6 @@ class TestTrajectoryScalerMatrixMock:
         is how the structure-factor reward silently scores the wrong thing.
         """
 
-        class RecordingPreparableReward(MockGradientRewardFunction):
-            """Reward that records its preparation, in the order it happened."""
-
-            def __init__(self):
-                """Start with no preparations and no evaluations recorded."""
-                super().__init__()
-                self.prepared_atom_counts: list[int] = []
-                self.calls = 0
-                self.calls_before_prepare = 0
-
-            def prepare(self, atom_array, *, device="cpu") -> None:
-                """Record the size of the topology this reward was bound to."""
-                self.prepared_atom_counts.append(atom_array.array_length())
-
-            def __call__(self, coordinates: Tensor, *args, **kwargs) -> Tensor:
-                """Score as usual, counting evaluations and any that precede prepare()."""
-                self.calls += 1
-                if not self.prepared_atom_counts:
-                    self.calls_before_prepare += 1
-                return super().__call__(coordinates, *args, **kwargs)
-
         struct_atom_array = build_test_atom_array(
             chain_ids=["A"] * 5,
             res_ids=[1, 2, 3, 4, 5],
@@ -643,7 +623,7 @@ class TestTrajectoryScalerMatrixMock:
         wrapper = MismatchCaseWrapper(case, device=device)
         structure = {"asym_unit": struct_atom_array, "metadata": {"id": "mismatch"}}
 
-        reward = RecordingPreparableReward()
+        reward = MockPreparableRewardFunction()
         sampler = AF3EDMSampler(
             EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
         )

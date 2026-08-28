@@ -89,6 +89,13 @@ class PureGuidance:
 
         reconciler = processed_structure.reconciler.to(coords.device)
         reward_inputs = processed_structure.to_reward_inputs(device=coords.device)
+        # `to_reward_inputs` neither mutates `processed_structure` (a frozen dataclass) nor
+        # reconciles coordinates. It builds the reward tensors in model atom order and uses the
+        # reconciler's index maps only to copy the structure's B-factors onto the common atoms.
+        # `reward_atom_array` is that same model-order array, so the topology `prepare` binds to
+        # is the one the sampled coordinates follow. When the model exposes its own array, its
+        # `.coord` are the model's template coordinates, not the reconciled reference; that is
+        # `reward_inputs.input_coords`.
         prepare_reward_if_needed(
             reward, processed_structure.reward_atom_array, device=coords.device
         )

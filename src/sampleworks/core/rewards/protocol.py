@@ -190,12 +190,15 @@ class RewardFunctionProtocol(Protocol):
 
 @runtime_checkable
 class PreparableRewardFunctionProtocol(RewardFunctionProtocol, Protocol):
-    """Protocol for reward functions that must see the model topology first.
+    """Protocol for reward functions that must be bound to the model's atom array first.
 
-    Rewards whose forward model needs the atom ordering itself — element symbols,
-    residue identity, a unit cell — cannot be fully built from the input structure
-    file, because the model may represent the same protein with a different atom
-    set (see ``utils/atom_reconciler.py``). Those rewards are constructed in two
+    "Model" is the generative model. Its atom array
+    (``SampleworksProcessedStructure.reward_atom_array``) is the one the sampled
+    coordinates follow, and it can differ from the processed input structure: the
+    model may add, drop or reorder atoms relative to the deposited file (see
+    ``utils/atom_reconciler.py``). A reward whose forward model depends on the atom
+    ordering itself — element symbols, residue identity, a unit cell — therefore
+    cannot be fully built from the input file. Such rewards are constructed in two
     phases: ``__init__`` takes the up-front configuration, and :meth:`prepare`
     binds the reward to the model atom array once sampling knows it.
     """
