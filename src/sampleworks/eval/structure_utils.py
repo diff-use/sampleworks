@@ -244,8 +244,28 @@ def process_structure_to_trajectory_input(
 
 
 def get_valid_atom_mask(atom_array: AtomArray | AtomArrayStack | Any) -> Any:
+    """Return a boolean mask selecting atoms usable for downstream computation.
+
+    An atom is considered valid when it has positive occupancy and finite
+    coordinates. Atoms with non-positive occupancy or with any NaN or infinite
+    coordinate component are excluded.
+
+    Parameters
+    ----------
+    atom_array : AtomArray or AtomArrayStack
+        Biotite atom container exposing ``occupancy`` (shape ``(n_atoms,)``) and
+        ``coord`` (shape ``(n_atoms, 3)`` for an ``AtomArray`` or
+        ``(n_models, n_atoms, 3)`` for an ``AtomArrayStack``) annotations.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean mask, ``True`` for valid atoms, broadcasting the occupancy and
+        finite-coordinate criteria over the atom axis.
+    """
     valid_atom_mask = atom_array.occupancy > 0
-    valid_atom_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)
+    # np.isfinite returns True for finite values, False for NaNs and infinities
+    valid_atom_mask &= np.isfinite(atom_array.coord).all(axis=-1)
     return valid_atom_mask
 
 
