@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+import warnings
 from importlib.resources import files
 from pathlib import Path
 
@@ -365,9 +366,11 @@ def translate_selection(selection: str) -> str:
         # assume this is already atomworks/pandas style and ignore.
         return selection
 
-    DeprecationWarning(
+    warnings.warn(
         "DEPRECATED: translate_selection converts from some pymol-like selection strings to "
-        "AtomWorks selection strings, but is not guaranteed to be correct for all cases."
+        "AtomWorks selection strings, but is not guaranteed to be correct for all cases.",
+        DeprecationWarning,
+        stacklevel=2,
     )
 
     pattern = re.compile(r"chain ([A-Z]) and resi (\d+)-(\d+)")
