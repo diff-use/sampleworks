@@ -28,7 +28,12 @@ env:
   # workflow-level env cannot read the secrets context.
   CHECKPOINTS_SOURCE_PATH: ${{ vars.SAMPLEWORKS_CHECKPOINTS_SOURCE_PATH }}
   ASTERA_IMAGE_NAME: library/pixi-with-checkpoints
-  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
+  # Pin to an `-immutable` tag's digest. quay rebuilds the moving tags
+  # (`latest`, `v1.22`, ...) and garbage-collects their old digests, which
+  # is how the previous pin vanished ("manifest unknown") on 2026-08-24 and
+  # failed every main build until this change. The `-immutable` tags are
+  # published once and kept.
+  SKOPEO_IMAGE: quay.io/skopeo/stable:v1.22.2-immutable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810
 
   DOCKER_METADATA_SHORT_SHA_LENGTH: 7
 
