@@ -12,6 +12,7 @@ import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from reciprocalspaceship.dtypes.base import MTZDtype
+from sampleworks.eval.structure_utils import get_asym_unit_from_structure
 from sampleworks.synthetic.synthetic_utils import (
     assign_occupancies,
     atomarray_to_gemmi,
@@ -24,6 +25,7 @@ from sampleworks.utils.atom_array_utils import (
     keep_amino_acids,
     keep_polymer,
     load_structure_with_altlocs,
+    parse_structure,
     remove_hydrogens,
 )
 from SFC_Torch import SFcalculator
@@ -32,6 +34,10 @@ from SFC_Torch.utils import assert_numpy
 
 
 DMIN = 2.0
+
+# chain_info fields the model wrappers read: chain_type (all), the canonical sequence
+# (Boltz/Protpardelle polymer YAML), and res_name (Boltz ligand CCD code).
+CROSS_MODEL_CHAIN_INFO_KEYS = ("chain_type", "processed_entity_canonical_sequence", "res_name")
 
 
 @pytest.fixture(scope="module")
@@ -222,6 +228,48 @@ class TestAtomArrayToGemmi:
         np.testing.assert_allclose(loaded.coord, ref.coord, atol=1e-3)
         np.testing.assert_allclose(loaded.b_factor, ref.b_factor, atol=1e-2)
         np.testing.assert_allclose(loaded.occupancy, ref.occupancy, atol=1e-2)
+
+    def test_saved_structure_round_trips_chain_info(self, resources_dir, stripped_gemmi, tmp_path):
+        """Test that a cif written by atomarray_to_gemmi parses back to the same chain_info
+        the source file does, so generated cifs can feed model featurization.
+
+        The load_any test above covers _atom_site fidelity. This one covers the layer above
+        it: atomworks derives chain_info from the entity block when one is present and from
+        _atom_site when it is not. Emitting a partial entity block (an _entity/_entity_poly
+        with no _entity_poly_seq, which gemmi's setup_entities() would produce) leads to the
+        first path with nothing to read, so chain_info comes back carrying
+        unprocessed_entity_canonical_sequence and every wrapper that reads
+        processed_entity_canonical_sequence raises KeyError.
+        """
+        source = parse_structure(resources_dir / "6b8x" / "6b8x_final.pdb")
+        ref = get_asym_unit_from_structure(source, 0)  # parse returns a stack; take the first model
+
+        save_cif_path = tmp_path / "saved.cif"
+        gemmi_structure = atomarray_to_gemmi(ref, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm)
+        gemmi_structure.make_mmcif_document().write_file(str(save_cif_path))
+        written = parse_structure(save_cif_path)
+
+        source_info, written_info = source["chain_info"], written["chain_info"]
+        assert set(written_info) == set(source_info)
+        for chain_id, expected in source_info.items():
+            actual = written_info[chain_id]
+            for key in CROSS_MODEL_CHAIN_INFO_KEYS:
+                assert key in expected, f"source chain {chain_id} has no {key!r}"
+                assert key in actual, f"round-tripped chain {chain_id} lost {key!r}"
+                assert np.array_equal(np.asarray(actual[key]), np.asarray(expected[key])), (
+                    f"chain {chain_id} field {key!r} did not round-trip"
+                )
+
+        # The canonical sequence is per-residue, but parse's processing could drop or renumber
+        # atoms without disturbing the sequence. Here we check that on a per-atom level the
+        # identity is preserved. Other annotation fields (b_factor/occupancy/element) are checked
+        # in the annotations round-trip test above.
+        loaded = get_asym_unit_from_structure(written, 0)
+        assert len(loaded) == len(ref)
+        for category in ("chain_id", "res_id", "atom_name"):
+            assert np.array_equal(loaded.get_annotation(category), ref.get_annotation(category)), (
+                f"annotation {category!r} did not survive the parse round-trip"
+            )
 
     def test_multichain_shared_res_ids_not_merged_in_gemmi(self, multichain_shared_resid_array):
         """Test that atomarray_to_gemmi splits shared res_ids into separate residues per chain

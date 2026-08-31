@@ -114,7 +114,7 @@ def test_get_reward_function_keeps_original_structure_file(
         lambda path: Path(path),
     )
     monkeypatch.setattr(
-        "sampleworks.utils.guidance_script_utils.parse",
+        "sampleworks.utils.guidance_script_utils.parse_structure",
         lambda *args, **kwargs: {
             "asym_unit": build_test_atom_array(n_atoms=3, with_occupancy=True)
         },

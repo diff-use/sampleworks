@@ -362,8 +362,9 @@ def _build_gemmi_residue(
     residue.name = atom_array.res_name[start_idx]
     residue.seqid = gemmi.SeqId(str(res_id))  # writes auth_seq_id
     residue.label_seq = res_id  # writes label_seq_id, important for saving mmCIF
-    # if the subchain id is not set, gemmi's setup_entities() will set it to multi-char,
-    # which is rejected by SFcalculator's PDB-header step.
+    # writes label_asym_id; nothing else assigns it, since atomarray_to_gemmi
+    # deliberately skips setup_entities(). Must stay single-char -- SFcalculator's
+    # PDB-header step rejects the multi-char subchain ids setup_entities() invents.
     residue.subchain = atom_array.chain_id[start_idx]
     # biotite's bool `hetero` -> gemmi's single-char het_flag ('H' HETATM / 'A' ATOM)
     residue.het_flag = "H" if bool(atom_array.hetero[start_idx]) else "A"
@@ -391,6 +392,12 @@ def atomarray_to_gemmi(
     Blank altloc labels are converted from biotite's '' to gemmi's '\\x00'. If
     the atom array has no ``altloc_id`` annotation (e.g. arrays reconstructed by
     a model wrapper), all altlocs default to blank.
+
+    No entities are assigned, so a cif written from the result has no entity block
+    and ``_atom_site.label_entity_id`` is ``.``. Sequences are then inferred from
+    ``_atom_site`` on reload, which is what model wrappers need; the cost is that
+    ``chain_info`` loses ``rcsb_entity`` (only Protenix reads it, and it falls back
+    to the chain id).
 
     Parameters
     ----------
@@ -429,7 +436,11 @@ def atomarray_to_gemmi(
 
     structure = gemmi.Structure()
     structure.add_model(model)
-    structure.setup_entities()  # SFcalculator/PDBParser expects entities assigned
+    # No setup_entities(): it fabricates entities with an empty full_sequence, so the
+    # written cif carries _entity/_entity_poly but no _entity_poly_seq. Atomworks reads
+    # this partial block which leads to KeyError when model wrapper accessing fields like
+    # `processed_entity_canonical_sequence`. When there are no entities, gemmi writes no
+    # entity block and atomworks infers the sequence from _atom_site instead.
     if unit_cell is not None:
         structure.cell = unit_cell
     if space_group is not None:
