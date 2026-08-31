@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 import reciprocalspaceship as rs
 import torch
-from atomworks import parse
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from reciprocalspaceship.dtypes.base import MTZDtype
@@ -26,6 +25,7 @@ from sampleworks.utils.atom_array_utils import (
     keep_amino_acids,
     keep_polymer,
     load_structure_with_altlocs,
+    parse_structure,
     remove_hydrogens,
 )
 from SFC_Torch import SFcalculator
@@ -38,23 +38,6 @@ DMIN = 2.0
 # chain_info fields the model wrappers read: chain_type (all), the canonical sequence
 # (Boltz/Protpardelle polymer YAML), and res_name (Boltz ligand CCD code).
 CROSS_MODEL_CHAIN_INFO_KEYS = ("chain_type", "processed_entity_canonical_sequence", "res_name")
-
-
-def _parse_at_production_kwargs(path: Path) -> dict:
-    """Parse a structure with the kwargs ``run_guidance`` uses.
-
-    Parameters
-    ----------
-    path : Path
-        Path to the structure file to parse.
-
-    Returns
-    -------
-    dict
-        The parsed Atomworks structure, keyed by ``"asym_unit"``, ``"chain_info"``, and the
-        rest of the parse metadata.
-    """
-    return parse(path, hydrogen_policy="remove", add_missing_atoms=False, ccd_mirror_path=None)
 
 
 @pytest.fixture(scope="module")
@@ -258,13 +241,13 @@ class TestAtomArrayToGemmi:
         unprocessed_entity_canonical_sequence and every wrapper that reads
         processed_entity_canonical_sequence raises KeyError.
         """
-        source = _parse_at_production_kwargs(resources_dir / "6b8x" / "6b8x_final.pdb")
+        source = parse_structure(resources_dir / "6b8x" / "6b8x_final.pdb")
         ref = get_asym_unit_from_structure(source, 0)  # parse returns a stack; take the first model
 
         save_cif_path = tmp_path / "saved.cif"
         gemmi_structure = atomarray_to_gemmi(ref, stripped_gemmi.cell, stripped_gemmi.spacegroup_hm)
         gemmi_structure.make_mmcif_document().write_file(str(save_cif_path))
-        written = _parse_at_production_kwargs(save_cif_path)
+        written = parse_structure(save_cif_path)
 
         source_info, written_info = source["chain_info"], written["chain_info"]
         assert set(written_info) == set(source_info)

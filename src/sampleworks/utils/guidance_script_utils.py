@@ -11,7 +11,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from atomworks import parse
 from atomworks.io.transforms.atom_array import ensure_atom_array_stack
 from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io import save_structure
@@ -31,6 +30,7 @@ from sampleworks.core.scalers.step_scalers import (
     NoScalingScaler,
 )
 from sampleworks.eval.occupancy_utils import extract_protein_and_occupancy
+from sampleworks.utils.atom_array_utils import parse_structure
 from sampleworks.utils.cif_utils import add_category_to_cif, resolve_mixed_hetatm_atom_altlocs
 from sampleworks.utils.guidance_constants import (
     GuidanceType,
@@ -276,12 +276,7 @@ def get_reward_function_and_structure(
     """Load structure and density inputs and build the real-space reward function."""
     logger.debug(f"Loading structure from {structure_path}")
     safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
-    structure = parse(
-        safe_structure_path,
-        hydrogen_policy="remove",
-        add_missing_atoms=False,
-        ccd_mirror_path=None,
-    )
+    structure = parse_structure(safe_structure_path)
 
     # make sure to cast paths to strings, since Path(x) != str(x) we don't want to
     # accidentally delete the originals.
