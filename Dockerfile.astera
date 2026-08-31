@@ -57,7 +57,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # that the download cache no longer survives a pod restart — environments
 # themselves live in the synced checkout and are unaffected.
 RUN mkdir -p /var/cache/pixi
-    SAMPLEWORKS_SKIP_ENV_PREPARE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
