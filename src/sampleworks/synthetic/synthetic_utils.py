@@ -417,7 +417,8 @@ def _prepare_residue_spans(atom_array: AtomArray) -> Iterator[tuple[int, int]]:
     Raises
     ------
     ValueError
-         If ``atom_array`` is malformed by having duplicate residues or chains.
+         If ``atom_array`` is malformed by having duplicate residues or chains, or a
+         residue's atoms disagree on ``hetero``.
     """
     chain_id = atom_array.chain_id
     # prepend True because atom 0 always starts a chain
@@ -433,6 +434,19 @@ def _prepare_residue_spans(atom_array: AtomArray) -> Iterator[tuple[int, int]]:
         },
         level="residue",
     )
+    # hetero is the only field _build_gemmi_residue reads that does not split a span
+    hetero = atom_array.hetero
+    changed = np.flatnonzero(hetero[1:] != hetero[:-1]) + 1  # atoms differing from the previous
+    stray = changed[~np.isin(changed, span_start_idx)]  # a change inside a span, not at its start
+    if len(stray):
+        idx = int(stray[0])
+        raise ValueError(
+            f"Atoms of residue (chain {chain_id[idx]!r}, res_id {atom_array.res_id[idx]}) "
+            f"disagree on hetero: atom {idx - 1} has {hetero[idx - 1]!r} but atom {idx} has "
+            f"{hetero[idx]!r}. atomarray_to_gemmi reads hetero from each residue's first "
+            "atom, so the differing value would be silently dropped."
+        )
+
     return pairwise(residue_span_idx.tolist())
 
 

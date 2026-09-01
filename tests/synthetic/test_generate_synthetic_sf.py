@@ -386,6 +386,18 @@ class TestGemmiHierarchyValidation:
         with pytest.raises(ValueError, match="identifies each residue"):
             atomarray_to_gemmi(arr)
 
+    def test_span_with_mixed_hetero_raises(self):
+        """Atoms in one residue disagreeing on hetero are rejected."""
+        arr = _build_atom_array(
+            chain_id=["A", "A"],
+            res_id=[1, 1],
+            res_name=["MSE", "MSE"],
+            atom_name=["N", "SE"],
+            hetero=[False, True],
+        )
+        with pytest.raises(ValueError, match="disagree on hetero"):
+            atomarray_to_gemmi(arr)
+
     def test_hetero_change_between_residues_is_valid(self):
         """hetero may change at a residue boundary, and reaches gemmi as the het_flag that
         marks the residue HETATM ('H') or ATOM ('A')."""
