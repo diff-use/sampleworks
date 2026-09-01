@@ -84,7 +84,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install -m 0755 /app/run_experiments.sh /usr/local/bin/run_experiments.sh \
     && install -m 0755 /app/run_all_models.sh /usr/local/bin/run_all_models.sh \
     && for cmd in \
-        bash column csh curl dig emacs git htop nano ncdu ping rsync tini tmux vim wget zsh; do \
+        bash column csh curl dig emacs git htop nano ncdu ping rsync timeout tini tmux vim wget zsh; do \
           command -v "${cmd}" >/dev/null 2>&1 || exit 1; \
         done
 

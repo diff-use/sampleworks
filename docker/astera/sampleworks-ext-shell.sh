@@ -14,7 +14,11 @@ esac
 [ -z "${ZSH_EXECUTION_STRING:-}" ] || return 0 2>/dev/null || exit 0
 # Not just "is ext on PATH" but "does ext actually run" - past this point the
 # shell is handed over with exec, so a broken binary would end the session.
-ext --help >/dev/null 2>&1 || return 0 2>/dev/null || exit 0
+# Bounded because this runs synchronously during shell startup: an ext that
+# hangs must not hold the prompt hostage. timeout is coreutils and asserted
+# at build time in Dockerfile.astera; were it ever missing, this line just
+# fails and the shell stays plain, which is the safe direction.
+timeout 5 ext --help >/dev/null 2>&1 || return 0 2>/dev/null || exit 0
 
 __sampleworks_ext_config_template="/usr/local/share/sampleworks/astera/ext-config.toml"
 __sampleworks_ext_data_home="${XDG_DATA_HOME:-${HOME:-/home/dev}/.local/share}"
