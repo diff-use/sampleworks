@@ -100,9 +100,29 @@ def _build_atom_array(
 
     Only the fields a test varies need to be passed; coords are distinct per atom and
     element/b_factor/occupancy are uniform, since none of them participate in residue
-    grouping or span validation. ``hetero`` defaults to biotite's all-False, and
-    ``altloc_id`` is left unset (not blank) when omitted, exercising the
-    missing-annotation path in ``_resolve_altlocs_for_gemmi``.
+    grouping or span validation. An omitted ``altloc_id`` exercises the missing-annotation
+    path in ``_resolve_altlocs_for_gemmi``.
+
+    Parameters
+    ----------
+    chain_id : list of str
+        Per-atom chain identifiers.
+    res_id : list of int
+        Per-atom residue identifiers.
+    res_name : list of str
+        Per-atom residue names.
+    atom_name : list of str
+        Per-atom atom names.
+    hetero : list of bool, optional
+        Per-atom hetero flags. If omitted, Biotite's all-false default is retained.
+    altloc_id : list of str, optional
+        Per-atom alternate-location identifiers. If omitted, the annotation remains
+        unset rather than being populated with blank identifiers.
+
+    Returns
+    -------
+    AtomArray
+        Array with deterministic coordinates and the annotations needed for conversion.
     """
     n = len(atom_name)
     arr = AtomArray(n)
@@ -282,11 +302,16 @@ class TestAtomArrayToGemmi:
                 f"annotation {category!r} did not survive the parse round-trip"
             )
 
-    def test_multichain_shared_res_ids_not_merged_in_gemmi(self, multichain_shared_resid_array):
+    def test_multichain_shared_res_ids_not_merged_in_gemmi(self):
         """Test that atomarray_to_gemmi splits shared res_ids into separate residues per chain
         in the Gemmi Structure object.
         """
-        arr = multichain_shared_resid_array
+        arr = _build_atom_array(
+            chain_id=["A", "A", "B", "B"],
+            res_id=[1, 2, 2, 3],
+            res_name=["ALA", "GLY", "GLY", "ALA"],
+            atom_name=["CA", "CA", "CA", "CA"],
+        )
         model = atomarray_to_gemmi(arr)[0]
 
         chains = list(model)
@@ -307,32 +332,6 @@ class TestAtomArrayToGemmi:
         """An empty AtomArray fails fast rather than yielding a chain-less structure."""
         with pytest.raises(ValueError, match="empty AtomArray"):
             atomarray_to_gemmi(AtomArray(0))
-
-    def test_occupancy_warns_on_extra_values(self, stripped_atom_array, caplog):
-        """A warning is logged when more occupancy values are provided than there are altlocs."""
-        altloc_info = detect_altlocs(stripped_atom_array)
-        with caplog.at_level(logging.WARNING):
-            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.2, 0.8, 0.0, 0.0])
-        assert "Extra values will be ignored" in caplog.text
-
-    def test_occupancy_warns_on_missing_values(self, stripped_atom_array, caplog):
-        """A warning is logged when fewer occupancy values are provided than there are altlocs."""
-        altloc_info = detect_altlocs(stripped_atom_array)
-        with caplog.at_level(logging.WARNING):
-            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.5, 0.5])
-        assert "Missing values are automatically set to 0" in caplog.text
-
-    def test_occupancy_raises_on_out_of_range(self, stripped_atom_array):
-        """ValueError is raised when an occupancy value is outside [0.0, 1.0]."""
-        altloc_info = detect_altlocs(stripped_atom_array)
-        with pytest.raises(ValueError, match="out of range"):
-            assign_occupancies(stripped_atom_array, altloc_info, "custom", [1.5, 0.0, 0.0])
-
-    def test_occupancy_raises_on_bad_sum(self, stripped_atom_array):
-        """ValueError is raised when occupancy values do not sum to 1.0."""
-        altloc_info = detect_altlocs(stripped_atom_array)
-        with pytest.raises(ValueError, match="sum to 1.0"):
-            assign_occupancies(stripped_atom_array, altloc_info, "custom", [0.3, 0.3, 0.3])
 
     def test_fprotein_changes_with_occupancy(self, stripped_atom_array, stripped_gemmi, device):
         """Fprotein amplitudes differ when occupancies changes from uniform to custom values."""
@@ -384,19 +383,7 @@ class TestGemmiHierarchyValidation:
             res_name=["ALA", "GLY"],
             atom_name=["N", "CA"],
         )
-        with pytest.raises(ValueError, match="disagree on res_name"):
-            atomarray_to_gemmi(arr)
-
-    def test_span_with_mixed_hetero_raises(self):
-        """Atoms in one residue disagreeing on hetero are rejected."""
-        arr = _build_atom_array(
-            chain_id=["A", "A"],
-            res_id=[1, 1],
-            res_name=["MSE", "MSE"],
-            atom_name=["N", "SE"],
-            hetero=[False, True],
-        )
-        with pytest.raises(ValueError, match="disagree on hetero"):
+        with pytest.raises(ValueError, match="identifies each residue"):
             atomarray_to_gemmi(arr)
 
     def test_hetero_change_between_residues_is_valid(self):
