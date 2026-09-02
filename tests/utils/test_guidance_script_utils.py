@@ -114,7 +114,7 @@ def test_get_reward_function_keeps_original_structure_file(
         lambda path: Path(path),
     )
     monkeypatch.setattr(
-        "sampleworks.utils.guidance_script_utils.parse",
+        "sampleworks.utils.guidance_script_utils.parse_structure",
         lambda *args, **kwargs: {
             "asym_unit": build_test_atom_array(n_atoms=3, with_occupancy=True)
         },
@@ -159,7 +159,7 @@ def test_get_reward_function_removes_temporary_file_after_parse_failure(
         "sampleworks.utils.guidance_script_utils.resolve_mixed_hetatm_atom_altlocs",
         lambda path: temporary_file,
     )
-    monkeypatch.setattr("sampleworks.utils.guidance_script_utils.parse", fail_parse)
+    monkeypatch.setattr("sampleworks.utils.guidance_script_utils.parse_structure", fail_parse)
 
     with pytest.raises(ValueError, match="invalid structure"):
         get_reward_function_and_structure(
@@ -191,7 +191,7 @@ def test_get_reward_function_ignores_temporary_file_cleanup_error(
         lambda path: temporary_file,
     )
     monkeypatch.setattr(
-        "sampleworks.utils.guidance_script_utils.parse",
+        "sampleworks.utils.guidance_script_utils.parse_structure",
         lambda *args, **kwargs: {
             "asym_unit": build_test_atom_array(n_atoms=3, with_occupancy=True)
         },

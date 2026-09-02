@@ -1,6 +1,6 @@
 # Sampleworks
 
-> This repository is under active development. Please always use the latest version. If you encounter any problems, please [create an issue on GitHub](https://github.com/diff-use/sampleworks/issues) and include: the PDB ID, the CIF file you used, your density map(s), and log information.
+> This repository is under active development. Please always use the latest version. If you encounter any problems, please [create an issue on GitHub](https://github.com/prism-science/sampleworks/issues) and include: the PDB ID, the CIF file you used, your density map(s), and log information.
 
 > We would welcome contributions from the community. We are most interested in:
  - new ModelWrappers for additional structure prediction models (especially smaller models which may be more steerable)
@@ -23,6 +23,8 @@ Chrispens, K., Collins, M., Mai, D., Wankowicz, S. A., Fraser, J. S., & van den 
 
 **Requirements**: Linux x86-64, CUDA 12, Python ≥ 3.11, < 3.14
 
+> **Note**: macOS (arm64) is supported for local development. The environments that pull CUDA builds are `linux-64` only; `pixi install -a` installs the rest, which is enough to develop and test most of the codebase.
+
 ### 1. Install Pixi
 
 ```bash
@@ -32,14 +34,17 @@ curl -fsSL https://pixi.sh/install.sh | sh
 ### 2. Clone and install
 
 ```bash
-git clone git@github.com:diff-use/sampleworks.git
+git clone git@github.com:prism-science/sampleworks.git
 cd sampleworks
-pixi install -a   # install all environments
 ```
 
-> **Note**: `pixi install -a` resolves all environments. This (currently) requires CUDA 12 and will fail on machines without it.
+Sampleworks is split across several Pixi environments: one per generative model, plus environments for analysis and development. For a complete list, run `pixi workspace environment list`. To install all that are compatible with your machine, run:
 
-Each generative model has its own Pixi environment. Install only what you need:
+```bash
+pixi install -a
+```
+
+Alternatively, install only what you need:
 
 ```bash
 pixi install -e boltz      # Boltz-1 / Boltz-2

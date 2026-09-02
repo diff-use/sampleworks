@@ -76,7 +76,7 @@ def find_altloc_selections(
     all_altloc_selections = {}
     for chain, start, end, _ in find_consecutive_residues(altlocs):
         if end - start >= min_span - 1:
-            # FIXME use new style selection https://github.com/diff-use/sampleworks/issues/56
+            # FIXME use new style selection https://github.com/prism-science/sampleworks/issues/56
             yield f"chain {chain} and resi {start}-{end}"  # old style, more compact, selection
 
         if include_all_altlocs:
@@ -134,7 +134,7 @@ def find_consecutive_residues(
     """
     # TODO create test cases from 5SOP and 7Z0E, low priority since this isn't a critical function
     #   and will likely change in the future anyway.
-    #   https://github.com/diff-use/sampleworks/issues/111
+    #   https://github.com/prism-science/sampleworks/issues/111
 
     # First find the chains
     all_chains = {res[0] for altloc in altlocs.values() for res in altloc}
