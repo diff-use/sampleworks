@@ -141,6 +141,15 @@ class TestResolveMixedHetatmAtomAltlocs:
     def test_mixed_returns_new_path(self, cif_mixed):
         assert resolve_mixed_hetatm_atom_altlocs(cif_mixed) != cif_mixed
 
+    @pytest.mark.parametrize("as_str", [False, True], ids=["path-in", "str-in"])
+    @pytest.mark.parametrize("fixture", ["cif_clean", "cif_mixed"], ids=["no-change", "fixed"])
+    def test_always_returns_path(self, fixture, as_str, request):
+        """Both return branches yield a Path even for str input, so callers can rely on
+        Path semantics downstream (guidance_script_utils compares and unlinks the result)."""
+        cif = request.getfixturevalue(fixture)
+        result = resolve_mixed_hetatm_atom_altlocs(str(cif) if as_str else cif)
+        assert isinstance(result, Path)
+
     def test_hetatm_records_removed_at_mixed_position(self, cif_mixed):
         result_path = resolve_mixed_hetatm_atom_altlocs(cif_mixed)
         arr = _load(result_path)
