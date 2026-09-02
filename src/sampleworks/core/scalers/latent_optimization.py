@@ -126,6 +126,70 @@ class LatentAnchor:
         return torch.stack(terms).sum()
 
 
+class _PerMemberStepper:
+    """Denoise one ensemble member at a time, each with its OWN trunk latent.
+
+    The it_opt "multiple-leaf" scheme gives every ensemble member its own latent, so ``s``/``z``
+    carry a leading ``ensemble_size`` batch dim. Stock model diffusion modules instead take an
+    un-batched conditioning and broadcast it internally, so a batched latent either crashes
+    (Protenix) or mis-broadcasts (Boltz's ``multiplicity``). This adapter sidesteps that in a
+    model-agnostic way: for each member it slices that member's latent, runs the wrapped model's
+    normal un-batched ``step`` on that member alone, and stacks the results. Members stay
+    independent, so gradients stay per-member; the summed density reward couples them only through
+    the ensemble average. Cost is N forwards instead of one batched call, with an equivalent result.
+
+    ``featurize`` / ``initialize_from_prior`` pass straight through to the wrapped model.
+    """
+
+    def __init__(
+        self,
+        model,
+        io: AttrLatentIO,
+        *,
+        optimize_single: bool,
+        optimize_pair: bool,
+        ensemble_size: int,
+    ):
+        self._model = model
+        self._io = io
+        self._optimize_single = optimize_single
+        self._optimize_pair = optimize_pair
+        self._ensemble_size = ensemble_size
+
+    def step(self, x_t: Tensor, t, *, features: GenerativeModelInput) -> Tensor:
+        """Loop the wrapped model's ``step`` over ensemble members; stack the per-member results."""
+        cond = features.conditioning
+        per_member: list[Tensor] = []
+        for i in range(self._ensemble_size):
+            # Slice only the OPTIMIZED latents (they carry the ensemble batch dim); a non-optimized
+            # latent stays the shared un-batched baseline already on ``cond``.
+            cond_i = cond
+            if self._optimize_single:
+                cond_i = self._io.write_single(cond_i, self._io.read_single(cond)[i])
+            if self._optimize_pair:
+                # read_pair returns None when the io addresses no pair rep. sample() only sets
+                # optimize_pair together with a pair_attr, so this is a misconfigured io reaching
+                # us directly; say so rather than failing on a None subscript mid-denoise.
+                pair = self._io.read_pair(cond)
+                if pair is None:
+                    raise ValueError(
+                        "optimize_pair is set, but the io addresses no pair representation."
+                    )
+                cond_i = self._io.write_pair(cond_i, pair[i])
+            t_i = t
+            if isinstance(t, Tensor) and t.ndim >= 1 and t.shape[0] == x_t.shape[0]:
+                t_i = t[i : i + 1]
+            features_i = GenerativeModelInput(conditioning=cond_i)
+            per_member.append(self._model.step(x_t[i : i + 1], t_i, features=features_i))
+        return torch.cat(per_member, dim=0)
+
+    def featurize(self, *args, **kwargs):
+        return self._model.featurize(*args, **kwargs)
+
+    def initialize_from_prior(self, *args, **kwargs):
+        return self._model.initialize_from_prior(*args, **kwargs)
+
+
 class LatentOptimization:
     """Trajectory scaler that optimizes the model's ``s``/``z`` latents (IT-opt).
 
@@ -139,6 +203,7 @@ class LatentOptimization:
         num_steps: int = 200,
         guidance_t_start: float = 0.0,
         *,
+        t_start: float = 0.0,
         outer_steps: int = 1,
         learning_rate: float = 0.05,
         max_grad_norm: float = 1.0,
@@ -205,6 +270,9 @@ class LatentOptimization:
         self.ensemble_size = ensemble_size
         self.num_steps = num_steps
         self.guidance_start = int(guidance_t_start * num_steps)
+        # Partial diffusion: rollouts begin here, from the noised input structure rather than the
+        # prior. Mirrors PureGuidance.starting_step.
+        self.starting_step = int(t_start * num_steps)
         self.outer_steps = outer_steps
         self.learning_rate = learning_rate
         self.max_grad_norm = max_grad_norm
@@ -259,6 +327,16 @@ class LatentOptimization:
         schedule = sampler.compute_schedule(num_steps=self.num_steps)
         grad_enabler = _GradEnablingScaler()
 
+        # Denoise per member so each uses its own latent: stock model diffusion modules take an
+        # un-batched conditioning, so the batched per-member latents can't go through in one call.
+        stepper = _PerMemberStepper(
+            model,
+            io,
+            optimize_single=self.optimize_single,
+            optimize_pair=self.optimize_pair,
+            ensemble_size=self.ensemble_size,
+        )
+
         # --- optional coordinate-space geometry penalty -------------------------
         # BondGeometryReward penalizes stretched bonds and steric clashes in the denoised structure,
         # curbing the overshoot where an aggressive latent update trades geometry for density fit.
@@ -279,7 +357,7 @@ class LatentOptimization:
         for outer in tqdm(range(self.outer_steps)):
             optimizer = torch.optim.Adam(latents, lr=self.learning_rate)  # a fresh, persistent Adam
             round_losses = self._optimize_one_round(
-                model=model,
+                model=stepper,
                 sampler=sampler,
                 reward=reward,
                 features=features,
@@ -306,8 +384,8 @@ class LatentOptimization:
             )
 
         # --- final clean sampling round with the optimized latents --------------
-        final_coords, trajectory, losses = self._sample_with_frozen_latents(
-            model=model,
+        final_coords, trajectory, trajectory_denoised, losses = self._sample_with_frozen_latents(
+            model=stepper,
             sampler=sampler,
             reward=reward,
             io=io,
@@ -322,6 +400,7 @@ class LatentOptimization:
         metadata = {
             "optimization_losses": optimization_losses,
             "latent_drift": latent_drift,
+            "trajectory_denoised": trajectory_denoised,
         }
         if reconciler.has_mismatch and processed.model_atom_array is not None:
             metadata["model_atom_array"] = processed.model_atom_array
@@ -341,8 +420,12 @@ class LatentOptimization:
         detached baselines (anchor targets), and per-latent anchor weights. Each
         leaf is a detached clone made ``requires_grad=True`` -- a true leaf severed
         from any trunk graph, so Adam updates it directly (leaves persist and are
-        updated in place across rounds and steps). Shapes are preserved (whatever
-        the wrapper caches), so no assumption is made about a batch dimension.
+        updated in place across rounds and steps).
+
+        Each leaf gets a leading ``ensemble_size`` batch dimension -- one INDEPENDENT latent per
+        ensemble member, all cloned from the same trunk baseline (the it_opt "multiple-leaf"
+        scheme), so members can diverge rather than share one latent. The baseline kept for the
+        anchor stays un-batched and broadcasts across members.
         """
         conditioning = features.conditioning
         latents: list[Tensor] = []
@@ -367,7 +450,14 @@ class LatentOptimization:
                     "conditioning does not expose it. Check the attribute names for this model."
                 )
             baseline = baseline.detach()
-            leaf = baseline.clone().requires_grad_(True)
+            # it_opt "multiple-leaf" scheme: give each ensemble member its OWN latent. We stack
+            # ensemble_size independent copies of the trunk baseline into a leading batch dim, so
+            # each member gets its own gradient and can diverge, instead of collapsing onto one
+            # shared latent. (The reference does the same via batch-expand-then-clone.) Stock
+            # diffusion modules take an un-batched conditioning, so _PerMemberStepper slices this
+            # batch dim back apart and runs one forward per member at denoise time.
+            member_copies = [baseline for _ in range(self.ensemble_size)]
+            leaf = torch.stack(member_copies).requires_grad_(True)
             # The conditioning is a frozen dataclass, so setattr would raise; replace() returns a
             # copy with this one field swapped and every sidecar field left untouched.
             conditioning = dataclasses.replace(conditioning, **{attr: leaf})
@@ -416,8 +506,11 @@ class LatentOptimization:
         coords = torch.as_tensor(
             model.initialize_from_prior(batch_size=self.ensemble_size, features=features)
         )
+        if self.starting_step > 0:
+            starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
+            coords = alignment_reference + coords * torch.as_tensor(starting_context.noise_scale)
         losses: list[float] = []
-        steps = tqdm(range(self.num_steps), f"IT-opt round {round_index}")
+        steps = tqdm(range(self.starting_step, self.num_steps), f"IT-opt round {round_index}")
         for i in steps:
             optimize = i >= self.guidance_start
             context = sampler.get_context_for_step(i, schedule)
@@ -535,9 +628,13 @@ class LatentOptimization:
         coords = torch.as_tensor(
             model.initialize_from_prior(batch_size=self.ensemble_size, features=frozen_features)
         )
+        if self.starting_step > 0:
+            starting_context = sampler.get_context_for_step(self.starting_step - 1, schedule)
+            coords = alignment_reference + coords * torch.as_tensor(starting_context.noise_scale)
         trajectory: list[Tensor] = []
+        trajectory_denoised: list[Tensor] = []
         losses: list[float | None] = []
-        steps = tqdm(range(self.num_steps), "IT-opt final sampling")
+        steps = tqdm(range(self.starting_step, self.num_steps), "IT-opt final sampling")
         for i in steps:
             context = sampler.get_context_for_step(i, schedule).with_reconciler(
                 reconciler=reconciler, alignment_reference=alignment_reference
@@ -553,6 +650,7 @@ class LatentOptimization:
             trajectory.append(coords.clone().cpu())
 
             if step_output.denoised is not None:
+                trajectory_denoised.append(step_output.denoised.clone().cpu())
                 with torch.no_grad():
                     loss = reward(
                         coordinates=step_output.denoised,
@@ -563,4 +661,4 @@ class LatentOptimization:
                 losses.append(float(loss))
             else:
                 losses.append(None)
-        return coords, trajectory, losses
+        return coords, trajectory, trajectory_denoised, losses
