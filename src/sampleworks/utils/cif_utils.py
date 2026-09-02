@@ -242,7 +242,17 @@ def resolve_mixed_hetatm_atom_altlocs(cif_path: Path | str) -> Path:
     ) as tmp_file:
         tmp_path = Path(tmp_file.name)
 
-    save_structure_to_cif(fixed_array, tmp_path)
+    try:
+        save_structure_to_cif(fixed_array, tmp_path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError as error:
+            logger.warning(
+                f"Failed to remove temporary CIF after save failure: {tmp_path}: {error}"
+            )
+        raise
+
     logger.info(f"Wrote altloc-fixed CIF to temporary file: {tmp_path}")
     return tmp_path
 

@@ -275,13 +275,19 @@ def get_reward_function_and_structure(
 ) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
     """Load structure and density inputs and build the real-space reward function."""
     logger.debug(f"Loading structure from {structure_path}")
-    safe_structure_path = resolve_mixed_hetatm_atom_altlocs(Path(structure_path))
-    structure = parse_structure(safe_structure_path)
-
-    # make sure to cast paths to strings, since Path(x) != str(x) we don't want to
-    # accidentally delete the originals.
-    if str(safe_structure_path) != str(structure_path):
-        safe_structure_path.unlink()  # delete the temporary file if it was created
+    structure_path = Path(structure_path)
+    safe_structure_path = resolve_mixed_hetatm_atom_altlocs(structure_path)
+    try:
+        structure = parse_structure(safe_structure_path)
+    finally:
+        # resolve_mixed_hetatm_atom_altlocs always returns a Path (pinned by
+        # test_always_returns_path), so comparing Paths cannot mistake the
+        # original for the temporary copy.
+        if safe_structure_path != structure_path:
+            try:
+                safe_structure_path.unlink()
+            except OSError as error:
+                logger.warning(f"Failed to remove temporary CIF: {safe_structure_path}: {error}")
 
     logger.debug(f"Loading density map from {density}")
     xmap = XMap.fromfile(density, resolution=resolution)
