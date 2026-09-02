@@ -37,10 +37,6 @@ from sampleworks.eval.constants import DEFAULT_SELECTION_PADDING
 from sampleworks.eval.eval_dataclasses import ProteinConfig, Trial
 from sampleworks.eval.grid_search_eval_utils import parse_eval_args, setup_evaluation_parameters
 from sampleworks.eval.metrics import rscc
-from sampleworks.eval.structure_utils import (
-    get_asym_unit_from_structure,
-    get_reference_structure_coords,
-)
 from sampleworks.utils.atom_array_utils import (
     filter_to_common_atoms,
     parse_structure,
@@ -55,6 +51,10 @@ from sampleworks.utils.frame_transforms import (
     weighted_rigid_align_differentiable,
 )
 from sampleworks.utils.framework_utils import match_batch
+from sampleworks.utils.structure_utils import (
+    get_asym_unit_from_structure,
+    get_reference_structure_coords,
+)
 
 
 OccKey = tuple[tuple[str, float], ...]

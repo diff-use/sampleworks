@@ -12,7 +12,6 @@ import torch
 from atomworks.io.transforms.atom_array import remove_waters
 from biotite.structure import AtomArray
 from reciprocalspaceship.dtypes.base import MTZDtype
-from sampleworks.eval.structure_utils import get_asym_unit_from_structure
 from sampleworks.synthetic.synthetic_utils import (
     assign_occupancies,
     atomarray_to_gemmi,
@@ -28,6 +27,7 @@ from sampleworks.utils.atom_array_utils import (
     parse_structure,
     remove_hydrogens,
 )
+from sampleworks.utils.structure_utils import get_asym_unit_from_structure
 from SFC_Torch import SFcalculator
 from SFC_Torch.io import PDBParser
 from SFC_Torch.utils import assert_numpy

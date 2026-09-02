@@ -17,12 +17,12 @@ from sampleworks.core.samplers.protocol import StepParams
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
 from sampleworks.core.scalers.step_scalers import DataSpaceDPSScaler, NoiseSpaceDPSScaler
-from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.utils.atom_array_utils import make_normalized_atom_id
 from sampleworks.utils.atom_reconciler import AtomReconciler
 from sampleworks.utils.frame_transforms import apply_forward_transform
 from sampleworks.utils.guidance_script_arguments import GuidanceConfig
 from sampleworks.utils.guidance_script_utils import save_everything
+from sampleworks.utils.structure_utils import process_structure_to_trajectory_input
 
 from tests.mocks import MismatchCase, MismatchCaseWrapper
 from tests.utils.atom_array_builders import build_test_atom_array

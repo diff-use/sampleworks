@@ -65,7 +65,6 @@ import pandas as pd
 from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
-from sampleworks.eval.structure_utils import selection_to_residues
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.metrics.rmsd import AllAtomRMSD
 from sampleworks.utils.atom_array_utils import (
@@ -78,6 +77,7 @@ from sampleworks.utils.atom_array_utils import (
     load_structure_with_altlocs,
     parse_selection_string,
 )
+from sampleworks.utils.structure_utils import selection_to_residues
 
 
 _ATOMWORKS_CHAIN_RE = re.compile(r"chain_id\s*==\s*['\"]([^'\"]+)['\"]")

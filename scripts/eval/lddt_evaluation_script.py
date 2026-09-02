@@ -15,9 +15,9 @@ from sampleworks.eval.grid_search_eval_utils import (
     setup_evaluation_parameters,
     translate_selection,
 )
-from sampleworks.eval.structure_utils import get_reference_atomarraystack
 from sampleworks.metrics.lddt import AllAtomLDDT
 from sampleworks.utils.atom_array_utils import filter_to_common_atoms, map_altlocs_to_stack
+from sampleworks.utils.structure_utils import get_reference_atomarraystack
 from sklearn.metrics import silhouette_samples
 
 

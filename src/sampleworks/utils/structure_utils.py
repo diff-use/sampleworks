@@ -12,6 +12,7 @@ from atomworks.io.utils.ccd import ChainType, UNKNOWN_AA
 from atomworks.io.utils.sequence import get_1_from_3_letter_code, get_3_from_1_letter_code
 from biotite.structure import AtomArray, AtomArrayStack, from_template
 from loguru import logger
+
 from sampleworks.core.rewards.protocol import RewardInputs
 from sampleworks.eval.eval_dataclasses import ProteinConfig
 from sampleworks.models.protocol import GenerativeModelInput

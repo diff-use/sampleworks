@@ -9,8 +9,8 @@ from tqdm import tqdm
 from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 from sampleworks.core.samplers.protocol import TrajectorySampler
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
-from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.models.protocol import FlowModelWrapper
+from sampleworks.utils.structure_utils import process_structure_to_trajectory_input
 
 
 class PureGuidance:

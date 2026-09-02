@@ -454,7 +454,7 @@ if reconciler.has_mismatch:
     aligned_coords, transform = reconciler.align(model_coords, reference_coords)
 ```
 
-Build reward inputs from the model atom array (not the input structure) when a mismatch exists. See `eval/structure_utils.py::SampleworksProcessedStructure.to_reward_inputs()` for the canonical pattern.
+Build reward inputs from the model atom array (not the input structure) when a mismatch exists. See `utils/structure_utils.py::SampleworksProcessedStructure.to_reward_inputs()` for the canonical pattern.
 
 ## Avoiding Technical Debt
 
