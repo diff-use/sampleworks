@@ -29,9 +29,9 @@ from protpardelle.core.models import load_model, Protpardelle
 from protpardelle.data.sequence import seq_to_aatype
 from torch import Tensor
 
-from sampleworks.eval.structure_utils import get_asym_unit_from_structure, get_valid_atom_mask
 from sampleworks.models.protocol import GenerativeModelInput
 from sampleworks.utils.framework_utils import match_batch
+from sampleworks.utils.structure_utils import get_asym_unit_from_structure, get_valid_atom_mask
 
 
 # Number of atom37 slots in the all-atom (atom37) representation. Matches

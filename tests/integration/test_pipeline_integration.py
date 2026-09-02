@@ -24,13 +24,13 @@ from sampleworks.core.scalers.step_scalers import (
     NoiseSpaceDPSScaler,
     NoScalingScaler,
 )
-from sampleworks.eval.structure_utils import process_structure_to_trajectory_input
 from sampleworks.utils.guidance_constants import (
     StepScalers,
     StructurePredictor,
     TrajectorySamplers,
     TrajectoryScalers,
 )
+from sampleworks.utils.structure_utils import process_structure_to_trajectory_input
 from torch import Tensor
 
 from tests.conftest import (

@@ -19,11 +19,11 @@ from sampleworks.core.samplers.protocol import (
     TrajectorySampler,
 )
 from sampleworks.core.scalers.protocol import GuidanceOutput, StepScalerProtocol
-from sampleworks.eval.structure_utils import (
+from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
+from sampleworks.utils.structure_utils import (
     process_structure_to_trajectory_input,
     SampleworksProcessedStructure,
 )
-from sampleworks.models.protocol import FlowModelWrapper, GenerativeModelInput
 
 
 class FKSteering:
