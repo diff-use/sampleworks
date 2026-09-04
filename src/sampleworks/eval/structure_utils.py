@@ -3,7 +3,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast, overload
+from typing import Any, cast, overload
 
 import numpy as np
 import torch
@@ -187,8 +187,7 @@ def process_structure_to_trajectory_input(
     # The deposited structure may have zero-occupancy or NaN-coordinate atoms from
     # unresolved regions or altloc processing; these must be removed before
     # building the reconciler against the model's (already-clean) atom array.
-    valid_atom_mask = atom_array.occupancy > 0
-    valid_atom_mask &= ~np.any(np.isnan(atom_array.coord), axis=-1)
+    valid_atom_mask = get_valid_atom_mask(atom_array)
     atom_array = atom_array[valid_atom_mask]
 
     # Build reconciler from model and structure atom arrays.
@@ -254,6 +253,32 @@ def process_structure_to_trajectory_input(
         reconciler=reconciler,
         model_atom_array=model_atom_array,
     )
+
+
+def get_valid_atom_mask(atom_array: AtomArray | AtomArrayStack | Any) -> Any:
+    """Return a boolean mask selecting atoms usable for downstream computation.
+
+    An atom is considered valid when it has positive occupancy and finite
+    coordinates. Atoms with non-positive occupancy or with any NaN or infinite
+    coordinate component are excluded.
+
+    Parameters
+    ----------
+    atom_array : AtomArray or AtomArrayStack
+        Biotite atom container exposing ``occupancy`` (shape ``(n_atoms,)``) and
+        ``coord`` (shape ``(n_atoms, 3)`` for an ``AtomArray`` or
+        ``(n_models, n_atoms, 3)`` for an ``AtomArrayStack``) annotations.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean mask, ``True`` for valid atoms, broadcasting the occupancy and
+        finite-coordinate criteria over the atom axis.
+    """
+    valid_atom_mask = atom_array.occupancy > 0
+    # np.isfinite returns True for finite values, False for NaNs and infinities
+    valid_atom_mask &= np.isfinite(atom_array.coord).all(axis=-1)
+    return valid_atom_mask
 
 
 def selection_to_residues(atom_array: AtomArray, selection: str) -> set[tuple[str, int]]:
@@ -422,8 +447,8 @@ def canonicalize_mixed_altloc_residues(
     ``res_id`` rather than an altloc. That path still needs the CIF-level
     :func:`~sampleworks.utils.cif_utils.resolve_mixed_hetatm_atom_altlocs`.
 
-    That CIF-level function is not simply reused here because has a different tolerance for losing
-    the modified conformer: it prepares a *single* structure to feed a ModelWrapper, where
+    That CIF-level function is not simply reused here because it has a different tolerance for
+    losing the modified conformer: it prepares a *single* structure to feed a ModelWrapper, where
     atomworks would otherwise insert a spurious extra residue, so it deliberately drops the
     modified altloc and keeps only the canonical one. This function instead prepares an evaluation
     *reference ensemble*, where both conformers are real experimental data that must be preserved
