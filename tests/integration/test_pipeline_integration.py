@@ -50,6 +50,7 @@ from tests.mocks import (
     MismatchCase,
     MismatchCaseWrapper,
     MockFlowModelWrapper,
+    MockPreparableRewardFunction,
     MockStepScaler,
 )
 from tests.mocks.rewards import MockGradientRewardFunction
@@ -599,33 +600,13 @@ class TestTrajectoryScalerMatrixMock:
         trajectory_scaler_type: TrajectoryScalers,
         device: torch.device,
     ):
-        """Two-phase rewards see the model atom array before any reward evaluation.
+        """Two-phase rewards are prepared with model-topology reward inputs before any evaluation.
 
         The model and the structure deliberately have different atom counts. A reward
         prepared against the input structure would bind the wrong atom ordering, which
-        is how the structure-factor reward silently scores the wrong thing.
+        is how the structure-factor reward silently scores the wrong thing. The inputs
+        handed to ``prepare`` carry the model atom array as their topology.
         """
-
-        class RecordingPreparableReward(MockGradientRewardFunction):
-            """Reward that records its preparation, in the order it happened."""
-
-            def __init__(self):
-                """Start with no preparations and no evaluations recorded."""
-                super().__init__()
-                self.prepared_atom_counts: list[int] = []
-                self.calls = 0
-                self.calls_before_prepare = 0
-
-            def prepare(self, atom_array, *, device="cpu") -> None:
-                """Record the size of the topology this reward was bound to."""
-                self.prepared_atom_counts.append(atom_array.array_length())
-
-            def __call__(self, coordinates: Tensor, *args, **kwargs) -> Tensor:
-                """Score as usual, counting evaluations and any that precede prepare()."""
-                self.calls += 1
-                if not self.prepared_atom_counts:
-                    self.calls_before_prepare += 1
-                return super().__call__(coordinates, *args, **kwargs)
 
         struct_atom_array = build_test_atom_array(
             chain_ids=["A"] * 5,
@@ -643,7 +624,7 @@ class TestTrajectoryScalerMatrixMock:
         wrapper = MismatchCaseWrapper(case, device=device)
         structure = {"asym_unit": struct_atom_array, "metadata": {"id": "mismatch"}}
 
-        reward = RecordingPreparableReward()
+        reward = MockPreparableRewardFunction()
         sampler = AF3EDMSampler(
             EDMSamplerConfig(device=device, augmentation=False, align_to_input=False)
         )
@@ -665,6 +646,10 @@ class TestTrajectoryScalerMatrixMock:
         )
 
         assert reward.prepared_atom_counts == [case.n_model]
+        (prepared,) = reward.prepared_inputs
+        assert prepared.atom_array is not None
+        assert prepared.atom_array.array_length() == case.n_model
+        assert list(prepared.atom_array.atom_name) == list(case.model_atom_array.atom_name)
         assert reward.calls > 0
         assert reward.calls_before_prepare == 0
 
