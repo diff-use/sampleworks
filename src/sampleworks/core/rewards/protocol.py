@@ -142,6 +142,14 @@ class RewardFunctionProtocol(Protocol):
 
     Any callable that computes a scalar reward from atomic coordinates
     and properties can implement this protocol.
+
+    Sign convention: the returned scalar is **minimized**. Lower is better, so
+    every implementation is a loss or a penalty, and a term naturally written as
+    a score to maximize must negate itself. Guidance backpropagates the value as
+    a loss and Feynman-Kac steering selects particles with ``argmin``, so a
+    sign-inverted term steers away from the data rather than towards it. Weighted
+    combinations (:class:`~sampleworks.core.rewards.composite.CompositeReward`)
+    are only meaningful when every term agrees on this.
     """
 
     def __call__(
@@ -178,6 +186,62 @@ class RewardFunctionProtocol(Protocol):
             Scalar reward value
         """
         ...
+
+
+@runtime_checkable
+class PreparableRewardFunctionProtocol(RewardFunctionProtocol, Protocol):
+    """Protocol for reward functions that must be bound to the model's atom array first.
+
+    "Model" is the generative model. Its atom array
+    (``SampleworksProcessedStructure.reward_atom_array``) is the one the sampled
+    coordinates follow, and it can differ from the processed input structure: the
+    model may add, drop or reorder atoms relative to the deposited file (see
+    ``utils/atom_reconciler.py``). A reward whose forward model depends on the atom
+    ordering itself — element symbols, residue identity, a unit cell — therefore
+    cannot be fully built from the input file. Such rewards are constructed in two
+    phases: ``__init__`` takes the up-front configuration, and :meth:`prepare`
+    binds the reward to the model atom array once sampling knows it.
+    """
+
+    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
+        """Bind this reward to the model atom ordering.
+
+        Mutates the reward in place and returns nothing. Implementations must be
+        re-runnable, so a caller can prepare the same reward again for a different
+        atom array or device.
+
+        Parameters
+        ----------
+        atom_array
+            Model-order atom array the subsequent ``__call__`` coordinates follow.
+        device
+            PyTorch device the prepared state is placed on.
+        """
+        ...
+
+
+def prepare_reward_if_needed(
+    reward: RewardFunctionProtocol,
+    atom_array: AtomArray,
+    *,
+    device: torch.device | str = "cpu",
+) -> None:
+    """Prepare ``reward`` against the model topology when it asks to be prepared.
+
+    Rewards that do not implement :class:`PreparableRewardFunctionProtocol` are
+    left untouched, so callers can apply this unconditionally.
+
+    Parameters
+    ----------
+    reward
+        Reward function about to be used for guidance.
+    atom_array
+        Model-order atom array the reward's coordinates will follow.
+    device
+        PyTorch device the reward's prepared state is placed on.
+    """
+    if isinstance(reward, PreparableRewardFunctionProtocol):
+        reward.prepare(atom_array, device=device)
 
 
 @runtime_checkable

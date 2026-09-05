@@ -51,6 +51,21 @@ class SampleworksProcessedStructure:
     reconciler: AtomReconciler
     model_atom_array: AtomArray | None = None
 
+    @property
+    def reward_atom_array(self) -> AtomArray:
+        """Atom array the reward tensors and reward topology follow.
+
+        ``model_atom_array`` is None when the model conditioning/features don't
+        expose a separate atom array, i.e. the model operates on the same atom set
+        as the input structure and the reconciler is an identity mapping.
+
+        Returns
+        -------
+        AtomArray
+            The model atom array when the model exposes one, else the structure's.
+        """
+        return self.model_atom_array if self.model_atom_array is not None else self.atom_array
+
     def to_reward_inputs(self, device: torch.device | str = "cpu") -> RewardInputs:
         """Build RewardInputs with model atom count when model atom arrays are available.
 
@@ -70,10 +85,7 @@ class SampleworksProcessedStructure:
         -------
         RewardInputs
         """
-        # model_atom_array is None when the model conditioning/features don't expose a
-        # separate atom array i.e. the model operates on the same atom set as the
-        # input structure and the reconciler is an identity mapping.
-        atom_array_for_rewards = self.model_atom_array or self.atom_array
+        atom_array_for_rewards = self.reward_atom_array
 
         reward_inputs = RewardInputs.from_atom_array(
             atom_array=atom_array_for_rewards,
