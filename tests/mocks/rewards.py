@@ -3,7 +3,7 @@
 from typing import Any
 
 import torch
-from biotite.structure import AtomArray
+from sampleworks.core.rewards.protocol import RewardInputs
 from torch import Tensor
 
 
@@ -35,8 +35,9 @@ class MockPreparableRewardFunction(MockGradientRewardFunction):
 
     Scores exactly like :class:`MockGradientRewardFunction` and adds ``prepare``, so
     it satisfies ``PreparableRewardFunctionProtocol``. Preparation changes nothing
-    about the score; the point is the record, so tests can assert which atom array
-    and device the scalers handed over and that no evaluation preceded ``prepare``.
+    about the score; the point is the record, so tests can assert which reward
+    inputs and device the scalers handed over and that no evaluation preceded
+    ``prepare``.
     """
 
     def __init__(self, gradient_scale: float = 1.0):
@@ -49,25 +50,27 @@ class MockPreparableRewardFunction(MockGradientRewardFunction):
         """
         super().__init__(gradient_scale)
         self.prepared_with: list[tuple[int, str]] = []
+        self.prepared_inputs: list[RewardInputs] = []
         self.calls = 0
         self.calls_before_prepare = 0
 
     @property
     def prepared_atom_counts(self) -> list[int]:
-        """Atom count of every array this reward was prepared against, in order."""
+        """Atom count of every reward input this reward was prepared against, in order."""
         return [n_atoms for n_atoms, _ in self.prepared_with]
 
-    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
-        """Record the atom count and device this reward was bound to.
+    def prepare(self, reward_inputs: RewardInputs, *, device: torch.device | str = "cpu") -> None:
+        """Record the reward inputs (by object and atom count) and device this reward was bound to.
 
         Parameters
         ----------
-        atom_array
-            Model-order atom array the caller is binding the reward to.
+        reward_inputs
+            Model-order reward inputs the caller is binding the reward to.
         device
             Device the prepared state would be placed on.
         """
-        self.prepared_with.append((atom_array.array_length(), str(device)))
+        self.prepared_with.append((reward_inputs.b_factors.shape[-1], str(device)))
+        self.prepared_inputs.append(reward_inputs)
 
     def __call__(self, coordinates: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         """Score as the parent does, counting evaluations and any that precede ``prepare``.

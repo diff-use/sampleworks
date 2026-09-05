@@ -454,7 +454,7 @@ if reconciler.has_mismatch:
     aligned_coords, transform = reconciler.align(model_coords, reference_coords)
 ```
 
-Build reward inputs from the model atom array (not the input structure) when a mismatch exists. See `eval/structure_utils.py::SampleworksProcessedStructure.to_reward_inputs()` for the canonical pattern.
+Build reward inputs from the model atom array (not the input structure) when a mismatch exists. See `eval/structure_utils.py::SampleworksProcessedStructure.to_reward_inputs()` for the canonical pattern. Two-phase rewards (`PreparableRewardFunctionProtocol`) are prepared with those same `RewardInputs`, never with an atom array; `RewardInputs.to_atom_array()` rebuilds a reference `AtomArray` (model topology, reconciled coordinates and B-factors) for forward models that need one. Do not write reconciled values back into the model atom array.
 
 ## Avoiding Technical Debt
 
