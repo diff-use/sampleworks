@@ -600,11 +600,12 @@ class TestTrajectoryScalerMatrixMock:
         trajectory_scaler_type: TrajectoryScalers,
         device: torch.device,
     ):
-        """Two-phase rewards see the model atom array before any reward evaluation.
+        """Two-phase rewards are prepared with model-topology reward inputs before any evaluation.
 
         The model and the structure deliberately have different atom counts. A reward
         prepared against the input structure would bind the wrong atom ordering, which
-        is how the structure-factor reward silently scores the wrong thing.
+        is how the structure-factor reward silently scores the wrong thing. The inputs
+        handed to ``prepare`` carry the model atom array as their topology.
         """
 
         struct_atom_array = build_test_atom_array(
@@ -645,6 +646,10 @@ class TestTrajectoryScalerMatrixMock:
         )
 
         assert reward.prepared_atom_counts == [case.n_model]
+        (prepared,) = reward.prepared_inputs
+        assert prepared.atom_array is not None
+        assert prepared.atom_array.array_length() == case.n_model
+        assert list(prepared.atom_array.atom_name) == list(case.model_atom_array.atom_name)
         assert reward.calls > 0
         assert reward.calls_before_prepare == 0
 

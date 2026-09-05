@@ -16,11 +16,12 @@ from biotite.structure import AtomArray, AtomArrayStack, stack
 from biotite.structure.io import save_structure
 from loguru import logger
 
-from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume import XMap
+from sampleworks.core.rewards.options import RealSpaceDensityOptions
 from sampleworks.core.rewards.real_space_density import (
+    build_real_space_density_reward,
     RealSpaceRewardFunction,
-    setup_scattering_params,
 )
+from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
@@ -264,16 +265,23 @@ def get_model_and_device(
     return device, model_wrapper
 
 
-# TODO: further atomize for easier testing.
-def get_reward_function_and_structure(
-    density: str | Path,
-    device: torch.device,
-    em,
-    loss_order,
-    resolution,
-    structure_path: str | Path,
-) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
-    """Load structure and density inputs and build the real-space reward function."""
+def load_guidance_structure(structure_path: str | Path) -> dict[str, Any]:
+    """Parse the input structure for a guidance run.
+
+    Reward-agnostic: every reward in a run scores the same structure, so it is
+    loaded once here and handed to the reward builders through
+    :class:`~sampleworks.core.rewards.registry.RewardBuildContext`.
+
+    Parameters
+    ----------
+    structure_path : str | Path
+        Path to the structure file (``.cif`` / ``.pdb``) to sample around.
+
+    Returns
+    -------
+    dict[str, Any]
+        Atomworks-parsed structure dictionary.
+    """
     logger.debug(f"Loading structure from {structure_path}")
     structure_path = Path(structure_path)
     safe_structure_path = resolve_mixed_hetatm_atom_altlocs(structure_path)
@@ -289,26 +297,32 @@ def get_reward_function_and_structure(
             except OSError as error:
                 logger.warning(f"Failed to remove temporary CIF: {safe_structure_path}: {error}")
 
-    logger.debug(f"Loading density map from {density}")
-    xmap = XMap.fromfile(density, resolution=resolution)
+    return structure
 
-    logger.debug("Setting up scattering parameters")
 
-    atom_array = structure["asym_unit"]
-    scattering_params = setup_scattering_params(em_mode=em, device=device)
+def get_reward_function_and_structure(
+    density: str | Path,
+    device: torch.device,
+    em,
+    loss_order,
+    resolution,
+    structure_path: str | Path,
+) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
+    """Load structure and density inputs and build the real-space reward function.
 
-    selection_mask = atom_array.occupancy > 0
-    n_selected = selection_mask.sum()
-    logger.info(f"Selected {n_selected} atoms with occupancy > 0")
-
+    .. deprecated::
+        Build rewards through
+        :func:`sampleworks.core.rewards.registry.build_single_reward` (or
+        :func:`build_reward` for a whole run configuration) instead. Kept for
+        callers that still construct the density reward positionally.
+    """
+    structure = load_guidance_structure(structure_path)
     logger.info("Creating reward function")
-    reward_function = RealSpaceRewardFunction(
-        xmap,
-        scattering_params,
-        selection_mask,
-        em=em,
-        loss_order=loss_order,
-        device=device,
+    reward_function = build_real_space_density_reward(
+        RealSpaceDensityOptions(
+            density=str(density), resolution=resolution, loss_order=loss_order, em=em
+        ),
+        RewardBuildContext(structure=structure, device=device),
     )
     return reward_function, structure
 
