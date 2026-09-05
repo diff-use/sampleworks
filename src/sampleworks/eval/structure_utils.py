@@ -75,6 +75,9 @@ class SampleworksProcessedStructure:
         Reward tensors are generated from the model atom array whenever possible.
         Structure-derived B-factors are copied onto common atoms, and the
         reference coordinates come from ``self.input_coords`` (model-space).
+        The result keeps :attr:`reward_atom_array` as its topology
+        (``RewardInputs.atom_array``), untouched. A two-phase reward's ``prepare``
+        receives these same inputs; see ``prepare_reward_if_needed``.
 
         Parameters
         ----------
