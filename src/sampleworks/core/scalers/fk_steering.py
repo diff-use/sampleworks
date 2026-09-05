@@ -114,14 +114,11 @@ class FKSteering:
 
         reconciler = processed.reconciler.to(coords.device)
         reward_inputs = processed.to_reward_inputs(device=coords.device)
-        # `to_reward_inputs` neither mutates `processed` (a frozen dataclass) nor reconciles
-        # coordinates. It builds the reward tensors in model atom order and uses the reconciler's
-        # index maps only to copy the structure's B-factors onto the common atoms.
-        # `reward_atom_array` is that same model-order array, so the topology `prepare` binds to
-        # is the one the sampled coordinates follow. When the model exposes its own array, its
-        # `.coord` are the model's template coordinates, not the reconciled reference; that is
-        # `reward_inputs.input_coords`.
-        prepare_reward_if_needed(reward, processed.reward_atom_array, device=coords.device)
+        # Two-phase rewards are bound to the same inputs every step hands to `reward`: model
+        # atom order, the structure's B-factors on the common atoms, and the reconciled
+        # reference coordinates. `processed` (a frozen dataclass) and its atom arrays are
+        # never written to.
+        prepare_reward_if_needed(reward, reward_inputs, device=coords.device)
 
         schedule = sampler.compute_schedule(self.num_steps)
         loss_history: list[torch.Tensor] = []
