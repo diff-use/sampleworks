@@ -4,7 +4,7 @@ import pytest
 import torch
 from sampleworks.core.rewards.composite import CompositeReward
 from sampleworks.core.rewards.config import build_reward, RewardConfig
-from sampleworks.core.rewards.protocol import RewardFunctionProtocol
+from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
 from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.utils.guidance_constants import Rewards
 
@@ -28,14 +28,14 @@ class QuadraticReward:
 
 
 class PreparableQuadraticReward(QuadraticReward):
-    """A quadratic reward that also binds to the model topology."""
+    """A quadratic reward that also binds to the reward inputs."""
 
     def __init__(self, scale: float = 1.0):
         super().__init__(scale)
         self.prepared_atom_counts: list[int] = []
 
-    def prepare(self, atom_array, *, device="cpu") -> None:
-        self.prepared_atom_counts.append(atom_array.array_length())
+    def prepare(self, reward_inputs: RewardInputs, *, device="cpu") -> None:
+        self.prepared_atom_counts.append(reward_inputs.b_factors.shape[-1])
 
 
 def coords(value: float = 2.0) -> torch.Tensor:
@@ -99,14 +99,19 @@ class TestCompositeValidation:
 
 
 def test_prepare_is_forwarded_only_to_terms_that_need_it():
-    from biotite.structure import AtomArray
-
+    n_atoms = 6
+    reward_inputs = RewardInputs(
+        elements=torch.zeros(1, n_atoms, dtype=torch.long),
+        b_factors=torch.full((1, n_atoms), 20.0),
+        occupancies=torch.ones(1, n_atoms),
+        input_coords=torch.zeros(1, n_atoms, 3),
+    )
     preparable = PreparableQuadraticReward()
     composite = CompositeReward([QuadraticReward(), preparable])
 
-    composite.prepare(AtomArray(6), device="cpu")
+    composite.prepare(reward_inputs, device="cpu")
 
-    assert preparable.prepared_atom_counts == [6]
+    assert preparable.prepared_atom_counts == [n_atoms]
 
 
 class TestBuildReward:

@@ -11,7 +11,7 @@ from sampleworks.core.rewards.protocol import prepare_reward_if_needed, RewardFu
 
 
 if TYPE_CHECKING:
-    from biotite.structure import AtomArray
+    from sampleworks.core.rewards.protocol import RewardInputs
 
 
 class CompositeReward:
@@ -117,18 +117,18 @@ class CompositeReward:
             )
         return total
 
-    def prepare(self, atom_array: AtomArray, *, device: torch.device | str = "cpu") -> None:
-        """Prepare each component reward that needs the model topology.
+    def prepare(self, reward_inputs: RewardInputs, *, device: torch.device | str = "cpu") -> None:
+        """Prepare each component reward that needs binding to the reward inputs.
 
         Parameters
         ----------
-        atom_array
-            Model-order atom array the coordinates will follow.
+        reward_inputs
+            Model-order reward inputs every component's ``__call__`` will be fed.
         device
             PyTorch device the prepared state is placed on.
         """
         for reward in self.rewards:
-            prepare_reward_if_needed(reward, atom_array, device=device)
+            prepare_reward_if_needed(reward, reward_inputs, device=device)
 
     def __repr__(self) -> str:
         terms = ", ".join(

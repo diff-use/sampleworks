@@ -14,6 +14,7 @@ from sampleworks.core.rewards.protocol import (
     PreparableRewardFunctionProtocol,
     prepare_reward_if_needed,
     RewardFunctionProtocol,
+    RewardInputs,
 )
 from sampleworks.core.rewards.real_space_density import RealSpaceRewardFunction
 from sampleworks.core.rewards.registry import RewardBuildContext
@@ -102,11 +103,15 @@ def test_structure_factor_reward_scores_a_structure_end_to_end(
     assert isinstance(reward, StructureFactorRewardFunction)
     assert isinstance(reward, PreparableRewardFunctionProtocol)
 
-    # The scalers prepare against the model-order atom array
-    # (SampleworksProcessedStructure.reward_atom_array); here that is the structure the
+    # The scalers prepare against the reward inputs built in model atom order
+    # (SampleworksProcessedStructure.to_reward_inputs); here that is the structure the
     # synthetic MTZ was computed from, altlocs and all.
     atom_array = structure_1vme_sf
-    prepare_reward_if_needed(reward, atom_array, device=device)
+    prepare_reward_if_needed(
+        reward,
+        RewardInputs.from_atom_array(atom_array, ensemble_size=1, device=device),
+        device=device,
+    )
     elements, b_factors, occupancies = build_reward_input_tensors_without_coords(atom_array, device)
     coords = torch.from_numpy(atom_array.coord).to(device=device, dtype=torch.float32)
     # One conformer, as a batch of one: rewards are always called batched.
